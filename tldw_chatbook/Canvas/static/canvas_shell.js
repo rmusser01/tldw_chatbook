@@ -28,6 +28,7 @@
   let pendingPlan = null;
   let currentPort = null;
   let rendererReady = false;
+  let branchUnavailable = false;
 
   async function post(path, value, extraHeaders = {}) {
     const headers = {"Content-Type": "application/json", ...extraHeaders};
@@ -83,6 +84,28 @@
   }
 
   function dismissNotice() { ui.notice.hidden = true; }
+
+  function showBranchUnavailable() {
+    branchUnavailable = true;
+    rendererReady = false;
+    pendingPlan = null;
+    latestRevisionId = "";
+    if (currentPort) currentPort.close();
+    currentPort = null;
+    ui.frame.src = "about:blank";
+    ui.sourceView.value = "";
+    ui.sourcePanel.hidden = true;
+    ui.source.setAttribute("aria-expanded", "false");
+    for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
+    ui.loading.textContent = "Unavailable on this branch";
+    ui.loading.hidden = false;
+    ui.compatibility.hidden = true;
+    dismissNotice();
+    setConnection("Disconnected", true);
+    for (const control of document.querySelectorAll(".canvas-toolbar button, .canvas-toolbar select, .canvas-toolbar input")) {
+      if (control !== ui.close) control.disabled = true;
+    }
+  }
 
   async function mintAction(action) {
     return (await post("api/actions", {action})).capability;
@@ -159,7 +182,8 @@
       for (const event of payload.events || []) {
         lastEventId = event.event_id;
         if (event.kind === "disconnected") {
-          setConnection("Disconnected", true);
+          if (event.metadata?.notice === "unavailable_on_branch") showBranchUnavailable();
+          else setConnection("Disconnected", true);
           continue;
         }
         if (event.kind === "discarded") {
@@ -175,7 +199,7 @@
           showNotice("New version available", {follow: true});
         }
       }
-      setConnection("Connected");
+      if (!branchUnavailable) setConnection("Connected");
     } catch (_) {
       setConnection("Disconnected", true);
     } finally {

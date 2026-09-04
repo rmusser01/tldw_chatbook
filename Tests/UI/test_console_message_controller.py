@@ -28,10 +28,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_destination_shells import _build_test_app
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
-)
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _build_console_send_test_app,
@@ -40,7 +36,11 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_selector,
     _wait_for_text,
 )
-
+from Tests.UI.test_destination_shells import _build_test_app
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -403,6 +403,52 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
 
     store.create_session(ephemeral=True)
     assert screen._console_canvas_publication_is_current(publication) is False
+
+
+def test_canvas_composer_sink_validates_exact_session_and_branch_target():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    root = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    left = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    target = CanvasBridgeTarget(
+        browser_session_id="browser-exact",
+        session_id=session.id,
+        conversation_id=session.id,
+        active_message_ids=(root.id, left.id),
+        canvas_id="canvas-exact",
+        revision_id="revision-exact",
+    )
+    composer = Mock()
+    screen._console_composer_or_none = Mock(return_value=composer)
+
+    screen._prefill_console_canvas_repair(target, "exact draft")
+
+    composer.load_draft.assert_called_once_with("exact draft")
+    assert store.session_draft(session.id) == "exact draft"
+
+    store.create_sibling(
+        left.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    with pytest.raises(RuntimeError, match="unavailable"):
+        screen._prefill_console_canvas_repair(target, "stale branch draft")
+    assert store.session_draft(session.id) == "exact draft"
+
+    store.create_session(ephemeral=True)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        screen._prefill_console_canvas_repair(target, "stale session draft")
+    assert store.session_draft(session.id) == "exact draft"
 
 
 async def _closed_coroutine() -> None:

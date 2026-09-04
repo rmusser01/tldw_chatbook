@@ -209,6 +209,78 @@ async def test_gateway_starts_lazily_once_on_numeric_loopback_and_shuts_down() -
     assert gateway.capabilities.closed is True
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_unreachable_browser_keeps_events_but_revokes_all_old_authority() -> None:
+    class UnavailableAuthority(_Authority):
+        async def read_events(self, scope, *, after_event_id):
+            del after_event_id
+            return (
+                CanvasGatewayEvent(
+                    "event-unavailable",
+                    "disconnected",
+                    scope.canvas_id,
+                    scope.revision_id,
+                    {"notice": "unavailable_on_branch"},
+                ),
+            )
+
+    gateway = CanvasGateway(authority=UnavailableAuthority([]))
+    launch = await gateway.open_shell(_scope())
+    assert gateway.origin is not None
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        origin, csrf, old_bridge = await _ready_bridge(session, gateway, launch)
+        gateway.mark_browser_session_unavailable("browser-a")
+
+        events = await session.get(_launch_url(launch, "api/events"))
+        assert events.status == 200
+        assert (await events.json())["events"][0]["kind"] == "disconnected"
+        assert gateway.has_browser_session_for("conversation-session-a") is False
+        assert (await session.get(_launch_url(launch, "api/state"))).status == 401
+        actions = await _post_json(
+            session,
+            _launch_url(launch, "api/actions"),
+            {"action": "source_read"},
+            origin=origin,
+            csrf=csrf,
+        )
+        assert actions.status == 403
+        replay = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            _bridge_request(request_id="stale-after-branch"),
+            origin=origin,
+            csrf=csrf,
+            capability=old_bridge,
+        )
+        assert replay.status == 403
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_unreachable_pending_shell_cannot_boot_after_branch_switch() -> None:
+    gateway = CanvasGateway(authority=_Authority([]))
+    launch = await gateway.open_shell(_scope())
+    assert gateway.origin is not None
+
+    gateway.mark_browser_session_unavailable("browser-a")
+
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        boot = await _post_json(
+            session,
+            _launch_url(launch, "api/boot"),
+            {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+            origin=gateway.origin,
+        )
+        assert boot.status == 401
+    await gateway.aclose()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
 async def test_gateway_cleanup_retains_runner_until_a_retry_settles(

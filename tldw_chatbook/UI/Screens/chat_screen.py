@@ -19385,16 +19385,61 @@ class ChatScreen(BaseAppScreen):
             run_id=str(uuid4()),
         )
 
-    def _prefill_console_canvas_repair(self, repair: str) -> None:
-        """Place the bounded repair request into the exact current unsent draft."""
+    def _prefill_console_canvas_repair(
+        self,
+        target_or_repair: Any,
+        repair: str | None = None,
+    ) -> None:
+        """Place a repair request into its exact live Console draft.
+
+        Native Canvas bridge submissions provide a captured browser target and
+        are revalidated here, at the effect boundary.  The one-argument form is
+        retained for the local transcript repair action, which already acts on
+        the current message and never crosses the browser capability boundary.
+        """
+
+        from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
+        if repair is None:
+            repair_text = target_or_repair
+        else:
+            target = target_or_repair
+            if (
+                not isinstance(target, CanvasBridgeTarget)
+                or session_id != target.session_id
+            ):
+                raise RuntimeError("Canvas repair target is unavailable")
+            session = next(
+                (item for item in store.sessions() if item.id == target.session_id),
+                None,
+            )
+            if (
+                session is None
+                or (session.persisted_conversation_id or session.id)
+                != target.conversation_id
+            ):
+                raise RuntimeError("Canvas repair target is unavailable")
+            active_ids = tuple(
+                (message.persisted_message_id or message.id)
+                for message in (
+                    store.get_message(native_id)
+                    for native_id in store.active_path_message_ids(target.session_id)
+                )
+            )
+            if active_ids != target.active_message_ids:
+                raise RuntimeError("Canvas repair target is unavailable")
+            repair_text = repair
         composer = self._console_composer_or_none()
-        if session_id is None or composer is None:
+        if (
+            session_id is None
+            or composer is None
+            or not isinstance(repair_text, str)
+        ):
             raise RuntimeError("Canvas repair composer is unavailable")
-        composer.load_draft(repair)
-        store.set_session_draft(session_id, repair)
+        composer.load_draft(repair_text)
+        store.set_session_draft(session_id, repair_text)
         composer.focus()
 
     def _console_canvas_authority(self) -> Any:
@@ -19467,6 +19512,10 @@ class ChatScreen(BaseAppScreen):
     async def _open_console_canvas_block(self, reference: Any, source: str) -> Any:
         """Import one authorized HTML block and open its native preview."""
 
+        from tldw_chatbook.Chat.console_message_actions import (
+            canvas_block_origin_turn_id,
+        )
+
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         message_id = reference.message_id
@@ -19484,7 +19533,9 @@ class ChatScreen(BaseAppScreen):
             create_new=reference.create_new,
             source_message_id=message.id,
             origin_message_id=message.persisted_message_id or message.id,
-            source_turn_id=message.turn_id or message.trace_turn_id or message.id,
+            source_turn_id=canvas_block_origin_turn_id(
+                message, reference.block_index
+            ),
             block_index=reference.block_index,
             block_identity=reference.identity,
         )

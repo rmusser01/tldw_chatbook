@@ -26,6 +26,10 @@ from tldw_chatbook.Canvas.limits import sha256_utf8
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleMessageRole,
+)
 
 
 @dataclass
@@ -352,6 +356,102 @@ async def test_production_authority_import_selector_rename_and_hot_reload() -> N
         await frame.get_by_role("heading", name="Hot reloaded").wait_for()
         await page.get_by_text("Revision 3", exact=True).wait_for()
         assert updated.parent_revision_id is not None
+        await browser.close()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_real_branch_transition_clears_unreachable_preview_until_reopened() -> None:
+    controller = ConsoleCanvasController()
+    holder = {}
+    store = ConsoleChatStore(
+        canvas_promotion_participant=controller,
+        canvas_turn_controller=controller,
+        on_canvas_context_changed=lambda session_id: holder.get("authority")
+        and holder["authority"].sync_live_context(session_id),
+    )
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="root")
+    left = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="left"
+    )
+
+    def resolve(requested: str) -> CanvasScope:
+        if store.active_session_id != requested:
+            raise RuntimeError("Canvas session is no longer active")
+        return CanvasScope(
+            session_id=requested,
+            conversation_id=requested,
+            active_message_ids=tuple(store.active_path_message_ids(requested)),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="browser-branch-transition",
+        )
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=resolve,
+        canvas_controller=controller,
+    )
+    holder["authority"] = authority
+    created = authority.import_html(
+        session_id=session.id,
+        source="<!doctype html><h1>Left branch preview</h1>",
+        source_message_id=left.id,
+        origin_message_id=left.id,
+        source_turn_id="left-browser-import",
+        block_index=0,
+        block_identity=f"{left.id}:canvas-html:0",
+    )
+    scope = authority.gateway_scope(
+        session_id=session.id,
+        browser_session_id="browser-unreachable-production",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    gateway = CanvasGateway(authority=authority)
+    authority.bind_gateway_invalidator(gateway.mark_browser_session_unavailable)
+    launch = await gateway.open_shell(scope)
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 1000, "height": 700})
+        page.set_default_timeout(7_000)
+        await page.goto(launch.browser_url)
+        await page.frame_locator("#canvas-preview").get_by_role(
+            "heading", name="Left branch preview"
+        ).wait_for()
+
+        store.create_sibling(
+            left.id, role=ConsoleMessageRole.ASSISTANT, content="right"
+        )
+        await page.get_by_text("Unavailable on this branch", exact=True).wait_for()
+        assert await page.locator("#canvas-preview").get_attribute("src") in {
+            None,
+            "about:blank",
+        }
+        assert await page.get_by_text("Disconnected", exact=True).is_visible()
+
+        store.set_active_leaf(session.id, left.id)
+        await page.wait_for_timeout(500)
+        assert await page.get_by_text(
+            "Unavailable on this branch", exact=True
+        ).is_visible()
+
+        reopened_scope = authority.gateway_scope(
+            session_id=session.id,
+            browser_session_id="browser-reopened-production",
+            canvas_id=created.canvas_id,
+            revision_id=created.revision_id,
+        )
+        reopened = await gateway.open_shell(reopened_scope)
+        await page.goto(reopened.browser_url)
+        await page.frame_locator("#canvas-preview").get_by_role(
+            "heading", name="Left branch preview"
+        ).wait_for()
         await browser.close()
     await gateway.aclose()
 

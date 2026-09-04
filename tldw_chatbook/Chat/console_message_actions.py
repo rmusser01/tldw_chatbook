@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Literal
 
 from markdown_it import MarkdownIt
@@ -91,6 +92,29 @@ def assistant_canvas_html_blocks(
             )
         )
     return tuple(blocks)
+
+
+def canvas_block_origin_turn_id(
+    message: ConsoleChatMessage,
+    block_index: int,
+) -> str:
+    """Return a restart-stable, source-free identity for one Canvas import.
+
+    A hydrated persisted turn identity is preferred when the message owns one.
+    Ordinary persisted assistant rows currently do not, so their persisted
+    message id plus parsed block position is the deterministic fallback.
+    Hashing keeps the storage-facing identifier bounded and prevents either
+    identity from leaking into incidental diagnostics. Temporary messages
+    remain scoped to their in-memory turn/message identity and session lifecycle.
+    """
+
+    if message.persisted_message_id is not None:
+        stable_owner = message.trace_turn_id or message.persisted_message_id
+        digest = sha256(
+            f"{stable_owner}\0{block_index}".encode("utf-8")
+        ).hexdigest()
+        return f"canvas-import-{digest}"
+    return message.turn_id or message.trace_turn_id or message.id
 
 
 def resolve_canvas_html_block(

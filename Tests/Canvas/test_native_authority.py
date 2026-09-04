@@ -11,11 +11,19 @@ from tldw_chatbook.Canvas.gateway import (
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Canvas.service import CanvasService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
+from tldw_chatbook.Chat.console_message_actions import (
+    assistant_canvas_html_blocks,
+    canvas_block_origin_turn_id,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -261,7 +269,7 @@ def test_live_branch_sync_moves_following_selection_but_keeps_pinned_selection()
 
     scopes[session_id] = left_scope
     pinned = authority.navigate(
-        replace(left_gateway, revision_id=left.revision.revision_id), action="pin"
+        replace(left_gateway, revision_id=root.revision.revision_id), action="pin"
     )
     scopes[session_id] = right_scope
     authority.sync_live_context(session_id)
@@ -279,6 +287,83 @@ def test_live_context_sync_is_a_noop_before_any_canvas_selection():
     )
 
     authority.sync_live_context("empty-session")
+
+
+def test_store_branch_transition_invalidates_unreachable_canvas_until_reopened():
+    controller = ConsoleCanvasController()
+    authority_holder = {}
+    store = ConsoleChatStore(
+        canvas_promotion_participant=controller,
+        canvas_turn_controller=controller,
+        on_canvas_context_changed=lambda session_id: authority_holder.get(
+            "authority"
+        )
+        and authority_holder["authority"].sync_live_context(session_id),
+    )
+    session = store.create_session(ephemeral=True)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="root"
+    )
+    left = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="left"
+    )
+
+    def resolve(requested: str) -> CanvasScope:
+        if store.active_session_id != requested:
+            raise RuntimeError("Canvas session is no longer active")
+        return CanvasScope(
+            session_id=requested,
+            conversation_id=requested,
+            active_message_ids=tuple(store.active_path_message_ids(requested)),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="branch-transition",
+        )
+
+    invalidated = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=resolve,
+        canvas_controller=controller,
+    )
+    authority.bind_gateway_invalidator(invalidated.append)
+    authority_holder["authority"] = authority
+    created = authority.import_html(
+        session_id=session.id,
+        source="<!doctype html><h1>left only</h1>",
+        source_message_id=left.id,
+        origin_message_id=left.id,
+        source_turn_id="left-import",
+        block_index=0,
+        block_identity=f"{left.id}:canvas-html:0",
+    )
+    browser_scope = authority.gateway_scope(
+        session_id=session.id,
+        browser_session_id="browser-unreachable",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    authority.navigate(browser_scope, action="pin")
+
+    right = store.create_sibling(
+        left.id, role=ConsoleMessageRole.ASSISTANT, content="right"
+    )
+
+    assert invalidated == ["browser-unreachable"]
+    events = authority.read_events(browser_scope, after_event_id=None)
+    assert events[-1].kind == "disconnected"
+    assert events[-1].metadata == {"notice": "unavailable_on_branch"}
+    assert session.id not in authority._selection
+
+    store.set_active_leaf(session.id, left.id)
+    assert invalidated == ["browser-unreachable"]
+    reopened = authority.gateway_scope(
+        session_id=session.id,
+        browser_session_id="browser-reopened",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    assert reopened.revision_id == created.revision_id
+    assert store.get_message(right.id).content == "right"
 
 
 def test_temporary_import_rename_previous_and_promotion_share_one_history():
@@ -369,6 +454,136 @@ def test_parsed_block_identity_is_idempotent_branch_bound_and_preserves_origin()
     with pytest.raises(RuntimeError, match="source message") as error:
         authority.import_html(**arguments)
     assert "<p>one</p>" not in str(error.value)
+
+
+def test_durable_parsed_block_identity_survives_real_store_hydration(tmp_path):
+    db = CharactersRAGDB(tmp_path / "canvas-native-hydration.sqlite", "canvas-native")
+    try:
+        conversations = ChatConversationService(db)
+        conversation_id = conversations.create_conversation(
+            id="canvas-hydrated-conversation",
+            title="Hydrated Canvas",
+            scope_type="global",
+            state="in-progress",
+        )
+        user_id = db.add_message(
+            {
+                "id": "canvas-hydrated-user",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "Show two examples.",
+            }
+        )
+        assistant_id = db.add_message(
+            {
+                "id": "canvas-hydrated-assistant",
+                "conversation_id": conversation_id,
+                "parent_message_id": user_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "```html\n<!doctype html><p>same</p>\n```\n"
+                "```html\n<!doctype html><p>same</p>\n```",
+            }
+        )
+        db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=assistant_id,
+            before_message_id=None,
+        )
+
+        def hydrate():
+            tree = conversations.get_conversation_tree(
+                conversation_id, depth_cap=10_000, root_limit=10_000
+            )
+            nodes = console_messages_from_conversation_tree(tree, db=db)
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            session = store.restore_persisted_session(
+                title="Hydrated Canvas",
+                workspace_id=None,
+                persisted_conversation_id=conversation_id,
+                all_nodes=nodes,
+                active_leaf_persisted_id=assistant_id,
+            )
+            assistant = next(
+                item
+                for item in nodes
+                if item.persisted_message_id == assistant_id
+            )
+            return store, session, assistant
+
+        def scope_for(store, session):
+            return CanvasScope(
+                session_id=session.id,
+                conversation_id=conversation_id,
+                active_message_ids=tuple(
+                    store.get_message(message_id).persisted_message_id
+                    or message_id
+                    for message_id in store.active_path_message_ids(session.id)
+                ),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id="hydrated-import",
+            )
+
+        first_store, first_session, first_assistant = hydrate()
+        first_scope = scope_for(first_store, first_session)
+        first_authority = NativeConsoleCanvasAuthority(
+            scope_resolver=lambda _requested: first_scope,
+            canvas_controller=ConsoleCanvasController(
+                durable_service=CanvasService(db)
+            ),
+        )
+        first_blocks = assistant_canvas_html_blocks(first_assistant)
+        imported = []
+        for block in first_blocks:
+            imported.append(
+                first_authority.import_html(
+                    session_id=first_session.id,
+                    source=block.html,
+                    source_message_id=first_assistant.id,
+                    origin_message_id=assistant_id,
+                    source_turn_id=canvas_block_origin_turn_id(
+                        first_assistant, block.index
+                    ),
+                    block_index=block.index,
+                    block_identity=block.identity,
+                )
+            )
+        assert imported[0].revision_id != imported[1].revision_id
+
+        restarted_store, restarted_session, restarted_assistant = hydrate()
+        assert restarted_assistant.id != first_assistant.id
+        restarted_scope = scope_for(restarted_store, restarted_session)
+        restarted_authority = NativeConsoleCanvasAuthority(
+            scope_resolver=lambda _requested: restarted_scope,
+            canvas_controller=ConsoleCanvasController(
+                durable_service=CanvasService(db)
+            ),
+        )
+        restarted_blocks = assistant_canvas_html_blocks(restarted_assistant)
+        reopened = []
+        for block in restarted_blocks:
+            reopened.append(
+                restarted_authority.import_html(
+                    session_id=restarted_session.id,
+                    source=block.html,
+                    source_message_id=restarted_assistant.id,
+                    origin_message_id=assistant_id,
+                    source_turn_id=canvas_block_origin_turn_id(
+                        restarted_assistant, block.index
+                    ),
+                    block_index=block.index,
+                    block_identity=block.identity,
+                )
+            )
+
+        assert [item.revision_id for item in reopened] == [
+            item.revision_id for item in imported
+        ]
+        assert len(CanvasService(db).list_canvases(restarted_scope)) == 1
+    finally:
+        db.close_connection()
 
 
 def test_temporary_canvas_history_is_destroyed_with_session():
@@ -554,6 +769,55 @@ def test_completed_tool_mutation_publishes_and_requests_first_auto_open_after_co
     assert events[-1].revision_id == created.revision.revision_id
 
 
+def test_settlement_listener_retry_only_retries_incomplete_auto_open():
+    session_id = "temporary-partial-publication"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    scope = _scope(session_id)
+    attempts = 0
+    opened = []
+
+    def flaky_open(requested, info):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected open failure")
+        opened.append((requested, info.revision_id))
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: scope,
+        canvas_controller=controller,
+        auto_open=flaky_open,
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    run = controller.register_run(
+        scope, assistant_message_id="assistant-1", temporary=True
+    )
+    created = run.create_canvas(
+        scope,
+        tool_call_id="partial-create",
+        title="Partial listener",
+        html="<!doctype html><h1>partial</h1>",
+    )
+    settlement = run.finish_assistant_run(
+        "assistant-1", actual_run_id=scope.run_id, terminal_status="done"
+    )
+    assert settlement is not None
+
+    assert controller.confirm_exact_settlement(settlement) is True
+    first_events = authority._events[(session_id, created.revision.canvas_id)]
+    assert len(first_events) == 1
+    assert attempts == 1
+    assert opened == []
+
+    assert controller.confirm_exact_settlement(settlement) is True
+    final_events = authority._events[(session_id, created.revision.canvas_id)]
+    assert len(final_events) == 1
+    assert attempts == 2
+    assert opened == [(session_id, created.revision.revision_id)]
+    assert controller.promotion_contribution(session_id).revision_count == 1
+
+
 def test_confirmed_json_submit_reaches_composer_as_valid_json_text():
     class Settlement:
         def try_settle(self, callback):
@@ -561,10 +825,23 @@ def test_confirmed_json_submit_reaches_composer_as_valid_json_text():
             return True
 
     drafts = []
+    controller = ConsoleCanvasController()
+    controller.activate_session("temporary-bridge")
     authority = NativeConsoleCanvasAuthority(
         scope_resolver=lambda _requested: _scope("temporary-bridge"),
-        canvas_controller=ConsoleCanvasController(),
-        bridge_sink=drafts.append,
+        canvas_controller=controller,
+        bridge_sink=lambda target, text: drafts.append((target, text)),
+    )
+    created = authority.import_html(
+        session_id="temporary-bridge",
+        source="<!doctype html><p>bridge</p>",
+        create_new=True,
+    )
+    browser_scope = authority.gateway_scope(
+        session_id="temporary-bridge",
+        browser_session_id="browser-bridge",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
     )
     request = BridgeConfirmationRequest(
         approved=True,
@@ -577,15 +854,148 @@ def test_confirmed_json_submit_reaches_composer_as_valid_json_text():
     )
 
     response = authority.confirm_bridge(
-        CanvasGatewayScope(
-            browser_session_id="browser-bridge",
-            conversation_session_id="temporary-bridge",
-            canvas_id="canvas-bridge",
-            revision_id="revision-bridge",
-        ),
+        browser_scope,
         request,
         settlement=Settlement(),
     )
 
     assert response.status == "confirmed"
-    assert drafts == ['{"answer":42,"ok":true}']
+    assert drafts[0][1] == '{"answer":42,"ok":true}'
+
+
+def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
+    active = {"session_id": "bridge-session"}
+    scopes = {
+        "bridge-session": _branch_scope(
+            "bridge-session",
+            "bridge-session",
+            ("user-root", "assistant-left"),
+            "bridge-run",
+        ),
+        "other-session": _branch_scope(
+            "other-session",
+            "other-session",
+            ("other-user", "other-assistant"),
+            "other-run",
+        ),
+    }
+
+    def resolve(requested: str) -> CanvasScope:
+        if requested != active["session_id"]:
+            raise RuntimeError("Canvas session is no longer active")
+        return scopes[requested]
+
+    controller = ConsoleCanvasController()
+    controller.activate_session("bridge-session")
+    drafts = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=resolve,
+        canvas_controller=controller,
+        bridge_sink=lambda target, text: drafts.append((target, text)),
+    )
+    created = authority.import_html(
+        session_id="bridge-session",
+        source="<!doctype html><p>bridge</p>",
+        create_new=True,
+    )
+    browser = authority.gateway_scope(
+        session_id="bridge-session",
+        browser_session_id="bridge-browser",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+        follow_latest=False,
+    )
+    request = BridgeConfirmationRequest(
+        approved=True,
+        request=CanvasBridgeRequest(
+            version="canvas-v1",
+            request_id="bridge-session-fence",
+            kind="submit",
+            value="confirmed draft",
+        ),
+    )
+
+    exact = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    assert exact.status == "confirmed"
+    assert drafts[0][0].session_id == "bridge-session"
+    assert drafts[0][0].active_message_ids == ("user-root", "assistant-left")
+    assert drafts[0][1] == "confirmed draft"
+
+    drafts.clear()
+    scopes["bridge-session"] = replace(
+        scopes["bridge-session"],
+        active_message_ids=("user-root", "assistant-right"),
+    )
+    sibling = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    assert sibling.status == "refused"
+    assert drafts == []
+
+    scopes["bridge-session"] = replace(
+        scopes["bridge-session"],
+        active_message_ids=("user-root", "assistant-left"),
+    )
+    active["session_id"] = "other-session"
+    switched = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    assert switched.status == "refused"
+    assert drafts == []
+
+
+def test_bridge_effect_revalidates_after_switch_during_settlement():
+    scope = _branch_scope(
+        "bridge-race",
+        "bridge-race",
+        ("root", "left"),
+        "bridge-race-run",
+    )
+    current = {"scope": scope}
+    controller = ConsoleCanvasController()
+    controller.activate_session(scope.session_id)
+    drafts = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: current["scope"],
+        canvas_controller=controller,
+        bridge_sink=lambda target, text: drafts.append((target, text)),
+    )
+    created = authority.import_html(
+        session_id=scope.session_id,
+        source="<!doctype html><p>race</p>",
+        create_new=True,
+    )
+    browser = authority.gateway_scope(
+        session_id=scope.session_id,
+        browser_session_id="bridge-race-browser",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    request = BridgeConfirmationRequest(
+        approved=True,
+        request=CanvasBridgeRequest(
+            version="canvas-v1",
+            request_id="bridge-race-request",
+            kind="submit",
+            value={"safe": True},
+        ),
+    )
+
+    class SwitchDuringSettlement:
+        def try_settle(self, callback):
+            current["scope"] = replace(
+                scope, active_message_ids=("root", "right")
+            )
+            callback()
+            return True
+
+    response = authority.confirm_bridge(
+        browser,
+        request,
+        settlement=SwitchDuringSettlement(),
+    )
+
+    assert response.status == "refused"
+    assert drafts == []
+
+
+class _Settlement:
+    def try_settle(self, callback):
+        callback()
+        return True

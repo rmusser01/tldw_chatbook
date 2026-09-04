@@ -348,6 +348,7 @@ class _BrowserSession:
     shell_incarnation_id: str
     selection_epoch: int = 0
     current_load_id: str | None = None
+    unavailable: bool = False
     bridge_settlements: dict[str, _BridgeSettlementRecord] = field(default_factory=dict)
 
 
@@ -607,9 +608,33 @@ class CanvasGateway:
         with self._state_lock:
             self._discard_expired_sessions()
             return any(
-                session.scope.conversation_session_id == conversation_session_id
+                not session.unavailable
+                and session.scope.conversation_session_id == conversation_session_id
                 for session in self._sessions.values()
             )
+
+    def mark_browser_session_unavailable(self, browser_session_id: str) -> None:
+        """Revoke one shell's content authority while retaining its event lane."""
+
+        with self._state_lock:
+            digest = self._session_ids.get(browser_session_id)
+            session = self._sessions.get(digest) if digest is not None else None
+            if session is None:
+                self._revoke_session_id(browser_session_id)
+                return
+            if session.unavailable:
+                return
+            scope = session.scope
+            self.capabilities.revoke_selection(
+                browser_session_id=scope.browser_session_id,
+                conversation_session_id=scope.conversation_session_id,
+                canvas_id=scope.canvas_id,
+                revision_id=scope.revision_id,
+            )
+            self._clear_bridge_records(session)
+            session.current_load_id = None
+            session.selection_epoch += 1
+            session.unavailable = True
 
     @property
     def bridge_settlement_count(self) -> int:
@@ -749,6 +774,7 @@ class CanvasGateway:
             session.scope = scope
             session.selection_epoch += 1
             session.current_load_id = None
+            session.unavailable = False
 
     async def aclose(self) -> None:
         """Revoke all browser authority and cleanly stop the listener."""
@@ -1113,7 +1139,7 @@ class CanvasGateway:
         return web.json_response(_render_plan_wire(plan))
 
     async def _events(self, request: web.Request) -> web.Response:
-        session = self._require_session(request)
+        session = self._require_session(request, allow_unavailable=True)
         if session is None:
             return _error_response("session_refused", 401)
         scope = session.scope
@@ -1127,7 +1153,7 @@ class CanvasGateway:
             self._authority.read_events(scope, after_event_id=after)
         )
         if (
-            not self._session_is_current(session, scope)
+            not self._session_is_current(session, scope, allow_unavailable=True)
             or not isinstance(events, tuple)
             or not all(isinstance(event, CanvasGatewayEvent) for event in events)
             or not all(event.canvas_id == scope.canvas_id for event in events)
@@ -1310,7 +1336,9 @@ class CanvasGateway:
         return _bridge_confirmation_response(result)
 
     async def _close_session(self, request: web.Request) -> web.Response:
-        session = self._require_session(request, csrf=True)
+        session = self._require_session(
+            request, csrf=True, allow_unavailable=True
+        )
         if session is None:
             return _error_response("session_refused", 403)
         value = await self._read_json(request)
@@ -1360,7 +1388,11 @@ class CanvasGateway:
             raise web.HTTPBadRequest() from exc
 
     def _require_session(
-        self, request: web.Request, *, csrf: bool = False
+        self,
+        request: web.Request,
+        *,
+        csrf: bool = False,
+        allow_unavailable: bool = False,
     ) -> _BrowserSession | None:
         self._discard_expired_sessions()
         shell_incarnation_id = self._request_shell_incarnation(request)
@@ -1373,6 +1405,7 @@ class CanvasGateway:
         session = self._sessions.get(digest)
         if (
             session is None
+            or (session.unavailable and not allow_unavailable)
             or session.shell_incarnation_id != shell_incarnation_id
             or self._shell_bindings[shell_incarnation_id].browser_session_id
             != session.scope.browser_session_id
@@ -1409,13 +1442,18 @@ class CanvasGateway:
                 self._shell_bindings.pop(shell_incarnation_id, None)
 
     def _session_is_current(
-        self, session: _BrowserSession, scope: CanvasGatewayScope
+        self,
+        session: _BrowserSession,
+        scope: CanvasGatewayScope,
+        *,
+        allow_unavailable: bool = False,
     ) -> bool:
         """Check that an awaited authority response still targets a live scope."""
 
         with self._state_lock:
             return (
                 not self._closed
+                and (allow_unavailable or not session.unavailable)
                 and session.scope == scope
                 and self._sessions.get(session.digest) is session
                 and self._session_ids.get(scope.browser_session_id) == session.digest

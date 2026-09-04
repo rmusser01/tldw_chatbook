@@ -876,6 +876,9 @@ class ConsoleRuntime:
         if self._canvas_gateway is not None:
             if self._canvas_gateway_authority is not authority:
                 raise ValueError("Canvas gateway is bound to a different authority")
+            binder = getattr(authority, "bind_gateway_invalidator", None)
+            if callable(binder):
+                binder(self._canvas_gateway.mark_browser_session_unavailable)
             return self._canvas_gateway
         if self._disposed:
             return None
@@ -883,13 +886,16 @@ class ConsoleRuntime:
 
         self._canvas_gateway = CanvasGateway(authority=authority)
         self._canvas_gateway_authority = authority
+        binder = getattr(authority, "bind_gateway_invalidator", None)
+        if callable(binder):
+            binder(self._canvas_gateway.mark_browser_session_unavailable)
         return self._canvas_gateway
 
     def ensure_canvas_native_authority(
         self,
         *,
         scope_resolver: Callable[[str], Any],
-        bridge_sink: Callable[[str], None] | None = None,
+        bridge_sink: Callable[[Any, str], None] | None = None,
         auto_open: Callable[[str, Any], None] | None = None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> Any:

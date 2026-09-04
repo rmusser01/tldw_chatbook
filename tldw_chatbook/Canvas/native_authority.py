@@ -102,7 +102,28 @@ class _ParsedBlockImport:
     content_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class CanvasBridgeTarget:
+    """Exact source-free native chat target captured by one browser shell."""
+
+    browser_session_id: str
+    session_id: str
+    conversation_id: str
+    active_message_ids: tuple[str, ...]
+    canvas_id: str
+    revision_id: str
+
+
+@dataclass(slots=True)
+class _PublicationReceipt:
+    state_published: bool = False
+    auto_opened: bool = False
+    auto_open_in_flight: bool = False
+
+
 _MAX_PARSED_BLOCK_IMPORTS = 512
+_MAX_BROWSER_BINDINGS = 64
+_MAX_PUBLICATION_RECEIPTS = 256
 
 
 class NativeConsoleCanvasAuthority:
@@ -113,7 +134,7 @@ class NativeConsoleCanvasAuthority:
         *,
         scope_resolver: Callable[[str], CanvasScope],
         canvas_controller: Any,
-        bridge_sink: Callable[[str], None] | None = None,
+        bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
@@ -122,18 +143,30 @@ class NativeConsoleCanvasAuthority:
         self._bridge_sink = bridge_sink
         self._auto_open = auto_open
         self._publication_guard = publication_guard
+        self._gateway_invalidator: Callable[[str], None] | None = None
         self._selection: dict[str, _Selection] = {}
         self._parsed_block_imports: OrderedDict[
             tuple[str, str, int], _ParsedBlockImport
         ] = OrderedDict()
+        self._browser_targets: OrderedDict[str, CanvasBridgeTarget] = OrderedDict()
+        self._publication_receipts: OrderedDict[str, _PublicationReceipt] = (
+            OrderedDict()
+        )
         self._events: dict[tuple[str, str], list[CanvasGatewayEvent]] = {}
         self._lock = RLock()
+
+    def bind_gateway_invalidator(
+        self, invalidator: Callable[[str], None] | None
+    ) -> None:
+        """Bind the runtime-owned capability revoker for unreachable shells."""
+
+        self._gateway_invalidator = invalidator
 
     def rebind_view(
         self,
         *,
         scope_resolver: Callable[[str], CanvasScope],
-        bridge_sink: Callable[[str], None] | None,
+        bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
@@ -149,7 +182,13 @@ class NativeConsoleCanvasAuthority:
 
         scope = getattr(publication, "scope", None)
         revisions = getattr(publication, "revisions", ())
-        if not isinstance(scope, CanvasScope) or not revisions:
+        publication_id = getattr(publication, "publication_id", None)
+        if (
+            not isinstance(scope, CanvasScope)
+            or not revisions
+            or not isinstance(publication_id, str)
+            or not publication_id.startswith("publication-")
+        ):
             return
         if self._publication_guard is not None:
             if not self._publication_guard(publication):
@@ -168,21 +207,58 @@ class NativeConsoleCanvasAuthority:
                 return
         info = revisions[-1]
         with self._lock:
-            previous = self._selection.get(scope.session_id)
-            self._selection[scope.session_id] = _Selection(
-                info.canvas_id, info.revision_id, True
+            receipt = self._publication_receipts.setdefault(
+                publication_id, _PublicationReceipt()
             )
-            for revision in revisions:
-                self._publish(
-                    scope.session_id,
-                    revision,
-                    "updated"
-                    if previous is not None and previous.canvas_id == revision.canvas_id
-                    else "selection_changed",
+            self._publication_receipts.move_to_end(publication_id)
+            if not receipt.state_published:
+                previous = self._selection.get(scope.session_id)
+                self._selection[scope.session_id] = _Selection(
+                    info.canvas_id, info.revision_id, True
                 )
-                previous = _Selection(revision.canvas_id, revision.revision_id)
-        if self._auto_open is not None:
-            self._auto_open(scope.session_id, info)
+                for revision in revisions:
+                    self._publish(
+                        scope.session_id,
+                        revision,
+                        "updated"
+                        if previous is not None
+                        and previous.canvas_id == revision.canvas_id
+                        else "selection_changed",
+                    )
+                    previous = _Selection(revision.canvas_id, revision.revision_id)
+                receipt.state_published = True
+            if receipt.auto_opened:
+                self._prune_publication_receipts()
+                return
+            if receipt.auto_open_in_flight:
+                raise RuntimeError("Canvas publication is already opening")
+            receipt.auto_open_in_flight = True
+        try:
+            if self._auto_open is not None:
+                self._auto_open(scope.session_id, info)
+        except Exception:
+            with self._lock:
+                receipt.auto_open_in_flight = False
+                self._prune_publication_receipts()
+            raise
+        with self._lock:
+            receipt.auto_open_in_flight = False
+            receipt.auto_opened = True
+            self._prune_publication_receipts()
+
+    def _prune_publication_receipts(self) -> None:
+        while len(self._publication_receipts) > _MAX_PUBLICATION_RECEIPTS:
+            completed = next(
+                (
+                    key
+                    for key, receipt in self._publication_receipts.items()
+                    if receipt.state_published and receipt.auto_opened
+                ),
+                None,
+            )
+            self._publication_receipts.pop(
+                completed or next(iter(self._publication_receipts)), None
+            )
 
     def import_html(
         self,
@@ -332,6 +408,23 @@ class NativeConsoleCanvasAuthority:
                 chosen.revision.revision_id,
                 following=follow_latest,
             )
+            event_key = (session_id, chosen.revision.canvas_id)
+            prior_events = self._events.get(event_key)
+            if prior_events and prior_events[-1].kind == "disconnected":
+                prior_events.pop()
+                if not prior_events:
+                    self._events.pop(event_key, None)
+            self._browser_targets[browser_session_id] = CanvasBridgeTarget(
+                browser_session_id=browser_session_id,
+                session_id=session_id,
+                conversation_id=scope.conversation_id,
+                active_message_ids=scope.active_message_ids,
+                canvas_id=chosen.revision.canvas_id,
+                revision_id=chosen.revision.revision_id,
+            )
+            self._browser_targets.move_to_end(browser_session_id)
+            while len(self._browser_targets) > _MAX_BROWSER_BINDINGS:
+                self._browser_targets.popitem(last=False)
             return CanvasGatewayScope(
                 browser_session_id=browser_session_id,
                 conversation_session_id=session_id,
@@ -432,10 +525,15 @@ class NativeConsoleCanvasAuthority:
     def sync_live_context(self, session_id: str | None) -> None:
         """Publish the reachable head after a real session or branch transition."""
 
-        if session_id is None:
-            return
+        invalidated: list[str] = []
         with self._lock:
-            if self._selection.get(session_id) is None:
+            for stale_session_id in tuple(self._selection):
+                if stale_session_id != session_id:
+                    invalidated.extend(
+                        self._invalidate_unreachable_selection(stale_session_id)
+                    )
+            if session_id is None or self._selection.get(session_id) is None:
+                self._revoke_browser_targets(invalidated)
                 return
         scope = self._scope_resolver(session_id)
         with self._lock:
@@ -453,7 +551,21 @@ class NativeConsoleCanvasAuthority:
                 ),
                 None,
             )
-            if item is None or item.revision_id == selection.revision_id:
+            selected_reachable = True
+            try:
+                self._read_exact(
+                    scope, selection.canvas_id, selection.revision_id
+                )
+            except (RuntimeError, ValueError):
+                selected_reachable = False
+            if item is None or (not selection.following and not selected_reachable):
+                invalidated.extend(
+                    self._invalidate_unreachable_selection(session_id)
+                )
+                self._revoke_browser_targets(invalidated)
+                return
+            if item.revision_id == selection.revision_id:
+                self._revoke_browser_targets(invalidated)
                 return
             reachable = self._read_exact(scope, item.canvas_id, item.revision_id)
             if selection.following:
@@ -461,6 +573,39 @@ class NativeConsoleCanvasAuthority:
                     item.canvas_id, item.revision_id, True
                 )
             self._publish(session_id, reachable.revision, "selection_changed")
+        self._revoke_browser_targets(invalidated)
+
+    def _invalidate_unreachable_selection(self, session_id: str) -> list[str]:
+        """Drop one stale selection and publish a source-free terminal event."""
+
+        selection = self._selection.pop(session_id, None)
+        if selection is None:
+            return []
+        browser_ids = [
+            browser_id
+            for browser_id, target in self._browser_targets.items()
+            if target.session_id == session_id
+            and target.canvas_id == selection.canvas_id
+        ]
+        for browser_id in browser_ids:
+            self._browser_targets.pop(browser_id, None)
+        self._events.setdefault((session_id, selection.canvas_id), []).append(
+            CanvasGatewayEvent(
+                f"event-{uuid4().hex}",
+                "disconnected",
+                selection.canvas_id,
+                selection.revision_id,
+                {"notice": "unavailable_on_branch"},
+            )
+        )
+        return browser_ids
+
+    def _revoke_browser_targets(self, browser_ids: list[str]) -> None:
+        invalidator = self._gateway_invalidator
+        if invalidator is None:
+            return
+        for browser_id in browser_ids:
+            invalidator(browser_id)
 
     def read_events(
         self, scope: CanvasGatewayScope, *, after_event_id: str | None
@@ -488,10 +633,51 @@ class NativeConsoleCanvasAuthority:
             or self._bridge_sink is None
         ):
             return BridgeConfirmationResponse(request.request.request_id, "cancelled")
+        target = self._browser_targets.get(scope.browser_session_id)
+        if target is None or not self._bridge_target_is_current(scope, target):
+            return BridgeConfirmationResponse(request.request.request_id, "refused")
         text = _draft_payload(request.request.value)
-        if settlement.try_settle(lambda: self._bridge_sink(text)):
-            return BridgeConfirmationResponse(request.request.request_id, "confirmed")
+        try:
+            if settlement.try_settle(
+                lambda: self._apply_bridge_effect(scope, target, text)
+            ):
+                return BridgeConfirmationResponse(request.request.request_id, "confirmed")
+        except RuntimeError:
+            pass
         return BridgeConfirmationResponse(request.request.request_id, "refused")
+
+    def _apply_bridge_effect(
+        self,
+        scope: CanvasGatewayScope,
+        target: CanvasBridgeTarget,
+        text: str,
+    ) -> None:
+        """Revalidate inside settlement immediately before the composer effect."""
+
+        if not self._bridge_target_is_current(scope, target):
+            raise RuntimeError("Canvas bridge target is unavailable")
+        assert self._bridge_sink is not None
+        self._bridge_sink(target, text)
+
+    def _bridge_target_is_current(
+        self, scope: CanvasGatewayScope, target: CanvasBridgeTarget
+    ) -> bool:
+        if (
+            target.browser_session_id != scope.browser_session_id
+            or target.session_id != scope.conversation_session_id
+            or target.canvas_id != scope.canvas_id
+            or target.revision_id != scope.revision_id
+        ):
+            return False
+        try:
+            current = self._scope_resolver(target.session_id)
+        except RuntimeError:
+            return False
+        return (
+            current.session_id == target.session_id
+            and current.conversation_id == target.conversation_id
+            and current.active_message_ids == target.active_message_ids
+        )
 
     def _selected_scope(self, gateway_scope: CanvasGatewayScope) -> CanvasScope:
         scope = self._scope_resolver(gateway_scope.conversation_session_id)

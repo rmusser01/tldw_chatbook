@@ -10303,13 +10303,15 @@ class ConsoleChatStore:
                 "Console message is missing its owning session registration."
             )
         with self._fork_source_transition(session_id):
-            return self._create_sibling(
+            sibling = self._create_sibling(
                 anchor_message_id,
                 role=role,
                 content=content,
                 persist=persist,
                 attachments=attachments,
             )
+        self._notify_canvas_context_changed(session_id)
+        return sibling
 
     def _create_sibling(
         self,

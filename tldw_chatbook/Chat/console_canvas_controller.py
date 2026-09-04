@@ -227,6 +227,7 @@ class CanvasRunSettlement:
 class CanvasSettlementPublication:
     """Source-free committed tool revisions published after durable settlement."""
 
+    publication_id: str
     scope: CanvasScope
     assistant_message_id: str
     revisions: tuple[CanvasRevisionInfo, ...]
@@ -973,7 +974,16 @@ class ConsoleCanvasController:
                 )
             ):
                 return False
+            publication_parts = (
+                stage.scope.session_id,
+                stage.scope.conversation_id,
+                stage.scope.run_id,
+                stage.assistant_message_id,
+                *(row.info.revision_id for row in stage.revisions),
+            )
+            publication_digest = sha256_utf8("\0".join(publication_parts))
             stage.publication = CanvasSettlementPublication(
+                publication_id=f"publication-{publication_digest}",
                 scope=stage.scope,
                 assistant_message_id=stage.assistant_message_id,
                 revisions=tuple(row.info for row in stage.revisions),
