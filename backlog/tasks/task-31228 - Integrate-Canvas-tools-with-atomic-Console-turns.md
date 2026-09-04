@@ -1,18 +1,25 @@
 ---
 id: TASK-31228
 title: Integrate Canvas tools with atomic Console turns
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, agents, console]
-dependencies: [TASK-31226, TASK-31227]
+updated_date: '2026-09-04 09:40'
+labels:
+  - canvas
+  - agents
+  - console
+dependencies:
+  - TASK-31226
+  - TASK-31227
 priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Expose explicit conversation-scoped Canvas tools to Console assistants and make their staged revisions commit or disappear with the originating assistant turn, without copying sensitive HTML into generic tool records, logs, diagnostics, or transcript cards.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -27,8 +34,16 @@ Expose explicit conversation-scoped Canvas tools to Console assistants and make 
 - [ ] #9 Focused provider, runtime, projection, commit-failure, cancellation, concurrency, and resume tests pass
 <!-- AC:END -->
 
-## Related Design
+## Implementation Plan
 
-- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this task implements ADR-115’s agent projection, scoped tool authority, approval classification, and assistant-turn transaction boundaries; no new ADR is needed unless implementation changes those accepted security or ownership contracts.
+
+1. Inventory every raw tool argument/result consumer and add a generic audience-specific projection seam whose default preserves all existing providers while failures redact closed.
+2. Register the four Canvas tools behind enabled Console session scope, inject all authority fields, enforce shared limits/full-document optimistic contracts, and narrowly pre-authorize only reversible Canvas mutations.
+3. Coordinate run-owned Canvas staging so successful assistant messages, card metadata, and revisions commit atomically, while cancellation/failure discards exact staged state and continuation remains source-free.
+4. Run focused Agent catalog/runtime/projection, approval, Console controller/persistence/cancellation/continuation, and transcript suites plus static checks.
+5. Request independent review focused on approval-bypass scope and source leakage, then update TASK-31228 and the implementation plan with transaction, cancellation, inventory, and sentinel evidence.
+<!-- SECTION:PLAN:END -->
