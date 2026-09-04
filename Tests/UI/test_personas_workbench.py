@@ -6135,6 +6135,7 @@ class TestConsoleActions:
                 screen.character_handler, "load_character", load_character
             )
 
+            await screen._ensure_center_view("character-editor")
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
@@ -6170,6 +6171,7 @@ class TestConsoleActions:
 
             monkeypatch.setattr(screen, "_render_profile_rows", observe_render_rows)
 
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Archivist"})
             await pilot.pause()
 
