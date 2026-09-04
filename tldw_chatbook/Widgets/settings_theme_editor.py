@@ -69,9 +69,9 @@ class SettingsThemeEditor(Vertical):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        from ..config import _get_effective_config_path
+        from ..config import get_user_themes_dir
 
-        self.custom_themes_path = _get_effective_config_path().parent / "themes"
+        self.custom_themes_path = get_user_themes_dir()
         self.custom_themes_path.mkdir(parents=True, exist_ok=True)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
@@ -159,7 +159,7 @@ class SettingsThemeEditor(Vertical):
         # widget must not import the screen).
         yield Static(
             "Apply applies immediately - no Save needed; "
-            "Save stores the theme for future sessions.",
+            "Save stores the theme; Set as launch default makes it load at startup.",
             id="settings-theme-apply-hint",
             classes="settings-help-copy",
         )
@@ -168,6 +168,7 @@ class SettingsThemeEditor(Vertical):
             yield Button("Save", id="settings-theme-save", variant="success")
             yield Button("Reset", id="settings-theme-reset", variant="warning")
             yield Button("Generate from Primary", id="settings-theme-generate", variant="primary")
+            yield Button("Set as launch default", id="settings-theme-set-default")
 
     def _compose_preview_section(self) -> ComposeResult:
         yield Static("Live Preview", classes="destination-section")
@@ -471,6 +472,14 @@ class SettingsThemeEditor(Vertical):
             with open(theme_path, "w", encoding="utf-8") as f:
                 toml.dump(theme_data, f)
 
+            # TASK-31250: register at once so Appearance and the palette can
+            # offer the theme without a restart.
+            self.app.register_theme(
+                create_theme_from_dict(
+                    theme_name, {**self.current_theme_data, "dark": self.is_dark_theme}
+                )
+            )
+
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
 
@@ -491,6 +500,22 @@ class SettingsThemeEditor(Vertical):
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(f"Failed to save theme: {e}", severity="error")
+
+    @on(Button.Pressed, "#settings-theme-set-default")
+    def on_set_launch_default(self) -> None:
+        """Make the current saved theme the startup theme (TASK-31250)."""
+        name = self.current_theme_name
+        saved = (self.custom_themes_path / f"{name}.toml").exists()
+        if not saved and not self._is_catalog_theme(name):
+            self.app.notify(
+                "Save the theme first, then set it as the launch default",
+                severity="warning",
+            )
+            return
+        from ..config import save_setting_to_cli_config
+
+        save_setting_to_cli_config("general", "default_theme", name)
+        self.app.notify(f"'{name}' will load at the next launch", severity="success")
 
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:

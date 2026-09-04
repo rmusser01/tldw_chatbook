@@ -12961,3 +12961,18 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
             ]
         finally:
             release.set()
+
+
+def test_settings_appearance_theme_options_include_registered_user_themes():
+    """TASK-31250: themes registered with the app (saved user themes) are offered."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    assert ("Ocean (saved)", "ocean") in options
+    assert [value for _label, value in options].count("textual-dark") == 1

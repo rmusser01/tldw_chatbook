@@ -36,6 +36,35 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
     return Theme(**theme_args)
 
 
+def load_user_themes(themes_dir) -> list[Theme]:
+    """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
+
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    Unreadable files are skipped with a warning so one bad file cannot block
+    startup (TASK-31250).
+    """
+    from pathlib import Path
+
+    import toml
+    from loguru import logger
+
+    themes: list[Theme] = []
+    root = Path(themes_dir)
+    if not root.is_dir():
+        return themes
+    for path in sorted(root.glob("*.toml")):
+        try:
+            data = toml.load(path)
+            meta = data.get("theme", {}) or {}
+            name = str(meta.get("name") or path.stem).strip() or path.stem
+            colors = dict(data.get("colors", {}) or {})
+            colors["dark"] = bool(meta.get("dark", True))
+            themes.append(create_theme_from_dict(name, colors))
+        except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
+            logger.warning(f"Skipping unreadable user theme {path}: {exc}")
+    return themes
+
+
 RAW_THEMES_DATA = {
     # It's good practice to ensure your custom theme names are unique
     # and don't clash with potential future built-in Textual themes.

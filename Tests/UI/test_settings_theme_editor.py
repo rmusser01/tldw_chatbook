@@ -586,3 +586,54 @@ async def test_settings_theme_editor_delete_keeps_app_theme(tmp_path):
         await pilot.pause()
         assert app.theme == "textual-light"
         assert editor.current_theme_name == "textual-dark"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_save_registers_theme_with_app(tmp_path):
+    """TASK-31250: Save registers the theme so Appearance/palette can offer it."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert "ocean" in app.available_themes
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
+    tmp_path, monkeypatch
+):
+    """TASK-31250: unsaved -> warning; saved -> general.default_theme written."""
+    import tldw_chatbook.config as config_module
+
+    written: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        config_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: written.append((section, key, value)) or True,
+    )
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_set_launch_default()
+        await pilot.pause()
+        assert "Save the theme first" in app.notify.call_args.args[0]
+        assert written == []
+
+        editor.on_save_theme()
+        await pilot.pause()
+        editor.on_set_launch_default()
+        await pilot.pause()
+        assert written == [("general", "default_theme", "ocean")]

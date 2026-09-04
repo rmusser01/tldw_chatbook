@@ -590,7 +590,9 @@ def _force_restore_audio_cpp_merge_delta(
 
 def _theme_save_target() -> Path:
     """Return the active profile's directory for custom theme files."""
-    return get_cli_config_path().parent / "themes"
+    from tldw_chatbook.config import get_user_themes_dir
+
+    return get_user_themes_dir()
 
 
 def _internal_prompts_save_target() -> Path:
@@ -8091,6 +8093,16 @@ class SettingsScreen(BaseAppScreen):
             seen.add(theme_name)
             options.append(
                 (theme_name.replace("_", " ").replace("-", " ").title(), theme_name)
+            )
+        # TASK-31250: the user's saved themes are registered with the app at
+        # startup and after Save; offer them like the shipped catalog.
+        registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
+        for theme_name in registered:
+            if theme_name in seen:
+                continue
+            seen.add(theme_name)
+            options.append(
+                (f"{theme_name.replace('_', ' ').replace('-', ' ').title()} (saved)", theme_name)
             )
         current_theme = str(self._appearance_setting_values()["default_theme"])
         if current_theme and current_theme not in seen:
