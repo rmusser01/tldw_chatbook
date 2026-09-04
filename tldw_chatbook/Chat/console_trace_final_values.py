@@ -741,8 +741,7 @@ def verify_provider_request_shadow(
             ),
         )
         for name, value in projected.value.items()
-        if (handler_source_names or {}).get(name, name)
-        not in omitted_component_names
+        if (handler_source_names or {}).get(name, name) not in omitted_component_names
     )
     was_redacted = (
         actual.redacted

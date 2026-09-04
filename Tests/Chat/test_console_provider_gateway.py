@@ -2921,7 +2921,9 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
-async def test_vllm_live_policy_bypasses_saved_match_and_pins_adapter_endpoint() -> None:
+async def test_vllm_live_policy_bypasses_saved_match_and_pins_adapter_endpoint() -> (
+    None
+):
     """An explicit live owner may differ from config without adapter fallback."""
 
     calls: list[dict[str, object]] = []

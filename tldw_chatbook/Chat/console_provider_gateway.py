@@ -4727,11 +4727,7 @@ class ConsoleProviderGateway:
                         )
                         if endpoint_is_ephemeral:
                             omitted = tuple(
-                                sorted(
-                                    set(omitted).union(
-                                        {"api_base_url", "endpoint"}
-                                    )
-                                )
+                                sorted(set(omitted).union({"api_base_url", "endpoint"}))
                             )
                         signals.begin_exchange(
                             provider=str(resolution.provider or ""),
