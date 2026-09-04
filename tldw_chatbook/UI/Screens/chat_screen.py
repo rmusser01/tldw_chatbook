@@ -491,6 +491,7 @@ from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
 from ...Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
 )
@@ -8415,6 +8416,8 @@ class ChatScreen(BaseAppScreen):
             "set_pending_skill_script": getattr(
                 skill, "_set_console_pending_skill_script", None
             ),
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._fleet._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -20710,6 +20713,29 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         card.set_summary(round_id, text)
+
+    def _set_console_task_panel(
+        self, session_id: str | None, tasks: list[dict[str, object]]
+    ) -> None:
+        """PRD Feature B: mirror ``session_id``'s task list into the pinned panel.
+
+        UI-thread target of the controller's ``set_task_panel`` hook. Ignores
+        snapshots for any session other than the viewed one -- a background
+        session's ``todo_*`` calls must not repaint the panel the user is
+        looking at; ``switch_session`` re-derives it on arrival (AC-B5).
+
+        Args:
+            session_id: The session the snapshot belongs to.
+            tasks: That session's full task list; empty hides the panel.
+        """
+        controller = self._console_chat_controller
+        if controller is None or controller.store.active_session_id != session_id:
+            return
+        try:
+            panel = self.query_one("#console-task-panel", ConsoleTaskPanel)
+        except QueryError:
+            return
+        panel.set_tasks(session_id, tasks)
 
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's

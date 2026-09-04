@@ -2208,6 +2208,42 @@
 
 
 
+/* ===== WIDGET: ConsoleTaskPanel (Widgets/Console/console_task_panel.py) ===== */
+
+    ConsoleTaskPanel {
+        height: auto;
+        max-height: 12;
+        width: 1fr;
+        border-top: solid $secondary;
+        border-bottom: solid $secondary;
+        padding: 0 1;
+    }
+    ConsoleTaskPanel > #console-task-panel-header {
+        height: 1;
+        text-style: bold;
+    }
+    ConsoleTaskPanel > #console-task-panel-header:hover {
+        background: $boost;
+    }
+    ConsoleTaskPanel > #console-task-panel-body {
+        height: auto;
+        max-height: 10;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    ConsoleTaskPanel .console-task-panel-row {
+        height: auto;
+        width: 1fr;
+    }
+    ConsoleTaskPanel .console-task-panel-done {
+        color: $text-muted;
+    }
+    ConsoleTaskPanel .console-task-panel-active {
+        color: $accent;
+        text-style: bold;
+    }
+
+
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
 
     ConsoleMessageHeader {

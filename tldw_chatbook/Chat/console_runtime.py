@@ -634,6 +634,14 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "`request_skill_script_confirm` (`allow=False, remember=False`).",
     ),
     ConsoleViewHookSlot(
+        "set_task_panel",
+        "controller",
+        why="Every read site is an `is not None` guard: the pinned task "
+        "panel is a mirror of the session's todo store, and with no view "
+        "there is nothing to mirror into. The store itself keeps the tasks, "
+        "so the next attach re-derives the panel from it.",
+    ),
+    ConsoleViewHookSlot(
         "wake_user_priority_probe",
         "controller",
         viewless_user_priority_probe,
