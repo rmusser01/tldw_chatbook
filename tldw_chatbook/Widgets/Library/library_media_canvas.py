@@ -833,6 +833,40 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 yield self._gate_mutation_action(dismiss, "Dismiss")
 
+        # task-31236: a dismissed review set's undo receipt -- the same
+        # grammar as the bulk-delete receipt above, because a one-click
+        # dismissal of a mid-walk set (with its done-marks) must be
+        # recoverable right where the user lands after the picker closes.
+        dismissed_set_name = getattr(
+            self.canvas, "review_dismiss_receipt_name", ""
+        )
+        if dismissed_set_name:
+            dismiss_receipt_row = Horizontal(
+                classes="ds-toolbar", id="library-media-review-dismiss-receipt"
+            )
+            dismiss_receipt_row.styles.height = "auto"
+            with dismiss_receipt_row:
+                yield Static(
+                    f"✓ dismissed · {dismissed_set_name}",
+                    id="library-media-review-dismiss-receipt-copy",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
+                undo_set = Button(
+                    "Undo",
+                    id="library-media-review-dismiss-undo",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield self._gate_stale_action(undo_set, "Undo")
+                close_receipt = Button(
+                    "Dismiss",
+                    id="library-media-review-dismiss-receipt-close",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield self._gate_mutation_action(close_receipt, "Dismiss")
+
         status_text = (
             self.pager.status_copy
             if self.pager is not None and self.pager.status_copy

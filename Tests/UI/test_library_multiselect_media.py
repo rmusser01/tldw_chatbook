@@ -662,6 +662,52 @@ async def test_delete_receipt_absent_when_count_zero():
             pilot.app.query_one("#library-media-bulk-delete-undo", Button)
 
 
+class _MediaCanvasDismissReceiptApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=dataclasses.replace(
+                _select_mode_canvas_state(),
+                select_mode=False,
+                review_dismiss_receipt_name="Read later",
+            ),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_review_dismiss_receipt_renders_name_with_undo_and_dismiss():
+    """task-31236: a dismissed review set's receipt renders in the list,
+    naming the set, with Undo right at the point of action -- the same
+    grammar as the bulk-delete receipt (a one-click dismissal of a
+    mid-walk set must be recoverable in place)."""
+    app = _MediaCanvasDismissReceiptApp()
+    async with app.run_test() as pilot:
+        receipt_copy = pilot.app.query_one(
+            "#library-media-review-dismiss-receipt-copy", Static
+        )
+        rendered = str(receipt_copy.renderable)
+        assert "Read later" in rendered
+        assert "dismissed" in rendered.lower()
+
+        undo_btn = pilot.app.query_one(
+            "#library-media-review-dismiss-undo", Button
+        )
+        close_btn = pilot.app.query_one(
+            "#library-media-review-dismiss-receipt-close", Button
+        )
+        assert undo_btn is not None and close_btn is not None
+
+
+@pytest.mark.asyncio
+async def test_review_dismiss_receipt_absent_when_no_name():
+    app = _MediaCanvasApp()  # review_dismiss_receipt_name defaults to ""
+    async with app.run_test() as pilot:
+        with pytest.raises(NoMatches):
+            pilot.app.query_one(
+                "#library-media-review-dismiss-receipt-copy", Static
+            )
+
+
 def _select_mode_with_preview_state() -> LibraryMediaCanvasState:
     """Select mode active with a stale ``selected_id``/preview left over
     from before Select was entered -- the exact UAT repro shape (LIB-05)."""
