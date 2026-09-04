@@ -6,6 +6,7 @@ This module provides functions to launch the Textual application as a web server
 allowing users to access the TUI through their web browser.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Optional
@@ -13,14 +14,14 @@ from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
 
+from ..Canvas.control_protocol import CanvasControlBroker
+from ..config import get_cli_setting
 from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
     check_web_server_deps,
     require_dependency,
 )
-from ..config import get_cli_setting
-
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
 _TEXTUAL_SERVE_CANVAS_RENDERERS = (
@@ -170,6 +171,63 @@ class ChatbookWebServerMixin:
         app.on_shutdown.append(self.on_shutdown)
         return app
 
+    async def on_startup(self, app) -> None:
+        """Start the private loopback control broker before children spawn."""
+
+        self._canvas_control_broker = CanvasControlBroker()
+        await self._canvas_control_broker.start()
+        await super().on_startup(app)
+
+    async def on_shutdown(self, app) -> None:
+        """Revoke all child control capabilities with the served process."""
+
+        broker = getattr(self, "_canvas_control_broker", None)
+        if broker is not None:
+            await broker.aclose()
+            self._canvas_control_broker = None
+        await super().on_shutdown(app)
+
+    async def handle_websocket(self, request):
+        """Bind one browser websocket to exactly one authenticated child."""
+
+        from aiohttp import web
+
+        websocket = web.WebSocketResponse(heartbeat=15)
+        width = _web_dimension(request.query.get("width"), 80)
+        height = _web_dimension(request.query.get("height"), 24)
+        app_service = None
+        try:
+            await websocket.prepare(request)
+            app_service_class = getattr(self, "_chatbook_app_service_class", None)
+            broker = getattr(self, "_canvas_control_broker", None)
+            if app_service_class is None or broker is None:
+                raise RuntimeError("served Canvas control broker is unavailable")
+            app_service = app_service_class(
+                self.command,
+                write_bytes=websocket.send_bytes,
+                write_str=websocket.send_str,
+                close=websocket.close,
+                download_manager=self.download_manager,
+                debug=self.debug,
+                canvas_control_broker=broker,
+            )
+            await app_service.start(width, height)
+            try:
+                await self._process_messages(websocket, app_service)
+            finally:
+                await app_service.stop()
+        except asyncio.CancelledError:
+            await websocket.close()
+        except Exception as error:  # noqa: BLE001 - websocket boundary stays alive
+            # No traceback here: the spawn frame holds the per-child secret.
+            logger.error(
+                "Served terminal session failed type={}", type(error).__name__
+            )
+        finally:
+            if app_service is not None:
+                await app_service.stop()
+        return websocket
+
     @property
     def _static_url(self) -> str:
         """Return the public static asset URL with a trailing slash."""
@@ -229,11 +287,78 @@ def _load_textual_serve_server_class() -> type:
     return TextualServeServer
 
 
-def build_chatbook_web_server_class(textual_serve_server_class: type) -> type:
+def _load_textual_serve_app_service_class() -> type:
+    """Load textual-serve's supported child process service."""
+
+    require_dependency("textual_serve", "web")
+    from textual_serve.app_service import AppService as TextualServeAppService
+
+    return TextualServeAppService
+
+
+def _web_dimension(value: object, default: int) -> int:
+    """Match textual-serve's forgiving positive terminal-size parsing."""
+
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
+    """Extend only textual-serve's documented child-environment build seam."""
+
+    class ChatbookAppService(textual_app_service_class):
+        def __init__(self, *args, canvas_control_broker, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._canvas_control_broker = canvas_control_broker
+            self._canvas_control_environment: dict[str, str] = {}
+            self._canvas_control_started = False
+
+        def _build_environment(self, width: int = 80, height: int = 24):
+            environment = super()._build_environment(width, height)
+            environment.update(self._canvas_control_environment)
+            return environment
+
+        async def start(self, width: int, height: int) -> None:
+            launch = self._canvas_control_broker.issue_child(self.app_service_id)
+            self._canvas_control_environment = dict(launch.environment)
+            try:
+                await super().start(width, height)
+            except BaseException:
+                await self._canvas_control_broker.revoke_child(self.app_service_id)
+                self._canvas_control_environment.clear()
+                raise
+            self._canvas_control_started = True
+
+        async def stop(self) -> None:
+            try:
+                await super().stop()
+            finally:
+                if self._canvas_control_started:
+                    self._canvas_control_started = False
+                    await self._canvas_control_broker.revoke_child(
+                        self.app_service_id
+                    )
+                self._canvas_control_environment.clear()
+
+    ChatbookAppService.__name__ = "ChatbookAppService"
+    return ChatbookAppService
+
+
+def build_chatbook_web_server_class(
+    textual_serve_server_class: type,
+    textual_app_service_class: type | None = None,
+) -> type:
     """Build the Chatbook server subclass from a provided textual-serve base."""
 
     class ChatbookWebServer(ChatbookWebServerMixin, textual_serve_server_class):
-        pass
+        _chatbook_app_service_class = (
+            build_chatbook_app_service_class(textual_app_service_class)
+            if textual_app_service_class is not None
+            else None
+        )
 
     ChatbookWebServer.__name__ = "ChatbookWebServer"
     return ChatbookWebServer
@@ -280,8 +405,10 @@ def create_server(
         ImportError: If textual-serve is not installed
     """
     textual_serve_server_class = _load_textual_serve_server_class()
+    textual_app_service_class = _load_textual_serve_app_service_class()
     chatbook_web_server_class = build_chatbook_web_server_class(
         textual_serve_server_class,
+        textual_app_service_class,
     )
 
     # Create the command to run the app
