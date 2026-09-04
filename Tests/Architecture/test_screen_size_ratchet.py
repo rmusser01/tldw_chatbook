@@ -294,9 +294,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # 2026-09-03, wave-3 task 4 (combined search+RAG cleanup, series 3/3):
     # the generated search+rag-state shim block (task 2) deleted wholesale;
     # every remaining screen-side `_library_rag_<field>`/`_library_search_
-    # history` literal retargeted to `self._rag_search_state.<field>` (35
-    # occurrences across 9 screen methods via one mechanical regex pass,
-    # AST-reverified to zero remaining live consumers). A wider census also
+    # history` literal retargeted to `self._rag_search_state.<field>` (66
+    # occurrences across 11 screen methods via one mechanical regex pass,
+    # AST-reverified to zero remaining live consumers -- corrected here
+    # from an initial undercount of "35 occurrences across 9 methods";
+    # see the fix-round comment below). A wider census also
     # flagged `canvas_sync.py`'s `_sync_library_canvas` (its `"search"`
     # branch writes `screen._library_rag_answer_render_key` directly) as a
     # candidate -- an initial retarget to `screen._rag_search_state.
@@ -322,7 +324,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # STATE_FIELDS` import the deleted shim was the screen's only consumer
     # of. 12 fewer `FunctionDef`s -- exactly the 12 pruned delegators; no
     # method body touched. 43009/1316 -> 42949/1304.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42949, 1304),
+    # 2026-09-03, wave-3 task 4 fix round 1: 9 more cluster-caused dead
+    # imports pruned from the same `Widgets.Library` import block --
+    # `library_rag_answer_children`, `library_rag_history_children`,
+    # `library_rag_query_quiet_text`, `library_rag_query_shows_full_
+    # recovery`, `library_rag_query_status_children`, `library_rag_
+    # results_body_children`, `library_rag_scope_recovery_children`,
+    # `results_heading_text`, `scope_toggle_label` -- each verified
+    # single-occurrence (import line only) before deletion; the neighbour
+    # `library_rag_scope_shows_recovery` stayed (still live, ~line 42446).
+    # Comment-only otherwise; no method body touched. 42949/1304 ->
+    # 42940/1304.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42940, 1304),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
