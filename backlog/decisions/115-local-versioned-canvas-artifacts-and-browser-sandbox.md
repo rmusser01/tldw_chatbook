@@ -1,4 +1,4 @@
-# ADR-081: Local versioned Canvas artifacts and browser sandbox
+# ADR-115: Local versioned Canvas artifacts and browser sandbox
 
 Status: Accepted
 Date: 2026-09-03
