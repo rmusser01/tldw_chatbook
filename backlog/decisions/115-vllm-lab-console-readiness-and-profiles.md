@@ -1,6 +1,6 @@
 # ADR-115: Separate vLLM launch, readiness, profiles, and Console adoption
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-03
 Related Tasks: TASK-31213, TASK-31214, TASK-31215, TASK-31217, TASK-31219, TASK-31221
 Extends: ADR-002, ADR-006, ADR-095

@@ -100,7 +100,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-107](107-portable-tool-use-packs.md) | Proposed | Export one flattened Tool policy profile as deterministic policy-only content; import it unbound with exact mapping, first-bind confirmation, and deny tombstones. |
 | [ADR-113](113-collections-capture-authority-and-legacy-boundary.md) | Accepted | Separate Local and Server Collections capture authority from Media and preserve obsolete generic containers as explicit read-only legacy data. |
 | [ADR-114](114-llamacpp-lab-console-connection-authority.md) | Accepted | Keep llama.cpp process ownership, HTTP/model readiness, Console session adoption, and durable provider defaults separate behind one sanitized connection target. |
-| [ADR-115](115-vllm-lab-console-readiness-and-profiles.md) | Proposed | Treat vLLM setup as a generation-fenced launch-or-connect workflow with verified Console adoption and device-local non-secret launch profiles. |
+| [ADR-115](115-vllm-lab-console-readiness-and-profiles.md) | Accepted | Treat vLLM setup as a generation-fenced launch-or-connect workflow with verified Console adoption and device-local non-secret launch profiles. |
 
 ## Historical Decision Material
 

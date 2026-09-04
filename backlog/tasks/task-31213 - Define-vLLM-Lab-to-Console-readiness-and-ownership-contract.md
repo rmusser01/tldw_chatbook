@@ -1,11 +1,11 @@
 ---
 id: TASK-31213
 title: Define vLLM Lab-to-Console readiness and ownership contract
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:31'
-updated_date: '2026-09-03 22:35'
+updated_date: '2026-09-04 00:09'
 labels:
   - vllm
   - lab
@@ -23,10 +23,10 @@ Define the authoritative process, connection, model, persistence, privacy, and r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An accepted ADR distinguishes process liveness, API readiness, served-model identity, Console session adoption, and durable defaults.
-- [ ] #2 The contract defines generation fencing, endpoint normalization, network-exposure behavior, privacy boundaries, and rollback.
-- [ ] #3 The design specification covers first-time and experienced-user workflows at normal and compact terminal widths.
-- [ ] #4 No production code changes are included in the contract task.
+- [x] #1 An accepted ADR distinguishes process liveness, API readiness, served-model identity, Console session adoption, and durable defaults.
+- [x] #2 The contract defines generation fencing, endpoint normalization, network-exposure behavior, privacy boundaries, and rollback.
+- [x] #3 The design specification covers first-time and experienced-user workflows at normal and compact terminal widths.
+- [x] #4 No production code changes are included in the contract task.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,3 +44,9 @@ ADR path: `backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md`
 
 Reason: This work defines provider/runtime ownership, a cross-screen service contract, durable profile storage, privacy boundaries, and long-lived UX structure.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Accepted ADR-115 and the approved end-to-end vLLM Lab-to-Console specification. Defined process, readiness, model identity, session/default ownership, profile privacy, responsive behavior, rollback, and six-task delivery boundaries. No production code changed.
+<!-- SECTION:NOTES:END -->
