@@ -10981,3 +10981,26 @@ Rule: when introducing a wrapper around an existing full-height Textual view,
 verify it with a real pointer-driven workflow, not only widget queries,
 visibility flags, or screenshots. Painted descendants do not prove their
 ancestor geometry participates in hit testing.
+
+## A PR's green CI never ran the MERGED combination -- re-run the changed method's fake-driven tests on the merged head (task-31237, 2026-09-04)
+
+Incident (PR #2367, 2026-09-04): the branch added `_close_library_media_find()`
+and routed `_delete_library_media_item`'s query reset through it instead of
+assigning the two query attributes directly. Pre-merge CI was green. Meanwhile
+dev had merged task-14901's two single-delete tests, which drive
+`_delete_library_media_item` on a bare `SimpleNamespace` fake -- attribute
+assignment works on a SimpleNamespace, a method call does not. On the merged
+head both raised `AttributeError`; PR Fast Lane does not run
+`test_library_multiselect_media.py`, the update-branch merge commit went green,
+the landing loop admin-merged it, and dev needed follow-up PR #2369. Same shape
+on #2366 the same night: two PRs each regenerating
+`Docs/security/production-diagnostic-inventory.json` merge cleanly, but the
+summary count carries only one side.
+
+Rule: after the update-branch / merge-with-dev step and BEFORE admin-merge, grep
+`Tests/` for every production method whose body you changed
+(`grep -rn '<method_name>' Tests/`) and run those files on the merged head --
+a direct-method fake that dev added after you forked will not be in your
+branch's test list. Regenerate derived inventories on the merged head, not on
+the branch tip. A green check on the pre-merge head is evidence about the
+branch, not about dev-plus-branch.
