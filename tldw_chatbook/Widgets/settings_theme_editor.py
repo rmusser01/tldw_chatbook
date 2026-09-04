@@ -815,7 +815,10 @@ class SettingsThemeEditor(Vertical):
 
     def _generate_theme_from_primary(self, primary: Color) -> dict[str, str]:
         """Generate a complete theme based on a primary color."""
-        hue, saturation, lightness = primary.hsl
+        # Textual's Color.hsl reports hue in the 0-1 range; _adjust_color works
+        # in degrees (TASK-31253: every primary used to yield red/cyan).
+        hsl = primary.hsl
+        hue, saturation, lightness = hsl.h * 360, hsl.s, hsl.l
 
         return {
             "primary": primary.hex,
@@ -870,7 +873,7 @@ class SettingsThemeEditor(Vertical):
             g = max(0, min(255, int((g + m) * 255)))
             b = max(0, min(255, int((b + m) * 255)))
 
-            return f"#{r:02x}{g:02x}{b:02x}"
+            return f"#{r:02X}{g:02X}{b:02X}"
         except Exception:
             return "#808080"
 

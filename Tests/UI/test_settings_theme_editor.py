@@ -661,3 +661,30 @@ async def test_settings_theme_editor_remount_after_apply_restores_palette(tmp_pa
         assert editor.query_one("#settings-theme-name", Input).value == "new_theme"
         assert editor.color_inputs["primary"].value.upper() == "#123456"
         assert editor.color_inputs["background"].value != ""
+
+
+def _hue_deg(hex_value: str) -> float:
+    from textual.color import Color
+
+    return Color.parse(hex_value).hsl.h * 360
+
+
+def _hue_distance(a: float, b: float) -> float:
+    delta = abs(a - b) % 360
+    return min(delta, 360 - delta)
+
+
+@pytest.mark.parametrize("primary", ["#9966FF", "#00CC66", "#FF9900"])
+def test_generate_from_primary_keeps_the_primary_hue(primary):
+    """TASK-31253: Color.hsl hue is 0-1; the generator treated it as degrees,
+    so every primary produced a red secondary and a cyan accent."""
+    from textual.color import Color
+
+    editor = SettingsThemeEditor()  # is_dark_theme defaults to True
+    palette = editor._generate_theme_from_primary(Color.parse(primary))
+
+    base = _hue_deg(primary)
+    for key in ("secondary", "background", "surface", "panel"):
+        assert _hue_distance(_hue_deg(palette[key]), base) <= 30, (key, palette[key])
+    assert 150 <= _hue_distance(_hue_deg(palette["accent"]), base) <= 180
+    assert all(value == value.upper() for value in palette.values()), palette
