@@ -33,7 +33,6 @@ from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import ScriptPlan
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult

@@ -45,7 +45,6 @@ import threading
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import (
-    _RecordingWakeGateway,
     _controller_rig,
     _drain,
     _quiet,

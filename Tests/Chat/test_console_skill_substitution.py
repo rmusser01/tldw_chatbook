@@ -12,7 +12,6 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from Tests.console_provider_doubles import persisted_console_store
 from Tests.console_provider_doubles import provider_resolution
