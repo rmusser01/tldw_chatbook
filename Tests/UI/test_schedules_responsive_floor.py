@@ -603,3 +603,217 @@ async def test_the_pushed_pane_repaints_from_the_same_refresh_as_the_docked_one(
             assert pushed._current_task.title == "Renamed check"
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Final-review fix wave: the floor's remaining traps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_m_at_the_floor_opens_the_dropdown_in_the_pane_the_user_can_see(
+    tmp_path,
+):
+    """F1: `m` below the threshold must not activate the HIDDEN pane.
+
+    It used to mount a `Select` inside `#scheduling-detail-pane` while that
+    pane was `display: none` -- a zero-region editor that painted nothing,
+    stole focus off the queue table (so Up/Down stopped moving the list) and
+    said nothing. `m` now takes the same push route `Enter` does and
+    activates the Runs-on row of the pane that is actually on screen.
+    """
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db)
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            await _select_row(pilot)
+            assert workbench._detail_hidden(), "the floor must hide the docked pane"
+
+            await pilot.press("m")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            host = pilot.app.screen
+            assert isinstance(host, WorkbenchHostScreen), (
+                "`m` at the floor must push the detail, not activate a hidden pane"
+            )
+            row = host.query_one(TaskDetail).runs_on_row
+            editors = row.query(Select)
+            assert editors, "no owner picker opened in the pushed pane"
+            region = editors.first().region
+            assert region.width > 0 and region.height > 0, (
+                f"the dropdown is unpainted ({region}) -- the zero-region trap"
+            )
+            # The invisible docked pane was left alone.
+            docked = workbench.query_one("#scheduling-task-detail", TaskDetail)
+            assert not docked.query(Select)
+
+            # Escape closes the editor, Escape again returns to a WORKING queue
+            # (the old trap left the list unresponsive with nothing painted).
+            await pilot.press("escape")
+            await pilot.pause()
+            assert pilot.app.screen is host
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert pilot.app.screen is workbench
+            table = workbench.query_one("#scheduling-task-table", DataTable)
+            table.focus()
+            await pilot.press("down")
+            await pilot.pause()
+            assert workbench.focused is table, "the queue never got its keys back"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_m_at_the_floor_on_an_empty_queue_refuses_out_loud(tmp_path):
+    """F1's other half: no row under the cursor still says why."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        async with app.run_test(size=FLOOR) as pilot:
+            await _open_workbench(pilot)
+            notifications: list[str] = []
+            pilot.app.notify = lambda message, **kw: notifications.append(message)
+
+            await pilot.press("m")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, WorkbenchHostScreen)
+            assert notifications, "`m` with nothing to move must not go silent"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pushed_detail_never_repaints_from_another_rows_data(tmp_path):
+    """F2: the pushed pane is pinned to the row it was pushed FOR.
+
+    `_render_table`'s restore falls back to `target_index = 0` whenever the
+    selected row is gone, and every re-feed used to reach the pushed instance
+    too -- so a pane headed "ZZZ Second reminder" could end up painting (and
+    wiring its Delete button to) "AAA First reminder". The identity gate in
+    `_detail_panes` makes that frame impossible.
+    """
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "AAA First reminder")
+        _reminder(db, "ZZZ Second reminder")
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            rows = workbench._visible_rows
+            zzz_index = next(
+                index
+                for index, row in enumerate(rows)
+                if row.title == "ZZZ Second reminder"
+            )
+            await _select_row(pilot, zzz_index)
+            host = await _push_detail(pilot)
+            pushed = host.query_one(TaskDetail)
+            assert pushed._current_task.title == "ZZZ Second reminder"
+            assert host.title == "ZZZ Second reminder"
+
+            # The seam every refresh goes through, aimed at the OTHER row.
+            other_index = 1 - zzz_index
+            workbench._update_detail_for_index(other_index)
+            await pilot.pause()
+
+            docked = workbench.query_one("#scheduling-task-detail", TaskDetail)
+            assert docked._current_task.title == "AAA First reminder"
+            assert pushed._current_task.title == "ZZZ Second reminder", (
+                "the pushed pane retargeted while its Header still named ZZZ"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pushed_detail_closes_with_a_notice_when_its_row_is_gone(tmp_path):
+    """F2's honest gone-state (the documented choice: auto-pop + notice).
+
+    A background refresh that drops the open row leaves the pane nothing true
+    to show -- and its Delete / Disable / Run-now controls pointed at a
+    reminder that no longer exists. Popping removes both problems.
+    """
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "AAA First reminder")
+        zzz_id = _reminder(db, "ZZZ Second reminder")
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            zzz_index = next(
+                index
+                for index, row in enumerate(workbench._visible_rows)
+                if row.title == "ZZZ Second reminder"
+            )
+            await _select_row(pilot, zzz_index)
+            host = await _push_detail(pilot)
+            pushed = host.query_one(TaskDetail)
+
+            notifications: list[str] = []
+            pilot.app.notify = lambda message, **kw: notifications.append(message)
+
+            db.delete_reminder_task(zzz_id)
+            workbench._request_tasks_refresh(refresh_definitions=False)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert pilot.app.screen is workbench, "the stale pane stayed open"
+            assert workbench._pushed_detail is None
+            assert workbench._pushed_row_id is None
+            assert any("ZZZ Second reminder" in text for text in notifications), (
+                "the pane vanished without saying why"
+            )
+            assert pushed._current_task.title == "ZZZ Second reminder", (
+                "the pane took another row's data on its way out"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_resolving_a_conflict_in_the_pushed_view_reloads_the_queue(tmp_path):
+    """F3: `ConflictsTab.ConflictResolved` reaches the workbench LIVE.
+
+    Task 5 moved the only `ConflictsTab` instance onto a pushed screen, and
+    that push carried no `route_message` -- so the message bubbled tab -> host
+    -> App and `@on(ConflictsTab.ConflictResolved)` never ran. The badge count
+    still updated on pop, which is why the loss looked like nothing.
+
+    Asserted through the REAL message path (post from the hosted tab), never a
+    direct `_on_conflict_resolved(...)` call -- a direct call is exactly what
+    could not observe this break.
+    """
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        task_id = _reminder(db, "Losing side")
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+
+            assert await pilot.click("#scheduling-conflicts-badge")
+            await pilot.pause()
+            host = pilot.app.screen
+            tab = host.query_one(ConflictsTab)
+
+            # What "the winning side" looks like to the queue behind.
+            db.update_reminder_task(task_id, title="Winning side")
+            tab.post_message(ConflictsTab.ConflictResolved("conflict-1", "local"))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert pilot.app.screen is host, "the overlay must still be open"
+            assert [task.title for task in workbench._tasks] == ["Winning side"], (
+                "resolving a conflict did not reload the queue behind the overlay"
+            )
+    finally:
+        db.close()

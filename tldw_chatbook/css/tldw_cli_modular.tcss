@@ -13666,18 +13666,20 @@ Button.error:hover {
  * ======================================== */
 
 /* The liveness Static + bottom status strip are auto-height siblings of
- * the TabbedContent; without an explicit 1fr the auto-height TabbedContent
- * measures its fr children against the whole content area and overflows
- * past the footer. */
+ * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
+ * this rationale used to name); without an explicit 1fr the auto-height
+ * workbench row measures its fr children against the whole content area
+ * and overflows past the footer. */
 #schedules-shell {
     height: 1fr;
     min-height: 0;
 }
 
-/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
- * across every tab (not Queue-specific), hosting the existing
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
+ * below the whole workbench, not inside the list pane, hosting the existing
  * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
- * that switches to the Conflicts tab. SyncStatusWidget takes the
+ * that PUSHES the conflicts view over the list (redesign PR-4 task 5: the
+ * Conflicts tab it used to switch to is retired). SyncStatusWidget takes the
  * remaining width so the badge sits flush right; `align` centers the
  * badge (height:1, from .scheduling-queue-chip) against the taller
  * padded SyncStatusWidget row. */

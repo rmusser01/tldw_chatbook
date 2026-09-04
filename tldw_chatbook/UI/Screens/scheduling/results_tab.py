@@ -11,13 +11,15 @@ button or a definition pane's unread row.
 Minimal-honest inbox (plan ruling 1): a `DataTable` of `automation_results`
 rows spanning every owner (Task 1's `list_automation_results(owner_id=None)`)
 plus a read-only detail pane. Row mutations (read/dismiss/mark-solved/mark
-all read) are keybindings owned by `SchedulesWorkbench` -- this widget is a
-pure renderer. Unlike `ConflictsTab`
+all read) are keybindings owned by the SCREEN, not by this widget -- this
+widget is a pure renderer. They began as `SchedulesWorkbench` bindings; task
+2 factored the orchestration into the module-level helpers below and task 5
+retired the workbench's copies, leaving `ResultsHostScreen` (bottom of this
+module) as their owner. Unlike `ConflictsTab`
 (whose "Use server"/"Use local" buttons resolve locally, synchronously),
 the actions here (`SchedulingService.review_automation_result`/
-`resolve_definition`) are async server-aware calls, so they live on the
-screen that already owns `run_worker` plumbing for exactly that shape
-(`_begin_automation_transfer`).
+`resolve_definition`) are async server-aware calls, so they live on a screen
+with `run_worker` plumbing rather than in the renderer.
 
 redesign PR-4, task 2 (Results relocation) adds two things on top of the
 above, unchanged: (1) `ResultsTab` gains the same `initial_*`-self-paints-
@@ -44,8 +46,9 @@ these helpers only need to be async because the mutation itself is.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual import on
@@ -53,8 +56,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import DataTable, Static
-
-from .workbench_host_screen import WorkbenchHostScreen
 
 # `index_definitions_by_id`/`definition_for_result` moved to
 # `unified_rows.py` (redesign PR-2 Task 1 -- that pure module resolves
@@ -65,6 +66,7 @@ from .unified_rows import (
     definition_for_result,
     index_definitions_by_id,  # noqa: F401  (re-export: schedules_workbench.py imports this from here)
 )
+from .workbench_host_screen import WorkbenchHostScreen
 
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
@@ -145,7 +147,7 @@ def _parse_created_at(created_at: str | None) -> datetime | None:
     except ValueError:
         return None
     if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
+        created = created.replace(tzinfo=UTC)
     return created
 
 
@@ -166,7 +168,7 @@ def _result_sort_key(result: dict[str, Any]) -> datetime:
     definition-scoped tie ever turns out to matter.
     """
     return _parse_created_at(result.get("created_at")) or datetime.min.replace(
-        tzinfo=timezone.utc
+        tzinfo=UTC
     )
 
 
@@ -182,7 +184,7 @@ def _format_result_created(
     created = _parse_created_at(created_at)
     if created is None:
         return "-" if not created_at else str(created_at)
-    reference = now if now is not None else datetime.now(timezone.utc)
+    reference = now if now is not None else datetime.now(UTC)
     seconds = (reference - created).total_seconds()
     future = seconds < 0
     seconds = abs(seconds)
@@ -541,7 +543,7 @@ class ResultsTab(Vertical):
 
 async def review_selected_result(
     service: Any,
-    results_tab: "ResultsTab",
+    results_tab: ResultsTab,
     review_state: str,
     notify: Callable[[str, str], None],
 ) -> None:
@@ -607,15 +609,15 @@ class ResultsHostScreen(WorkbenchHostScreen):
     """`WorkbenchHostScreen` + the Results-specific r/d/o/a bindings
     (redesign PR-4, task 2).
 
-    `SchedulesWorkbench`'s own r/d/o/a bindings are tab-gated
-    (`_is_results_tab_active`) AND, more fundamentally, never receive a
-    key event while this screen sits on top of the stack -- Textual
-    routes a key through the CURRENTLY ACTIVE screen's own binding chain
-    only, and a screen underneath is not part of that chain. The pushed
-    view therefore needs its own copies of the same four actions; they
-    share the underlying service orchestration with the tab
-    (`review_selected_result`/`mark_selected_result_solved`/`mark_
-    results_read` above) so the two surfaces cannot drift apart.
+    `SchedulesWorkbench` has no r/d/o/a bindings at all any more (task 5
+    retired its tab-gated copies along with the Results tab), and it could
+    not receive those keys here regardless -- Textual routes a key through
+    the CURRENTLY ACTIVE screen's own binding chain only, and a screen
+    underneath is not part of that chain. This pushed view therefore owns
+    the four actions outright, over the module-level service orchestration
+    above (`review_selected_result`/`mark_selected_result_solved`/`mark_
+    results_read`), which is where the tab-era logic was factored to
+    before the tab went away.
 
     `query`/`unread_ids` are closures the constructing `SchedulesWorkbench`
     supplies, scoped to whatever this push is (the global inbox, or one
@@ -628,7 +630,7 @@ class ResultsHostScreen(WorkbenchHostScreen):
     dismissed").
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar = [
         *WorkbenchHostScreen.BINDINGS,
         Binding("r", "review_read", "Read"),
         Binding("d", "review_dismiss", "Dismiss"),
@@ -638,7 +640,7 @@ class ResultsHostScreen(WorkbenchHostScreen):
 
     def __init__(
         self,
-        widget_factory: Callable[[], "ResultsTab"],
+        widget_factory: Callable[[], ResultsTab],
         *,
         title: str,
         service: Any,
@@ -666,7 +668,7 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self._query = query
         self._unread_ids = unread_ids
 
-    def _results_tab(self) -> "ResultsTab":
+    def _results_tab(self) -> ResultsTab:
         return self.query_one(ResultsTab)
 
     def _notify(self, message: str, severity: str) -> None:

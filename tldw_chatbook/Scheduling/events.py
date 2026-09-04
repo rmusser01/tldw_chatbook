@@ -67,7 +67,6 @@ class RunReminderNowRequested(Message):
         self.task = task
 
 
-
 # redesign PR-4, task 4 (ruling 2): `TransferToServerRequested`/
 # `TransferToLocalRequested`/`CancelTransferRequested`/
 # `RetryTransferRequested` (schedules-handoff spec §6, PR-5 task 7) were
@@ -164,11 +163,13 @@ class ReminderOwnerActionRequested(Message):
     idiom `DetailValueRow.Activated`/`ReminderFieldEditRequested` already
     use) so the workbench can call `row.show_error(...)` directly on a
     refusal -- this row's transfer refusals render inline (health-quoting
-    preserved), NOT through the legacy toast the existing Move/Cancel/
-    Retry buttons still use (`SchedulesWorkbench._begin_transfer`'s own
-    ``notify(reason, ...)``) -- the two surfaces are deliberately
-    independent (coexistence, task-5 brief). `TaskDetail` has already
-    called `row.end_edit()` (a dropdown commit) before posting this.
+    preserved) rather than as a toast. That inline rendering was
+    originally the coexisting alternative to the legacy Move/Cancel/Retry
+    buttons' `SchedulesWorkbench._begin_transfer` toast (PR-3 task 5
+    brief); redesign PR-4 task 4 deleted those buttons and that method, so
+    this row's dropdown is now the ONE transfer surface (ruling 2).
+    `TaskDetail` has already called `row.end_edit()` (a dropdown commit)
+    before posting this.
     """
 
     def __init__(self, task: ReminderTask, action: str, row: DetailValueRow) -> None:

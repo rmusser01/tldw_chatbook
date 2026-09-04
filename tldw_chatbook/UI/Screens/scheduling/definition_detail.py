@@ -1625,10 +1625,11 @@ class DefinitionDetail(Vertical):
 
     def _request_runs_on_cancel(self) -> None:
         """Post a cancel request from the Runs-on row's own mini-bar
-        (PR-3 task 5) -- a SEPARATE surface from the Automations tab's
-        `k`-key `_cancel_automation_transfer` (coexistence, task-5
-        brief): this one renders a refusal via `row.show_error`, not the
-        tab's shared inline-notice Static."""
+        (PR-3 task 5). It began as a SEPARATE surface coexisting with the
+        Automations tab's `k`-key `_cancel_automation_transfer` (task-5
+        brief); redesign PR-4 task 5 retired that tab and its key, so this
+        mini-bar is now the only cancel affordance -- and it still renders
+        a refusal via `row.show_error`, never a shared notice Static."""
         definition = self._definition
         row = self._runs_on_row
         if definition is not None and row is not None:
@@ -1692,7 +1693,9 @@ class DefinitionDetail(Vertical):
         toggle (the task-4 brief's "optimistic repaint") -- called by the
         workbench on EVERY mounted `DefinitionDetail` instance right
         after `set_definition_lifecycle` succeeds, ahead of the slower
-        background refresh (`_request_automations_refresh`), so this pane
+        background refresh (`_request_tasks_refresh` -- redesign PR-4 task
+        5 retired the Automations tab's `_request_automations_refresh`
+        this used to name), so this pane
         never shows a stale Pause/Resume label while that worker is still
         running. Task 2's own DB-level pull-guard is what then keeps a
         RACING sync pull from reverting the value that background refresh

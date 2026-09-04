@@ -16,7 +16,8 @@ with no shared state, is architecturally normal here.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -36,7 +37,7 @@ class WorkbenchHostScreen(Screen):
     for later tasks, and this task's own conflicts-badge repoint.
     """
 
-    BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
+    BINDINGS: ClassVar = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(
         self,

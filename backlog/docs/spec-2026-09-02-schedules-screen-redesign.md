@@ -233,6 +233,14 @@ After the handoff program:
 Up/Down traverse detail rows when the pane has focus. Footer-visible key
 hints extend ADR-099's parity requirement to the pane.
 
+**PR-4 amendment (2026-09-04).** `Enter` is honored only below the
+responsive floor's 84-column threshold, where it PUSHES the row's detail
+full-screen (plan ruling 6); at or above it the detail pane is already
+docked beside the list showing that row, so `Enter` stays the no-op it
+has always been. `m` follows the same split: below the threshold it
+pushes the detail and opens the Runs-on dropdown inside it, because the
+docked pane is hidden there (final review F1).
+
 ## 13. Out of scope
 
 - `agent_task` rows beyond the disabled Create entry.

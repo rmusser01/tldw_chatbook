@@ -1423,11 +1423,16 @@ class TaskDetail(Vertical):
         # redesign PR-4 task 5 (ruling 5): the task-23106 ownership line
         # ("#scheduling-task-detail-managed") and its `else` branch are
         # DELETED -- provably unreachable, not merely unused. `TaskDetail(`
-        # is constructed exactly once in the repo (schedules_workbench.py's
-        # detail pane) and fed only from `load_tasks`, which calls
-        # `list_tasks(owner_id=None, include_projections=False)` and then
-        # filters the result to `ReminderTask` anyway; `_update_detail_for_
-        # index` asserts the same before every call. So `task` here is
+        # is constructed in exactly TWO places in the repo, both in
+        # `schedules_workbench.py` (the docked detail pane, and task 6's
+        # fresh per-push overlay instance -- final review F5 corrected the
+        # original "exactly once" wording, which task 6 had made false).
+        # Both are fed through the SAME single seam, `_update_detail_for_
+        # index` (`_detail_panes` is one list, not a second data path),
+        # whose data comes from `load_tasks` -> `list_tasks(owner_id=None,
+        # include_projections=False)` filtered to `ReminderTask`, and which
+        # asserts `isinstance(task, ReminderTask)` before every call. So
+        # `task` here is
         # never anything but a `ReminderTask`, the `else` never ran, and
         # the empty Static it painted into was pure weight. The copy
         # generator itself (`_managed_elsewhere_notice`) STAYS: the

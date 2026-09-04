@@ -2478,9 +2478,12 @@ async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             detail = pilot.app.screen.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail
@@ -2604,9 +2607,12 @@ async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_p
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             detail = pilot.app.screen.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail
@@ -3197,8 +3203,12 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
             await service.mutation_refresh_started.wait()
 
             # Resolving a conflict is a user action whose production handler
-            # requests a grouped task-list refresh.
-            workbench._on_conflict_resolved(
+            # requests a grouped task-list refresh. Fix wave F3: POSTED, not
+            # called -- a direct `_on_conflict_resolved(...)` call is what let
+            # the DISPATCH itself break unnoticed when task 5 moved the
+            # `ConflictsTab` onto a pushed screen (the live-path pin now lives
+            # in `test_schedules_responsive_floor.py`).
+            workbench.post_message(
                 ConflictsTab.ConflictResolved("conflict-1", "local")
             )
             await service.user_refresh_started.wait()
@@ -4075,9 +4085,13 @@ async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
         async with app.run_test(size=(220, 60)) as pilot:
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
             workbench = pilot.app.screen
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             detail = workbench.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail
@@ -4917,7 +4931,9 @@ async def test_definition_owner_action_marks_stale_before_resolving(
 ):
     """Fix round 1 finding 1, pinned via ORDERING, not a post-hoc flag
     read: a real mounted workbench has its own background refreshes
-    (mount-time, `TabActivated` on the initial tab) that legitimately
+    (mount-time `load_tasks`, the catch-up results pull, `on_screen_
+    resume`'s `_consume_definitions_stale` -- redesign PR-4 task 5 retired
+    the `TabActivated` refresh this used to name) that legitimately
     consume/clear `_definitions_stale` too, so asserting the flag's
     value some time AFTER the action is racy against those -- this pins
     the actual claim instead: `self._definitions_stale` is ALREADY
@@ -5073,6 +5089,16 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with
         async with app.run_test(size=(220, 60)) as pilot:
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
+            # Fix wave F4: this body was repointed onto the LIVE
+            # `#scheduling-queue-definition-detail` pane in task 5, which
+            # the workbench's own mount-time `load_tasks` repaints -- with
+            # an empty queue that means `set_definition(None)`, wiping the
+            # definition set below (and its editable rows) before the test
+            # activates the Runs-on row. The final review measured this
+            # body at 7 failed / 3 passed over 10 solo runs without this
+            # line (10 passed at BASE, where it still pointed at the
+            # retired pane); 10/10 green with it.
+            await settle_schedules_workbench(pilot, pilot.app.screen)
 
             mirror = db.get_automation_definition(mirror_id)
             detail = pilot.app.screen.query_one(
@@ -5564,9 +5590,12 @@ async def test_queue_definition_pane_repaints_after_a_successful_in_pane_edit(tm
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             queue_detail = pilot.app.screen.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail

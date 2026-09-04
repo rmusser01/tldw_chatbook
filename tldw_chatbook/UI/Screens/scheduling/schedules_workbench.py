@@ -428,6 +428,19 @@ class SchedulesWorkbench(BaseAppScreen):
         #: (`_detail_panes`) -- never to reparent or reuse it; the next
         #: push builds another instance.
         self._pushed_detail: TaskDetail | DefinitionDetail | None = None
+        #: The `UnifiedRow.row_id` `_pushed_detail` was pushed FOR (fix
+        #: wave F2). The pushed pane is pinned to this identity, never to
+        #: a row index: a background refresh that drops the open row used
+        #: to fall through `_render_table`'s `target_index = 0` and re-feed
+        #: the overlay with a DIFFERENT row's data while its Header still
+        #: named the original -- a pane whose Delete button then targeted
+        #: the wrong reminder. `_detail_panes` now only feeds the pushed
+        #: instance for THIS row_id, and `_pop_pushed_detail_if_gone`
+        #: closes it (with a notice) when the row leaves the queue.
+        self._pushed_row_id: str | None = None
+        #: The `WorkbenchHostScreen` hosting `_pushed_detail`, held only so
+        #: the gone-row check above can pop it.
+        self._pushed_host: WorkbenchHostScreen | None = None
         #: One `asyncio.Lock` per definition an in-pane row edit has
         #: touched, serializing that definition's read-merge-write saves
         #: (Qodo finding 7) -- see `_edit_definition_field`.
@@ -1256,6 +1269,10 @@ class SchedulesWorkbench(BaseAppScreen):
         deterministic tests.
         """
         render_now = now if now is not None else datetime.now(timezone.utc)
+        # Fix wave F2: before anything re-feeds the panes, close a pushed
+        # overlay whose row is no longer in `_all_rows` -- otherwise the
+        # restore/empty branches below would hand it another row's data.
+        self._pop_pushed_detail_if_gone()
         previous_selected_row_id = self._selected_row_id
         self._visible_rows = sort_rows(
             filter_rows(self._all_rows, chip=self._chip, query=self._filter_text),
@@ -1360,7 +1377,11 @@ class SchedulesWorkbench(BaseAppScreen):
             return False
 
     def _detail_panes(
-        self, pane_id: str, pane_type: type[TaskDetail | DefinitionDetail]
+        self,
+        pane_id: str,
+        pane_type: type[TaskDetail | DefinitionDetail],
+        *,
+        row_id: str | None = None,
     ) -> list[Any]:
         """Every live instance of one detail pane class to paint.
 
@@ -1370,12 +1391,66 @@ class SchedulesWorkbench(BaseAppScreen):
         is fed by the same service-backed loads the docked pane is" true
         by construction rather than by a parallel code path -- a mutation
         that repaints the pane behind repaints the one on screen too.
+
+        ``row_id`` is the identity gate (fix wave F2). A row-scoped feed
+        passes the `UnifiedRow.row_id` whose data it is about to write,
+        and the pushed instance joins the list only when that is the row
+        it was PUSHED for: the docked pane follows the queue cursor (and
+        `_render_table`'s row-0 fallback when the selection vanishes),
+        the pushed pane must not, or its Header names one reminder while
+        its body -- and its Delete button -- belong to another. Feeds
+        that carry no row identity at all (`_update_follow_button_state`'s
+        availability flag) pass ``None`` and reach every instance, as
+        before.
         """
         panes: list[Any] = [self.query_one(pane_id, pane_type)]
         pushed = self._pushed_detail
-        if isinstance(pushed, pane_type) and pushed.is_mounted:
+        if (
+            isinstance(pushed, pane_type)
+            and pushed.is_mounted
+            and (row_id is None or row_id == self._pushed_row_id)
+        ):
             panes.append(pushed)
         return panes
+
+    def _pop_pushed_detail_if_gone(self) -> None:
+        """Close a pushed detail whose row has left the queue (fix wave F2).
+
+        The chosen honest gone-state is **auto-pop with a notice**, not a
+        blanked overlay: a full-screen pane titled after a reminder that no
+        longer exists has nothing true left to show, and popping is the
+        one outcome that also removes its Delete/Disable/Run-now buttons
+        from reach. Keyed off `_all_rows` (what EXISTS), never
+        `_visible_rows` (what the current chip/filter shows) -- a filter
+        narrowing must not close an open pane.
+
+        Clears the pushed state inline rather than routing through
+        `_pushed_detail_dismissed`: this runs from inside `_render_table`,
+        i.e. inside the `schedules-load-tasks` worker, and that hook's own
+        `_request_tasks_refresh()` would cancel the very load we are in
+        (same exclusive group). If the host is not the active screen (a
+        modal opened over it), the pop is skipped this round; the identity
+        gate above still keeps the stale pane from being re-fed.
+
+        Only `load_tasks`'s SUCCESS path reaches `_render_table` -- its
+        `except` branch empties `_all_rows` and returns early -- so a
+        transient service failure never closes an open pane.
+        """
+        host = self._pushed_host
+        row_id = self._pushed_row_id
+        if host is None or row_id is None:
+            return
+        if any(row.row_id == row_id for row in self._all_rows):
+            return
+        self._pushed_detail = None
+        self._pushed_row_id = None
+        self._pushed_host = None
+        if self.app.screen is not host:
+            return
+        self.app_instance.notify(
+            f"'{host.title}' is no longer in the queue.", severity="warning"
+        )
+        host.dismiss()
 
     def _show_queue_detail_pane(self, kind: RowKind) -> None:
         """Toggle which Queue detail widget is visible (redesign PR-2,
@@ -1589,17 +1664,24 @@ class SchedulesWorkbench(BaseAppScreen):
             built.append(pane)
             return pane
 
-        await self.app.push_screen(
-            WorkbenchHostScreen(
-                _factory,
-                title=row.title,
-                dismissed=self._pushed_detail_dismissed,
-                route_message=self._route_pushed_detail_message,
-            )
+        host = WorkbenchHostScreen(
+            _factory,
+            title=row.title,
+            dismissed=self._pushed_detail_dismissed,
+            route_message=self._route_pushed_detail_message,
         )
+        await self.app.push_screen(host)
         if not built:
             return
         self._pushed_detail = built[0]
+        # Fix wave F2: the pane is pinned to the row it was pushed for,
+        # and the Header's `title` above is that same row's -- so the two
+        # can no longer disagree. (A later rename of the pinned row does
+        # leave the Header stale until the pane is reopened; the identity
+        # it names stays correct, which is what the wrong-target-delete
+        # defect turned on.)
+        self._pushed_row_id = row.row_id
+        self._pushed_host = host
         self._update_detail_for_index(index)
 
     def _pushed_detail_dismissed(self) -> None:
@@ -1612,6 +1694,8 @@ class SchedulesWorkbench(BaseAppScreen):
         pruned.
         """
         self._pushed_detail = None
+        self._pushed_row_id = None
+        self._pushed_host = None
         self._request_tasks_refresh()
 
     def _route_pushed_detail_message(self, message: Message) -> None:
@@ -1716,7 +1800,7 @@ class SchedulesWorkbench(BaseAppScreen):
             known_timezones = self._task_timezones()
             runs_on_options = self._runs_on_options()[0]
             for task_detail in self._detail_panes(
-                "#scheduling-task-detail", TaskDetail
+                "#scheduling-task-detail", TaskDetail, row_id=row.row_id
             ):
                 task_detail.set_task(
                     task,
@@ -2143,6 +2227,15 @@ class SchedulesWorkbench(BaseAppScreen):
         mounted tab instance that did). `dismissed=self._refresh_
         conflicts_badge` re-syncs the badge count on pop, in case the
         overlay resolved anything while it was open.
+
+        Fix wave F3: the push also relays `ConflictsTab.ConflictResolved`
+        back here (task 6's `route_message` pattern). Without it the
+        message bubbled tab -> host screen -> App and never reached
+        `_on_conflict_resolved`, so resolving a conflict updated the badge
+        on pop but never reloaded the queue -- the row kept showing the
+        LOSING side's title/schedule until some unrelated refresh
+        happened to fire. Relaying restores the LIVE reload the mounted
+        tab used to get, while the overlay is still open.
         """
         service = self._service()
         conflicts = (
@@ -2164,8 +2257,18 @@ class SchedulesWorkbench(BaseAppScreen):
                 _factory,
                 title="Conflicts",
                 dismissed=self._refresh_conflicts_badge,
+                route_message=self._route_conflicts_message,
             )
         )
+
+    def _route_conflicts_message(self, message: Message) -> None:
+        """Relay a pushed `ConflictsTab`'s resolution back to this screen
+        (fix wave F3) -- the allowlisted counterpart of `_route_pushed_
+        detail_message`, kept separate because the two pushes carry
+        entirely different message vocabularies.
+        """
+        if isinstance(message, ConflictsTab.ConflictResolved):
+            self.post_message(message)
 
     @on(DefinitionRunNowRequested)
     def _on_definition_run_now_requested(
@@ -3172,7 +3275,7 @@ class SchedulesWorkbench(BaseAppScreen):
             self._no_task_notice("pause or resume"), severity="warning"
         )
 
-    def action_move_owner(self) -> None:
+    async def action_move_owner(self) -> None:
         """`m`: open the selected row's Runs-on dropdown (spec §12/§7).
 
         Posting `DetailValueRow.Activated` on the row directly drives the
@@ -3181,8 +3284,30 @@ class SchedulesWorkbench(BaseAppScreen):
         show_error`), then the dropdown -- so this needs no new
         activation logic, only a reference to the right pane's row
         (`TaskDetail`/`DefinitionDetail.runs_on_row`).
+
+        Fix wave F1: below the responsive floor the docked detail region
+        is `display: none`, and this used to resolve the DOCKED pane's
+        row anyway -- mounting a `Select` inside an invisible pane, taking
+        focus off the queue table, and painting nothing. The queue's
+        arrow keys then stopped working with no notification and no
+        visible editor: a silent input trap, only escapable by a guessed
+        `Esc`. Narrow widths now take the SAME route `Enter` does
+        (`_push_row_detail`, ruling 6) and activate the Runs-on row of the
+        pane that is actually on screen -- `m` still means "open the
+        transfer dropdown for this row", it just opens it where the user
+        can see it. At or above the threshold nothing changes.
         """
-        if self._selected_task() is not None:
+        row: DetailValueRow | None
+        if self._detail_hidden():
+            table = self.query_one("#scheduling-task-table", DataTable)
+            index = table.cursor_row
+            if index is None or not (0 <= index < len(self._visible_rows)):
+                row = None
+            else:
+                await self._push_row_detail(index)
+                pushed = self._pushed_detail
+                row = pushed.runs_on_row if pushed is not None else None
+        elif self._selected_task() is not None:
             row = self.query_one("#scheduling-task-detail", TaskDetail).runs_on_row
         elif self._selected_queue_definition() is not None:
             row = self.query_one(
@@ -3452,7 +3577,9 @@ class SchedulesWorkbench(BaseAppScreen):
         if service is None:
             if row_id == self._selected_row_id:
                 for detail in self._detail_panes(
-                    "#scheduling-queue-definition-detail", DefinitionDetail
+                    "#scheduling-queue-definition-detail",
+                    DefinitionDetail,
+                    row_id=row_id,
                 ):
                     detail.set_definition(
                         definition, run_count=0, last_run=None, unread_count=0
@@ -3476,7 +3603,7 @@ class SchedulesWorkbench(BaseAppScreen):
         lifecycle_lock = service.transfer_lock_reason(definition)
         transfer_errors = _definition_transfer_errors(service, definition)
         for detail in self._detail_panes(
-            "#scheduling-queue-definition-detail", DefinitionDetail
+            "#scheduling-queue-definition-detail", DefinitionDetail, row_id=row_id
         ):
             detail.set_definition(
                 definition,
@@ -4181,6 +4308,13 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
+        """Reload the queue when a conflict is resolved.
+
+        The `ConflictsTab` posting this lives on a pushed
+        `WorkbenchHostScreen` (task 5 retired the mounted one), so the
+        message reaches this handler only through that push's
+        `route_message` relay -- see `_route_conflicts_message`.
+        """
         self._request_tasks_refresh(refresh_definitions=False)
         self._refresh_conflicts_badge()
 

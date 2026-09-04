@@ -125,7 +125,7 @@ rows.
 | `/` | Focus the filter box |
 | `n` | Create — opens the Reminder / Recurring question chooser |
 | `p` | Pause or resume (a reminder's enable state, an automation's lifecycle) |
-| `m` | Open the highlighted row's **Runs on** dropdown — the move-between-owners flow |
+| `m` | Open the highlighted row's **Runs on** dropdown — the move-between-owners flow. Below 84 columns this opens the row's full-screen detail first, since the docked pane is hidden there |
 | `r` | Mark the highlighted automation's unread results read |
 | `e` | Edit in full — opens the row's own edit form |
 | `space` | Enable or disable (reminders) |
@@ -158,7 +158,9 @@ The screen has a floor of **80×24** and degrades in two steps:
   place behind it. **Escape** closes it (and, while a row editor is
   open, Escape closes *the editor* first). The four filter chips
   collapse into one **Filter: …** button that cycles them, and the rail
-  keeps Create ▾, Mark all read and Results on a single row.
+  keeps its buttons on a single row — Create ▾ and Results, plus
+  **Mark all read** whenever there is anything unread to mark (that
+  button is hidden otherwise, at every width).
 
 At the floor every operation is still reachable: create through **n** or
 **Create ▾**; edit, pause/resume, run now and transfer inside the pushed
@@ -748,7 +750,14 @@ hosted-editor `Esc` rule, every operation reachable at 80x24, and the
 `Tests/UI/test_schedules_keyboard_map.py`,
 `Tests/UI/test_schedules_unified_list.py`,
 `Tests/UI/test_schedules_results_tab.py` and
-`Tests/UI/test_schedules_workbench.py`.)*
+`Tests/UI/test_schedules_workbench.py`. Final fix wave (2026-09-04): `m`
+below 84 columns now pushes the detail and opens the Runs-on dropdown
+inside it instead of activating the hidden pane, a pushed detail is
+pinned to the row it was opened for (and closes with a notice if that row
+leaves the queue), and resolving a conflict reloads the queue while the
+conflicts view is still open — all four pinned in
+`Tests/UI/test_schedules_responsive_floor.py`. The `m` row above and the
+rail sentence in "Narrow terminals" were corrected in the same pass.)*
 
 *Verified against the schedules redesign PR-3 final fix wave —
 2026-09-03 (docs pass against shipped code/tests, live check pending the
