@@ -84,9 +84,11 @@ class SettingsThemeEditor(Vertical):
         """
         # Title is rendered by SettingsScreen._render_detail_pane()
         with Vertical(id="settings-theme-card", classes="settings-focus-card"):
+            # TASK-31256: Actions before the palette and presets so Apply/Save
+            # are reachable without Tabbing through 10 inputs and 40 swatches.
             yield from self._compose_library_section()
-            yield from self._compose_palette_section()
             yield from self._compose_actions_section()
+            yield from self._compose_palette_section()
             yield from self._compose_preview_section()
 
     def _compose_library_section(self) -> ComposeResult:
@@ -113,7 +115,7 @@ class SettingsThemeEditor(Vertical):
         # task-1585: the collapsed tree left a large blank region with no
         # explanation of what fills it.
         yield Static(
-            "Expand Themes to browse built-in and saved themes; "
+            "Your themes come first; expand Shipped themes to browse the catalog. "
             "New starts a theme from the current palette.",
             id="settings-theme-tree-hint",
             classes="settings-detail-row",
@@ -240,25 +242,25 @@ class SettingsThemeEditor(Vertical):
 
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
-        for theme_file in self.custom_themes_path.glob("*.toml"):
+        for theme_file in sorted(self.custom_themes_path.glob("*.toml")):
             try:
                 with open(theme_file, "r", encoding="utf-8") as f:
                     theme_data = toml.load(f)
                 theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
-                parent_node.add_leaf(f"user:{theme_name}")
+                # TASK-31256: the leaf's data says which loader applies; the
+                # label is the bare name (no "user:" prefix).
+                parent_node.add_leaf(theme_name, data="user")
             except Exception as e:
                 logger.error(f"Failed to load user theme {theme_file}: {e}")
 
     @on(Tree.NodeSelected)
     def on_theme_selected(self, event: Tree.NodeSelected) -> None:
         """Handle theme selection from the tree."""
-        if not event.node.children:
-            theme_name = str(event.node.label)
-            if theme_name.startswith("user:"):
-                theme_name = theme_name[5:]
-                self.load_user_theme(theme_name)
-            else:
-                self.load_theme(theme_name)
+        theme_name = str(event.node.label)
+        if event.node.data == "user":
+            self.load_user_theme(theme_name)
+        elif event.node.data == "catalog":
+            self.load_theme(theme_name)
 
     def load_theme(self, theme_name: str) -> None:
         """Load a theme for editing."""
@@ -505,17 +507,16 @@ class SettingsThemeEditor(Vertical):
             tree = self.query_one("#settings-theme-tree", Tree)
             user_node = None
             for node in tree.root.children:
-                if str(node.label) == "User Themes":
+                if str(node.label) == "Your themes":
                     user_node = node
                     break
 
             if user_node:
                 theme_exists = any(
-                    str(child.label) == f"user:{theme_name}"
-                    for child in user_node.children
+                    str(child.label) == theme_name for child in user_node.children
                 )
                 if not theme_exists:
-                    user_node.add_leaf(f"user:{theme_name}")
+                    user_node.add_leaf(theme_name, data="user")
         except Exception as e:
             logger.error(f"Failed to save theme: {e}")
             self.app.notify(f"Failed to save theme: {e}", severity="error")
@@ -718,9 +719,9 @@ class SettingsThemeEditor(Vertical):
 
             tree = self.query_one("#settings-theme-tree", Tree)
             for node in tree.root.children:
-                if str(node.label) == "User Themes":
+                if str(node.label) == "Your themes":
                     for child in node.children:
-                        if str(child.label) == f"user:{theme_name}":
+                        if str(child.label) == theme_name:
                             child.remove()
                             break
                     break
@@ -888,17 +889,23 @@ class SettingsThemeEditor(Vertical):
         tree = self.query_one("#settings-theme-tree", Tree)
         tree.root.remove_children()
 
-        builtin_node = tree.root.add("Built-in Themes", expand=True)
-        builtin_node.add_leaf("textual-dark")
-        builtin_node.add_leaf("textual-light")
+        # TASK-31256: the user's own themes first and open; the two Textual
+        # built-ins; then the 58 shipped themes collapsed so they do not push
+        # everything else out of the 12-row box. The root is expanded so the
+        # box is never a collapsed line over ten blank rows (task-1585).
+        user_node = tree.root.add("Your themes", expand=True)
+        self._load_user_themes(user_node)
 
-        custom_node = tree.root.add("Custom Themes", expand=True)
+        builtin_node = tree.root.add("Built-in", expand=True)
+        builtin_node.add_leaf("textual-dark", data="catalog")
+        builtin_node.add_leaf("textual-light", data="catalog")
+
+        shipped_node = tree.root.add("Shipped themes", expand=False)
         for theme in ALL_THEMES:
             if hasattr(theme, "name"):
-                custom_node.add_leaf(theme.name)
+                shipped_node.add_leaf(theme.name, data="catalog")
 
-        user_node = tree.root.add("User Themes", expand=True)
-        self._load_user_themes(user_node)
+        tree.root.expand()
 
     def on_show(self) -> None:
         """Refresh the theme tree when the widget becomes visible."""

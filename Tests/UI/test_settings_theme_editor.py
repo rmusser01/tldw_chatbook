@@ -222,7 +222,7 @@ async def test_settings_theme_editor_delete_blocks_builtin_themes(tmp_path):
 @pytest.mark.asyncio
 async def test_settings_theme_editor_delete_blocks_shipped_themes(tmp_path):
     """Shipped catalog themes are not deletable and say "shipped", matching
-    the tree's own grouping (Built-in / Custom catalog / User Themes)."""
+    the tree's own grouping (Your themes / Built-in / Shipped themes)."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
@@ -253,7 +253,7 @@ def _write_user_theme(themes_dir, theme_name: str):
 def _user_theme_labels(editor: SettingsThemeEditor) -> set[str]:
     tree = editor.query_one("#settings-theme-tree", Tree)
     for node in tree.root.children:
-        if str(node.label) == "User Themes":
+        if str(node.label) == "Your themes":
             return {str(child.label) for child in node.children}
     return set()
 
@@ -271,7 +271,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
 
         # The tree picked the file up on mount, so the delete also exercises
         # the tree-removal branch.
-        assert "user:my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in _user_theme_labels(editor)
 
         editor.current_theme_name = "my_custom_theme"
         editor.on_delete_theme()
@@ -287,7 +287,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert theme_file.exists()
-        assert "user:my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in _user_theme_labels(editor)
 
         # Re-invoke and confirm: only now is the file unlinked.
         editor.on_delete_theme()
@@ -297,7 +297,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert "user:my_custom_theme" not in _user_theme_labels(editor)
+        assert "my_custom_theme" not in _user_theme_labels(editor)
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == "Deleted theme 'my_custom_theme'"
@@ -316,7 +316,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        assert f"user:{shipped_name}" in _user_theme_labels(editor)
+        assert shipped_name in _user_theme_labels(editor)
 
         editor.current_theme_name = shipped_name
         editor.on_delete_theme()
@@ -330,7 +330,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert f"user:{shipped_name}" not in _user_theme_labels(editor)
+        assert shipped_name not in _user_theme_labels(editor)
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == f"Deleted theme '{shipped_name}'"
@@ -688,3 +688,54 @@ def test_generate_from_primary_keeps_the_primary_hue(primary):
         assert _hue_distance(_hue_deg(palette[key]), base) <= 30, (key, palette[key])
     assert 150 <= _hue_distance(_hue_deg(palette["accent"]), base) <= 180
     assert all(value == value.upper() for value in palette.values()), palette
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_actions_precede_presets_in_focus_order(tmp_path):
+    """TASK-31256: Apply/Save/Reset must not sit behind 40 preset swatches."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ids = [w.id for w in editor.query("*") if getattr(w, "can_focus", False) and w.id]
+        assert ids.index("settings-theme-apply") < ids.index("settings-theme-preset-Blues-0")
+        assert ids.index("settings-theme-apply") < ids.index("settings-theme-color-primary")
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_tabbing_does_not_move_preset_target(tmp_path):
+    """TASK-31256: focusing colour inputs on the way to a swatch must not change
+    which colour the swatch fills (it used to land on Error)."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["error"].focus()
+        await pilot.pause()
+        before_error = editor.color_inputs["error"].value
+        editor.query_one("#settings-theme-preset-Blues-0").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert editor.current_theme_data["primary"] == editor.COLOR_PRESETS["Blues"][0]
+        assert editor.color_inputs["error"].value == before_error
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(tmp_path):
+    """TASK-31256: own themes first and open; the 58 shipped themes collapsed."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        labels = [str(node.label) for node in tree.root.children]
+        assert labels == ["Your themes", "Built-in", "Shipped themes"]
+        assert tree.root.is_expanded
+        assert tree.root.children[0].is_expanded
+        assert not tree.root.children[2].is_expanded
+        assert [str(c.label) for c in tree.root.children[0].children] == ["ocean"]
