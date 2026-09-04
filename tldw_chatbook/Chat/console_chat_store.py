@@ -1308,9 +1308,10 @@ class ConsoleChatSession:
     library_destination_runtime: ConsoleLibraryDestinationRuntimeState = field(
         default_factory=ConsoleLibraryDestinationRuntimeState
     )
-    #: Verified endpoint selected for this live process only. Conversation
-    #: metadata, screen snapshots, sync, import, export, forks, and promotion
-    #: deliberately serialize ``settings`` instead and never this policy.
+    #: Verified endpoint selected for this live process only. Fork snapshots
+    #: may carry it in memory so the child keeps the same live-only authority;
+    #: conversation metadata, sync, import, export, and promotion never
+    #: serialize it.
     ephemeral_endpoint_policy: ConsoleEphemeralEndpointPolicy | None = None
     draft: str = ""
     #: Session-lifetime evidence that the composer has held user-authored text.
@@ -6077,9 +6078,15 @@ class ConsoleChatStore:
         settings = session.settings
         if not isinstance(settings, ConsoleSessionSettings):
             raise ValueError("Console fork settings are unavailable.")
+        endpoint_policy = session.ephemeral_endpoint_policy
+        persisted_settings = replace(
+            settings,
+            base_url=None if endpoint_policy is not None else settings.base_url,
+            pinned_prefill=None,
+        )
         return ConsoleForkConfigurationSnapshot(
             workspace_id=session.workspace_id,
-            settings=replace(settings, pinned_prefill=None),
+            settings=persisted_settings,
             rag_scope=session.rag_scope_holder.scope,
             context_policy_overrides=session.context_policy_overrides,
             library_policy=self.session_library_policy_candidate(session.id),
@@ -6097,6 +6104,7 @@ class ConsoleChatStore:
                 session.project_instruction_state
             ),
             thinking_history_policy=session.thinking_history_policy,
+            ephemeral_endpoint_policy=endpoint_policy,
         )
 
     def _fork_configuration_fingerprint(
@@ -7472,6 +7480,7 @@ class ConsoleChatStore:
             workspace_id=configuration.workspace_id,
             persisted_conversation_id=snapshot.fork_conversation_id,
             settings=configuration.settings,
+            ephemeral_endpoint_policy=configuration.ephemeral_endpoint_policy,
             context_policy_overrides=configuration.context_policy_overrides,
             library_policy_holder=ConsoleLibraryPolicyHolder(policy_snapshot),
             library_policy_hydrated=not snapshot.durable,
@@ -16565,11 +16574,20 @@ class ConsoleChatStore:
             )
 
         scope_type, workspace_id = self._persistence_scope(session)
+        persisted_settings = (
+            replace(session.settings, base_url=None)
+            if session.settings is not None
+            and session.ephemeral_endpoint_policy is not None
+            else session.settings
+        )
         metadata: dict[str, object] = {}
-        if session.settings is not None:
+        if persisted_settings is not None:
+            serialized_settings = asdict(persisted_settings)
+            if session.ephemeral_endpoint_policy is not None:
+                serialized_settings.pop("base_url", None)
             metadata["console_session_settings"] = {
                 "version": 1,
-                **asdict(session.settings),
+                **serialized_settings,
             }
         if session.rag_scope_holder.scope is not None:
             metadata["rag_scope"] = serialize_scope(session.rag_scope_holder.scope)
@@ -16598,8 +16616,8 @@ class ConsoleChatStore:
                 )
             )
         staged_generation_snapshot = (
-            snapshot_from_session_settings(session.settings)
-            if session.settings is not None
+            snapshot_from_session_settings(persisted_settings)
+            if persisted_settings is not None
             and session.generation_settings_revision > 0
             else None
         )

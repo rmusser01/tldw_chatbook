@@ -916,6 +916,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "speech_preferences",
                 "project_instruction_state",
                 "thinking_history_policy",
+                "ephemeral_endpoint_policy",
             ),
         ),
         (

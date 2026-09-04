@@ -1317,9 +1317,12 @@ class ChatPersistenceService:
         if dict(conversation_kwargs) != prepared:
             raise ValueError("Console fork configuration changed.")
         metadata: dict[str, object] = {}
+        serialized_settings = asdict(configuration.settings)
+        if configuration.ephemeral_endpoint_policy is not None:
+            serialized_settings.pop("base_url", None)
         metadata["console_session_settings"] = {
             "version": 1,
-            **asdict(configuration.settings),
+            **serialized_settings,
             "pinned_prefill": None,
         }
         metadata = merge_console_generation_settings(

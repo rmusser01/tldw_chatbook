@@ -8187,13 +8187,11 @@ class ConsoleChatController:
                 session.id,
                 origin,
                 frozen_capture_enabled=(
-                    preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                    capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
-                frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=preparation.pii_ruleset_revision_id,
-                frozen_next_trace_privacy_revision=(
-                    preparation.next_trace_privacy_revision
-                ),
+                frozen_pii_redaction_enabled=pii_redaction_enabled,
+                frozen_pii_ruleset_revision_id=pii_ruleset_revision_id,
+                frozen_next_trace_privacy_revision=next_trace_privacy_revision,
             )
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
@@ -17195,7 +17193,8 @@ class ConsoleChatController:
         self, session_id: str
     ) -> ConsoleProviderSelection:
         """Resolve provider inputs from the owning session, never the viewed tab."""
-        settings = self.store.session_settings(session_id)
+        settings = self.store.effective_session_settings(session_id)
+        endpoint_policy = self.store.session_ephemeral_endpoint_policy(session_id)
         workspace_id = self.store.session_workspace_id(session_id)
         current_workspace = self.store.workspace_context
         workspace_context = (
@@ -17216,6 +17215,15 @@ class ConsoleChatController:
             app_config=app_config,
             workspace_context=workspace_context,
         )
+        if (
+            endpoint_policy is not None
+            and endpoint_policy.provider == settings.provider
+            and endpoint_policy.model == settings.model
+        ):
+            selection = replace(
+                selection,
+                configured_endpoint_fallback_allowed=False,
+            )
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
@@ -17248,7 +17256,7 @@ class ConsoleChatController:
             session_id=session_id,
             provider_selection=selection,
             scratch_space=self._scratch_spaces.snapshot(session_id),
-            session_settings=self.store.session_settings(session_id),
+            session_settings=self.store.effective_session_settings(session_id),
             workspace_roots=(),
             capabilities={
                 "vision": bool(model)

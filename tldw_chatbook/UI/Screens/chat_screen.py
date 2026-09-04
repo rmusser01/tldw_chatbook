@@ -8175,9 +8175,22 @@ class ChatScreen(BaseAppScreen):
                 else ConsoleWorkspaceContext(active_workspace_id=workspace_id)
             )
 
+        endpoint_policy = (
+            store.session_ephemeral_endpoint_policy(target_session_id)
+            if target_session_id is not None
+            else None
+        )
+        endpoint_policy_owns_selection = (
+            endpoint_policy is not None
+            and endpoint_policy.provider == selection_settings.provider
+            and endpoint_policy.model == selection_settings.model
+        )
         return ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
+            configured_endpoint_fallback_allowed=(
+                not endpoint_policy_owns_selection
+            ),
             explicit_model=explicit_model,
             configured_model=configured_model,
             temperature=selection_settings.temperature,

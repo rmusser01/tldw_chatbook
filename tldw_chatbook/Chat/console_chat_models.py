@@ -819,6 +819,9 @@ class ConsoleProviderSelection:
 
     provider: str
     base_url: str | None = None
+    #: False only for a live session policy that must never fall back to a
+    #: configured endpoint (notably a failed endpoint-adoption rollback).
+    configured_endpoint_fallback_allowed: bool = True
     explicit_model: str | None = None
     configured_model: str | None = None
     temperature: float | None = None

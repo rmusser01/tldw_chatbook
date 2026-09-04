@@ -479,6 +479,17 @@ class _VllmDefaultPresentationSnapshot:
 
     draft: SettingsDraft | None
     provider_save_result: str
+    provider_test_result: str
+    provider_test_evidence_store: ProviderTestEvidenceStore
+    provider_draft_generation: int
+    provider_credential_revision: int
+    model_discovery_status: str
+    model_discovery_models: tuple[object, ...]
+    model_discovery_selected_model_ids: frozenset[str]
+    endpoint_suppress_queue: tuple[str, ...]
+    credential_env_var_suppress_queue: tuple[str, ...]
+    api_key_suppress_queue: tuple[str, ...]
+    context_window_suppress_queue: tuple[str, ...]
     card_disabled: bool
     inputs: tuple[tuple[str, str, str | None, bool], ...]
     selects: tuple[tuple[str, object, bool], ...]
@@ -2559,6 +2570,7 @@ class SettingsScreen(BaseAppScreen):
             "settings_rag_backfill",
         }
     )
+    _VLLM_DEFAULT_RELEASE_RETRY_LIMIT = 3
 
     # task-15475: none of these three is `recompose=True` any more. Each used
     # to rebuild the WHOLE screen -- nav bar, footer, category rail, mode
@@ -2643,6 +2655,8 @@ class SettingsScreen(BaseAppScreen):
         self._vllm_default_before_presentation: (
             _VllmDefaultPresentationSnapshot | None
         ) = None
+        self._vllm_default_release_attempts = 0
+        self._vllm_default_release_retry_scheduled = False
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
@@ -11391,6 +11405,25 @@ class SettingsScreen(BaseAppScreen):
         return _VllmDefaultPresentationSnapshot(
             draft=copy.deepcopy(self._provider_draft()),
             provider_save_result=self._provider_save_result,
+            provider_test_result=self._provider_test_result,
+            provider_test_evidence_store=copy.copy(
+                self._provider_test_evidence_store
+            ),
+            provider_draft_generation=self._provider_draft_generation,
+            provider_credential_revision=self._provider_credential_revision,
+            model_discovery_status=self._model_discovery_status,
+            model_discovery_models=tuple(self._model_discovery_models),
+            model_discovery_selected_model_ids=frozenset(
+                self._model_discovery_selected_model_ids
+            ),
+            endpoint_suppress_queue=tuple(self._provider_endpoint_suppress_queue),
+            credential_env_var_suppress_queue=tuple(
+                self._provider_credential_env_var_suppress_queue
+            ),
+            api_key_suppress_queue=tuple(self._provider_api_key_suppress_queue),
+            context_window_suppress_queue=tuple(
+                self._provider_context_window_suppress_queue
+            ),
             card_disabled=card.disabled,
             inputs=inputs,
             selects=selects,
@@ -11429,6 +11462,25 @@ class SettingsScreen(BaseAppScreen):
             self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = copy.deepcopy(
                 snapshot.draft
             )
+        self._provider_test_result = snapshot.provider_test_result
+        self._provider_test_evidence_store = copy.copy(
+            snapshot.provider_test_evidence_store
+        )
+        self._provider_draft_generation = snapshot.provider_draft_generation
+        self._provider_credential_revision = snapshot.provider_credential_revision
+        self._model_discovery_status = snapshot.model_discovery_status
+        self._model_discovery_models = tuple(snapshot.model_discovery_models)
+        self._model_discovery_selected_model_ids = set(
+            snapshot.model_discovery_selected_model_ids
+        )
+        self._provider_endpoint_suppress_queue[:] = snapshot.endpoint_suppress_queue
+        self._provider_credential_env_var_suppress_queue[:] = (
+            snapshot.credential_env_var_suppress_queue
+        )
+        self._provider_api_key_suppress_queue[:] = snapshot.api_key_suppress_queue
+        self._provider_context_window_suppress_queue[:] = (
+            snapshot.context_window_suppress_queue
+        )
 
         values = self._provider_setting_values_mapping()
         provider = str(values.get("provider") or "").strip()
@@ -11460,6 +11512,8 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-provider-save-result", snapshot.provider_save_result
         )
+        self._update_provider_test_result()
+        self._refresh_model_discovery_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
         for widget_id, disabled in snapshot.buttons:
             try:
@@ -11473,10 +11527,23 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _vllm_default_actions_fenced(self) -> bool:
+        """Reject Settings mutations until the staged handoff is settled."""
+
+        if self._vllm_default_claim is None:
+            return False
+        self.app.notify(
+            "Finishing verified vLLM handoff. Settings actions are temporarily "
+            "unavailable.",
+            severity="warning",
+        )
+        return True
+
     def _consume_pending_vllm_default_intent(self) -> bool:
         """Stage one current verified target in Providers without saving it."""
 
         if self._vllm_default_claim is not None:
+            self._retry_vllm_default_cleanup()
             return False
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
@@ -11504,6 +11571,8 @@ class SettingsScreen(BaseAppScreen):
             self._vllm_default_claim = cast(
                 HandoffClaim[VllmDefaultIntent], claim
             )
+            self._vllm_default_release_attempts = 0
+            self._vllm_default_release_retry_scheduled = False
             self._set_vllm_default_compensation_fence(True)
             self._stage_provider_value("provider", "vllm")
             self._stage_provider_value("model", intent.model_id)
@@ -11591,6 +11660,8 @@ class SettingsScreen(BaseAppScreen):
         presentation = self._vllm_default_before_presentation
         self._vllm_default_claim = None
         self._vllm_default_before_presentation = None
+        self._vllm_default_release_attempts = 0
+        self._vllm_default_release_retry_scheduled = False
         if presentation is not None:
             try:
                 self.query_one(
@@ -11623,19 +11694,62 @@ class SettingsScreen(BaseAppScreen):
                     copy.deepcopy(presentation.draft)
                 )
         store = getattr(self.app_instance, "pending_handoffs", None)
+        released = False
         if type(store) is PendingHandoffStore:
             try:
-                store.release(current_claim)
+                released = store.release(current_claim) is True
             except BaseException as release_error:
                 logger.warning(
                     "vLLM Settings handoff release failed "
-                    "(revision={}, exception_category={})",
+                    "(revision=%s, exception_category=%s)",
                     current_claim.revision,
                     type(release_error).__name__,
                 )
-        self._vllm_default_claim = None
-        self._vllm_default_before_presentation = None
-        if self.is_mounted and presentation is None:
+        if released:
+            self._vllm_default_claim = None
+            self._vllm_default_before_presentation = None
+            self._vllm_default_release_attempts = 0
+            self._vllm_default_release_retry_scheduled = False
+            if self.is_mounted:
+                self._set_vllm_default_compensation_fence(False)
+                self._update_draft_status_widgets(
+                    SettingsCategoryId.PROVIDERS_MODELS
+                )
+            return
+
+        self._vllm_default_claim = current_claim
+        self._vllm_default_release_attempts += 1
+        if self.is_mounted:
+            self._set_vllm_default_compensation_fence(True)
+        if (
+            self.is_mounted
+            and self._vllm_default_release_attempts
+            < self._VLLM_DEFAULT_RELEASE_RETRY_LIMIT
+            and not self._vllm_default_release_retry_scheduled
+        ):
+            self._vllm_default_release_retry_scheduled = True
+            try:
+                self.call_after_refresh(self._retry_vllm_default_cleanup)
+            except BaseException as schedule_error:
+                self._vllm_default_release_retry_scheduled = False
+                logger.warning(
+                    "vLLM Settings handoff release retry could not be scheduled "
+                    "(revision=%s, exception_category=%s)",
+                    current_claim.revision,
+                    type(schedule_error).__name__,
+                )
+
+    def _retry_vllm_default_cleanup(self) -> None:
+        """Retry one retained exact release without exceeding auto-retry bounds."""
+
+        self._vllm_default_release_retry_scheduled = False
+        if self._vllm_default_claim is None:
+            return
+        self._rollback_vllm_default_intent()
+
+        if self.is_mounted and self._vllm_default_claim is not None:
+            self._set_vllm_default_compensation_fence(True)
+        elif self.is_mounted and self._vllm_default_before_presentation is None:
             self._set_vllm_default_compensation_fence(False)
             self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -13217,6 +13331,8 @@ class SettingsScreen(BaseAppScreen):
         saved config are skipped (defense-in-depth no-op guard) so merely
         viewing the category never rewrites config.toml.
         """
+        if self._vllm_default_actions_fenced():
+            return
         try:
             auto_refresh_enabled = self.query_one(
                 "#settings-model-catalog-auto-refresh", Checkbox
@@ -25150,16 +25266,22 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._discover_provider_models_worker()
 
     @on(Button.Pressed, "#settings-save-discovered-provider-models")
     def handle_save_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._save_selected_discovered_provider_models_worker()
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._clear_discovered_provider_models_worker()
 
     @on(Checkbox.Changed)
@@ -25697,6 +25819,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_save_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
@@ -26551,6 +26675,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_revert_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
@@ -26755,6 +26881,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_test_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:

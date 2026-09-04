@@ -36,6 +36,10 @@ from tldw_chatbook.Chat.console_project_instructions import (
     sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointPolicyState,
+    ConsoleEphemeralEndpointPolicy,
+)
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
@@ -313,6 +317,7 @@ class ConsoleForkConfigurationSnapshot:
     speech_preferences: ConsoleSpeechPreferences
     project_instruction_state: ProjectInstructionControlState
     thinking_history_policy: ThinkingHistoryPolicy = "auto"
+    ephemeral_endpoint_policy: ConsoleEphemeralEndpointPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -509,6 +514,26 @@ def fingerprint_console_fork_configuration(
     )
     if configuration.settings.pinned_prefill is not None:
         raise ValueError("Fork configuration must clear pinned prefill.")
+    endpoint_policy = configuration.ephemeral_endpoint_policy
+    if endpoint_policy is not None:
+        if type(endpoint_policy) is not ConsoleEphemeralEndpointPolicy:
+            raise TypeError("Fork endpoint policy must be an exact live policy.")
+        _require_exact_field_types(
+            "Fork endpoint policy",
+            endpoint_policy,
+            {
+                "provider": (str,),
+                "model": (str, type(None)),
+                "base_url": (str,),
+                "state": (ConsoleEndpointPolicyState,),
+            },
+        )
+        if (
+            configuration.settings.base_url is not None
+            or endpoint_policy.provider != configuration.settings.provider
+            or endpoint_policy.model != configuration.settings.model
+        ):
+            raise ValueError("Fork endpoint policy does not own its safe settings.")
     if type(configuration.rag_scope) not in {RagScope, type(None)}:
         raise TypeError("Fork RAG scope must be RagScope or None.")
     if configuration.rag_scope is not None:
@@ -610,6 +635,16 @@ def fingerprint_console_fork_configuration(
             "source": settings.source,
             "pinned_prefill": None,
         },
+        "ephemeral_endpoint_policy": (
+            None
+            if endpoint_policy is None
+            else {
+                "provider": endpoint_policy.provider,
+                "model": endpoint_policy.model,
+                "base_url": endpoint_policy.base_url,
+                "state": endpoint_policy.state.value,
+            }
+        ),
         "rag_scope": (
             None
             if rag_scope is None

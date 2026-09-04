@@ -2847,6 +2847,82 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
+async def test_vllm_live_policy_bypasses_saved_match_and_pins_adapter_endpoint() -> None:
+    """An explicit live owner may differ from config without adapter fallback."""
+
+    calls: list[dict[str, object]] = []
+
+    def adapter(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "live reply"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "vllm": {
+                    "api_url": "http://127.0.0.1:9098/v1",
+                    "model": "configured-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    selection = ConsoleProviderSelection(
+        provider="vllm",
+        explicit_model="live-model",
+        base_url="http://127.0.0.1:9188/v1",
+        configured_endpoint_fallback_allowed=False,
+        streaming=False,
+    )
+
+    resolution = await gateway.resolve_for_send(selection)
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "live request"}],
+        )
+    ]
+
+    assert resolution.ready is True
+    assert resolution.base_url == "http://127.0.0.1:9188/v1"
+    assert chunks == ["live reply"]
+    assert calls[0]["api_base_url"] == "http://127.0.0.1:9188/v1"
+
+
+@pytest.mark.asyncio
+async def test_blocked_live_policy_never_falls_back_to_configured_vllm_endpoint() -> (
+    None
+):
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "vllm": {
+                    "api_url": "http://127.0.0.1:9098/v1",
+                    "model": "configured-model",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="vllm",
+            explicit_model="live-model",
+            base_url=None,
+            configured_endpoint_fallback_allowed=False,
+        )
+    )
+
+    assert resolution.ready is False
+    assert not resolution.base_url
+    assert resolution.base_url != "http://127.0.0.1:9098/v1"
+    assert "could not be restored safely" in resolution.visible_copy
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_endpoint() -> (
     None
 ):

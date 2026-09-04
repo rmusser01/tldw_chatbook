@@ -3004,6 +3004,19 @@ class ConsoleProviderGateway:
                 provider=selection.provider,
                 visible_copy="Select a provider and model before sending.",
             )
+        if (
+            not selection.configured_endpoint_fallback_allowed
+            and not str(selection.base_url or "").strip()
+        ):
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "Provider blocked: this session's endpoint could not be "
+                    "restored safely. Reopen the chat or choose provider settings "
+                    "again before sending."
+                ),
+            )
 
         identity = resolve_console_provider_identity(selection.provider)
         if identity.uses_direct_llama_path:
@@ -3198,7 +3211,8 @@ class ConsoleProviderGateway:
             )
 
         if (
-            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            selection.configured_endpoint_fallback_allowed
+            and provider_uses_endpoint(identity.readiness_key, provider_settings)
             and endpoint_differs
         ):
             return self._blocked_resolution(
@@ -5306,6 +5320,8 @@ class ConsoleProviderGateway:
             "custom-openai-api-2",
             "mistral",
             "mistralai",
+            "vllm",
+            "local_vllm",
         }:
             kwargs["api_base_url"] = resolution.base_url or None
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:

@@ -69,6 +69,9 @@ def _detached_selection(
     return ConsoleProviderSelection(
         provider=str(selection.provider),
         base_url=selection.base_url,
+        configured_endpoint_fallback_allowed=(
+            selection.configured_endpoint_fallback_allowed
+        ),
         explicit_model=selection.explicit_model,
         configured_model=selection.configured_model,
         temperature=selection.temperature,
