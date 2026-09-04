@@ -3,7 +3,7 @@
 - **Date:** 2026-09-03
 - **Status:** Approved
 - **ADR required:** yes
-- **ADR path:** `backlog/decisions/081-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- **ADR path:** `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - **Reason:** Canvas introduces durable schema, branch-aware artifact ownership,
   browser sandbox and authentication boundaries, a parent/child process
   protocol, export/import changes, and future capability constraints.
@@ -969,7 +969,7 @@ References:
 
 ## 21. Final Design Decisions
 
-- **ADR required:** yes; ADR-081 records the storage, runtime, security,
+- **ADR required:** yes; ADR-115 records the storage, runtime, security,
   process, authentication, and portability boundaries.
 - **Chosen architecture:** authoritative Canvas domain service in the Chatbook
   app process plus a same-origin browser gateway/session broker; private
