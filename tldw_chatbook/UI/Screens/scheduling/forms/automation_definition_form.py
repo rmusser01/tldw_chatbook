@@ -4,9 +4,12 @@ Mirrors `ReminderForm`'s structure (ADR-099 idiom parity: the modal box is
 its own scroll container, a docked footer keeps the live preview/errors/
 actions visible, Escape triggers a discard guard). The recurring-cron
 schedule sub-form reuses `reminder_form.py`'s task-23102 pure helpers
-(`preset_to_cron`, `cron_to_preset`, `parse_forgiving_datetime`, timezone
-helpers) directly -- only the Textual wiring (widget ids, compose layout)
-is necessarily duplicated, since it is bound to this form's own field ids.
+(`preset_to_cron`, `cron_to_preset`) directly, plus `parse_forgiving_
+datetime`/`is_valid_zone` from `Scheduling/schedule_input_parsing.py`
+(redesign PR-3, task 3 hoisted these two out of `reminder_form.py` -- pure
+stdlib, no Textual, no layering reason left to route through the form
+module) -- only the Textual wiring (widget ids, compose layout) is
+necessarily duplicated, since it is bound to this form's own field ids.
 `cron_to_preset` is used for edit-mode prefill (mapping a stored cron
 expression back onto the preset/time-of-day fields); nothing here needs
 `parse_time_of_day` directly since `cron_to_preset` already returns the
@@ -35,19 +38,17 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
+from tldw_chatbook.Scheduling.schedule_input_parsing import parse_forgiving_datetime
 
 from ..task_detail import definition_cron_expression
 
 from .reminder_form import (
-    _CURATED_TIMEZONES,
-    _DEFAULT_TIMEZONE,
+    DEFAULT_TIME_OF_DAY,
     _TIME_OF_DAY_PRESETS,
-    _is_valid_zone,
     cron_to_preset,
-    detect_system_timezone,
-    parse_forgiving_datetime,
     preset_to_cron,
     system_timezone_name,
+    timezone_options,
 )
 
 if TYPE_CHECKING:
@@ -358,7 +359,10 @@ class AutomationDefinitionForm(ModalScreen):
                 )
                 with Vertical(id="automation-preset-time-group"):
                     yield Label("Time of day (24-hour):", classes="form-label")
-                    yield Input(placeholder="09:00", id="automation-preset-time")
+                    yield Input(
+                        placeholder=DEFAULT_TIME_OF_DAY,
+                        id="automation-preset-time",
+                    )
                 with Vertical(id="automation-cron-custom-group"):
                     yield Label("Cron Expression:", classes="form-label")
                     yield Input(placeholder="0 9 * * 1", id="automation-cron")
@@ -412,7 +416,7 @@ class AutomationDefinitionForm(ModalScreen):
                     yield Button("Cancel", id="automation-cancel")
 
     def on_mount(self) -> None:
-        self.query_one("#automation-preset-time", Input).value = "09:00"
+        self.query_one("#automation-preset-time", Input).value = DEFAULT_TIME_OF_DAY
         self.query_one("#automation-cron", Input).value = "0 9 * * *"
         self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
         self._update_preset_field_visibility("daily")
@@ -538,19 +542,24 @@ class AutomationDefinitionForm(ModalScreen):
         but non-curated zone (`Pacific/Apia`) assigned a value outside the
         Select's own options and raised `InvalidSelectValueError`, taking
         the whole edit modal down.
+
+        Delegates to the module-level `timezone_options()` (redesign PR-3
+        task 3 hoisted this same body out of `ReminderForm._timezone_
+        options` for a bare-function inline-row editor to reuse; task 4's
+        review flagged this method as a third, still-independent copy --
+        folded in here, no test pins either difference below). Two small
+        observable difference from the pre-consolidation body: an
+        UNDETECTED machine zone (`detect_system_timezone()` returning
+        `None`) now gets an honest "machine zone not detected" label on
+        the fallback entry instead of silently offering the bare default
+        zone -- a strict improvement, not a behavior this form
+        deliberately avoided. The unrecognized-zone label keeps saying
+        "stored on this automation" via the `noun` argument: the
+        consolidation had briefly put the reminder wording on this
+        surface, which is the vocabulary slip final review F10 caught.
+        Option VALUES/ordering are unchanged.
         """
-        detected = detect_system_timezone()
-        zones = [detected or _DEFAULT_TIMEZONE]
-        stored = self._stored_timezone()
-        for zone in list(_CURATED_TIMEZONES) + ([stored] if stored else []):
-            if zone not in zones and _is_valid_zone(zone):
-                zones.append(zone)
-        options = [(zone, zone) for zone in zones]
-        if stored and stored not in zones:
-            options.append(
-                (f"{stored} — stored on this automation, not recognized here", stored)
-            )
-        return options
+        return timezone_options(self._stored_timezone(), noun="automation")
 
     def _initial_timezone(self) -> str:
         return self._stored_timezone() or system_timezone_name()

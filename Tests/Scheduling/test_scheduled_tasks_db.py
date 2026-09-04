@@ -1677,6 +1677,26 @@ def test_upsert_definitions_inserts_new_row(tmp_path):
     assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
 
 
+def test_upsert_definitions_insert_defaults_json_columns_to_empty_dict_not_null(
+    tmp_path,
+):
+    """task-4 review Finding 1: a server item that omits `input`/`config`/
+    `notification_policy` entirely (the exact `_definition_item()` default
+    shape every other test in this section already uses) used to leave
+    those THREE columns SQL NULL on insert -- unlike `family`/`name`/
+    `lifecycle`/`health`/`version`, which all get an explicit
+    `setdefault`. `SchedulingService._merge_definition_payload`'s
+    `isinstance(stored, dict)` check then skipped the merge entirely for
+    a NULL column, silently dropping whatever the untouched group held on
+    the next edit (e.g. `input.question`)."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    row = db.get_automation_definition_by_server_id("server:42", "srv-def-1")
+    assert row["input"] == {}
+    assert row["config"] == {}
+    assert row["notification_policy"] == {}
+
+
 def test_upsert_definitions_strips_resolved_sources_from_scope(tmp_path):
     """Task 6 fix-round finding: a server item's `config.scope` may echo
     back `resolved_sources` (the client's own local preview does, for the
@@ -1725,6 +1745,161 @@ def test_upsert_definitions_server_wins_on_update(tmp_path):
     assert len(rows) == 1
     assert rows[0]["name"] == "Renamed"
     assert rows[0]["lifecycle"] == "paused"
+
+
+def test_upsert_definitions_pending_lifecycle_mutation_blocks_lifecycle_field(tmp_path):
+    """PR-3 task 2, guard layer 1: an unpushed local pause/resume/archive
+    outranks the mirror until SyncEngine's lifecycle replay has pushed it
+    -- same TOCTOU-closing shape as the results review guard, but
+    surgical: only `lifecycle` is withheld, every other field still
+    server-wins."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.record_pending_mutation(
+        local_id,
+        "automation_lifecycle",
+        "server:42",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(name="Renamed", lifecycle="archived")],
+    )
+
+    assert counts == {"inserted": 0, "updated": 1}
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "configured"  # withheld -- unpushed pause pending
+    assert row["name"] == "Renamed"  # every other field still server-wins
+
+
+def test_upsert_definitions_pending_non_lifecycle_mutation_does_not_block_lifecycle(
+    tmp_path,
+):
+    """A queued EDIT lives in the `automation_definition` slot, which the
+    guard (keyed on `automation_lifecycle` since Qodo findings 5+6) never
+    reads -- so an unrelated pending edit does not freeze `lifecycle`,
+    and the two coexist on one row instead of sharing a slot."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:42",
+        {"action": "update", "definition_payload": {"name": "Local edit"}},
+    )
+
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(lifecycle="archived")],
+    )
+
+    assert counts == {"inserted": 0, "updated": 1}
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "archived"  # not a lifecycle mutation -- server wins
+
+
+def test_upsert_definitions_skip_lifecycle_server_ids_blocks_lifecycle_field(tmp_path):
+    """PR-3 task 2, guard layer 2: the same-cycle pushed-ids skip set
+    (threaded from `SyncEngine._replay_definition_mutations`, mirroring
+    `skip_review_server_ids`) protects a row whose pending mutation is
+    ALREADY gone (replayed earlier this cycle) from a same-cycle stale
+    echo -- guard 1 alone can't see it."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(name="Renamed", lifecycle="archived")],
+        skip_lifecycle_server_ids=frozenset({"srv-def-1"}),
+    )
+
+    assert counts == {"inserted": 0, "updated": 1}
+    row = db.list_automation_definitions(owner_id="server:42")[0]
+    assert row["lifecycle"] == "configured"  # withheld -- pushed this cycle
+    assert row["name"] == "Renamed"  # every other field still server-wins
+
+
+def test_upsert_definitions_pending_lifecycle_mutation_recorded_mid_loop_still_blocks(
+    tmp_path,
+):
+    """Fault-ordering, same shape as
+    `test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update`:
+    the guard's pending-mutation SELECT must run per-row INSIDE this
+    write transaction, immediately before that row's own UPDATE -- not
+    snapshotted once before the loop starts. Proven by inserting row 2's
+    pending lifecycle mutation, via a separate real connection, DURING
+    this very upsert call, timed to land right as row 1's existence
+    check fires (strictly after any pre-loop snapshot would have been
+    taken). A snapshot-based guard would miss it; the per-row check
+    catches it."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server(
+        "server:42",
+        [
+            _definition_item(id="srv-def-1", name="First"),
+            _definition_item(id="srv-def-2", name="Second"),
+        ],
+    )
+    rows_by_server_id = {
+        row["server_id"]: row["id"]
+        for row in db.list_automation_definitions(owner_id="server:42")
+    }
+    local_id_2 = rows_by_server_id["srv-def-2"]
+
+    real_get_connection = ScheduledTasksDB._get_connection
+    injected = {"done": False}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "SELECT id FROM automation_definitions" not in sql:
+                return
+            injected["done"] = True
+            # Simulate a concurrent set_definition_lifecycle write landing
+            # mid-loop: a totally separate connection records row 2's
+            # pending pause mutation right now, before this upsert call
+            # has reached row 2.
+            side_conn = sqlite3.connect(str(tmp_path / "s.db"))
+            try:
+                side_conn.execute(
+                    "INSERT INTO pending_mutations "
+                    "(local_id, primitive, owner_id, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        local_id_2,
+                        "automation_lifecycle",
+                        "server:42",
+                        '{"action": "pause", "server_definition_id": "srv-def-2"}',
+                        "2026-09-01T00:00:00+00:00",
+                    ),
+                )
+                side_conn.commit()
+            finally:
+                side_conn.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_definitions_from_server(
+            "server:42",
+            [
+                _definition_item(id="srv-def-1", name="First", lifecycle="archived"),
+                _definition_item(id="srv-def-2", name="Second", lifecycle="archived"),
+            ],
+        )
+
+    assert injected["done"], "the spy never saw the expected SELECT -- test setup is stale"
+    assert counts == {"inserted": 0, "updated": 2}
+    row_2 = db.get_automation_definition(local_id_2)
+    assert row_2["lifecycle"] == "configured"  # caught despite landing mid-loop
+    assert row_2["name"] == "Second"  # other fields still server-wins
 
 
 def test_upsert_definitions_never_clears_local_transfer_state(tmp_path):
@@ -1963,6 +2138,70 @@ def test_adopt_server_definition_identity_unknown_local_id_returns_false(tmp_pat
         db.adopt_server_definition_identity("does-not-exist", {"id": "srv-def-1"})
         is False
     )
+
+
+def test_adopt_server_definition_identity_withholds_lifecycle_under_the_guard(tmp_path):
+    """Redesign PR-3 final review C1's belt: the push-echo mirror now
+    carries the same `lifecycle` guard the pull mirror has. A pause queued
+    while an online save was in flight must not be reverted by the echo
+    that save comes back with -- SURGICALLY: every other echoed field,
+    `server_id` included, still writes."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    db.update_automation_definition(
+        local_id,
+        lifecycle="paused",
+        pending_mutation={
+            "primitive": "automation_lifecycle",
+            "owner_id": "server:42",
+            "payload": {"action": "pause", "server_definition_id": "srv-def-9"},
+        },
+    )
+
+    assert (
+        db.adopt_server_definition_identity(
+            local_id,
+            {
+                "id": "srv-def-9",
+                "name": "Server-confirmed name",
+                "lifecycle": "configured",
+            },
+        )
+        is True
+    )
+
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "paused"
+    assert row["server_id"] == "srv-def-9"
+    assert row["name"] == "Server-confirmed name"
+
+
+def test_adopt_server_definition_identity_applies_lifecycle_under_an_edit_mutation(
+    tmp_path,
+):
+    """The guard is SLOT-scoped, not "any pending mutation for this row":
+    the replay that CALLS this method always still has its own edit
+    mutation queued in the `automation_definition` slot (it is deleted
+    right after), so a primitive-blind check would freeze `lifecycle` on
+    every push."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft", lifecycle="paused"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:42",
+        {"action": "update", "server_definition_id": "srv-def-9"},
+    )
+
+    db.adopt_server_definition_identity(
+        local_id, {"id": "srv-def-9", "lifecycle": "configured"}
+    )
+
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
 
 
 # ----------------------------------------------------------------------

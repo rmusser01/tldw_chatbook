@@ -1751,6 +1751,53 @@ async def test_save_definition_edit_still_clears_a_field_the_payload_carries(db)
 
 
 @pytest.mark.asyncio
+async def test_save_definition_edit_merges_over_a_sql_null_json_column(db):
+    """task-4 review Finding 1: `config`/`input`/`notification_policy`
+    may be SQL NULL (Python `None`) rather than `{}` -- reachable via
+    `create_automation_definition`'s own `None -> NULL` pass-through (the
+    same shape `upsert_automation_definitions_from_server`'s INSERT path
+    used to leave before its own fix) for a definition a caller never
+    populated one of these groups on. `_merge_definition_payload`'s old
+    `isinstance(stored, dict)` gate treated NULL as "nothing to merge"
+    and skipped the branch entirely -- dropping the payload's OWN
+    incoming value for that group too, not just the (nonexistent) stored
+    one. Edits the SAME group that is NULL (`config`, via the Generation
+    row's real edit shape) to pin the exact failure mode the review
+    reproduced."""
+    def_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Nully digest",
+        input={"question": "What shipped?"},
+        config=None,
+        notification_policy=None,
+        schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+    )
+    row = db.get_automation_definition(def_id)
+    assert row["config"] is None
+    assert row["notification_policy"] is None
+
+    svc = SchedulingService(db=db, runtime_source="local")
+    outcome = await svc.save_definition(
+        {
+            "family": "recurring_question",
+            "name": "Nully digest",
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "config": {"generation_mode": "required"},
+            "input": {},
+            "notification_policy": {},
+        },
+        "local",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved", outcome.errors
+    row = db.get_automation_definition(def_id)
+    assert row["config"]["generation_mode"] == "required"
+    assert row["input"]["question"] == "What shipped?"  # untouched group preserved
+
+
+@pytest.mark.asyncio
 async def test_save_definition_server_owner_offline_invalid_writes_nothing(db):
     server_client = AsyncMock()
     server_client.preview_automation_definition.side_effect = ServerUnavailableError(
@@ -2939,6 +2986,150 @@ async def test_update_reminder_refused_while_transferring(db):
     assert db.get_reminder_task(reminder_id)["title"] == "Original"
 
 
+# ----------------------------------------------------------------------
+# edit_reminder_fields (redesign PR-3 task 2's reminder validation bridge)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_cron_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"cron": "not a cron"})
+
+    assert outcome.status == "error"
+    assert outcome.errors == [
+        {
+            "field": "cron",
+            "code": "invalid_cron",
+            "message": "Cron expression is invalid.",
+        }
+    ]
+    assert db.get_reminder_task(reminder_id)["cron"] == "0 9 * * *"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_timezone_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(
+        reminder_id, {"timezone": "Not/A_Real_Zone"}
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "timezone"
+    assert outcome.errors[0]["code"] == "invalid_timezone"
+    assert db.get_reminder_task(reminder_id)["timezone"] == "UTC"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_run_at_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "not a date"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "run_at"
+    assert outcome.errors[0]["code"] == "invalid_datetime"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_run_at_accepts_forgiving_local_format(db):
+    """Reuses `reminder_form.parse_forgiving_datetime` -- a naive,
+    space-separated datetime (not full ISO-8601) must parse and persist,
+    same as the create form accepts."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "2031-06-15 09:30"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert (outcome.task.run_at.year, outcome.task.run_at.month, outcome.task.run_at.day) == (
+        2031,
+        6,
+        15,
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_bad_schedule_kind_returns_field_error_not_raw_exception(db):
+    """Belt-and-suspenders: a bad value the pre-checks above don't cover
+    (schedule_kind isn't cron/run_at/timezone) still routes through
+    `ReminderTask`'s own model validation inside `update_reminder` -- the
+    bridge must catch that `pydantic.ValidationError` and translate it,
+    never let it escape."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db)
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"schedule_kind": "bogus"})
+
+    assert outcome.status == "error"
+    assert outcome.errors
+    assert outcome.errors[0]["field"] == "schedule_kind"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_locked_row_returns_row_error(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, title="Original")
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+    assert db.get_reminder_task(reminder_id)["title"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_unknown_task_id_returns_row_not_found(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.edit_reminder_fields("does-not-exist", {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_edit_threads_the_rows_owner(db):
+    """PR-2 row-owner discipline: the row's OWN `owner_id` is threaded to
+    `update_reminder`, not the service's active `owner_id` -- the unified
+    list can show a row that belongs to a different owner than the
+    service's current one (same rationale as `delete_reminder`'s)."""
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    svc = SchedulingService(db=db, server_client=offline_client, runtime_source="local")
+    reminder_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Renamed"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert outcome.task.title == "Renamed"
+    assert svc.owner_id == "local"  # never flipped
+    offline_client.update_reminder.assert_awaited_once()
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+
+
 @pytest.mark.asyncio
 async def test_delete_reminder_refused_while_transferring(db):
     """I7: deleting a dormant release copy discards the only row the
@@ -2983,7 +3174,7 @@ async def test_set_definition_lifecycle_local_writes_without_a_mutation(db):
 
     assert outcome.status == "saved"
     assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
-    assert db.get_pending_mutations(primitive="automation_definition") == []
+    assert db.get_pending_mutations(primitive="automation_lifecycle") == []
 
 
 @pytest.mark.asyncio
@@ -3000,9 +3191,12 @@ async def test_set_definition_lifecycle_server_row_records_the_replay_mutation(d
 
     assert outcome.status == "saved"
     assert db.get_automation_definition(definition_id)["lifecycle"] == "configured"
-    mutations = db.get_pending_mutations("server:1", primitive="automation_definition")
+    mutations = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert [m["payload"]["action"] for m in mutations] == ["resume"]
     assert mutations[0]["payload"]["server_definition_id"] == "srv-def-1"
+    # Its OWN slot -- nothing lands in the shared definition primitive
+    # (Qodo findings 5+6), which is what leaves room for a queued edit.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
 
 
 @pytest.mark.asyncio
@@ -3024,6 +3218,282 @@ async def test_set_definition_lifecycle_refused_while_transferring(db):
     outcome = await svc.set_definition_lifecycle(definition_id, "archive")
     assert outcome.status == "error"
     assert outcome.errors[0]["code"] == "transfer_in_progress"
+
+
+# ----------------------------------------------------------------------
+# Mutation-slot COEXISTENCE: an edit and a lifecycle change queue in
+# different `pending_mutations` slots (`automation_definition` vs
+# `automation_lifecycle`), so neither destroys the other -- Qodo findings
+# 5+6, which reversed final review C1's cross-action refusal for the
+# lifecycle half. Both of C1's probes are kept, inverted: what used to be
+# refused now succeeds with BOTH mutations intact. The edit-vs-TRANSFER
+# refusal below still stands (those two DO share a slot).
+# ----------------------------------------------------------------------
+
+
+def _paused_server_definition(db):
+    """A synced, server-owned definition with a `pause` queued for sync."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    db.update_automation_definition(
+        definition_id,
+        lifecycle="paused",
+        pending_mutation={
+            "primitive": "automation_lifecycle",
+            "owner_id": "server:1",
+            "payload": {"action": "pause", "server_definition_id": "srv-def-1"},
+        },
+    )
+    return definition_id
+
+
+def _assert_pause_survived(db, definition_id):
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+    pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
+    assert [m["payload"]["action"] for m in pending] == ["pause"]
+
+
+@pytest.mark.asyncio
+async def test_edit_coexists_with_a_queued_pause_online(db):
+    """C1 probe 1, inverted. The edit goes through (it no longer collides
+    with anything), the echo cannot revert `lifecycle` -- `adopt_server_
+    definition_identity`'s guard reads the lifecycle slot and sees the
+    pause -- and `_clear_stale_edit_mutation` cannot reach the pause
+    either, since it only ever clears the definition slot."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    # The echo carries the server's PRE-pause `lifecycle` -- the exact
+    # payload that used to revert the row.
+    server_client.update_automation_definition.return_value = _server_definition_echo(
+        name="Edited", lifecycle="configured"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited"
+    _assert_pause_survived(db, definition_id)
+    server_client.preview_automation_definition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_offline_edit_coexists_with_a_queued_pause(db):
+    """C1 probe 2, inverted -- the finding-5 headline. `record_pending_
+    mutation`'s `INSERT OR REPLACE` is keyed `(local_id, primitive,
+    owner_id)`: with the pause in its own primitive, the queued edit
+    lands BESIDE it instead of overwriting it, so both replay."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "queued"
+    _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
+    assert queued_edits[0]["payload"]["definition_payload"]["name"] == "Edited"
+
+
+@pytest.mark.asyncio
+async def test_pause_after_an_offline_edit_keeps_both_queued(db):
+    """The MIRROR direction of finding 5 (the C1 deferral this reversal
+    closes): pausing a row that already has an offline edit queued used
+    to discard that edit's push. Order must not matter."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    edited = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+    paused = await svc.set_definition_lifecycle(definition_id, "pause")
+
+    assert (edited.status, paused.status) == ("queued", "saved")
+    _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_edit_refused_while_a_release_transfer_is_queued(db):
+    """C1's TRANSFER half stands after Qodo 5+6: a queued
+    `release_from_server` still shares the `automation_definition` slot
+    an edit would take, and the mirror row carries no `transfer_state`
+    for `transfer_lock_reason` to catch."""
+    definition_id = _paused_server_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:1",
+        {"action": "release_from_server", "server_definition_id": "srv-def-1"},
+    )
+    svc = SchedulingService(db=db, server_client=AsyncMock(), runtime_source="server:1")
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "error"
+    assert "move to this device" in outcome.errors[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_offline_edit_still_replaces_an_earlier_offline_edit(db):
+    """C1's refusal is CROSS-action only: update-over-update coalescing is
+    what `_save_definition_offline` documents and must keep working."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    first = await svc.save_definition(
+        _definition_payload(name="First"), "server:1", definition_id=definition_id
+    )
+    second = await svc.save_definition(
+        _definition_payload(name="Second"), "server:1", definition_id=definition_id
+    )
+
+    assert (first.status, second.status) == ("queued", "queued")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["definition_payload"]["name"] == "Second"
+
+
+@pytest.mark.asyncio
+async def test_local_row_edit_is_never_refused_by_its_retained_transfer_mutation(db):
+    """A `to_server_failed` row deliberately KEEPS its transfer mutation
+    queued and stays editable (`transfer_lock_reason`'s own docstring).
+    C1's guard is scoped to server-owned rows -- the only ones whose edits
+    touch the queue at all -- so this pins that it did not turn that
+    documented affordance into a refusal."""
+    definition_id = _make_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "local",
+        {"action": "transfer_to_server", "transfer_errors": ["nope"]},
+    )
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+    svc = _transfer_service(db, server_client=_connected_server_client())
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited anyway"),
+        owner_id="local",
+        definition_id=definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited anyway"
+
+
+@pytest.mark.asyncio
+async def test_online_save_does_not_clear_a_lifecycle_mutation_queued_mid_flight(db):
+    """C1's second leg, still live after Qodo 5+6: a pause queued DURING
+    the online round trip must survive both the echo's `lifecycle` (the
+    adopt-identity belt withholds it) and the mirror's queue clear (which
+    only ever touches the definition slot)."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+
+    async def _commit_then_user_pauses(*_args, **_kwargs):
+        # The user hits Pause while the PATCH is in flight.
+        db.update_automation_definition(
+            definition_id,
+            lifecycle="paused",
+            pending_mutation={
+                "primitive": "automation_lifecycle",
+                "owner_id": "server:1",
+                "payload": {
+                    "action": "pause",
+                    "server_definition_id": "srv-def-1",
+                },
+            },
+        )
+        return _server_definition_echo(name="Edited", lifecycle="configured")
+
+    server_client.update_automation_definition.side_effect = _commit_then_user_pauses
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    # The edit landed; the pause was neither reverted nor dequeued.
+    assert row["name"] == "Edited"
+    _assert_pause_survived(db, definition_id)
 
 
 # ----------------------------------------------------------------------

@@ -1882,7 +1882,7 @@
     },
     {
       "call_count": 35,
-      "diagnostic_digest": "f4e8d6eb51cef7e9606e",
+      "diagnostic_digest": "ddee18d094a5525b4b45",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/services/sync_engine.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2896,6 +2896,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "6abd5e2a330f548a189a",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Screens/scheduling/definition_detail.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "9464185b1733c0018297",
       "owner": "TASK-494",
@@ -2903,10 +2910,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 28,
-      "diagnostic_digest": "d95d225ae19609a110d2",
+      "call_count": 34,
+      "diagnostic_digest": "b7e7388dbb41c5b41a6f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "ed9785733a5fff78c95a",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Screens/scheduling/task_detail.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -11307,10 +11321,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 569,
+    "owner_files": 571,
     "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
     "task_492_calls": 1337,
-    "task_494_calls": 7588
+    "task_494_calls": 7596
   }
 }

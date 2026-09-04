@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
 from textual.app import ComposeResult
@@ -18,6 +17,10 @@ from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.events import ReminderFormSubmitted
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
+from tldw_chatbook.Scheduling.schedule_input_parsing import (
+    is_valid_zone,
+    parse_forgiving_datetime,
+)
 
 
 _DEFAULT_TIMEZONE = "UTC"
@@ -44,14 +47,6 @@ _CURATED_TIMEZONES: tuple[str, ...] = (
     "Australia/Sydney",
 )
 
-#: Forgiving local datetime formats (naive -> system local zone).
-_FORGIVING_DATETIME_FORMATS: tuple[str, ...] = (
-    "%Y-%m-%d %H:%M",
-    "%Y-%m-%dT%H:%M",
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S",
-)
-
 _TIME_OF_DAY_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 #: Day-of-week field per time-of-day preset (task-23102).
@@ -62,36 +57,6 @@ _PRESET_DOW: dict[str, str] = {
 }
 
 _TIME_OF_DAY_PRESETS = frozenset(_PRESET_DOW)
-
-
-# Why these parsers live here and not in ``Utils/input_validation.py``:
-# that module is the *security* boundary ("Input validation utilities for
-# secure user input handling") -- boolean gatekeepers for traversal,
-# injection, SSRF and size-class risks. The helpers below are domain
-# format parsers: they normalize text into schedule values (an aware
-# datetime, an (hour, minute) pair, a cron expression) and hand back
-# presentation signals the form renders as live hints, such as
-# ``parse_forgiving_datetime``'s ``assumed_local`` flag. Nothing here
-# guards a trust boundary -- the parsed values reach SQLite only through
-# parameterized queries, and cron validity is enforced by ``croniter`` --
-# so hoisting them would import croniter, zoneinfo and this screen's
-# preset vocabulary into a module the security-critical paths depend on,
-# for no safety gain. Bounds checks that DO protect a boundary belong in
-# the shared module; these belong with the form whose messages they feed.
-def _is_valid_zone(name: str) -> bool:
-    """Return True when ``name`` resolves to an IANA timezone.
-
-    Args:
-        name: Candidate IANA zone name, e.g. ``"Europe/Berlin"``.
-
-    Returns:
-        True when the local tzdata can resolve ``name``, False otherwise.
-    """
-    try:
-        ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError, TypeError):
-        return False
-    return True
 
 
 def detect_system_timezone() -> str | None:
@@ -107,7 +72,7 @@ def detect_system_timezone() -> str | None:
         The detected IANA zone name, or None when detection fails.
     """
     tz_env = os.environ.get("TZ", "").strip()
-    if tz_env and _is_valid_zone(tz_env):
+    if tz_env and is_valid_zone(tz_env):
         return tz_env
     try:
         localtime = os.path.realpath("/etc/localtime")
@@ -115,7 +80,7 @@ def detect_system_timezone() -> str | None:
         localtime = ""
     if "/zoneinfo/" in localtime:
         name = localtime.split("/zoneinfo/", 1)[1]
-        if _is_valid_zone(name):
+        if is_valid_zone(name):
             return name
     return None
 
@@ -130,42 +95,12 @@ def system_timezone_name() -> str:
     return detect_system_timezone() or _DEFAULT_TIMEZONE
 
 
-def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
-    """Parse a run-at datetime, accepting forgiving local forms.
-
-    Returns ``(parsed, assumed_local)``: full ISO-8601 keeps its offset
-    (``assumed_local`` False); a naive form such as ``2026-08-28 09:00``
-    is interpreted in the system's local timezone (``assumed_local``
-    True). ``(None, False)`` when nothing parses.
-
-    Args:
-        raw: The user-entered run-at text; surrounding whitespace is
-            ignored and an empty string is treated as "not a date".
-
-    Returns:
-        A ``(datetime | None, bool)`` pair. The datetime is always
-        timezone-aware when parsing succeeds. The bool is True only when
-        a naive input was assumed to be local time, so the caller can say
-        so in the UI.
-    """
-    text = raw.strip()
-    if not text:
-        return None, False
-    parsed: datetime | None = None
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        for fmt in _FORGIVING_DATETIME_FORMATS:
-            try:
-                parsed = datetime.strptime(text, fmt)
-            except ValueError:
-                continue
-            break
-    if parsed is None:
-        return None, False
-    if parsed.tzinfo is None:
-        return parsed.astimezone(), True
-    return parsed, False
+#: The time of day every preset-driven surface falls back to when it has
+#: no stored one to reuse: the two forms' `HH:MM` placeholder and reset
+#: value, and both detail panes' Repeat-row `preset_to_cron` fallback
+#: (Qodo finding 4 -- five copies of the same literal, one of which
+#: silently decides when a rescheduled automation actually fires).
+DEFAULT_TIME_OF_DAY = "09:00"
 
 
 def parse_time_of_day(raw: str) -> tuple[int, int] | None:
@@ -264,6 +199,67 @@ def cron_to_preset(cron: str) -> tuple[str, str]:
                 if dow == preset_dow:
                     return preset, time_text
     return "custom", ""
+
+
+def timezone_options(
+    task_zone: str | None,
+    known_timezones: Sequence[str] = (),
+    *,
+    noun: str = "task",
+) -> list[tuple[str, str]]:
+    """(label, zone) options: system zone first, then curated zones, then
+    task-used zones, then ``task_zone`` itself (redesign PR-3, task 3:
+    module-level so `TaskDetail`'s inline Timezone row editor can reuse
+    the exact same option source `ReminderForm._timezone_options` builds,
+    without instantiating a modal screen just to call one method).
+
+    ``task_zone``'s stored value is always offered -- even when it does
+    not resolve in local tzdata -- labeled as unrecognized, so an
+    unrelated edit round-trips it instead of silently rewriting it to the
+    system zone (review F4). An undetected machine zone is labeled
+    honestly (review F7).
+
+    Args:
+        task_zone: The zone already stored on the row being edited, or
+            ``None`` for a fresh (create-mode) selector.
+        known_timezones: Zones already used by other existing tasks,
+            offered alongside the curated list (task-23102). Callers with
+            no such inventory (a single-row editor, not the full form) may
+            omit this -- the system zone, curated list, and ``task_zone``
+            itself are still always offered.
+        noun: What the calling surface calls the row being edited, for
+            the unrecognized-zone label ("stored on this <noun>").
+            Consolidating the third copy of this builder (task 3) put the
+            reminder wording on the automations surface too, where the
+            row is an automation, not a task -- the same task-vs-
+            automation vocabulary slip PR-1's owner-row bug was about
+            (final review F10; `Tests/UI/test_schedules_terminology.py`
+            is the standing guard for that class). Defaults to the
+            reminder wording, so every existing caller is unchanged.
+
+    Returns:
+        ``(label, zone)`` options, safe to pass directly to a `Select`.
+    """
+    detected = detect_system_timezone()
+    zones = [detected or _DEFAULT_TIMEZONE]
+    candidates = list(_CURATED_TIMEZONES) + [zone for zone in known_timezones if zone]
+    if task_zone:
+        candidates.append(task_zone)
+    for zone in candidates:
+        if zone not in zones and is_valid_zone(zone):
+            zones.append(zone)
+
+    options: list[tuple[str, str]] = []
+    for zone in zones:
+        if detected is None and zone == _DEFAULT_TIMEZONE:
+            options.append((f"{zone} — machine zone not detected", zone))
+        else:
+            options.append((zone, zone))
+    if task_zone and task_zone not in zones:
+        options.append(
+            (f"{task_zone} — stored on this {noun}, not recognized here", task_zone)
+        )
+    return options
 
 
 class ReminderForm(ModalScreen):
@@ -411,38 +407,16 @@ class ReminderForm(ModalScreen):
         return task_owner or self._default_owner
 
     def _timezone_options(self) -> list[tuple[str, str]]:
-        """(label, zone) options: system zone first, then curated zones,
-        then task-used zones, then this task's stored zone.
+        """(label, zone) options for this form's own edited task.
 
-        The edited task's OWN stored zone is always offered -- even when
-        it does not resolve in local tzdata -- labeled as unrecognized,
-        so an unrelated edit round-trips it instead of silently rewriting
-        the task's timezone to the system zone (review F4). An undetected
-        machine zone is labeled honestly (review F7).
+        Thin wrapper around the module-level `timezone_options` (redesign
+        PR-3, task 3): the create/edit modal's own known-zones/edited-task
+        inputs feed the same reusable option-builder `TaskDetail`'s inline
+        Timezone row editor now consumes too, so both surfaces stay
+        byte-identical without a second implementation to drift.
         """
-        detected = detect_system_timezone()
-        zones = [detected or _DEFAULT_TIMEZONE]
-        candidates = list(_CURATED_TIMEZONES) + [
-            zone for zone in self._known_timezones if zone
-        ]
         task_zone = getattr(self._reminder_task, "timezone", None)
-        if task_zone:
-            candidates.append(task_zone)
-        for zone in candidates:
-            if zone not in zones and _is_valid_zone(zone):
-                zones.append(zone)
-
-        options: list[tuple[str, str]] = []
-        for zone in zones:
-            if detected is None and zone == _DEFAULT_TIMEZONE:
-                options.append((f"{zone} — machine zone not detected", zone))
-            else:
-                options.append((zone, zone))
-        if task_zone and task_zone not in zones:
-            options.append(
-                (f"{task_zone} — stored on this task, not recognized here", task_zone)
-            )
-        return options
+        return timezone_options(task_zone, self._known_timezones)
 
     def _initial_timezone(self) -> str:
         """The zone preselected on open: the task's own, else the system's.
@@ -555,7 +529,7 @@ class ReminderForm(ModalScreen):
                 with Vertical(id="reminder-preset-time-group"):
                     yield Label("Time of day (24-hour):", classes="form-label")
                     yield Input(
-                        placeholder="09:00",
+                        placeholder=DEFAULT_TIME_OF_DAY,
                         id="reminder-preset-time",
                     )
                 with Vertical(id="reminder-cron-custom-group"):
@@ -595,7 +569,7 @@ class ReminderForm(ModalScreen):
         """Prefill the form when editing an existing reminder."""
         if self._reminder_task is None:
             # Create mode: start from the default preset (daily at 09:00).
-            self.query_one("#reminder-preset-time", Input).value = "09:00"
+            self.query_one("#reminder-preset-time", Input).value = DEFAULT_TIME_OF_DAY
             self.query_one("#reminder-cron", Input).value = "0 9 * * *"
             self._update_preset_field_visibility("daily")
             self._update_cron_preview()
@@ -620,7 +594,7 @@ class ReminderForm(ModalScreen):
             # Recurring reveals a coherent preset + time (not both
             # sub-groups at once with a preset that silently overrides a
             # typed cron on save).
-            self.query_one("#reminder-preset-time", Input).value = "09:00"
+            self.query_one("#reminder-preset-time", Input).value = DEFAULT_TIME_OF_DAY
             self.query_one("#reminder-cron", Input).value = "0 9 * * *"
             self._update_preset_field_visibility("daily")
             self._update_cron_preview()
@@ -849,7 +823,7 @@ class ReminderForm(ModalScreen):
                 # The unknown-zone error stays as a defensive backstop for
                 # programmatic value assignment only.
                 stored_zone = getattr(self._reminder_task, "timezone", None)
-                if timezone != stored_zone and not _is_valid_zone(timezone):
+                if timezone != stored_zone and not is_valid_zone(timezone):
                     errors.append(f"Unknown timezone: {timezone}")
 
         if errors:

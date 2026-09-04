@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from loguru import logger
+from pydantic import ValidationError
 
 # ADR-097 boot ratchet: automation_health loads on first use. A thin module-
 # level proxy (not a plain deferred import) keeps `compute_local_health`
@@ -72,6 +73,14 @@ _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 #: as _RESULT_REVIEW_PRIMITIVE above (this module is the producer of these
 #: mutations, SyncEngine the consumer/replayer).
 _DEFINITION_PRIMITIVE = "automation_definition"
+
+#: Matches ScheduledTasksDB._LIFECYCLE_PRIMITIVE / SyncEngine's constant of
+#: the same value. Pause/resume/archive get their OWN `pending_mutations`
+#: slot (Qodo findings 5+6) so a queued lifecycle change and a queued edit
+#: can coexist on one row instead of destroying each other in the shared
+#: `UNIQUE(local_id, primitive, owner_id)` slot -- see the DB constant's
+#: comment for the full rationale.
+_LIFECYCLE_PRIMITIVE = "automation_lifecycle"
 
 #: v1 scope guard (schedules-handoff PR-4, task 4): only this family can be
 #: authored through `preview_definition`/`save_definition`. `agent_task`
@@ -198,6 +207,32 @@ class ResolveOutcome:
 
     status: str
     reason: str | None = None
+
+
+@dataclass(slots=True)
+class ReminderEditOutcome:
+    """Result of `SchedulingService.edit_reminder_fields` (PR-3 task 3's
+    reminder row editors).
+
+    Gives the reminder side the same ``{field, code, message}`` validation
+    surface `save_definition` already gives the definition side (survey
+    §2's asymmetry: `update_reminder` alone raises a bare, uncaught
+    `pydantic.ValidationError` on a bad schedule/timezone value and
+    returns `None` -- with no per-field detail -- on a locked row).
+
+    Attributes:
+        status: ``"saved"`` (persisted, via `update_reminder`) or
+            ``"error"`` (nothing written -- an unknown row, a locked
+            row, or a validation failure).
+        errors: Field-addressed validation errors (``{"field", "code",
+            "message"}``), populated for ``"error"``. A locked or unknown
+            row addresses the pseudo-field ``"_row"``.
+        task: The updated `ReminderTask`, populated only for ``"saved"``.
+    """
+
+    status: str
+    errors: list[dict[str, Any]] = _dataclass_field(default_factory=list)
+    task: ReminderTask | None = None
 
 
 def _seam_failure_warning(exc: Exception) -> dict[str, str]:
@@ -581,6 +616,147 @@ class SchedulingService:
         row = self.db.get_reminder_task(task_id)
         assert row is not None
         return self._row_to_reminder(row)
+
+    async def edit_reminder_fields(
+        self, task_id: str, payload: dict[str, Any]
+    ) -> ReminderEditOutcome:
+        """Validate and persist a single-row reminder edit (PR-3 task 3).
+
+        Wraps `update_reminder` with the create form's own schedule
+        validators (`schedule_input_parsing.parse_forgiving_datetime`/
+        `is_valid_zone` -- the pure module `ReminderForm` itself also
+        imports these from, task 3's folded-in refactor -- plus
+        `croniter.is_valid` for cron) -- reused
+        rather than re-derived, so a Repeat/At/Timezone row editor gets
+        the same forgiving-local-datetime and known-zone behavior the
+        create form gives, and the same errors when it doesn't parse.
+        `update_reminder` alone does none of this: an invalid `cron`/
+        `timezone` would silently persist (the `ReminderTask` model
+        never validates their contents), and an invalid `run_at`/
+        `schedule_kind` combination raises a bare `pydantic.
+        ValidationError` with no field-addressed detail for a row editor
+        to render.
+
+        Args:
+            task_id: The local reminder row to update.
+            payload: The one or few fields the row editor is changing --
+                same partial shape `update_reminder` already accepts.
+
+        Returns:
+            A `ReminderEditOutcome`. ``status="error"`` covers: an
+            unknown ``task_id``, a locked (in-transfer) row (`errors`
+            addresses the pseudo-field ``"_row"``, per
+            `transfer_lock_reason`), or a bad schedule/timezone value
+            (`errors` addresses the offending field). ``status="saved"``
+            means `update_reminder` was called -- threading the ROW's
+            OWN owner, not `self.owner_id` (PR-2's Queue lists reminders
+            across owners, so the row under a cursor is not necessarily
+            the service's active owner -- same rationale as
+            `delete_reminder`'s) -- and returned the updated task.
+        """
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
+        row = self.db.get_reminder_task(task_id)
+        if row is None:
+            return ReminderEditOutcome(
+                status="error",
+                errors=[field_error("_row", "not_found", f"Reminder {task_id} was not found.")],
+            )
+
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            return ReminderEditOutcome(
+                status="error",
+                errors=[field_error("_row", "transfer_in_progress", locked)],
+            )
+
+        # redesign PR-3, task 3's folded-in refactor (task-2-review.md
+        # finding 1): these two used to live in `reminder_form.py`, a
+        # UI-layer module this service-layer file had no business
+        # importing from. Hoisted to a pure `Scheduling/`-side module --
+        # still function-local (ADR-097 boot ratchet), though this one no
+        # longer carries any Textual weight, so hoisting the IMPORT to
+        # module level would also be safe; left function-local anyway for
+        # a minimal diff against Task 2's shape.
+        from tldw_chatbook.Scheduling.schedule_input_parsing import (
+            is_valid_zone,
+            parse_forgiving_datetime,
+        )
+
+        errors: list[dict[str, Any]] = []
+        cleaned = dict(payload)
+        if "run_at" in cleaned and isinstance(cleaned["run_at"], str):
+            parsed, _assumed_local = parse_forgiving_datetime(cleaned["run_at"])
+            if parsed is None:
+                errors.append(
+                    field_error(
+                        "run_at",
+                        "invalid_datetime",
+                        "Run At must be a date and time like 2026-08-28 09:00.",
+                    )
+                )
+            else:
+                cleaned["run_at"] = parsed
+        if "cron" in cleaned and cleaned["cron"] is not None:
+            if not croniter.is_valid(cleaned["cron"]):
+                errors.append(
+                    field_error("cron", "invalid_cron", "Cron expression is invalid.")
+                )
+        if "timezone" in cleaned and cleaned["timezone"] is not None:
+            new_zone = cleaned["timezone"]
+            # Same stored-zone round-trip carve-out as the create form
+            # (reminder_form.py's `_save`): a zone already on the row must
+            # keep validating even if this machine's tzdata can't resolve
+            # it -- only a genuinely NEW zone value is checked.
+            if new_zone != row.get("timezone") and not is_valid_zone(new_zone):
+                errors.append(
+                    field_error(
+                        "timezone", "invalid_timezone", f"Unknown timezone: {new_zone}"
+                    )
+                )
+
+        if errors:
+            return ReminderEditOutcome(status="error", errors=errors)
+
+        try:
+            task = await self.update_reminder(
+                task_id, cleaned, owner_id=row.get("owner_id")
+            )
+        except ValidationError as exc:
+            # Belt-and-suspenders: a schedule_kind/run_at/cron combination
+            # the checks above don't cover (e.g. a one_time edit that
+            # leaves run_at unset) still routes through `ReminderTask`'s
+            # own model validation inside `update_reminder` -- catch that
+            # surface here too so it never escapes as a raw exception.
+            return ReminderEditOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        ".".join(str(part) for part in err["loc"]) or "_row",
+                        str(err["type"]),
+                        str(err["msg"]),
+                    )
+                    for err in exc.errors()
+                ],
+            )
+
+        if task is None:
+            # `update_reminder` refuses (returns None) if the row was
+            # deleted or newly locked between the check above and this
+            # call -- a narrow race, not a validation failure.
+            return ReminderEditOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        "_row",
+                        "update_refused",
+                        "This reminder could not be updated -- it may have "
+                        "just been deleted or locked by a transfer.",
+                    )
+                ],
+            )
+
+        return ReminderEditOutcome(status="saved", task=task)
 
     async def delete_reminder(
         self, task_id: str, *, owner_id: str | None = None
@@ -1365,6 +1541,92 @@ class SchedulingService:
         "archive": "archived",
     }
 
+    #: The `automation_definition` payload actions `save_definition` OWNS
+    #: -- the only ones it may replace in the shared queue slot (final
+    #: review C1). The transfer actions in that slot belong to a different
+    #: writer and must not be silently overwritten.
+    _EDIT_ACTIONS = frozenset({"create", "update"})
+
+    #: User-facing names for the non-edit actions that can be holding the
+    #: `automation_definition` slot, for `_cross_action_mutation_reason`'s
+    #: refusal copy. Lifecycle actions are absent by design: they live in
+    #: `_LIFECYCLE_PRIMITIVE`'s own slot now (Qodo findings 5+6) and
+    #: coexist with an edit rather than being refused.
+    _PENDING_ACTION_LABELS = {
+        "transfer_to_server": "a move to the server",
+        "release_from_server": "a move to this device",
+    }
+
+    def _cross_action_mutation_reason(self, row_id: str) -> str | None:
+        """Why editing ``row_id`` must be refused right now, or ``None``.
+
+        `pending_mutations` holds exactly ONE row per `(local_id,
+        primitive, owner_id)`, and edit and TRANSFER mutations still
+        share the `automation_definition` primitive -- so a server-owned
+        row can have only one of those two queued. An edit committed
+        while a transfer is waiting would destroy it silently
+        (`record_pending_mutation`'s `INSERT OR REPLACE`), so the edit is
+        refused at the entry instead, naming the change that is waiting
+        -- the same shape as `transfer_lock_reason`'s refusal, which both
+        panes already render inline under the row.
+
+        LIFECYCLE is no longer part of this refusal (Qodo findings 5+6,
+        reversing final review C1's lifecycle half): pause/resume/archive
+        moved to `_LIFECYCLE_PRIMITIVE`, a different slot, so an edit and
+        a lifecycle change now coexist -- both queue, both replay, both
+        land -- instead of one being refused to protect the other.
+
+        Same-ACTION replacement (an update over a queued update) is
+        untouched: that coalescing is what `_save_definition_offline`
+        documents and wants.
+
+        Read via `get_pending_mutation_for_local_id` -- the mutation's
+        OWN `owner_id`, never "today's active server", the same lesson
+        `_delete_transfer_mutation` records.
+        """
+        mutation = self.db.get_pending_mutation_for_local_id(
+            row_id, _DEFINITION_PRIMITIVE
+        )
+        if mutation is None:
+            return None
+        action = str((mutation.get("payload") or {}).get("action") or "")
+        if action in self._EDIT_ACTIONS:
+            return None
+        label = self._PENDING_ACTION_LABELS.get(action, "a pending change")
+        return (
+            f"{label[0].upper()}{label[1:]} is waiting to sync — edit this "
+            "automation once it lands."
+        )
+
+    def _clear_stale_edit_mutation(self, row_id: str, owner_id: str) -> None:
+        """Drop the queued EDIT mutation an online save just superseded.
+
+        Scoped to `_EDIT_ACTIONS` rather than clearing whatever sits in
+        the slot: the only mutation this save supersedes is an earlier
+        offline save of its own (`_mirror_server_definition`'s docstring).
+        A TRANSFER mutation in the slot was queued by another writer
+        DURING the online round-trip -- `_cross_action_mutation_reason`
+        refused the edit if one was already there -- so deleting it would
+        silently drop a move the server has not heard about. Same
+        action-scoped-delete shape, for the same reason, as
+        `_delete_transfer_mutation`.
+
+        Lifecycle needs no scoping here at all any more (Qodo findings
+        5+6): a queued pause lives in `_LIFECYCLE_PRIMITIVE`'s own slot,
+        which this `_DEFINITION_PRIMITIVE`-keyed lookup cannot even see.
+        """
+        mutation = self.db.get_pending_mutation_for_local_id(
+            row_id, _DEFINITION_PRIMITIVE
+        )
+        if mutation is None:
+            return
+        action = str((mutation.get("payload") or {}).get("action") or "")
+        if action not in self._EDIT_ACTIONS:
+            return
+        self.db.delete_pending_mutation_for_record(
+            row_id, _DEFINITION_PRIMITIVE, owner_id
+        )
+
     async def set_definition_lifecycle(
         self, row_id: str, action: str
     ) -> SaveDefinitionOutcome:
@@ -1384,11 +1646,25 @@ class SchedulingService:
         the replay to push -- so a lifecycle change made offline survives
         and lands on the next sync, exactly like an offline edit.
 
-        **No UI is wired to this yet, deliberately**: the Automations
-        tab's pause/resume/archive affordances belong to the schedules
-        redesign program, not to PR-5, whose scope is the transfer
-        machine. This method exists so the replay leg below it is
-        reachable and tested rather than dead code.
+        That mutation is recorded under `_LIFECYCLE_PRIMITIVE`, NOT the
+        shared `_DEFINITION_PRIMITIVE` (Qodo findings 5+6). `pending_
+        mutations` is `UNIQUE(local_id, primitive, owner_id)`, so a
+        lifecycle change sharing the definition primitive occupied the
+        one slot an offline edit also needs: whichever was queued second
+        silently destroyed the first. Its own primitive is its own slot,
+        with no schema change -- an offline pause and an offline edit of
+        the same row now both queue, both replay, and both land.
+
+        The UI caller is the definition pane's header Pause/Resume
+        affordance (schedules-redesign PR-3 Task 4,
+        `DefinitionDetail._toggle_lifecycle` ->
+        `SchedulesWorkbench._toggle_definition_lifecycle`) -- this
+        method's FIRST, added by that task. It shipped ahead of that
+        caller (PR-5) so the replay leg below it was reachable and tested
+        rather than dead code; the paragraph claiming it still has no UI
+        caller outlived that, and final review F9 recorded the cost --
+        "no UI can reach this" is exactly what made the C1 slot collision
+        with `save_definition` easy to miss once a UI could.
 
         Args:
             row_id: The definition's LOCAL row id.
@@ -1442,7 +1718,7 @@ class SchedulingService:
         pending_mutation = None
         if self._owner_uses_server(owner_id):
             pending_mutation = {
-                "primitive": _DEFINITION_PRIMITIVE,
+                "primitive": _LIFECYCLE_PRIMITIVE,
                 "owner_id": owner_id,
                 "payload": {
                     "action": action,
@@ -2046,6 +2322,26 @@ class SchedulingService:
                     definition_id=definition_id,
                 )
             payload = self._merge_definition_payload(payload, local_row)
+            # final review C1 (lifecycle half reversed by Qodo 5+6; the
+            # TRANSFER half stands): only a SERVER-owned row queues
+            # mutations at all, so only it can collide in the shared
+            # `automation_definition` slot with a transfer. A local row
+            # -- including a `to_server_failed` one, which deliberately
+            # keeps its transfer mutation queued and stays editable
+            # (`transfer_lock_reason`) -- writes straight through below
+            # and never touches the queue.
+            if self._owner_uses_server(owner_id):
+                blocked = await asyncio.to_thread(
+                    self._cross_action_mutation_reason, definition_id
+                )
+                if blocked is not None:
+                    return SaveDefinitionOutcome(
+                        status="error",
+                        errors=[
+                            field_error("_pending", "pending_mutation", blocked)
+                        ],
+                        definition_id=definition_id,
+                    )
 
         if not self._owner_uses_server(owner_id):
             mode = "update" if local_row is not None else "create"
@@ -2257,9 +2553,13 @@ class SchedulingService:
         its new server id -- that upsert reports only insert/update
         counts, not the generated id.
 
-        Either way, any pending `automation_definition` mutation left over
-        from an earlier offline save on this row is cleared once this
-        online save actually lands -- same precedent as
+        Either way, a pending `automation_definition` EDIT mutation left
+        over from an earlier offline save on this row is cleared once this
+        online save actually lands (`_clear_stale_edit_mutation`; final
+        review C1 scoped it to the edit actions, so a transfer mutation
+        that took the shared slot mid-round-trip survives -- a lifecycle
+        mutation is in a different slot entirely and was never at risk
+        here) -- same precedent as
         `_persist_server_reminder_response`'s `delete_pending_mutation_
         for_record` call. Without this, a stale queued mutation survives a
         later successful online save and the next sync replays it: for a
@@ -2288,10 +2588,7 @@ class SchedulingService:
 
         if saved_id is not None:
             await asyncio.to_thread(
-                self.db.delete_pending_mutation_for_record,
-                saved_id,
-                _DEFINITION_PRIMITIVE,
-                owner_id,
+                self._clear_stale_edit_mutation, saved_id, owner_id
             )
         return saved_id
 
@@ -2317,6 +2614,14 @@ class SchedulingService:
         `notification_policy` merge one level deep for the same reason,
         which is why the form emits `provider`/`model` explicitly as
         `None` when blank rather than omitting them.
+
+        `stored` may be SQL NULL (Python `None`) rather than `{}` -- a
+        server-mirrored row whose server item omitted the key entirely
+        (`upsert_automation_definitions_from_server`'s INSERT path,
+        task-4 review Finding 1) leaves the column NULL. Treated as `{}`
+        here so the merge still runs instead of silently skipping (which
+        used to drop the whole group -- e.g. `input.question` -- on any
+        edit that didn't itself touch that group).
         """
         merged: dict[str, Any] = {}
         for key in ("description", "visibility_policy", "approval_policy"):
@@ -2326,8 +2631,11 @@ class SchedulingService:
         for key in ("config", "input", "notification_policy"):
             stored = local_row.get(key)
             incoming = payload.get(key)
-            if isinstance(stored, dict) and isinstance(incoming, dict):
-                merged[key] = {**stored, **incoming}
+            if isinstance(incoming, dict):
+                merged[key] = {
+                    **(stored if isinstance(stored, dict) else {}),
+                    **incoming,
+                }
         return merged
 
     @staticmethod

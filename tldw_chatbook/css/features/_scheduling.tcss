@@ -291,6 +291,27 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0 1;
 }
 
+/* schedules-redesign PR-3, Task 4: the definitions pane's header
+ * Pause/Resume row -- same one-Button lifecycle-row shape as
+ * `#scheduling-task-detail-lifecycle` above. `DefinitionDetail` mounts
+ * under two different ids (Automations tab + Queue tab sibling), so both
+ * selectors share this declaration rather than one id-scoped rule. */
+#scheduling-automation-detail-lifecycle {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#scheduling-automation-detail-lifecycle .detail-lifecycle-button {
+    margin: 0 1 0 0;
+}
+
+#scheduling-automation-detail .follow-why,
+#scheduling-queue-definition-detail .follow-why {
+    color: $text-muted;
+    height: auto;
+    padding: 0 1;
+}
+
 /* Status badge base (detail pane) */
 #scheduling-task-status-badge {
     width: auto;
@@ -436,12 +457,52 @@ DetailValueRow .detail-value-row-affordance {
     padding: 0 0 0 1;
 }
 
+/* schedules-redesign PR-3, Task 1: the affordance's live state. `:focus-
+ * within` covers both a row focused via spec §12's Up/Down traversal AND
+ * (once `begin_edit` mounts an editor into the row) the editor itself
+ * holding focus -- `has_focus_within` counts a widget's own focus as
+ * "within itself" too, so one selector covers both. `:hover` mirrors it
+ * for mouse users. Un-dimming to the same colour as the value tells a user
+ * "Enter/click acts on this row" without a new token. */
+DetailValueRow:focus-within .detail-value-row-affordance,
+DetailValueRow:hover .detail-value-row-affordance {
+    color: $ds-text-primary;
+}
+
 DetailValueRow .detail-value-row-error {
     color: $ds-status-error-readable;
     width: 1fr;
     height: 1;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+/* schedules-redesign PR-3, Task 5: the Runs-on row's proactively-shown
+ * Cancel[/Retry] buttons -- a plain sibling `Horizontal` of the "Runs on"
+ * `DetailValueRow` inside its own `DetailGroup` (NOT nested inside the
+ * row itself: `begin_edit` would hide the row's own value `Static`,
+ * which the existing transfer-badge rendering pins verbatim -- see
+ * `task_detail.TaskDetail._configure_runs_on_row`'s docstring). Same
+ * compact single-row Button idiom `#scheduling-queue-chips .scheduling-
+ * queue-chip` already uses elsewhere in this file, so the row costs one
+ * line rather than a full 3-row Button box. Bare class selector (not
+ * scoped under `DetailValueRow`) since this widget lives outside it. */
+.detail-value-row-owner-actions {
+    /* `auto`, not a fixed `1` (final review M5): both buttons are
+     * `.display`-toggled and hidden in the overwhelmingly common
+     * no-transfer-in-flight case, but a fixed height still reserved a
+     * blank line inside the Details group of every reminder and every
+     * definition. `auto` measures 0 when both are hidden, 1 when either
+     * shows. */
+    height: auto;
+    align: right middle;
+}
+
+.detail-value-row-owner-actions .detail-owner-action-button {
+    height: 1;
+    min-width: 8;
+    border: none;
+    margin: 0 0 0 1;
 }
 
 DetailGroup {

@@ -6,6 +6,7 @@ from typing import Any
 
 from textual.message import Message
 
+from ..Widgets.detail_value_row import DetailValueRow
 from .models import ReminderTask
 
 
@@ -100,6 +101,121 @@ class RetryTransferRequested(Message):
     def __init__(self, task: ReminderTask) -> None:
         super().__init__()
         self.task = task
+
+
+class ReminderFieldEditRequested(Message):
+    """Posted when a reminder-pane Frequency row's inline editor commits
+    an edit (redesign PR-3, task 3).
+
+    ``row`` travels with the message so the handler (the workbench, which
+    owns the `SchedulingService` `TaskDetail` does not reach into) can
+    render a field-specific failure directly on the row that started the
+    edit (`DetailValueRow.show_error`) without a second lookup -- the
+    same "carry the widget the caller will need" idiom
+    `DetailValueRow.Activated` already uses for its own ``row``.
+    `TaskDetail` has already called `row.end_edit()` before posting this
+    (closing the editor, restoring the OLD display) -- a failure needs no
+    separate "restore" step beyond that.
+    """
+
+    def __init__(
+        self, task: ReminderTask, payload: dict[str, Any], row: DetailValueRow
+    ) -> None:
+        super().__init__()
+        self.task = task
+        self.payload = payload
+        self.row = row
+
+
+class DefinitionFieldEditRequested(Message):
+    """Posted when a definition-pane Details/Frequency row's inline editor
+    commits an edit (redesign PR-3, task 4).
+
+    ``definition`` is the raw definition dict `DefinitionDetail.set_
+    definition` was last painted with (a local DB row or a raw server
+    list-response dict -- either shape). Its own ``id`` may be a LOCAL row
+    id or, for a row shown from a pure server fetch that has no local
+    shadow yet, the SERVER's id -- the handler resolves the actual local
+    id `SchedulingService.save_definition` needs the same way the
+    existing full-modal Edit action already does
+    (`SchedulesWorkbench._resolve_local_definition_id`), rather than
+    assuming ``id`` is always local.
+
+    ``payload`` is already shaped for `save_definition` (family/name/
+    schedule resent verbatim per `definition_detail._definition_edit_
+    payload`'s own docstring -- `_merge_definition_payload` does not
+    default those from storage the way its docstring implies). ``row``
+    travels with it (same "carry the widget the handler needs" idiom
+    `DetailValueRow.Activated`/`ReminderFieldEditRequested` already use)
+    so the workbench can call `row.show_error(...)` directly on failure.
+    `DefinitionDetail` has already called `row.end_edit()` before posting
+    this.
+    """
+
+    def __init__(
+        self, definition: dict[str, Any], payload: dict[str, Any], row: DetailValueRow
+    ) -> None:
+        super().__init__()
+        self.definition = definition
+        self.payload = payload
+        self.row = row
+
+
+class DefinitionLifecycleToggleRequested(Message):
+    """Posted when the definition pane's header Pause/Resume button is
+    pressed (redesign PR-3, task 4 -- `SchedulingService.set_definition_
+    lifecycle`'s first UI caller).
+
+    ``action`` is ``"pause"`` or ``"resume"`` (`DefinitionDetail` decides
+    which, from the definition's current ``lifecycle``) -- the same two
+    action strings `SchedulingService._LIFECYCLE_ACTIONS` accepts.
+    """
+
+    def __init__(self, definition: dict[str, Any], action: str) -> None:
+        super().__init__()
+        self.definition = definition
+        self.action = action
+
+
+class ReminderOwnerActionRequested(Message):
+    """Posted by the reminder pane's 'Runs on' row (redesign PR-3, task 5):
+    a dropdown owner pick (``action`` is the transfer direction,
+    ``"to_server"``/``"to_local"``), or the row's own proactively-shown
+    Cancel/Retry affordance for an in-flight/failed transfer (``action``
+    is ``"cancel"``/``"retry"``).
+
+    ``row`` travels with it (same "carry the widget the handler needs"
+    idiom `DetailValueRow.Activated`/`ReminderFieldEditRequested` already
+    use) so the workbench can call `row.show_error(...)` directly on a
+    refusal -- this row's transfer refusals render inline (health-quoting
+    preserved), NOT through the legacy toast the existing Move/Cancel/
+    Retry buttons still use (`SchedulesWorkbench._begin_transfer`'s own
+    ``notify(reason, ...)``) -- the two surfaces are deliberately
+    independent (coexistence, task-5 brief). `TaskDetail` has already
+    called `row.end_edit()` (a dropdown commit) before posting this.
+    """
+
+    def __init__(self, task: ReminderTask, action: str, row: DetailValueRow) -> None:
+        super().__init__()
+        self.task = task
+        self.action = action
+        self.row = row
+
+
+class DefinitionOwnerActionRequested(Message):
+    """Definition-pane counterpart of `ReminderOwnerActionRequested`
+    (redesign PR-3, task 5). ``definition`` is the raw dict
+    `DefinitionDetail.set_definition` was last painted with, same
+    resolve-to-a-local-id handling as `DefinitionFieldEditRequested`.
+    """
+
+    def __init__(
+        self, definition: dict[str, Any], action: str, row: DetailValueRow
+    ) -> None:
+        super().__init__()
+        self.definition = definition
+        self.action = action
+        self.row = row
 
 
 class SyncCompleted(Message):

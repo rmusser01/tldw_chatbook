@@ -29,11 +29,16 @@ from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
     CancelTransferRequested,
+    DefinitionFieldEditRequested,
+    DefinitionLifecycleToggleRequested,
+    DefinitionOwnerActionRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    ReminderFieldEditRequested,
+    ReminderOwnerActionRequested,
     RetryTransferRequested,
     RunReminderNowRequested,
     SyncCompleted,
@@ -64,6 +69,7 @@ from ....UI.Screens.scheduling.results_tab import (
 )
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
+from ....Widgets.detail_value_row import DetailValueRow
 # schedules-redesign PR-1, Task 4: `automation_execution_target_label`/
 # `automation_name_cell` moved to `definition_detail.py` (that leaf
 # module's own "Model"/"Runs on" row formatters need them and importing
@@ -74,6 +80,7 @@ from ....Widgets.confirmation_dialog import ConfirmationDialog
 from .definition_detail import (
     DefinitionDetail,
     _definition_transfer_suffix,
+    _LIFECYCLE_TOGGLE_RESULTS,
     automation_execution_target_label,
     automation_name_cell,
 )
@@ -174,6 +181,37 @@ def _cancel_toast_text(name: str) -> str:
     return (
         f"Transfer cancelled for '{name}' — nothing further will be sent "
         "to the server."
+    )
+
+
+def _pending_transfer_errors(
+    service: "SchedulingService", table_kind: str, row_id: str
+) -> list[str]:
+    """The stored `transfer_errors` from `row_id`'s queued transfer
+    mutation, or `[]` when none exist -- shared by `_update_transfer_
+    actions`'s existing Retry-button computation (reminders) and both
+    panes' Runs-on row (fix round 1, finding 2: same source `set_
+    transfer_reasons`'s own "Last transfer error: …" line already reads,
+    fed here rather than re-derived, one lookup per row)."""
+    mutation = service.db.get_pending_mutation_for_local_id(row_id, table_kind)
+    if mutation is None:
+        return []
+    errors = (mutation.get("payload") or {}).get("transfer_errors")
+    return list(errors) if errors else []
+
+
+def _definition_transfer_errors(
+    service: "SchedulingService", definition: dict[str, Any]
+) -> list[str]:
+    """`_pending_transfer_errors` for a definition dict, only when it is
+    actually `to_server_failed` -- a `to_server_failed` row is always
+    local-owned (a failed to_server transfer never became server-owned),
+    so `definition["id"]` is already the local id, no `_resolve_local_
+    definition_id` round trip needed (fix round 1, finding 2)."""
+    if definition.get("transfer_state") != "to_server_failed":
+        return []
+    return _pending_transfer_errors(
+        service, "automation_definition", str(definition.get("id"))
     )
 
 
@@ -338,6 +376,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # `_selected_task_id` above stays reminder-only for the existing
         # action code that reads it directly.
         self._selected_row_id: str | None = None
+        #: One `asyncio.Lock` per definition an in-pane row edit has
+        #: touched, serializing that definition's read-merge-write saves
+        #: (Qodo finding 7) -- see `_edit_definition_field`.
+        self._definition_edit_locks: dict[str, asyncio.Lock] = {}
         self._marked_ids: set[str] = set()
         #: The current hidden-panes notice from on_resize; combined with
         #: the marks/glyph legend in _update_pane_notice (task-23107).
@@ -1424,6 +1466,14 @@ class SchedulesWorkbench(BaseAppScreen):
                 task,
                 run_history=self._run_history_for(task.id),
                 incidents=self._incidents_for(task.id),
+                # PR-3 task 3: same option source the create/edit modal's
+                # own Timezone selector reads (`_task_timezones`), so the
+                # pane's inline Timezone row editor offers the same zones.
+                known_timezones=self._task_timezones(),
+                # PR-3 task 5: same option source the create/edit forms'
+                # own owner selector reads, so the Runs-on row's dropdown
+                # offers the same choices.
+                runs_on_options=self._runs_on_options()[0],
             )
             self._update_transfer_actions(task_detail, task)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
@@ -1469,6 +1519,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 retry_errors=[],
             )
             task_detail.set_lifecycle_lock(None)
+            task_detail.set_runs_on_transfer_errors([])
             return
 
         row = transfer_row_dict(task)
@@ -1500,14 +1551,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # whatever server was active at the time of the failed
             # attempt, which silently stops matching after a server
             # switch if guessed instead of read.
-            mutation = service.db.get_pending_mutation_for_local_id(
-                task.id, "reminder_task"
-            )
-            if mutation is not None:
-                payload = mutation.get("payload") or {}
-                errors = payload.get("transfer_errors")
-                if errors:
-                    retry_errors = list(errors)
+            retry_errors = _pending_transfer_errors(service, "reminder_task", task.id)
 
         task_detail.set_transfer_reasons(
             to_server_reason=to_server_reason,
@@ -1519,6 +1563,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # spec §6.3 read-only-except-cancel (final review I7). Applied
         # AFTER set_transfer_reasons, which owns the same reason Static.
         task_detail.set_lifecycle_lock(service.transfer_lock_reason(row))
+        # PR-3 task 5 fix round 1 (finding 2): the SAME `retry_errors`
+        # feeds the Runs-on row's own failure text -- one source, not a
+        # second derivation.
+        task_detail.set_runs_on_transfer_errors(retry_errors)
 
     def _refuse_if_transfer_locked(self, task: Any, verb: str) -> bool:
         """Notify and return True when ``task`` is read-only mid-transfer.
@@ -2202,6 +2250,582 @@ class SchedulesWorkbench(BaseAppScreen):
         event.stop()
         self._set_reminder_enabled(event.task, False)
 
+    @on(ReminderFieldEditRequested)
+    def _on_reminder_field_edit_requested(
+        self, event: ReminderFieldEditRequested
+    ) -> None:
+        """A Frequency row's inline editor committed a value (PR-3 task 3)."""
+        event.stop()
+        self._edit_reminder_field(event.task, event.payload, event.row)
+
+    def _edit_reminder_field(
+        self,
+        task: ReminderTask,
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """Persist one Frequency row's edit via Task 2's validation bridge.
+
+        `TaskDetail` has already closed the row's editor (`end_edit`,
+        restoring the OLD display) before posting the request -- a
+        failure needs no separate "restore" step here, only `show_error`.
+        Success repaints authoritatively from a fresh read: the SAME
+        reminder-only refresh (`refresh_definitions=False`) every other
+        reminder mutation in this file uses, which re-selects the row by
+        id and re-feeds `TaskDetail.set_task` -- so the row shows the
+        value the bridge actually persisted, not a locally-guessed one.
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot save this edit."
+            )
+            return
+
+        async def _edit_and_refresh() -> None:
+            try:
+                outcome = await service.edit_reminder_fields(task.id, payload)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    # Qodo finding 2: an unattributed "it failed" line is
+                    # unusable in a log with many reminders. Ids only --
+                    # the VALUE is the user's own reminder text.
+                    "Failed to edit reminder {task_id} field {field}",
+                    task_id=task.id,
+                    field=row.row_key,
+                )
+                row.show_error("Failed to save this edit.")
+                return
+            if outcome.status != "saved":
+                message = "; ".join(
+                    str(err.get("message") or "")
+                    for err in outcome.errors
+                    if err.get("message")
+                ) or "This edit could not be saved."
+                row.show_error(message)
+                return
+            row.clear_error()
+            self._request_tasks_refresh(refresh_definitions=False)
+
+        self.run_worker(
+            _edit_and_refresh,
+            exclusive=True,
+            # Per-ROW group (final review M12): one group for the whole
+            # KIND meant committing a second row's editor cancelled the
+            # first commit mid-flight -- possibly after its write landed,
+            # so the success repaint never ran. `exclusive=True` still
+            # holds, now within one row.
+            group=f"schedules-edit-reminder-field-{row.row_key}",
+        )  # type: ignore[arg-type]
+
+    @on(DefinitionFieldEditRequested)
+    def _on_definition_field_edit_requested(
+        self, event: DefinitionFieldEditRequested
+    ) -> None:
+        """A Details/Frequency row's inline editor committed a value
+        (PR-3 task 4)."""
+        event.stop()
+        self._edit_definition_field(event.definition, event.payload, event.row)
+
+    def _edit_definition_field(
+        self,
+        definition: dict[str, Any],
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """Persist one Details/Frequency row's edit via `save_definition`.
+
+        `DefinitionDetail` has already closed the row's editor (`end_
+        edit`, restoring the OLD display) before posting the request --
+        a failure needs no separate "restore" step here, only `show_
+        error`. `definition["id"]` may be a LOCAL row id or, for a row
+        shown from a pure server fetch with no local shadow yet, the
+        SERVER's id -- resolved to a real local id the same way the
+        existing full-modal Edit action already does (`_resolve_local_
+        definition_id`, `_edit_selected_automation`'s own precedent).
+        Success repaints authoritatively via the SAME staleness-plus-
+        refresh seam every other definition mutation in this file uses
+        (run-now, transfer begin/cancel) -- `_definitions_stale = True`
+        + `_request_automations_refresh()`, which reloads the Automations
+        tab's own table+detail immediately and marks the Queue's unified
+        list stale for its own next (lazy, tab-activation-gated) refresh
+        -- PLUS `_repaint_queue_definition_detail`, because that lazy
+        Queue refresh is not a repaint of the Queue tab's own SECOND
+        `DefinitionDetail` instance (final review F4/I4).
+
+        Every failure path paints through `_show_definition_row_error`
+        rather than `row.show_error` directly (Qodo finding 9): this
+        worker holds `row` across an `await`, so a late failure could
+        otherwise stamp its message under whatever automation the pane
+        moved on to -- the same crossed-identity class the commit path's
+        `_editing_definition` belt closes on the way in.
+        """
+        service = self._scheduling_service
+        definition_id = str(definition.get("id") or "")
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot save this edit."
+            )
+            return
+
+        # Per-DEFINITION serialization (Qodo finding 7, narrowing final
+        # review M12): a field-keyed worker group let two edits of the
+        # SAME automation run concurrently, and `save_definition` merges
+        # each payload onto the row it read at ENTRY -- so the slower one
+        # wrote back a snapshot taken before the faster one landed,
+        # silently reverting it. The gate is a per-definition lock rather
+        # than `exclusive=True` on a per-definition group, because
+        # Textual's exclusivity CANCELS the running worker instead of
+        # queueing behind it: that turns "two quick edits" into "the
+        # first one is discarded", which is the same lost update by
+        # another route (M12 hit exactly this across rows). Different
+        # automations hold different locks and still run in parallel.
+        # The map is never pruned: one `asyncio.Lock` per definition
+        # edited this session, which is bounded by what a human clicks.
+        lock = self._definition_edit_locks.setdefault(definition_id, asyncio.Lock())
+
+        async def _edit_and_refresh() -> None:
+            async with lock:
+                await self._save_definition_field(
+                    service, definition, definition_id, payload, row
+                )
+
+        self.run_worker(
+            _edit_and_refresh,
+            group=f"schedules-edit-definition-{definition_id}",
+        )  # type: ignore[arg-type]
+
+    async def _save_definition_field(
+        self,
+        service: "SchedulingService",
+        definition: dict[str, Any],
+        definition_id: str,
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """`_edit_definition_field`'s worker body, under its row lock."""
+        local_id = await self._resolve_local_definition_id(service, definition)
+        if local_id is None:
+            self._show_definition_row_error(
+                row,
+                {definition_id},
+                "Could not prepare this automation for editing — see the log.",
+            )
+            return
+        owner_id = str(definition.get("owner_id") or "local")
+        painted = {definition_id, local_id}
+        try:
+            outcome = await service.save_definition(
+                payload, owner_id, definition_id=local_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                # Qodo finding 2: which automation, and which of its
+                # fields -- never the value, which is the user's own
+                # question/model text.
+                "Failed to edit automation definition {definition_id} field "
+                "{field}",
+                definition_id=local_id,
+                field=row.row_key,
+            )
+            self._show_definition_row_error(row, painted, "Failed to save this edit.")
+            return
+        if outcome.status not in ("saved", "queued"):
+            message = "; ".join(
+                str(err.get("message") or "")
+                for err in outcome.errors
+                if err.get("message")
+            ) or "This edit could not be saved."
+            self._show_definition_row_error(row, painted, message)
+            return
+        row.clear_error()
+        self._definitions_stale = True
+        self._request_automations_refresh()
+        await self._repaint_queue_definition_detail(service, local_id, definition)
+
+    def _show_definition_row_error(
+        self, row: DetailValueRow, definition_ids: set[str], message: str
+    ) -> None:
+        """`row.show_error(message)`, unless the row moved on (finding 9).
+
+        The pane that owns ``row`` is asked what it is currently
+        painting; if that is no longer one of ``definition_ids`` -- the
+        listing id the edit was dispatched for plus the local id it
+        resolved to, the same both-shapes pair `_repaint_queue_
+        definition_detail` matches on -- the message is dropped with a
+        debug line instead of being stamped onto another automation's
+        field. An unparented row (never mounted, or already removed)
+        paints as before: there is no pane to contradict it.
+        """
+        pane = next(
+            (
+                ancestor
+                for ancestor in row.ancestors
+                if isinstance(ancestor, DefinitionDetail)
+            ),
+            None,
+        )
+        if pane is not None and pane.shown_definition_id not in definition_ids:
+            logger.debug(
+                "Dropping a stale automation edit error for {expected}: the "
+                "pane now shows {actual}",
+                expected=sorted(definition_ids),
+                actual=pane.shown_definition_id,
+            )
+            return
+        row.show_error(message)
+
+    async def _repaint_queue_definition_detail(
+        self,
+        service: "SchedulingService",
+        local_id: str,
+        definition: dict[str, Any],
+    ) -> None:
+        """Repaint the QUEUE tab's `DefinitionDetail` for ``local_id``.
+
+        `DefinitionDetail` is mounted TWICE -- `#scheduling-automation-
+        detail` (Automations tab) and `#scheduling-queue-definition-
+        detail` (Queue tab) -- and `_request_automations_refresh` only
+        ever repaints the first. The Queue one is painted from
+        `_update_detail_for_index`, which early-returns for the same row
+        on a tick, so nothing repainted it after an in-pane edit: the
+        editor closed, the row restored the OLD value, and stayed that
+        way indefinitely even though the edit had persisted (final review
+        F4/I4). `_toggle_definition_lifecycle` got this right by looping
+        over both widget ids via `apply_lifecycle`; this is the same
+        both-homes discipline for a field edit, which needs the
+        authoritative re-read `apply_lifecycle`'s single known column
+        does not.
+
+        Only paints when the Queue's selected row IS this definition --
+        which is also what makes the widget guaranteed-mounted here. The
+        row id is matched against BOTH ids: `build_unified_rows` keys the
+        row on whatever id the merged listing carried (the SERVER id for
+        a pure server fetch with no local shadow yet), while the edit
+        itself went through `_resolve_local_definition_id`.
+        """
+        if self._selected_row_id not in {
+            f"definition:{local_id}",
+            f"definition:{definition.get('id') or ''}",
+        }:
+            return
+        fresh = await asyncio.to_thread(
+            service.db.get_automation_definition, local_id
+        )
+        if fresh is None:
+            return
+        await self._load_queue_definition_detail(self._selected_row_id, fresh)
+
+    @on(DefinitionLifecycleToggleRequested)
+    def _on_definition_lifecycle_toggle_requested(
+        self, event: DefinitionLifecycleToggleRequested
+    ) -> None:
+        """The header Pause/Resume button was pressed (PR-3 task 4 --
+        `set_definition_lifecycle`'s first UI caller)."""
+        event.stop()
+        self._toggle_definition_lifecycle(event.definition, event.action)
+
+    def _toggle_definition_lifecycle(
+        self, definition: dict[str, Any], action: str
+    ) -> None:
+        """Pause/resume one automation via `set_definition_lifecycle`.
+
+        Optimistic repaint (task-4 brief): on success, every mounted
+        `DefinitionDetail` instance currently showing this definition is
+        patched + repainted in place (`apply_lifecycle`) BEFORE the
+        slower background refresh below runs, so neither pane shows a
+        stale label while that worker is still fetching. Task 2's own
+        DB-level pull-guard (`ScheduledTasksDB.upsert_automation_
+        definitions_from_server`'s lifecycle skip) is what then keeps a
+        sync pull racing that background refresh from reverting the
+        value it eventually reads back -- this method does not need to
+        know about that guard, only rely on it already existing.
+        """
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot update the "
+                "automation.",
+                severity="warning",
+            )
+            return
+        name = str(definition.get("name") or definition.get("id") or "")
+        definition_id = str(definition.get("id") or "")
+
+        async def _toggle_and_refresh() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                self.app_instance.notify(
+                    f"Could not prepare '{name}' — see the log.",
+                    severity="error",
+                )
+                return
+            try:
+                outcome = await service.set_definition_lifecycle(local_id, action)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to toggle lifecycle for automation {}", local_id
+                )
+                self.app_instance.notify(
+                    f"Failed to update '{name}'.", severity="error"
+                )
+                return
+            if outcome.status != "saved":
+                message = (
+                    outcome.errors[0]["message"]
+                    if outcome.errors
+                    else f"Could not update '{name}'."
+                )
+                self.app_instance.notify(message, severity="warning")
+                return
+            new_lifecycle = _LIFECYCLE_TOGGLE_RESULTS[action]
+            definition["lifecycle"] = new_lifecycle
+            for widget_id in (
+                "#scheduling-automation-detail",
+                "#scheduling-queue-definition-detail",
+            ):
+                try:
+                    detail = self.query_one(widget_id, DefinitionDetail)
+                except Exception:  # noqa: BLE001 - not mounted yet
+                    continue
+                detail.apply_lifecycle(definition_id, new_lifecycle)
+            self._definitions_stale = True
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _toggle_and_refresh,
+            exclusive=True,
+            group="schedules-definition-lifecycle",
+        )  # type: ignore[arg-type]
+
+    # -- Owner-row transfer dropdown (PR-3 task 5, spec §7 flow) -------------
+    #
+    # A SECOND, row-scoped surface onto the SAME PR-5 transfer facade the
+    # legacy Move/Retry/Cancel buttons (`_begin_transfer`/`_cancel_
+    # transfer`/`_begin_automation_transfer`/`_cancel_automation_transfer`
+    # above/below) already drive -- deliberately independent end to end
+    # (own events, own helpers), not a refactor of them: coexistence is a
+    # pinned requirement (task-5 brief), and the two surfaces differ in
+    # how a refusal renders (this one uses `DetailValueRow.show_error`,
+    # the legacy ones toast/write the tab's shared inline notice).
+
+    async def _run_owner_transfer(
+        self,
+        *,
+        table_kind: str,
+        row_id: str,
+        row_dict: dict[str, Any],
+        name: str,
+        direction: str,
+        row: DetailValueRow,
+        refresh,
+    ) -> None:
+        """Shared move/retry body for both panes' Runs-on row.
+
+        `transfer_refusal` runs FIRST (health-quoting preserved, since it
+        is the SAME call `_begin_transfer`/`_begin_automation_transfer`
+        make) -- a refusal renders inline via `row.show_error`, never the
+        legacy toast/notice. Allowed -> the SAME `ConfirmationDialog` +
+        `transfer_warnings` + honest-toast shape those flows already use;
+        confirmed -> `begin_transfer_to_server`/`to_local` by `direction`
+        with `row_id` (the CURRENTLY DISPLAYED row's own local id for
+        both directions -- a `to_local` release's returned dormant-copy
+        id is a DIFFERENT id, `outcome.row_id`, relevant to a later
+        Cancel on that new row, not to this call).
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot start a transfer."
+            )
+            return
+        reason = service.transfer_refusal(row_dict, direction)
+        if reason is not None:
+            row.show_error(reason)
+            return
+        warnings = service.transfer_warnings(row_dict, direction)
+        dialog = self._transfer_confirm_dialog(name, direction, warnings)
+        confirmed = await self.app.push_screen_wait(dialog)
+        if not confirmed:
+            return
+        try:
+            if direction == "to_server":
+                outcome = await service.begin_transfer_to_server(table_kind, row_id)
+            else:
+                outcome = await service.begin_transfer_to_local(table_kind, row_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to begin owner-row transfer for {}", row_id)
+            row.show_error(f"Failed to start the transfer for '{name}'.")
+            return
+        if outcome.status == "refused":
+            row.show_error(outcome.reason or f"Could not move '{name}'.")
+            return
+        if outcome.status == "not_found":
+            row.show_error(f"'{name}' no longer exists.")
+            return
+        row.clear_error()
+        self.app_instance.notify(
+            self._transfer_pending_toast_text(name, direction),
+            severity="information",
+        )
+        refresh()
+
+    async def _run_owner_cancel(
+        self,
+        *,
+        table_kind: str,
+        row_id: str,
+        name: str,
+        row: DetailValueRow,
+        refresh,
+    ) -> None:
+        """Shared cancel body for both panes' Runs-on row mini-bar.
+
+        No confirm dialog (same rationale `_cancel_transfer`'s own
+        docstring gives: cancel is the escape hatch). `row_id` is
+        whichever row the pane is CURRENTLY DISPLAYING -- for a release
+        leg (`from_server_pending`) that is already the DORMANT COPY's
+        own id, never the mirror's: the mirror's own `transfer_state`
+        stays untouched by `create_local_copy_from_mirror` (survey §3),
+        so this row-level Cancel affordance is only ever proactively
+        shown (`_configure_runs_on_row`) on a row whose OWN state is
+        in-flight -- which, for a release, can only be the copy itself.
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot cancel the transfer."
+            )
+            return
+        try:
+            outcome = await service.cancel_transfer(table_kind, row_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to cancel owner-row transfer for {}", row_id)
+            row.show_error(f"Failed to cancel the transfer for '{name}'.")
+            return
+        if outcome.status != "cancelled":
+            row.show_error(
+                outcome.reason or f"Could not cancel the transfer for '{name}'."
+            )
+            return
+        row.clear_error()
+        self.app_instance.notify(_cancel_toast_text(name), severity="information")
+        refresh()
+
+    @on(ReminderOwnerActionRequested)
+    def _on_reminder_owner_action_requested(
+        self, event: ReminderOwnerActionRequested
+    ) -> None:
+        """The reminder pane's Runs-on row dropdown/mini-bar fired
+        (PR-3 task 5)."""
+        event.stop()
+        self._reminder_owner_action(event.task, event.action, event.row)
+
+    def _reminder_owner_action(
+        self, task: ReminderTask, action: str, row: DetailValueRow
+    ) -> None:
+        def _refresh() -> None:
+            self._request_tasks_refresh(refresh_definitions=False)
+
+        if action == "cancel":
+            async def _do() -> None:
+                await self._run_owner_cancel(
+                    table_kind="reminder_task",
+                    row_id=task.id,
+                    name=task.title,
+                    row=row,
+                    refresh=_refresh,
+                )
+
+            self.run_worker(_do, exclusive=True, group="schedules-transfer")  # type: ignore[arg-type]
+            return
+
+        direction = "to_server" if action == "retry" else action
+        row_dict = transfer_row_dict(task)
+
+        async def _do() -> None:
+            await self._run_owner_transfer(
+                table_kind="reminder_task",
+                row_id=task.id,
+                row_dict=row_dict,
+                name=task.title,
+                direction=direction,
+                row=row,
+                refresh=_refresh,
+            )
+
+        self.run_worker(_do, exclusive=True, group="schedules-transfer")  # type: ignore[arg-type]
+
+    @on(DefinitionOwnerActionRequested)
+    def _on_definition_owner_action_requested(
+        self, event: DefinitionOwnerActionRequested
+    ) -> None:
+        """A definition pane's Runs-on row dropdown/mini-bar fired
+        (PR-3 task 5)."""
+        event.stop()
+        self._definition_owner_action(event.definition, event.action, event.row)
+
+    def _definition_owner_action(
+        self, definition: dict[str, Any], action: str, row: DetailValueRow
+    ) -> None:
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot start a transfer."
+            )
+            return
+        name = str(definition.get("name") or definition.get("id") or "")
+
+        def _refresh() -> None:
+            self._request_automations_refresh()
+
+        async def _do() -> None:
+            # fix round 1 finding 1: unconditional, BEFORE resolving --
+            # same rule `_begin_automation_transfer`/`_cancel_automation_
+            # transfer` follow (schedules_workbench.py:2766-2778).
+            # `_resolve_local_definition_id` can itself mirror a brand
+            # new local row (`upsert_automation_definitions_from_server`)
+            # the first time a pure server-fetch definition is touched --
+            # regardless of which branch below this lands on (refused,
+            # failed, `local_id is None`, or a genuine success), the
+            # Automations tab's cached list may now be outdated.
+            self._definitions_stale = True
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                row.show_error(
+                    "Could not prepare this automation for transfer — see "
+                    "the log."
+                )
+                return
+            if action == "cancel":
+                await self._run_owner_cancel(
+                    table_kind="automation_definition",
+                    row_id=local_id,
+                    name=name,
+                    row=row,
+                    refresh=_refresh,
+                )
+                return
+            direction = "to_server" if action == "retry" else action
+            # A fresh read, like `_begin_automation_transfer`'s own
+            # precedent -- `self._definition` may be a raw server-fetch
+            # dict without the local row's `transfer_state`/`lifecycle`.
+            db_row = await asyncio.to_thread(
+                service.db.get_automation_definition, local_id
+            )
+            row_dict = db_row if db_row is not None else definition
+            await self._run_owner_transfer(
+                table_kind="automation_definition",
+                row_id=local_id,
+                row_dict=row_dict,
+                name=name,
+                direction=direction,
+                row=row,
+                refresh=_refresh,
+            )
+
+        self.run_worker(_do, exclusive=True, group="schedules-automation-transfer")  # type: ignore[arg-type]
+
     @on(RunReminderNowRequested)
     def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:
         """Dispatch the requested reminder immediately."""
@@ -2721,6 +3345,10 @@ class SchedulesWorkbench(BaseAppScreen):
             detail.set_definition(
                 definition, run_count=0, last_run=None, unread_count=0
             )
+            # Same fallback `_update_transfer_actions` uses for `TaskDetail`
+            # when there is no service to derive a real reason from.
+            detail.set_lifecycle_lock(None)
+            detail.set_runs_on_transfer_errors([])
             return
 
         run_count, last_run, unread_count, history_error = (
@@ -2736,6 +3364,22 @@ class SchedulesWorkbench(BaseAppScreen):
             last_run=last_run,
             unread_count=unread_count,
             history_error=history_error,
+            known_timezones=self._task_timezones(),
+            # PR-3 task 5: same option source the Queue reminder pane's
+            # own Runs-on row reads (`_update_detail_for_index`).
+            runs_on_options=self._runs_on_options()[0],
+        )
+        # PR-3 task 4: `DefinitionDetail` gains the SAME transfer-lock
+        # wiring `TaskDetail` has (survey point 10) -- `reason` comes from
+        # `SchedulingService.transfer_lock_reason` (never re-derived in
+        # the widget), fed right after `set_definition` per that
+        # method's own docstring, same as `_update_transfer_actions` does
+        # for the reminder pane.
+        detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
+        # PR-3 task 5 fix round 1 (finding 2): the Runs-on row's own
+        # failure text, same source the legacy Retry button would use.
+        detail.set_runs_on_transfer_errors(
+            _definition_transfer_errors(service, definition)
         )
 
     async def _fetch_definition_detail_counts(
@@ -2814,6 +3458,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 detail.set_definition(
                     definition, run_count=0, last_run=None, unread_count=0
                 )
+                detail.set_lifecycle_lock(None)
+                detail.set_runs_on_transfer_errors([])
             return
         run_count, last_run, unread_count, history_error = (
             await self._fetch_definition_detail_counts(
@@ -2830,6 +3476,21 @@ class SchedulesWorkbench(BaseAppScreen):
             last_run=last_run,
             unread_count=unread_count,
             history_error=history_error,
+            known_timezones=self._task_timezones(),
+            # PR-3 task 5: same option source the Automations-tab sibling
+            # instance's own Runs-on row reads (`_load_automation_detail`).
+            runs_on_options=self._runs_on_options()[0],
+        )
+        # PR-3 task 4: same transfer-lock wiring as `_load_automation_
+        # detail`'s Automations-tab pane -- this is the Queue tab's own
+        # sibling instance of the SAME widget class, so it needs the
+        # same call, independently (each `DefinitionDetail` instance
+        # locks itself; there's no shared state between them).
+        detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
+        # PR-3 task 5 fix round 1 (finding 2): same as the Automations-tab
+        # sibling instance above.
+        detail.set_runs_on_transfer_errors(
+            _definition_transfer_errors(service, definition)
         )
 
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")

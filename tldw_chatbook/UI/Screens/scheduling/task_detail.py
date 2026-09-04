@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ....Scheduling.events import (
     CancelTransferRequested,
@@ -17,15 +19,36 @@ from ....Scheduling.events import (
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    ReminderFieldEditRequested,
+    ReminderOwnerActionRequested,
     RetryTransferRequested,
     RunReminderNowRequested,
     TransferToLocalRequested,
     TransferToServerRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
+# PR-3 task 5: the owner-row dropdown's own lock/failed-state gating reads
+# the SAME state tuple `SchedulingService.transfer_lock_reason` keys off
+# (survey §3) -- a plain constant import, not a fresh boot-cost tier
+# (`scheduled_tasks_db` is already loaded via `scheduling_service.py`
+# by the time this lazy-loaded Scheduling screen is up, same reasoning
+# Task 3's own `reminder_form`/`schedule_input_parsing` imports rely on).
+from ....Scheduling.db.scheduled_tasks_db import IN_FLIGHT_TRANSFER_STATES
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
+# PR-3 task 3: the Frequency row editors reuse the create/edit modal's own
+# preset<->cron mapping and timezone-option builder verbatim (never
+# re-derived) -- `reminder_form.py` is already part of this same lazy-
+# loaded Scheduling-screen import chain (`schedules_workbench.py` imports
+# it at module level too), so this adds no new boot-cost tier (ADR-097).
+from .forms.reminder_form import (
+    DEFAULT_TIME_OF_DAY,
+    ReminderForm,
+    cron_to_preset,
+    preset_to_cron,
+    timezone_options,
+)
 # Hoisted to `unified_rows.py` (redesign PR-2 Task 1) so that pure module can
 # reuse them without pulling Textual in as an import side effect; re-exported
 # here unchanged so every existing call site/test import keeps working.
@@ -36,6 +59,29 @@ from .unified_rows import (
     definition_cron_expression,  # noqa: F401  (re-export: definition_detail.py imports this from here)
     owner_display_label,
 )
+
+
+#: Stable ids for the Frequency row editors (PR-3 task 3), so the
+#: `on_select_changed`/`on_input_submitted` handlers can route by id --
+#: same "filter on `.id`" idiom `on_button_pressed` already uses in this
+#: file for its own action buttons.
+_REPEAT_EDITOR_ID = "scheduling-detail-repeat-editor"
+_AT_EDITOR_ID = "scheduling-detail-at-editor"
+_TIMEZONE_EDITOR_ID = "scheduling-detail-timezone-editor"
+
+#: Repeat's "custom" preset has no single-value edit target here (the raw
+#: cron field only exists in the full modal) -- shown so the row's current
+#: value round-trips (Select requires the initial value be among its
+#: options), but selecting it as a NEW target is refused with this copy
+#: rather than silently doing nothing (ruling 2: never silent).
+_REPEAT_CUSTOM_REFUSAL = "Use the full Edit form to set a custom cron expression."
+
+#: Stable ids for the owner-row transfer dropdown (PR-3 task 5) and its
+#: proactively-shown Cancel/Retry mini-bar -- same "filter on `.id`" idiom
+#: the Frequency editors above already use.
+_RUNS_ON_EDITOR_ID = "scheduling-detail-runs-on-editor"
+_RUNS_ON_CANCEL_ID = "scheduling-detail-runs-on-cancel"
+_RUNS_ON_RETRY_ID = "scheduling-detail-runs-on-retry"
 
 
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
@@ -517,6 +563,45 @@ class TaskDetail(Vertical):
         self._timezone_row: DetailValueRow | None = None
         self._last_fire_row: DetailValueRow | None = None
         self._body_card: Static | None = None
+        # PR-3 task 3: cached from `set_lifecycle_lock` (never re-derived
+        # here, same "one source of truth" rule survey §8 names) so the
+        # Frequency rows' `Activated` handler can tell a locked row apart
+        # from an editable one without a second `transfer_lock_reason`
+        # call -- the workbench already computed this once per selection.
+        self._lifecycle_lock_reason: str | None = None
+        #: Zones already used by other tasks (task-23102), threaded in by
+        #: the workbench's own `set_task` call so the Timezone row editor
+        #: offers the same option set the create/edit modal does. Empty
+        #: by default: every other `set_task` caller (including every
+        #: pre-task-3 test) keeps working unchanged.
+        self._known_timezones: Sequence[str] = ()
+        #: PR-3 task 5: the workbench's own `_runs_on_options()` result
+        #: (hoisted the SAME way `known_timezones` already is -- the
+        #: workbench holds the service/server state needed to compute it,
+        #: this widget does not). Empty by default: every pre-task-5
+        #: `set_task` caller/test keeps working unchanged.
+        self._runs_on_options: Sequence[tuple[str, str]] = ()
+        #: PR-3 task 5: the Runs-on row's proactive Cancel/Retry
+        #: affordances -- plain always-mounted `Button`s toggled via
+        #: `.display` (never `begin_edit`-swapped INTO the row: that
+        #: would hide `#scheduling-detail-runs-on`'s own value Static,
+        #: which the existing transfer-badge rendering pins verbatim --
+        #: see `_configure_runs_on_row`). `None` until first `compose()`.
+        self._runs_on_cancel_button: Button | None = None
+        self._runs_on_retry_button: Button | None = None
+        #: PR-3 task 5 fix round 1 (finding 2): a `to_server_failed`
+        #: row's stored `transfer_errors`, threaded in by the workbench
+        #: (`set_runs_on_transfer_errors`) the SAME way it already feeds
+        #: the legacy Retry button's own reason line -- read by
+        #: `_runs_on_failure_reason` when the row is activated.
+        self._runs_on_transfer_errors: list[str] = []
+        #: Final review I2: the id of the reminder an open row editor was
+        #: opened AGAINST, captured at `begin_edit` time and validated at
+        #: commit time by `_editing_task`. Never reset by a repaint -- a
+        #: commit that crossed a repaint in flight has to still see the
+        #: id it was opened for, so it can be discarded instead of
+        #: writing one row's typed value onto another.
+        self._editing_task_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -597,22 +682,54 @@ class TaskDetail(Vertical):
                     "", id="scheduling-task-detail-body-card", markup=False
                 )
                 yield self._body_card
+                # `row_key` (final review M12): the per-row identity the
+                # workbench's edit worker groups its commit under, so two
+                # quick edits on DIFFERENT rows stop cancelling each
+                # other. Set on every editable row, nowhere else.
                 self._runs_on_row = DetailValueRow(
-                    "Runs on", "-", value_id="scheduling-detail-runs-on"
+                    "Runs on",
+                    "-",
+                    value_id="scheduling-detail-runs-on",
+                    row_key="runs_on",
+                )
+                # PR-3 task 5: the Runs-on row's own proactive Cancel/
+                # Retry affordances for an in-flight/failed transfer --
+                # a plain sibling `Horizontal`, hidden by default
+                # (`_configure_runs_on_row` toggles `.display`), NOT
+                # `begin_edit`-mounted into the row itself (that would
+                # hide the row's own value Static, which the existing
+                # transfer-badge rendering pins verbatim).
+                self._runs_on_cancel_button = Button(
+                    "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
+                )
+                self._runs_on_retry_button = Button(
+                    "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
+                )
+                runs_on_actions = Horizontal(
+                    self._runs_on_cancel_button,
+                    self._runs_on_retry_button,
+                    classes="detail-value-row-owner-actions",
                 )
                 yield DetailGroup(
                     self._runs_on_row,
+                    runs_on_actions,
                     title="Details",
                     id="scheduling-detail-group-details",
                 )
                 self._repeat_row = DetailValueRow(
-                    "Repeat", "-", value_id="scheduling-detail-repeat"
+                    "Repeat",
+                    "-",
+                    value_id="scheduling-detail-repeat",
+                    row_key="cron",
                 )
                 self._at_row = DetailValueRow(
-                    "At", "-", value_id="scheduling-detail-at"
+                    "At", "-", value_id="scheduling-detail-at", row_key="run_at"
                 )
                 self._timezone_row = DetailValueRow(
-                    "Timezone", "-", value_id="scheduling-detail-timezone"
+                    "Timezone",
+                    "-",
+                    value_id="scheduling-detail-timezone",
+                    row_key="timezone",
                 )
                 notifications_row = DetailValueRow(
                     "Notifications",
@@ -774,6 +891,8 @@ class TaskDetail(Vertical):
             "scheduling-transfer-to-local",
             "scheduling-retry-transfer",
             "scheduling-cancel-transfer",
+            _RUNS_ON_CANCEL_ID,
+            _RUNS_ON_RETRY_ID,
         }:
             event.stop()
         if button_id == "scheduling-edit-task":
@@ -796,6 +915,10 @@ class TaskDetail(Vertical):
             self._request_cancel_transfer()
         elif button_id == "scheduling-ack-incident":
             self._request_acknowledge()
+        elif button_id == _RUNS_ON_CANCEL_ID:
+            self._request_runs_on_cancel()
+        elif button_id == _RUNS_ON_RETRY_ID:
+            self._request_runs_on_retry()
 
     def _sync_acknowledge_button(self) -> None:
         """Enable the acknowledge button only when an alerting incident exists."""
@@ -862,6 +985,25 @@ class TaskDetail(Vertical):
         if isinstance(self._current_task, ReminderTask):
             self.post_message(CancelTransferRequested(self._current_task))
 
+    def _request_runs_on_cancel(self) -> None:
+        """Post a cancel request from the Runs-on row's own mini-bar
+        (PR-3 task 5) -- a SEPARATE surface from `_request_cancel_
+        transfer` above (coexistence, task-5 brief): this one renders a
+        refusal via `row.show_error`, not the legacy toast."""
+        task = self._current_task
+        row = self._runs_on_row
+        if isinstance(task, ReminderTask) and row is not None:
+            self.post_message(ReminderOwnerActionRequested(task, "cancel", row))
+
+    def _request_runs_on_retry(self) -> None:
+        """Post a retry request from the Runs-on row's own mini-bar
+        (PR-3 task 5) -- the PR-5 retry leg (re-begin), same SEPARATE
+        row-scoped surface as `_request_runs_on_cancel` above."""
+        task = self._current_task
+        row = self._runs_on_row
+        if isinstance(task, ReminderTask) and row is not None:
+            self.post_message(ReminderOwnerActionRequested(task, "retry", row))
+
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
         if self._current_task is None:
@@ -880,6 +1022,345 @@ class TaskDetail(Vertical):
         if confirmed and isinstance(self._current_task, ReminderTask):
             self.post_message(DeleteTaskRequested(self._current_task))
 
+    # -- Frequency row in-pane editing (PR-3 task 3) -------------------------
+
+    def _configure_frequency_editability(self, task: ReminderTask) -> None:
+        """Wire each Frequency row's affordance to whether it has a real
+        single-field edit target for the task's CURRENT schedule kind.
+
+        Repeat (regenerates `cron`) and Timezone (`timezone`) only apply
+        to a recurring schedule; At (`run_at`) only applies to a one-time
+        one. Editing the "wrong" one for the current kind is not merely
+        unhelpful -- `update_reminder`'s own recompute step (survey §2)
+        silently clobbers it back (a `cron`/`timezone` write on a
+        one-time row is reset to `None`; a `run_at` write on a recurring
+        row is reset to `None` too), so offering the affordance there
+        would be a guaranteed-to-silently-fail control. Notifications has
+        no backing field at all (survey §2 -- a reminder dispatch always
+        writes the same fixed inbox+toast, nothing per-row to persist)
+        and stays permanently read-only; `Runs on` is out of this task's
+        row list entirely.
+
+        Locked rows keep their affordance ON (not off): ruling 2 requires
+        activation to still respond with the lock reason via `show_error`
+        rather than going silent, and `on_detail_value_row_activated`
+        checks `self._lifecycle_lock_reason` before ever opening an
+        editor -- so the affordance glyph staying lit is what makes that
+        reachable at all, not a bug.
+        """
+        recurring = task.schedule_kind == ScheduleKind.RECURRING
+        for row, editable in (
+            (self._repeat_row, recurring),
+            (self._at_row, not recurring),
+            (self._timezone_row, recurring),
+        ):
+            assert row is not None
+            row.affordance = editable
+            row.can_focus = editable
+
+    def _configure_runs_on_row(self, task: ReminderTask) -> None:
+        """Wire the Runs-on row's Cancel/Retry button visibility (PR-3
+        task 5).
+
+        `row.affordance`/`can_focus` stay ON unconditionally (ruling 3:
+        "dropdown always renders") -- unlike the Frequency rows' kind
+        gating, nothing about the owner row ever makes activation itself
+        unreachable; `on_detail_value_row_activated` is what decides
+        whether activating it opens the dropdown or shows why not (fix
+        round 1 finding 2: a locked/failed row must not go silently
+        inert, same idiom the Frequency rows already use for their own
+        lock reason).
+
+        The Cancel[/Retry] buttons are plain always-mounted siblings of
+        the row, toggled via `.display` -- deliberately NOT `begin_edit`-
+        mounted INTO the row: `begin_edit` hides the row's own value
+        `Static` (`#scheduling-detail-runs-on`), and the existing
+        transfer-badge rendering (`_reminder_runs_on_label`'s suffix,
+        painted into that SAME Static by `set_task` above) is pinned
+        verbatim by an existing test -- this row's value must stay
+        readable while the actions show, not be replaced by them.
+        `to_server_failed` shows BOTH (`cancel_refusal`/the PR-5 retry
+        leg both allow this substate, mirroring the existing buttons'
+        own Retry-alongside-Cancel visibility rule); any other in-flight
+        state shows Cancel only.
+        """
+        row = self._runs_on_row
+        assert row is not None
+        row.affordance = True
+        row.can_focus = True
+        state = task.transfer_state
+        failed = state == "to_server_failed"
+        locked = failed or state in IN_FLIGHT_TRANSFER_STATES
+        assert self._runs_on_cancel_button is not None
+        assert self._runs_on_retry_button is not None
+        self._runs_on_cancel_button.display = locked
+        self._runs_on_retry_button.display = failed
+
+    def _runs_on_failure_reason(self, task: ReminderTask) -> str:
+        """The Runs-on row's own `to_server_failed` explanation (fix
+        round 1 finding 2): the SAME "Last transfer error: …" copy
+        `set_transfer_reasons` already renders for the legacy Retry
+        button, reusing the SAME stored `transfer_errors` (threaded in
+        by `set_runs_on_transfer_errors`) -- falls back to the plain
+        state label when no stored errors exist (e.g. a row that failed
+        before this field existed)."""
+        errors = self._runs_on_transfer_errors
+        if errors:
+            return "Last transfer error: " + "; ".join(errors)
+        return _TRANSFER_STATE_ROW_LABELS.get(
+            task.transfer_state or "", "This transfer failed."
+        )
+
+    def _editable_rows(self) -> tuple[DetailValueRow, ...]:
+        """Every row this pane can open an editor on (mounted ones only).
+
+        One list, read by the `Activated` router below AND by
+        `_reset_row_editing` -- a row that can open an editor is exactly a
+        row whose editor a repaint has to be able to close again.
+        """
+        return tuple(
+            row
+            for row in (
+                self._repeat_row,
+                self._at_row,
+                self._timezone_row,
+                self._runs_on_row,
+            )
+            if row is not None
+        )
+
+    def _reset_row_editing(self) -> None:
+        """Close every open row editor and clear every row error.
+
+        Final review I2/I3: an open editor and an inline error both belong
+        to the ROW THEY WERE OPENED ON. Left standing across a repaint
+        that swaps in a DIFFERENT reminder, the editor commits its typed
+        value onto the new task and the error accuses a value that is
+        perfectly valid. `set_task` calls this on a row-identity change
+        only -- never on a same-row tick repaint, which this pane does
+        continuously and which would otherwise make typing impossible.
+
+        `_editing_task_id` is deliberately NOT cleared here: it is the
+        commit-time evidence `_editing_task` needs to discard an edit that
+        crossed this repaint in flight.
+        """
+        for row in self._editable_rows():
+            row.end_edit(restore_focus=False)
+            row.clear_error()
+
+    def _editing_task(self) -> ReminderTask | None:
+        """The reminder an open editor was opened against, or ``None``.
+
+        Final review I2's belt. `set_task` closes the editors on a
+        row-identity change, so a commit that still arrives for a row the
+        pane no longer shows means the `Changed`/`Submitted` message and
+        the repaint crossed in flight. Writing it would land the typed
+        value on WHATEVER reminder is painted now -- discard it instead.
+        """
+        task = self._current_task
+        if not isinstance(task, ReminderTask):
+            return None
+        if self._editing_task_id is not None and self._editing_task_id != task.id:
+            logger.debug(
+                "Discarding a reminder row edit opened for {} while the "
+                "detail pane now shows {}",
+                self._editing_task_id,
+                task.id,
+            )
+            return None
+        return task
+
+    def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
+        """Open the activated Frequency/Runs-on row's editor, or -- locked
+        -- show why editing is refused instead of doing nothing (ruling 2).
+        """
+        row = event.row
+        if row not in self._editable_rows():
+            return
+        event.stop()
+        if self._lifecycle_lock_reason is not None:
+            row.show_error(self._lifecycle_lock_reason)
+            return
+        task = self._current_task
+        if not isinstance(task, ReminderTask):
+            return
+        if row is self._runs_on_row and task.transfer_state == "to_server_failed":
+            # fix round 1 finding 2: `_lifecycle_lock_reason` does not
+            # cover `to_server_failed` (it is not "locked" for the OTHER
+            # rows -- editing before a retry is meant to work there), but
+            # the Runs-on row's own dropdown has nothing sensible to
+            # offer a failed row either -- show why instead of opening it.
+            row.show_error(self._runs_on_failure_reason(task))
+            return
+        row.clear_error()
+        # Final review I2: capture the identity this editor is being
+        # opened against, for `_editing_task` to validate at commit time.
+        self._editing_task_id = task.id
+        if row is self._runs_on_row:
+            # A normal, unlocked owner pick (spec §7 flow) -- an
+            # in-flight row never reaches here at all: the top-of-
+            # function `_lifecycle_lock_reason` check above already
+            # intercepted it (that reason IS `transfer_lock_reason`,
+            # which covers every `IN_FLIGHT_TRANSFER_STATES` member).
+            current_owner = task.owner_id or "local"
+            options = list(self._runs_on_options)
+            if current_owner not in {value for _, value in options}:
+                # Same "the row's real owner always round-trips" fallback
+                # `_edit_selected_automation`'s own options-building
+                # already uses (survey §7) -- a `Select`'s initial value
+                # must be among its options.
+                options = [*options, (owner_display_label(current_owner), current_owner)]
+            row.begin_edit(
+                Select(
+                    options,
+                    allow_blank=False,
+                    value=current_owner,
+                    id=_RUNS_ON_EDITOR_ID,
+                )
+            )
+        elif row is self._repeat_row:
+            current_preset, _time_text = cron_to_preset(task.cron or "")
+            row.begin_edit(
+                Select(
+                    ReminderForm._preset_options(),
+                    allow_blank=False,
+                    value=current_preset,
+                    id=_REPEAT_EDITOR_ID,
+                )
+            )
+        elif row is self._at_row:
+            initial = task.run_at.isoformat() if task.run_at is not None else ""
+            row.begin_edit(Input(value=initial, id=_AT_EDITOR_ID))
+        elif row is self._timezone_row:
+            # task.timezone is guaranteed set here: this row's affordance
+            # is only ever True while `task.schedule_kind` is RECURRING,
+            # and `ReminderTask`'s own model validator requires a
+            # timezone for every recurring row.
+            row.begin_edit(
+                Select(
+                    timezone_options(task.timezone, self._known_timezones),
+                    allow_blank=False,
+                    value=task.timezone,
+                    id=_TIMEZONE_EDITOR_ID,
+                )
+            )
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Route a Frequency/Runs-on Select editor's commit by its stable id."""
+        if event.select.id == _REPEAT_EDITOR_ID:
+            self._commit_repeat_edit(event)
+        elif event.select.id == _TIMEZONE_EDITOR_ID:
+            self._commit_timezone_edit(event)
+        elif event.select.id == _RUNS_ON_EDITOR_ID:
+            self._commit_runs_on_edit(event)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Route the At row's Input editor commit (Enter submits)."""
+        if event.input.id == _AT_EDITOR_ID:
+            self._commit_at_edit(event)
+
+    def _commit_repeat_edit(self, event: Select.Changed) -> None:
+        task = self._editing_task()
+        row = self._repeat_row
+        if task is None or row is None:
+            return
+        event.stop()
+        new_preset = str(event.value)
+        current_preset, current_time_text = cron_to_preset(task.cron or "")
+        if new_preset == current_preset:
+            # `Select` posts a synthetic `Changed` the moment `begin_edit`
+            # mounts it with its CURRENT value preselected (Textual's own
+            # `_init_selected_option` assigns `self.value` on `_on_mount`,
+            # which its `_watch_value` always turns into a `Changed` post)
+            # -- indistinguishable from a real commit except by comparing
+            # against the stored value. Also correctly no-ops a genuine
+            # reselect of the unchanged value: nothing to persist either
+            # way, so the editor stays open for a real pick.
+            return
+        row.end_edit()
+        if new_preset == "custom":
+            row.show_error(_REPEAT_CUSTOM_REFUSAL)
+            return
+        new_cron = preset_to_cron(
+            new_preset, current_time_text or DEFAULT_TIME_OF_DAY
+        )
+        assert new_cron is not None, (
+            "every _preset_options() value besides 'custom' always yields a cron"
+        )
+        self.post_message(ReminderFieldEditRequested(task, {"cron": new_cron}, row))
+
+    def _commit_timezone_edit(self, event: Select.Changed) -> None:
+        task = self._editing_task()
+        row = self._timezone_row
+        if task is None or row is None:
+            return
+        event.stop()
+        new_zone = str(event.value)
+        if new_zone == (task.timezone or ""):
+            # Same mount-time-synthetic-`Changed` guard as the Repeat
+            # editor above.
+            return
+        row.end_edit()
+        self.post_message(
+            ReminderFieldEditRequested(task, {"timezone": new_zone}, row)
+        )
+
+    def _commit_at_edit(self, event: Input.Submitted) -> None:
+        task = self._editing_task()
+        row = self._at_row
+        if task is None or row is None:
+            return
+        event.stop()
+        row.end_edit()
+        raw = event.value.strip()
+        # Validated by the bridge (`SchedulingService.edit_reminder_fields`
+        # reuses the exact same `parse_forgiving_datetime` this pane's
+        # `At` display already implies) -- junk/empty text comes back as
+        # a `run_at`-addressed field error, rendered via `row.show_error`
+        # by the workbench's own outcome handler.
+        self.post_message(ReminderFieldEditRequested(task, {"run_at": raw}, row))
+
+    def _commit_runs_on_edit(self, event: Select.Changed) -> None:
+        """Commit the owner-picker Select (PR-3 task 5, spec §7 flow).
+
+        Same-owner selection is a no-op that leaves the dropdown OPEN,
+        and it has to be (final review F8/M8 -- this docstring used to
+        claim `end_edit()` closed it "right back to the read-only
+        display", which is not what the code, its pinning test, or
+        Textual allow). Two facts, both re-probed during the final fix
+        wave against Textual 8.2.8:
+
+        1. `begin_edit` mounting a `Select` with the row's current owner
+           preselected posts a synthetic `Changed` immediately -- the
+           reactive `value` var starts at `NULL`, so `_on_mount`'s
+           `_init_selected_option` assignment is a real change. Probed:
+           this handler fires with the current owner before the user
+           touches anything, and closing on it leaves the dropdown shut
+           the instant it opens.
+        2. A genuine re-pick of the SAME option posts nothing at all:
+           `Select._update_selection` assigns only `if value !=
+           self.value`. So this branch is reachable ONLY from (1).
+
+        Cancelling without picking is Escape, which `DetailValueRow._on_
+        key` already handles. Otherwise the target
+        owner decides the transfer direction (a server-shaped value is
+        `to_server`, anything else is `to_local`) and the workbench (via
+        `ReminderOwnerActionRequested`) runs `transfer_refusal` FIRST --
+        refusal renders inline via `row.show_error`.
+        """
+        task = self._editing_task()
+        row = self._runs_on_row
+        if task is None or row is None:
+            return
+        event.stop()
+        current_owner = task.owner_id or "local"
+        new_owner = str(event.value)
+        if new_owner == current_owner:
+            return
+        row.end_edit()
+        direction = "to_server" if new_owner.startswith("server:") else "to_local"
+        self.post_message(ReminderOwnerActionRequested(task, direction, row))
+
     def set_task(
         self,
         task: ReminderTask | ScheduledTask | None,
@@ -887,10 +1368,48 @@ class TaskDetail(Vertical):
         queue_empty: bool = False,
         run_history=None,
         incidents=None,
+        known_timezones: Sequence[str] = (),
+        runs_on_options: Sequence[tuple[str, str]] = (),
     ) -> None:
-        """Update the detail view for the given task (or clear it)."""
+        """Update the detail view for the given task (or clear it).
+
+        Args:
+            task: The row to paint, or ``None`` for the empty state. A
+                `ReminderTask` fills every group; a bare `ScheduledTask`
+                (the legacy shape) paints only what it carries.
+            queue_empty: True when the queue has no rows at all, which
+                picks the "schedule your first task" empty copy over the
+                "select a task" one. Read only when ``task`` is ``None``.
+            run_history: Pre-fetched run rows for the History group,
+                already read off the event loop by the caller (this
+                method performs no I/O of its own). ``None``/empty
+                renders `format_run_history`'s own no-history copy.
+            incidents: Pre-fetched incident rows -- rendered by
+                `format_incidents` and retained for the acknowledge
+                action's own open-incident lookup. Same caller-fetched
+                contract as ``run_history``.
+            known_timezones: PR-3 task 3 -- zones already used by other
+                tasks, passed through to the Timezone row editor's option
+                source (`timezone_options`) so it offers the same choices
+                the create/edit modal does. Every pre-task-3 caller omits
+                this and is unaffected.
+            runs_on_options: PR-3 task 5 -- the workbench's own
+                `_runs_on_options()[0]`, passed through to the Runs-on
+                row's owner-picker `Select` (same threaded-in-by-the-
+                workbench shape `known_timezones` already uses). Every
+                pre-task-5 caller/test omits this and is unaffected.
+        """
+        # Final review I2/I3: a repaint that swaps in a DIFFERENT reminder
+        # (a filter keystroke, a chip switch, a row aging out of the
+        # filter -- `_update_detail_for_index` falls back to index 0)
+        # takes the open editor and the inline error with it. A same-row
+        # tick repaint, which is what this pane mostly does, must not.
+        if getattr(task, "id", None) != getattr(self._current_task, "id", None):
+            self._reset_row_editing()
         self._current_task = task
         self._current_incidents = list(incidents or [])
+        self._known_timezones = known_timezones
+        self._runs_on_options = runs_on_options
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
@@ -920,6 +1439,18 @@ class TaskDetail(Vertical):
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
+            # PR-3 task 3: stale lock state from a PREVIOUS selection must
+            # not survive into a cleared pane (harmless today since the
+            # groups are hidden either way, but `on_detail_value_row_
+            # activated` reads this directly -- keep it honest).
+            self._lifecycle_lock_reason = None
+            # PR-3 task 5: the Runs-on row's Cancel/Retry buttons from a
+            # PREVIOUS selection must not stay visible in a cleared pane.
+            if self._runs_on_cancel_button is not None:
+                self._runs_on_cancel_button.display = False
+            if self._runs_on_retry_button is not None:
+                self._runs_on_retry_button.display = False
+            self._runs_on_transfer_errors = []
             return
 
         empty_state.display = False
@@ -949,6 +1480,8 @@ class TaskDetail(Vertical):
             self._at_row.update_value(_reminder_at_label(task))
             self._timezone_row.update_value(_reminder_timezone_label(task))
             self._last_fire_row.update_value(_reminder_last_fire_label(task))
+            self._configure_frequency_editability(task)
+            self._configure_runs_on_row(task)
 
         if isinstance(task, ReminderTask):
             # Structural visibility only (spec §6, PR-5 task 7): Move to
@@ -1174,6 +1707,15 @@ class TaskDetail(Vertical):
             "\n".join(reason_lines)
         )
 
+    def set_runs_on_transfer_errors(self, errors: list[str]) -> None:
+        """Cache a `to_server_failed` row's stored `transfer_errors` (PR-3
+        task 5 fix round 1, finding 2) for `_runs_on_failure_reason` --
+        called by the workbench right alongside `set_transfer_reasons`,
+        fed from the SAME `retry_errors` list that already backs the
+        legacy Retry button's own reason line (one source, not a second
+        derivation)."""
+        self._runs_on_transfer_errors = list(errors)
+
     def set_lifecycle_lock(self, reason: str | None) -> None:
         """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
 
@@ -1187,7 +1729,13 @@ class TaskDetail(Vertical):
         line in the always-visible Static, since keyboard users cannot
         see tooltips (UX-073). ``None`` restores the row's normal
         enabled/disabled logic, which `set_task` has already applied.
+
+        PR-3 task 3: also cached for the Frequency rows' `Activated`
+        handler (`self._lifecycle_lock_reason`) -- the SAME reason, not a
+        second `transfer_lock_reason` call, per survey §8's one-source-
+        of-truth rule.
         """
+        self._lifecycle_lock_reason = reason
         locked = reason is not None
         for button_id, tooltip in (
             ("scheduling-edit-task", "Edit this scheduled task."),

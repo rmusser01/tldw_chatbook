@@ -119,6 +119,13 @@ owns exclusively and we cannot push (none today — lifecycle, model,
 schedule, notifications all have push paths post-PR-5) would render
 read-only with a reason.
 
+> **Errata (PR-3, T6):** the "notifications … push paths post-PR-5" claim
+> above does not hold for reminders — a reminder's Notifications row has no
+> backing schema field at all (verified during PR-3 task 3; a dispatch
+> always writes the same fixed inbox+toast), so it stays read-only until a
+> field exists to push. `recurring_question` definitions do carry a real
+> notifications toggle and edit in place per §6.
+
 ## 6. Editing model (ADR-099 amendment)
 
 - In-pane quick edits cover single-value rows only. Each row commit goes

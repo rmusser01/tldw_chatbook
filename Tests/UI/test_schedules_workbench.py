@@ -1,7 +1,7 @@
 """Tests for the SchedulesWorkbench shell."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,11 +10,21 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DataTable,
+    Input,
+    Select,
+    Static,
+    TabbedContent,
+)
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
+    ReminderFieldEditRequested,
+    ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
 )
@@ -26,7 +36,11 @@ from tldw_chatbook.Scheduling.models import (
 )
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+    DefinitionDetail,
     _definition_owner_label,
+)
+from tldw_chatbook.Scheduling.services import (
+    scheduling_service as scheduling_service_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
@@ -39,6 +53,7 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
 
 
 # Shared across the Schedules UI test files (task-23106 review round F15).
@@ -46,6 +61,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB as _MockSchedulingDB,
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
+    rendered_row_cells,
 )
 
 
@@ -429,6 +445,2108 @@ async def test_task_detail_shows_the_reminder_body_card():
         detail.set_task(_frequency_reminder(body=None))
         await pilot.pause()
         assert card.display is False
+
+
+# --- redesign PR-3, task 3: reminder-pane in-pane Frequency-row editing ----
+
+
+def _real_scheduling_service(tmp_path):
+    """A real (in-memory-file) `ScheduledTasksDB` + `SchedulingService`,
+    no server -- for tests that need genuine persistence/validation
+    (Task 2's bridge), not a hand-rolled stub of it."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    service = SchedulingService(db=db, runtime_source="local")
+    return db, service
+
+
+@pytest.mark.asyncio
+async def test_repeat_row_editor_opens_with_current_preset_preselected():
+    """Activating a recurring reminder's Repeat row mounts a Select
+    preloaded with the CURRENT cron's preset (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        # `_frequency_reminder`'s default cron "0 9 * * 1" == Monday 09:00.
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        assert repeat_row.affordance is True
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+
+
+@pytest.mark.asyncio
+async def test_at_row_editor_opens_with_current_run_at_preselected():
+    """A one-time reminder's At row opens an Input preloaded with the
+    task's own `run_at.isoformat()` -- the same prefill shape the
+    create/edit modal uses."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        run_at = datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc)
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=run_at,
+            )
+        )
+        await pilot.pause()
+
+        at_row = detail._at_row
+        assert at_row.affordance is True
+        await pilot.click(at_row)
+        await pilot.pause()
+
+        editor = at_row.query_one(Input)
+        assert editor.value == run_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_timezone_row_editor_opens_with_current_zone_preselected():
+    """A recurring reminder's Timezone row opens a Select preloaded with
+    the task's OWN stored zone."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())  # timezone="America/New_York"
+        await pilot.pause()
+
+        tz_row = detail._timezone_row
+        assert tz_row.affordance is True
+        await pilot.click(tz_row)
+        await pilot.pause()
+
+        editor = tz_row.query_one(Select)
+        assert editor.value == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_frequency_row_affordance_matches_schedule_kind():
+    """Repeat/Timezone only apply to a recurring schedule, At only to a
+    one-time one (survey §2: the other combination is silently clobbered
+    by `update_reminder`'s own recompute step) -- the non-applicable row
+    stays read-only instead of offering a guaranteed-to-fail control."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())  # recurring
+        await pilot.pause()
+        assert detail._repeat_row.affordance is True
+        assert detail._at_row.affordance is False
+        assert detail._timezone_row.affordance is True
+
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc),
+            )
+        )
+        await pilot.pause()
+        assert detail._repeat_row.affordance is False
+        assert detail._at_row.affordance is True
+        assert detail._timezone_row.affordance is False
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_open_editor_without_committing():
+    """Escape closes the open editor via `end_edit` -- no field-edit
+    request is posted, and the row's old value is still shown."""
+
+    class _CapturingApp(_BareTaskDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_reminder_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+        assert repeat_row.query(Select)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)
+        assert pilot.app.requests == []
+        assert (
+            detail.query_one("#scheduling-detail-repeat", Static)
+            .render_line(0)
+            .text.strip()
+            == "Recurring"
+        )
+
+
+@pytest.mark.asyncio
+async def test_repeat_row_selecting_custom_target_refuses_without_a_bridge_call():
+    """Picking "Custom cron..." as a NEW Repeat target has no single-value
+    edit shape here (the raw cron field only exists in the full modal),
+    so it is refused client-side rather than sent to the bridge (ruling
+    2: never silent) -- distinct from "custom" merely being the row's
+    CURRENT (round-tripped) value, which never triggers a commit at all."""
+
+    class _CapturingApp(_BareTaskDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_reminder_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        # `_frequency_reminder`'s default cron "0 9 * * 1" == "monday".
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+
+        editor.value = "custom"  # a genuine change to an unsupported target
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)  # editor closed
+        assert pilot.app.requests == []  # never reached the bridge
+        error = repeat_row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "full Edit form" in error.render_line(0).text
+        # The stored cron is untouched -- nothing was persisted.
+        assert (
+            detail.query_one("#scheduling-detail-at", Static)
+            .render_line(0)
+            .text.strip()
+            == "Weekly on Monday at 09:00 America/New_York"
+        )
+
+
+@pytest.mark.asyncio
+async def test_locked_row_activation_shows_lock_reason_and_opens_no_editor():
+    """Ruling 2 (never silent): a locked row's Frequency rows keep their
+    affordance ON so activation still responds -- with the lock reason
+    via `show_error`, never an editor."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        detail.set_lifecycle_lock(
+            "This row is moving between this device and the server -- it "
+            "is read-only until the move finishes. Cancel the transfer first."
+        )
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        assert repeat_row.affordance is True  # still responsive, not silently off
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)
+        error = repeat_row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "moving between this device and the server" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_committing_repeat_edit_persists_and_repaints_pane_and_queue_list(
+    tmp_path,
+):
+    """Commit persists via Task 2's bridge; success repaints the pane from
+    a fresh read AND the unified Queue list's own row data (task-3 brief
+    AC: 'unified-list row updates after edit')."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        reminder = await service.create_reminder(
+            {
+                "title": "Weekly digest",
+                "schedule_kind": "recurring",
+                "run_at": None,
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            }
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            at_before = detail.query_one("#scheduling-detail-at", Static)
+            assert (
+                at_before.render_line(0).text.strip()
+                == "Weekly on Monday at 09:00 America/New_York"
+            )
+
+            # `pilot.click` targets a screen coordinate computed from
+            # `Widget.region`, which the Frequency group's real position
+            # inside the full 3-pane workbench does not reliably match
+            # (Task 1's own click-mechanics tests are BARE-harness only,
+            # never embedded here) -- posting `Activated` directly drives
+            # the exact same handler a real click reaches, without
+            # depending on pixel-perfect layout in a pane this narrow.
+            detail._repeat_row.post_message(
+                DetailValueRow.Activated(detail._repeat_row)
+            )
+            await pilot.pause()
+            select = detail._repeat_row.query_one(Select)
+            select.value = "daily"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(reminder.id)["cron"] == "0 9 * * *"
+
+            at_after = detail.query_one("#scheduling-detail-at", Static)
+            assert (
+                at_after.render_line(0).text.strip()
+                == "Daily at 09:00 America/New_York"
+            )
+
+            # The unified Queue list's own underlying row data, not just
+            # the detail pane, reflects the persisted edit -- proven via
+            # the workbench's own refreshed `_tasks` (deterministic; the
+            # rendered relative-time subtitle is wall-clock-dependent and
+            # not a safe assertion here).
+            workbench = pilot.app.screen
+            assert workbench._tasks[0].cron == "0 9 * * *"
+            assert rendered_row_cells(table, 0)[1] == "Weekly digest"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_edit_on_a_server_owned_row_persists_under_its_own_owner(
+    tmp_path,
+):
+    """PR-2's Queue spans owners -- a server-owned row's edit must persist
+    (row-owner threading is the bridge's own job, Task 2) without ever
+    repointing the service's active ('local') owner (task-3 brief AC)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="server:example.com",
+            title="Server reminder",
+            schedule_kind="recurring",
+            run_at=None,
+            cron="0 9 * * 1",
+            timezone="America/New_York",
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            detail._timezone_row.post_message(
+                DetailValueRow.Activated(detail._timezone_row)
+            )
+            await pilot.pause()
+            select = detail._timezone_row.query_one(Select)
+            select.value = "UTC"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row = db.get_reminder_task(task_id)
+            assert row["timezone"] == "UTC"
+            assert row["owner_id"] == "server:example.com"
+        assert service.owner_id == "local"  # never repointed by the edit
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_junk_at_value_shows_inline_error_and_restores_old_display(tmp_path):
+    """A junk At submission surfaces the bridge's field error inline and
+    leaves the OLD display + DB value untouched (task-3 brief AC)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="One-off",
+            schedule_kind="one_time",
+            run_at="2030-01-01T09:00:00+00:00",
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            at_row = detail._at_row
+            at_static = detail.query_one("#scheduling-detail-at", Static)
+            original_text = at_static.render_line(0).text.strip()
+
+            at_row.post_message(DetailValueRow.Activated(at_row))
+            await pilot.pause()
+            input_widget = at_row.query_one(Input)
+            input_widget.value = "not-a-date"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            error = at_row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert "Run At must be a date and time" in error.render_line(0).text
+
+            assert (
+                db.get_reminder_task(task_id)["run_at"]
+                == "2030-01-01T09:00:00+00:00"
+            )
+            assert at_static.render_line(0).text.strip() == original_text
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged(
+    tmp_path,
+):
+    """The lock guard holds end-to-end through the real bridge too: a
+    locked row's Repeat editor never opens, and the DB row is untouched."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Locked",
+            schedule_kind="recurring",
+            run_at=None,
+            cron="0 9 * * 1",
+            timezone="America/New_York",
+        )
+        db.set_transfer_state(
+            "reminder_task", task_id, "to_server_pending", expected=(None,)
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            repeat_row = detail._repeat_row
+            assert repeat_row.affordance is True
+
+            repeat_row.post_message(DetailValueRow.Activated(repeat_row))
+            await pilot.pause()
+
+            assert not repeat_row.query(Select)
+            error = repeat_row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert "moving between this device and the server" in error.render_line(0).text
+            assert db.get_reminder_task(task_id)["cron"] == "0 9 * * 1"
+    finally:
+        db.close()
+
+
+# --- redesign PR-3, task 4: definition-pane in-pane editing + lifecycle ----
+
+
+class _BareDefinitionDetailApp(ConsolidatedCSSApp):
+    """Bare app mounting one `DefinitionDetail` (schedules-redesign PR-3,
+    task 4), matching `_BareTaskDetailApp`'s own pattern."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield DefinitionDetail()
+
+
+def _editable_definition(**overrides) -> dict:
+    """A representative local `recurring_question` definition dict
+    covering every task-4 editable Details/Frequency row: a recurring
+    cron schedule, a pinned model, a non-default generation mode, an
+    explicit sources scope, and an on notification policy."""
+    base: dict = {
+        "id": "def-1",
+        "owner_id": "local",
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "lifecycle": "configured",
+        "schedule": {
+            "kind": "cron",
+            "cron": "0 9 * * 1",
+            "timezone": "America/New_York",
+        },
+        "input": {
+            "question": "What shipped?",
+            "provider": "openai",
+            "model": "gpt-5",
+        },
+        "config": {
+            "generation_mode": "required",
+            "scope": {"mode": "sources", "sources": ["media_db", "notes"]},
+            "finding_policy": {"preset": "high_confidence_only"},
+        },
+        "finding_policy": {"preset": "high_confidence_only"},
+        "notification_policy": {"on_success": True, "on_failure": True},
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_definition_details_rows_are_always_editable_regardless_of_schedule_kind():
+    """Model/Generation/Finding policy/Sources/Notifications don't depend
+    on schedule kind (unlike Repeat/At/Timezone) -- affordance stays on
+    for both kinds."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+        for row in (
+            detail._model_row,
+            detail._generation_row,
+            detail._finding_policy_row,
+            detail._sources_row,
+            detail._notifications_row,
+        ):
+            assert row.affordance is True
+
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        for row in (
+            detail._model_row,
+            detail._generation_row,
+            detail._finding_policy_row,
+            detail._sources_row,
+            detail._notifications_row,
+        ):
+            assert row.affordance is True
+
+
+@pytest.mark.asyncio
+async def test_definition_frequency_row_affordance_gated_by_schedule_kind():
+    """Repeat/Timezone only apply to a cron schedule, At only to a
+    one_time one -- same reasoning `task_detail.py`'s reminder Frequency
+    rows already use."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # cron
+        await pilot.pause()
+        assert detail._repeat_row.affordance is True
+        assert detail._at_row.affordance is False
+        assert detail._timezone_row.affordance is True
+
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        assert detail._repeat_row.affordance is False
+        assert detail._at_row.affordance is True
+        assert detail._timezone_row.affordance is False
+
+
+@pytest.mark.asyncio
+async def test_model_row_editor_preselects_provider_slash_model_and_is_blank_when_not_set():
+    """Task-4 brief: 'blank = provider default, the "Not set" honesty
+    preserved' -- the Input opens blank, not literal 'auto'."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == "openai/gpt-5"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(_editable_definition(input={"question": "What shipped?"}))
+        await pilot.pause()
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == ""
+
+
+@pytest.mark.asyncio
+async def test_generation_row_editor_preselects_current_value_defaulting_to_optional():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # generation_mode="required"
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "required"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(config={"scope": {"mode": "all_searchable_library"}})
+        )
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "optional"
+
+
+@pytest.mark.asyncio
+async def test_finding_policy_row_editor_preselects_current_value():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # high_confidence_only
+        await pilot.pause()
+        row = detail._finding_policy_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "high_confidence_only"
+
+
+@pytest.mark.asyncio
+async def test_sources_row_editor_checks_stored_sources_and_all_when_library_wide():
+    """The 3-checkbox mini-editor (task-4 brief's own suggested Sources
+    shape) prechecks the stored subset, or every box when the scope is
+    library-wide/unset -- visually 'everything', matching the row's own
+    displayed value."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # sources: media_db, notes
+        await pilot.pause()
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        checkboxes = {cb.id: cb.value for cb in row.query(Checkbox)}
+        assert checkboxes["scheduling-automation-detail-sources-media_db"] is True
+        assert checkboxes["scheduling-automation-detail-sources-notes"] is True
+        assert checkboxes["scheduling-automation-detail-sources-chats"] is False
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(config={"scope": {"mode": "all_searchable_library"}})
+        )
+        await pilot.pause()
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        checkboxes = {cb.id: cb.value for cb in row.query(Checkbox)}
+        assert all(checkboxes.values())
+
+
+@pytest.mark.asyncio
+async def test_notifications_row_editor_preselects_on_off():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # on
+        await pilot.pause()
+        row = detail._notifications_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "on"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(
+                notification_policy={"on_success": False, "on_failure": False}
+            )
+        )
+        await pilot.pause()
+        row = detail._notifications_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "off"
+
+
+@pytest.mark.asyncio
+async def test_definition_repeat_row_editor_preselects_current_preset():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # "0 9 * * 1" == monday
+        await pilot.pause()
+        row = detail._repeat_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "monday"
+
+
+@pytest.mark.asyncio
+async def test_definition_at_row_editor_preselects_current_run_at():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        row = detail._at_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Input)
+        assert editor.value == "2030-01-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_definition_timezone_row_editor_preselects_current_zone():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # America/New_York
+        await pilot.pause()
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_definition_timezone_editor_says_automation_not_task(monkeypatch):
+    """Final review F10: this pane's inline Timezone editor is one of the
+    two surfaces that got the reminder wording from task 3's option-source
+    consolidation -- it passes `noun="automation"` now."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        definition["schedule"]["timezone"] = "Mars/Olympus"
+        detail.set_definition(definition)
+        await pilot.pause()
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        labels = [str(prompt) for prompt, _value in row.query_one(Select)._options]
+        assert "Mars/Olympus — stored on this automation, not recognized here" in labels
+
+
+@pytest.mark.asyncio
+async def test_definition_escape_cancels_open_editor_without_committing():
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert pilot.app.requests == []
+
+
+@pytest.mark.asyncio
+async def test_definition_repeat_row_custom_target_refuses_client_side_without_bridge_call():
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._repeat_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        editor.value = "custom"
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert pilot.app.requests == []
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "full Edit form" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_sources_editor_apply_with_nothing_checked_refuses_client_side():
+    """Sources editor honesty (task-4 brief): unchecking every box and
+    applying is refused inline rather than sent to the bridge -- an
+    empty scope is a guaranteed `scope_empty` server refusal anyway."""
+
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        for checkbox in row.query(Checkbox):
+            checkbox.value = False
+        await pilot.pause()
+        apply_button = row.query_one(
+            "#scheduling-automation-detail-sources-apply", Button
+        )
+        await pilot.click(apply_button)
+        await pilot.pause()
+
+        assert not row.query(Checkbox)  # editor closed
+        assert pilot.app.requests == []
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "at least one source" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_definition_locked_row_activation_shows_lock_reason_and_opens_no_editor():
+    """Survey point 10: `DefinitionDetail` gains the SAME transfer-lock
+    wiring `TaskDetail` has -- a locked row keeps its affordance ON so
+    activation still responds, with the lock reason, never an editor."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        detail.set_lifecycle_lock(
+            "This row is moving between this device and the server -- it "
+            "is read-only until the move finishes. Cancel the transfer first."
+        )
+        await pilot.pause()
+
+        row = detail._generation_row
+        assert row.affordance is True  # still responsive, not silently off
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "moving between this device and the server" in error.render_line(0).text
+
+
+class _LifecycleCapturingApp(_BareDefinitionDetailApp):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list = []
+
+    def on_definition_lifecycle_toggle_requested(self, event) -> None:
+        self.requests.append(event)
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_shows_pause_and_posts_pause_when_configured():
+    async with _LifecycleCapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(lifecycle="configured"))
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.label.plain == "Pause"
+        await pilot.click(button)
+        await pilot.pause()
+        assert len(pilot.app.requests) == 1
+        assert pilot.app.requests[0].action == "pause"
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_shows_resume_and_posts_resume_when_paused():
+    async with _LifecycleCapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(lifecycle="paused"))
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.label.plain == "Resume"
+        await pilot.click(button)
+        await pilot.pause()
+        assert len(pilot.app.requests) == 1
+        assert pilot.app.requests[0].action == "resume"
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_disabled_and_reason_shown_when_locked():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        detail.set_lifecycle_lock("Read-only mid-transfer.")
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.disabled is True
+        assert button.tooltip == "Read-only mid-transfer."
+        why = detail.query_one("#scheduling-automation-detail-why", Static)
+        assert why.render_line(0).text.strip() == "Read-only mid-transfer."
+
+        detail.set_lifecycle_lock(None)
+        await pilot.pause()
+        assert button.disabled is False
+
+
+# --- integration: real DB + service + full workbench -----------------------
+
+
+@pytest.mark.asyncio
+async def test_committing_generation_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Commit persists via `save_definition`; success repaints the
+    Automations-tab pane from a fresh read AND arms the unified Queue
+    list's own (lazy, tab-activation-gated) refresh -- the same
+    `_definitions_stale` seam every other definition mutation in this
+    file uses (run-now, transfer begin/cancel)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={
+                "generation_mode": "optional",
+                "scope": {"mode": "all_searchable_library"},
+            },
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._generation_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "required"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                db.get_automation_definition(definition_id)["config"][
+                    "generation_mode"
+                ]
+                == "required"
+            )
+            generation_static = detail.query_one(
+                "#scheduling-automation-detail-generation", Static
+            )
+            assert (
+                generation_static.render_line(0).text.strip()
+                == "Always generate a draft"
+            )
+            # The unified Queue list's own next (lazy) refresh is armed.
+            assert workbench._definitions_stale is True
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_repeat_edit_resends_whole_schedule_preserving_timezone(
+    tmp_path,
+):
+    """Pinned (task-4 brief): schedule edits RESEND THE WHOLE schedule
+    dict -- an edited Repeat (cron) must not drop the recurring
+    schedule's own timezone."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._repeat_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "daily"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["schedule"]["cron"] == "0 9 * * *"
+            assert stored["schedule"]["kind"] == "cron"
+            assert stored["schedule"]["timezone"] == "America/New_York"  # not dropped
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_timezone_edit_preserves_cron(tmp_path):
+    """Companion pin: a Timezone edit must not drop the schedule's cron."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._timezone_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "UTC"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["schedule"]["timezone"] == "UTC"
+            assert stored["schedule"]["cron"] == "0 9 * * 1"  # not dropped
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_model_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Model row commit persists `input.provider`/`model` and repaints the
+    pane (task-4 review Finding 2: this row type had no real-DB persist
+    test in the original diff)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={"generation_mode": "optional"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._model_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            input_widget = row.query_one(Input)
+            input_widget.value = "openai/gpt-5"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["input"]["provider"] == "openai"
+            assert stored["input"]["model"] == "gpt-5"
+            assert stored["input"]["question"] == "What shipped?"  # not dropped
+            model_static = detail.query_one(
+                "#scheduling-automation-detail-model", Static
+            )
+            assert model_static.render_line(0).text.strip() == "openai/gpt-5"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_finding_policy_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Finding-policy row commit writes `config.finding_policy.preset`
+    AND persists it back to the TOP-LEVEL `finding_policy` column this
+    row reads for display (task-4 review Finding 2)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={"finding_policy": {"preset": "balanced_findings"}},
+            finding_policy={"preset": "balanced_findings"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._finding_policy_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "high_confidence_only"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert (
+                stored["config"]["finding_policy"]["preset"]
+                == "high_confidence_only"
+            )
+            assert stored["finding_policy"]["preset"] == "high_confidence_only"
+            finding_static = detail.query_one(
+                "#scheduling-automation-detail-finding-policy", Static
+            )
+            assert (
+                finding_static.render_line(0).text.strip()
+                == "High confidence only"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_sources_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Sources editor Apply persists the explicit `{"mode": "sources", ...}`
+    shape and repaints the pane (task-4 review Finding 2)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._sources_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            for checkbox in row.query(Checkbox):
+                checkbox.value = (
+                    checkbox.id == "scheduling-automation-detail-sources-notes"
+                )
+            await pilot.pause()
+            apply_button = row.query_one(
+                "#scheduling-automation-detail-sources-apply", Button
+            )
+            # A real pixel click on a widget nested this deep inside the
+            # full 3-pane embedded workbench is exactly the layout quirk
+            # Task 3's own report documents (bare-harness clicks land
+            # fine, embedded ones do not reliably match `Widget.region`)
+            # -- post the Pressed message directly, same workaround this
+            # file already uses for row Activation.
+            apply_button.post_message(Button.Pressed(apply_button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["scope"] == {
+                "mode": "sources",
+                "sources": ["notes"],
+            }
+            sources_static = detail.query_one(
+                "#scheduling-automation-detail-sources", Static
+            )
+            assert sources_static.render_line(0).text.strip() == "Notes"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_notifications_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Notifications row commit writes the boolean on/off shape for BOTH
+    outcomes and repaints the pane (task-4 review Finding 2)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+            notification_policy={"on_success": False, "on_failure": False},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._notifications_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "on"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["notification_policy"] == {
+                "on_success": True,
+                "on_failure": True,
+            }
+            notif_static = detail.query_one(
+                "#scheduling-automation-detail-notifications", Static
+            )
+            assert notif_static.render_line(0).text.strip() == "On"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_at_edit_persists_and_repaints_automations_pane(tmp_path):
+    """At row commit persists `run_at` on a one-time definition and
+    repaints the pane (task-4 review Finding 2)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "One-off digest",
+            schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"},
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._at_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            new_run_at = datetime(2031, 6, 15, 9, 0, tzinfo=timezone.utc)
+            input_widget = row.query_one(Input)
+            input_widget.value = new_run_at.isoformat()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["schedule"]["kind"] == "one_time"
+            assert stored["schedule"]["run_at"] == new_run_at.isoformat()
+            at_static = detail.query_one(
+                "#scheduling-automation-detail-at", Static
+            )
+            assert (
+                at_static.render_line(0).text.strip()
+                == "One-time at 2031-06-15 09:00 UTC"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_path):
+    """Qodo finding 8: the `At` row commits the field THIS schedule kind
+    owns and never converts the kind.
+
+    A `daily` schedule's `At` used to be editable (the row was gated on
+    "not cron") while the commit hard-coded `{"kind": "one_time",
+    "run_at": ...}` -- so setting the time on a daily automation turned it
+    into a one-shot and dropped `time_of_day`. The pin is the whole
+    schedule dict, `weekday` included: only the edited field moves."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "weekly",
+                "time_of_day": "09:00",
+                "weekday": 2,
+                "timezone": "UTC",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._at_row
+            assert row.affordance is True, "a weekly schedule has a time target"
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            input_widget = row.query_one(Input)
+            # Seeded from the field the kind owns, not from `run_at`.
+            assert input_widget.value == "09:00"
+            input_widget.value = "7:30"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)["schedule"]
+            assert stored["time_of_day"] == "07:30"  # normalized, zero-padded
+            assert stored["kind"] == "weekly"  # NEVER converted
+            assert stored["weekday"] == 2  # sibling fields preserved
+            assert stored["timezone"] == "UTC"
+            assert "run_at" not in stored
+
+            # Ruling 2: the row must repaint to the AUTHORITATIVE value.
+            # `_definition_at_label` used to answer "-" for every kind but
+            # cron/one_time, so this row went on reading "-" after a
+            # successful edit -- the dishonest-repaint class this program
+            # polices, on the row task 4 had just made editable.
+            at_static = detail.query_one(
+                "#scheduling-automation-detail-at", Static
+            )
+            assert (
+                at_static.render_line(0).text.strip()
+                == "Weekly on Wednesday at 07:30 UTC"
+            )
+
+            # SECOND surface: `_definition_at_label` also feeds the Queue
+            # tab's unified-row subtitle (`build_unified_rows`'s
+            # `schedule_summary` -> `_row_subtitle`). Painted, so the
+            # shared-helper change is verified where it actually lands
+            # rather than assumed.
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-queue-tab"
+            )
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            queue_table = workbench.query_one("#scheduling-task-table", DataTable)
+            painted = " ".join(
+                str(cell)
+                for index in range(queue_table.row_count)
+                for cell in queue_table.get_row_at(index)
+            )
+            assert "Weekly on Wednesday at 07:30 UTC" in painted
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
+    """Qodo finding 8, the other half: an `interval` schedule has no
+    single time field for `At` to edit, so the row offers no affordance
+    rather than an editor that would rewrite the kind."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Every hour",
+            schedule={"kind": "interval", "every_seconds": 3600},
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._at_row.affordance is False
+            assert detail._at_row.can_focus is False
+            detail._at_row.post_message(DetailValueRow.Activated(detail._at_row))
+            await pilot.pause()
+            assert not detail._at_row.query(Input)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_two_fields_of_one_definition_both_land_without_a_lost_update(tmp_path):
+    """Qodo finding 7: the edit worker groups per DEFINITION, not per
+    field.
+
+    With a per-FIELD group the two commits below ran concurrently, and
+    `save_definition` merges each payload onto the row it read at entry
+    -- so whichever finished second wrote back a snapshot taken before
+    the first landed, silently reverting it. Serialized per definition,
+    both survive."""
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={"generation_mode": "optional"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            definition = dict(detail._definition)
+
+            # Two DIFFERENT fields of the SAME definition, dispatched
+            # back to back with nothing awaited in between -- the shape
+            # a fast typist produces.
+            workbench._edit_definition_field(
+                definition,
+                _definition_edit_payload(definition, input={"model": "gpt-5"}),
+                detail._model_row,
+            )
+            workbench._edit_definition_field(
+                definition,
+                _definition_edit_payload(
+                    definition, config={"generation_mode": "required"}
+                ),
+                detail._generation_row,
+            )
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            assert stored["input"]["model"] == "gpt-5"  # not reverted by the second
+            assert stored["input"]["question"] == "What shipped?"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_model_only_target_round_trips_through_an_unchanged_submit(tmp_path):
+    """Qodo finding 10: a stored `model` with no `provider` must survive
+    being opened and submitted unchanged.
+
+    The editor seeds `/model` for that shape -- the exact inverse of the
+    commit's parse, where bare text means "provider". Seeding the bare
+    model instead (what the row's display label shows) silently moved the
+    value into the provider slot on the next Enter."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?", "model": "gpt-5"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            # The row still READS as a bare model -- the display label is
+            # unchanged, only the editor's seed is the parse's inverse.
+            model_static = detail.query_one(
+                "#scheduling-automation-detail-model", Static
+            )
+            assert model_static.render_line(0).text.strip() == "gpt-5"
+
+            row = detail._model_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            assert row.query_one(Input).value == "/gpt-5"
+            await pilot.press("enter")  # submitted UNCHANGED
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)["input"]
+            assert stored["model"] == "gpt-5"
+            assert not stored.get("provider")
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_non_recurring_question_definition_exposes_no_editors(tmp_path):
+    """Qodo finding 11: the pane only authors `recurring_question`, and
+    every payload it builds declares that family -- so an `agent_task`
+    row renders every row read-only and says why, instead of offering
+    editors whose commit would push it through the wrong family's
+    normalizer."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        db.create_automation_definition(
+            "local",
+            "agent_task",
+            "Nightly agent run",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._definition["family"] == "agent_task"
+            assert [row.row_key for row in detail._editable_rows() if row.affordance] == []
+            for row in detail._editable_rows():
+                row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            assert not detail.query(Input)
+            assert not detail.query(Select)
+            why = detail.query_one("#scheduling-automation-detail-why", Static)
+            assert "isn't a recurring question" in why.render_line(0).text
+    finally:
+        db.close()
+
+
+def test_stale_definition_row_error_is_not_painted_on_another_row(tmp_path):
+    """Qodo finding 9: the edit worker holds a `DetailValueRow` across an
+    `await`, so a failure arriving after the pane moved on must not stamp
+    its message under a different automation's field. The commit path
+    already validates the captured identity (`_editing_definition`); this
+    is the same check on the error path."""
+    detail = DefinitionDetail()
+    detail._definition = {"id": "def-B"}
+    row = DetailValueRow("Model", "-", row_key="model")
+    # Not mounted under the pane: the helper reads the row's ancestors,
+    # so drive it through the pane it would really have found.
+    workbench = SchedulesWorkbench.__new__(SchedulesWorkbench)
+
+    painted: list[str] = []
+    row.show_error = painted.append  # type: ignore[method-assign]
+
+    with patch.object(
+        type(row), "ancestors", property(lambda _self: [detail])
+    ):
+        workbench._show_definition_row_error(row, {"def-A"}, "boom")
+        assert painted == [], "an error for def-A must not land while def-B shows"
+        workbench._show_definition_row_error(row, {"def-B"}, "boom")
+        assert painted == ["boom"]
+
+
+@pytest.mark.asyncio
+async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
+    """The Model row's 'Not set'/blank honesty (task-4 brief AC) survives
+    an edit to an UNRELATED row: `_definition_edit_payload`'s empty-dict
+    `input`/`notification_policy` groups round-trip through `save_
+    definition`'s one-level merge untouched.
+
+    Scoped to `input`/`notification_policy` deliberately, NOT `config`'s
+    own generation_mode/scope/finding_policy trio: traced (empirically,
+    via `preview_automation_definition` -> `validate_recurring_question_
+    config`) that those three are unconditionally NORMALIZED WITH
+    DEFAULTS on every local save regardless of which row was actually
+    edited -- a PRE-EXISTING behavior of the shared preview pipeline the
+    create/edit modal never exercises (it always sends explicit values),
+    now newly reachable because task 4 is the first caller that can send
+    a payload leaving them genuinely absent. Not a task-4 regression and
+    out of this task's scope to change; flagged in the report instead."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Bare-model digest",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},  # no provider/model
+            config={"generation_mode": "optional"},
+            notification_policy={"on_success": True, "on_failure": False},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            model_static = detail.query_one(
+                "#scheduling-automation-detail-model", Static
+            )
+            assert model_static.render_line(0).text.strip() == "auto"
+
+            row = detail._generation_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "required"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            assert "provider" not in stored["input"]
+            assert "model" not in stored["input"]
+            assert stored["notification_policy"] == {
+                "on_success": True,
+                "on_failure": False,
+            }
+            assert model_static.render_line(0).text.strip() == "auto"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
+    tmp_path,
+):
+    """A server-owned row whose seam is unreachable still writes locally
+    and queues ONE pending mutation, under the ROW's OWN owner -- never
+    the service's active owner (mirrors Task 2's reminder-side row-owner
+    threading test) -- and `outcome.status == "queued"` is treated as UI
+    success (no inline error), same as `"saved"`."""
+    from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    try:
+        server_client = AsyncMock()
+        server_client.preview_automation_definition.side_effect = (
+            ServerUnavailableError("offline")
+        )
+        service = SchedulingService(
+            db=db, server_client=server_client, runtime_source="local"
+        )
+        # Shaped like a genuine `_load_server_automations` item (`id` is
+        # the SERVER's own id) -- the shape `_resolve_local_definition_id`
+        # expects. A row read back via `db.get_automation_definition`
+        # instead (LOCAL id in `id`) is a DIFFERENT shape and trips
+        # `_resolve_local_definition_id`'s server/local branch into
+        # mirroring a SECOND, bogus row (its own "server_id" would be
+        # the already-local uuid) instead of resolving the real one.
+        server_item = {
+            "id": "srv-def-1",
+            "owner_id": "server:1",
+            "family": "recurring_question",
+            "name": "Server automation",
+            "lifecycle": "configured",
+            "schedule": {
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "UTC",
+            },
+            "input": {"question": "What shipped?"},
+            "config": {"generation_mode": "optional"},
+            "version": 3,
+        }
+        db.upsert_automation_definitions_from_server("server:1", [server_item])
+        definition_id = db.get_automation_definition_by_server_id(
+            "server:1", "srv-def-1"
+        )["id"]
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(server_item)
+            await pilot.pause()
+
+            row = detail._generation_row
+            payload = _definition_edit_payload(
+                server_item, config={"generation_mode": "required"}
+            )
+            workbench._edit_definition_field(server_item, payload, row)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            # Final review C1 precedent: the mirror's `version` must not
+            # drift locally -- the server checks it for exact equality.
+            assert stored["version"] == 3
+            assert service.owner_id == "local"  # never repointed by the edit
+            mutation = db.get_pending_mutation_for_local_id(
+                definition_id, "automation_definition"
+            )
+            assert mutation is not None
+            assert mutation["payload"]["action"] == "update"
+            pending = db.get_pending_mutations(
+                "server:1", primitive="automation_definition"
+            )
+            assert len(pending) == 1  # queued under the ROW's own owner
+
+            error = row.query_one(".detail-value-row-error", Static)
+            assert error.display is False  # "queued" treated as success
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_toggle_pauses_a_local_automation_and_the_button_flips(
+    tmp_path,
+):
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Local automation",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            button = detail.query_one("#scheduling-automation-pause-resume", Button)
+            assert button.label.plain == "Pause"
+            await pilot.click(button)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            assert button.label.plain == "Resume"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_path):
+    """Pinned (task-4 brief): the pause/resume toggle's DB write races a
+    sync pull -- Task 2's own `upsert_automation_definitions_from_server`
+    lifecycle pull-guard must keep that pull from reverting the pause,
+    and that guarantee must be VISIBLE at the UI level (this pane's own
+    button) after the next paint, not merely true in the DB."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        # Shaped like a genuine `_load_server_automations` item (`id` is
+        # the SERVER's own id, `owner_id` stamped by that fetch) -- the
+        # shape `_resolve_local_definition_id` expects and the shape
+        # `DefinitionDetail._definition`/the toggle event actually carry
+        # in real usage. A row read back via `db.get_automation_
+        # definition` instead (LOCAL id in `id`) is a DIFFERENT shape and
+        # trips `_resolve_local_definition_id`'s own server/local branch.
+        server_item = {
+            "id": "srv-def-1",
+            "owner_id": "server:1",
+            "family": "recurring_question",
+            "name": "Server automation",
+            "lifecycle": "configured",
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "input": {"question": "What shipped?"},
+            "config": {},
+            "version": 1,
+        }
+        db.upsert_automation_definitions_from_server("server:1", [server_item])
+        definition_id = db.get_automation_definition_by_server_id(
+            "server:1", "srv-def-1"
+        )["id"]
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(server_item)
+            await pilot.pause()
+
+            workbench._toggle_definition_lifecycle(server_item, "pause")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            # Optimistic repaint already applied, ahead of/independent of
+            # the background `_request_automations_refresh` reload.
+            button = detail.query_one("#scheduling-automation-pause-resume", Button)
+            assert button.label.plain == "Resume"
+
+            # Qodo findings 5+6: the toggle queues under the LIFECYCLE
+            # primitive now, which is the same slot the pull guard reads.
+            # The optimistic path and the guard must stay keyed on the
+            # SAME primitive, or the racing pull below reverts the pause.
+            mutation = db.get_pending_mutation_for_local_id(
+                definition_id, "automation_lifecycle"
+            )
+            assert mutation is not None
+            assert mutation["payload"]["action"] == "pause"
+
+            # A racing pull that still thinks the row is "configured" --
+            # nothing has replayed the pending mutation yet, so Task 2's
+            # guard is live for it.
+            db.upsert_automation_definitions_from_server("server:1", [server_item])
+            assert (
+                db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            )  # guarded, not reverted
+
+            # The UI-visible check: a fresh paint from this (guarded) DB
+            # state still shows Resume -- no flicker back to Pause.
+            detail.set_definition(db.get_automation_definition(definition_id))
+            await pilot.pause()
+            assert button.label.plain == "Resume"
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -1691,3 +3809,1440 @@ async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
             "#scheduling-sync-status", SyncStatusWidget
         )
         assert "compact" not in sync_status.classes
+
+
+# --- redesign PR-3, task 5: owner-row transfer dropdown ---------------------
+
+
+class _FakeConnectedServerClient:
+    """Reads as "a server is connected" (`notifications_service is not
+    None`) without making any real network call -- local duplicate of
+    `test_schedules_transfer_actions.py`'s own `_FakeServerClient`,
+    matching this file's own no-cross-file-test-coupling precedent."""
+
+    def __init__(self) -> None:
+        self.notifications_service = object()
+
+
+def _connected_service(tmp_path, app):
+    """A real `ScheduledTasksDB` + `SchedulingService`, wired to LOOK
+    connected to a server (`active_server_id="1"`, a fake `server_
+    client`) -- for tests where the owner-row dropdown must actually
+    OFFER a `Server (1)` option (`SchedulesWorkbench._server_available`/
+    `SchedulingService._active_server_owner_id` both gate on this)."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    app.active_server_id = "1"
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="1")
+    )
+    service = SchedulingService(
+        db=db,
+        server_client=_FakeConnectedServerClient(),
+        runtime_source="local",
+        app_getter=lambda: app,
+    )
+    app.scheduling_service = service
+    return db, service
+
+
+# -- bare-harness: widget mechanics, no service needed -----------------------
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_opens_with_current_owner_preselected():
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+        select = row.query_one(Select)
+        assert select.value == "local"
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_opens_with_current_owner_preselected():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _editable_definition(owner_id="server:9"),
+            runs_on_options=[("This device", "local")],
+        )
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+        select = row.query_one(Select)
+        # `server:9` isn't in the base options -- the row's own current
+        # owner is appended as a fallback (survey §7's "never a value
+        # outside a Select's own options" precedent) so it still preselects.
+        assert select.value == "server:9"
+
+
+@pytest.mark.asyncio
+async def test_runs_on_same_owner_selection_is_a_no_op():
+    """The mount-time synthetic `Changed` `begin_edit` posts the moment
+    it preselects the row's OWN current owner (same trap Task 3's Repeat/
+    Timezone commits already guard against, reused verbatim) must not
+    close the editor or post a transfer request -- same as those rows,
+    the editor stays open for a real pick rather than self-closing.
+
+    Final review F8/M8 ADJUDICATION. The controller's ruling was "the
+    CODE is wrong -- close the editor on a same-owner pick, and update
+    this test"; re-probed against Textual 8.2.8, that ruling is not
+    implementable and the shipped behavior stands:
+
+    * the synthetic mount `Changed` is real -- `Select.value` is
+      `var(NULL, init=False)`, so `_on_mount`'s `_init_selected_option`
+      assignment is a genuine change and posts `Changed`. Probed: the
+      commit handler fires with `"local"` before any user input, and an
+      `end_edit()` there leaves `editor still open: False` -- the
+      dropdown shuts the instant it opens and the owner picker becomes
+      unusable;
+    * a genuine re-pick of the SAME option posts nothing at all
+      (`Select._update_selection` assigns only `if value != self.value`),
+      so a "close on a same-owner pick" branch has no reachable caller to
+      hang off in the first place.
+
+    The docstring that claimed otherwise is what got fixed instead
+    (`TaskDetail._commit_runs_on_edit`). Escape is the cancel path.
+    """
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        commits: list[str] = []
+        real_commit = TaskDetail._commit_runs_on_edit
+
+        def _spy(self, event):
+            commits.append(str(event.value))
+            return real_commit(self, event)
+
+        with patch.object(TaskDetail, "_commit_runs_on_edit", _spy), patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            row = detail._runs_on_row
+            await pilot.click(row)
+            await pilot.pause()
+
+            # The mount echo is real and DOES reach the commit path with
+            # the row's own current owner -- the whole reason that branch
+            # exists. Pinned, so a later "simplification" that closes on
+            # it fails here rather than in the user's hands.
+            assert commits == ["local"]
+            assert row.query(Select)
+            assert not any(
+                isinstance(call.args[0], ReminderOwnerActionRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_escape_cancels_dropdown_without_posting():
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        with patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            row = detail._runs_on_row
+            await pilot.click(row)
+            await pilot.pause()
+            assert row.query(Select)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not row.query(Select)
+            assert not any(
+                isinstance(call.args[0], ReminderOwnerActionRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_row_reflects_transfer_state():
+    """Cancel/Retry button visibility across all four `transfer_state`
+    values (task-5 brief), mirroring the existing per-button visibility
+    rules `test_schedules_transfer_actions.py` already pins. Affordance
+    stays ON unconditionally in EVERY state (fix round 1 finding 2:
+    ruling 3's "dropdown always renders" -- a locked/failed row's
+    activation still reaches `on_detail_value_row_activated`, which is
+    what decides dropdown-vs-show-why now, not a disabled affordance;
+    see the dedicated activation tests below)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+
+        for transfer_state, cancel_visible, retry_visible in (
+            (None, False, False),
+            ("to_server_pending", True, False),
+            ("to_server_failed", True, True),
+            ("from_server_pending", True, False),
+            (None, False, False),  # back to normal
+        ):
+            detail.set_task(_frequency_reminder(transfer_state=transfer_state))
+            await pilot.pause()
+            assert detail._runs_on_row.affordance is True
+            assert detail._runs_on_cancel_button.display is cancel_visible
+            assert detail._runs_on_retry_button.display is retry_visible
+
+
+@pytest.mark.asyncio
+async def test_runs_on_activation_on_in_flight_row_shows_lock_reason_not_dropdown():
+    """Fix round 1 finding 2: an in-flight row's activation now shows
+    its `_lifecycle_lock_reason` -- the SAME reason
+    `transfer_lock_reason` computes and the Frequency rows already
+    surface on click -- instead of going silently inert or opening a
+    dropdown with nothing sensible to offer."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state="to_server_pending"))
+        detail.set_lifecycle_lock(
+            "This row is moving between this device and the server."
+        )
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert (
+            "moving between this device and the server"
+            in error.render_line(0).text
+        )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_activation_on_failed_row_shows_stored_transfer_error():
+    """Fix round 1 finding 2: the SAME "Last transfer error: …" copy the
+    legacy Retry button already renders (`set_transfer_reasons`), now on
+    the Runs-on row too -- fed via `set_runs_on_transfer_errors`."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state="to_server_failed"))
+        detail.set_runs_on_transfer_errors(["Connection refused"])
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert (
+            error.render_line(0).text.strip()
+            == "Last transfer error: Connection refused"
+        )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_activation_on_failed_row_without_stored_errors_falls_back():
+    """No stored `transfer_errors` (e.g. a pre-existing failed row) still
+    surfaces SOMETHING rather than going silent."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state="to_server_failed"))
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "Transfer failed" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_row_reflects_transfer_state():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+
+        detail.set_definition(_editable_definition(transfer_state=None))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is False
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_definition(
+            _editable_definition(transfer_state="from_server_pending")
+        )
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_definition(_editable_definition(transfer_state="to_server_failed"))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is True
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_activation_on_in_flight_row_shows_lock_reason():
+    """Definition-pane counterpart of the reminder-pane lock-reason test
+    (fix round 1 finding 2)."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _editable_definition(transfer_state="from_server_pending")
+        )
+        detail.set_lifecycle_lock("Read-only mid-transfer.")
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert error.render_line(0).text.strip() == "Read-only mid-transfer."
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_activation_on_failed_row_shows_stored_transfer_error():
+    """Definition-pane counterpart of the reminder-pane stored-error test
+    (fix round 1 finding 2)."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(transfer_state="to_server_failed"))
+        detail.set_runs_on_transfer_errors(["Server rejected the request"])
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert (
+            error.render_line(0).text.strip()
+            == "Last transfer error: Server rejected the request"
+        )
+
+
+# -- integration: real DB + service + full workbench -------------------------
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_path):
+    """A refused target renders via `row.show_error` (this row's OWN
+    surface, never the Automations tab's shared inline notice) -- health-
+    quoting preserved verbatim (spec §6.4/§7), and nothing is written.
+
+    `transfer_refusal`'s FIRST gate ("No server connection is
+    configured.") applies to EVERY direction, not only `to_server` --
+    `_connected_service` is required here too, purely to get PAST that
+    gate and reach the `to_local`/`recurring_question` health check this
+    test actually targets.
+    """
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Server automation",
+            server_id="srv-1",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={
+                "generation_mode": "optional",
+                "scope": {"mode": "all_searchable_library"},
+            },
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            # A server-fetch-shaped dict (Task 4's own documented trap,
+            # its report's "trap hit while writing the lifecycle/offline
+            # tests": `id` IS the server's own id) -- painted directly
+            # onto the Automations-tab `DefinitionDetail` instance rather
+            # than driving a real server-list fetch (out of this test's
+            # scope), matching what `_selected_automation()` would hand
+            # this pane for a pure server row.
+            server_item = dict(db.get_automation_definition(definition_id) or {})
+            server_item["id"] = "srv-1"
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(
+                server_item, runs_on_options=[("This device", "local")]
+            )
+            await pilot.pause()
+
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            # "This device" (`to_local`) is always offered, server or not.
+            select.value = "local"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            error = row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert (
+                "Library RAG search is not available"
+                in error.render_line(0).text
+            )
+            assert db.get_automation_definition(definition_id)["transfer_state"] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
+    """Allowed -> the SAME `ConfirmationDialog` + `transfer_warnings`
+    shape the legacy buttons already use (imminent run_at + the
+    non-transferring `timeout_seconds` field, spec §6.4)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        imminent = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        db.create_reminder_task(
+            owner_id="local",
+            title="Almost due",
+            schedule_kind="one_time",
+            run_at=imminent,
+            timeout_seconds=30,
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            message = pilot.app.screen.message
+            assert "Almost due" in message
+            assert "unverified" in message
+            assert "timeout_seconds" in message
+            pilot.app.screen.dismiss(False)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_copy_id(
+    tmp_path,
+):
+    """Task-5 brief pinned case: `begin_transfer_to_local`'s outcome
+    carries the NEW dormant copy's own id, DISTINCT from the mirror's --
+    the mirror itself stays untouched (survey §3's `create_local_copy_
+    from_mirror` precedent). `_connected_service` -- `transfer_refusal`'s
+    FIRST gate ("No server connection is configured.") applies to `to_
+    local` too, not only `to_server`."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_reminder_task(
+            owner_id="server:1",
+            server_id="srv-9",
+            title="Server task",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "local"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            mirror = db.get_reminder_task(mirror_id)
+            assert mirror["transfer_state"] is None
+            assert mirror["owner_id"] == "server:1"
+
+            local_rows = [
+                row_dict
+                for row_dict in db.list_reminder_tasks(owner_id="local")
+                if row_dict["id"] != mirror_id
+            ]
+            assert len(local_rows) == 1
+            copy = local_rows[0]
+            assert copy["id"] != mirror_id
+            assert copy["transfer_state"] == "from_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
+    """The other direction: confirm fires `begin_transfer_to_server` with
+    the currently-displayed row's own local id (task-5 brief: 'the right
+    facade call with the right row id per direction')."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row_after = db.get_reminder_task(task_id)
+            assert row_after["transfer_state"] == "to_server_pending"
+            assert row_after["owner_id"] == "local"  # still local while queued
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
+    tmp_path,
+):
+    """Same pinned mechanism `test_cancel_on_dormant_copy_uses_the_copys_
+    own_id` (`test_schedules_transfer_actions.py`) proves for the legacy
+    Cancel button -- proven again here for the NEW row-level Cancel
+    affordance (task-5 brief: 'assert it'). `_connected_service` is only
+    needed for the SETUP call below (`begin_transfer_to_local` itself
+    checks `transfer_refusal`'s server-connection gate); the actual
+    cancel path (`cancel_transfer`) never checks it."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_reminder_task(
+            owner_id="server:1",
+            server_id="srv-9",
+            title="Server task",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        outcome = await service.begin_transfer_to_local("reminder_task", mirror_id)
+        assert outcome.status == "pending"
+        copy_id = outcome.row_id
+        assert copy_id is not None
+        assert copy_id != mirror_id
+
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 2
+            workbench = pilot.app.screen
+            copy_index = next(
+                index
+                for index, row in enumerate(workbench._visible_rows)
+                if row.kind == "reminder" and row.source_row.id == copy_id
+            )
+            table.cursor_coordinate = (copy_index, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            assert detail._runs_on_cancel_button.display is True
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(copy_id) is None
+            mirror = db.get_reminder_task(mirror_id)
+            assert mirror is not None
+            assert mirror["transfer_state"] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
+    """`to_server_failed`: Retry = re-begin (the PR-5 retry leg) -- same
+    facade call a first-time `to_server` begin makes."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        db.set_transfer_state(
+            "reminder_task", task_id, "to_server_failed", expected=(None,)
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            assert detail._runs_on_retry_button.display is True
+            detail._runs_on_retry_button.press()
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
+    """Coexistence (task-5 brief, pinned): the PR-5 buttons stay
+    untouched until PR-4 -- both surfaces read/write the SAME underlying
+    transfer state and stay in sync with each other, side by side."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+
+            # Legacy surface: begin via the EXISTING button, untouched.
+            legacy_to_server = pilot.app.screen.query_one(
+                "#scheduling-transfer-to-server", Button
+            )
+            assert not legacy_to_server.disabled
+            legacy_to_server.press()
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
+            # BOTH surfaces now reflect the in-flight state.
+            legacy_cancel = pilot.app.screen.query_one(
+                "#scheduling-cancel-transfer", Button
+            )
+            assert not legacy_cancel.disabled
+            assert detail._runs_on_cancel_button.display is True
+            # Affordance stays ON (fix round 1 finding 2) -- activation
+            # would show the lock reason instead of opening a dropdown.
+            assert detail._runs_on_row.affordance is True
+
+            # NEW surface: cancel via the row's own affordance.
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] is None
+            # The LEGACY button reflects the SAME underlying state,
+            # refreshed via the SAME `_request_tasks_refresh` seam.
+            legacy_cancel_after = pilot.app.screen.query_one(
+                "#scheduling-cancel-transfer", Button
+            )
+            assert legacy_cancel_after.disabled
+            assert detail._runs_on_row.affordance is True
+    finally:
+        db.close()
+
+
+# -- definition-pane twins of the deep reminder-side tests above (fix
+# round 1, finding 3: coverage gap -- finding 1 lived exactly here) --------
+
+
+def _stub_ready_health(monkeypatch) -> None:
+    """A `recurring_question` `to_local` refusal also gates on local
+    health (spec §6.4/§7.4) -- irrelevant to what these tests exercise
+    (the transfer machine's own routing) -- stubbed ready, mirroring
+    `test_schedules_transfer_actions.py`'s own `_stub_ready_health`
+    exactly (duplicated locally per this file's own no-cross-file-test-
+    coupling precedent)."""
+    monkeypatch.setattr(
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: ("ready", ""),
+    )
+
+
+@pytest.mark.asyncio
+async def test_definition_owner_action_marks_stale_before_resolving(
+    tmp_path, monkeypatch
+):
+    """Fix round 1 finding 1, pinned via ORDERING, not a post-hoc flag
+    read: a real mounted workbench has its own background refreshes
+    (mount-time, `TabActivated` on the initial tab) that legitimately
+    consume/clear `_definitions_stale` too, so asserting the flag's
+    value some time AFTER the action is racy against those -- this pins
+    the actual claim instead: `self._definitions_stale` is ALREADY
+    `True` by the time `_resolve_local_definition_id` runs, proving the
+    write happens unconditionally BEFORE resolving (the exact ordering
+    `_begin_automation_transfer`/`_cancel_automation_transfer` already
+    use, schedules_workbench.py:2766-2778) rather than only in `_refresh`
+    on a later success path.
+
+    `_resolve_local_definition_id` can itself mirror a brand-new local
+    row (`upsert_automation_definitions_from_server`) the FIRST time a
+    pure server-fetch definition is touched -- no existing local shadow
+    for this definition id, forcing that mirror path (every OTHER test
+    in this file happens to hit the "already mirrored" fast path, which
+    is exactly why this gap went untested)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            observed_stale_at_resolve: list[bool] = []
+            original_resolve = workbench._resolve_local_definition_id
+
+            async def _spy_resolve(service_arg, definition_arg):
+                observed_stale_at_resolve.append(workbench._definitions_stale)
+                return await original_resolve(service_arg, definition_arg)
+
+            monkeypatch.setattr(
+                workbench, "_resolve_local_definition_id", _spy_resolve
+            )
+
+            # A pure server-fetch dict (Task 4's own documented trap):
+            # `id` IS the server's own id, and NO local row exists for it
+            # yet anywhere in the DB.
+            server_item = {
+                "id": "srv-brand-new",
+                "owner_id": "server:1",
+                "server_id": "srv-brand-new",
+                "family": "recurring_question",
+                "name": "Brand new server automation",
+                "lifecycle": "configured",
+                "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+                "config": {"scope": {"mode": "all_searchable_library"}},
+            }
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._runs_on_row
+
+            workbench._definition_owner_action(server_item, "to_local", row)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The spy saw `_definitions_stale` already True the moment
+            # `_resolve_local_definition_id` was entered -- proves the
+            # unconditional-before-resolving placement, not just "True
+            # at some point".
+            assert observed_stale_at_resolve == [True]
+
+            # Refused (no ready health wired in this bare app), and the
+            # mirror this call created is real.
+            error = row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            mirrored = db.get_automation_definition_by_server_id(
+                "server:1", "srv-brand-new"
+            )
+            assert mirrored is not None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
+    """Definition-pane twin of `test_runs_on_dropdown_confirm_dialog_
+    lists_warnings` -- `to_server` never triggers the family/health
+    check (only `to_local` does), so no health stub is needed here."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        imminent = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Almost due automation",
+            schedule={"kind": "one_time", "run_at": imminent},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            message = pilot.app.screen.message
+            assert "Almost due automation" in message
+            assert "unverified" in message
+            pilot.app.screen.dismiss(False)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_copy_id(
+    tmp_path, monkeypatch
+):
+    """Definition-pane twin of the reminder-side dormant-copy-id test --
+    `to_local` on a `recurring_question` row needs `_stub_ready_health`
+    (irrelevant to what this test targets)."""
+    _stub_ready_health(monkeypatch)
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Server automation",
+            server_id="srv-9",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            mirror = db.get_automation_definition(mirror_id)
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(mirror, runs_on_options=[("This device", "local")])
+            await pilot.pause()
+
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "local"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            mirror_after = db.get_automation_definition(mirror_id)
+            assert mirror_after["transfer_state"] is None
+            assert mirror_after["owner_id"] == "server:1"
+
+            local_rows = [
+                row_dict
+                for row_dict in db.list_automation_definitions(owner_id="local")
+                if row_dict["id"] != mirror_id
+            ]
+            assert len(local_rows) == 1
+            copy = local_rows[0]
+            assert copy["id"] != mirror_id
+            assert copy["transfer_state"] == "from_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
+    """Definition-pane twin of the reminder-side `to_server` test."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Nightly digest automation",
+            schedule={"kind": "one_time", "run_at": "2030-01-01T00:00:00+00:00"},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row_after = db.get_automation_definition(definition_id)
+            assert row_after["transfer_state"] == "to_server_pending"
+            assert row_after["owner_id"] == "local"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
+    tmp_path, monkeypatch
+):
+    """Definition-pane twin of the reminder-side dormant-copy Cancel
+    test."""
+    _stub_ready_health(monkeypatch)
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Server automation",
+            server_id="srv-9",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        outcome = await service.begin_transfer_to_local(
+            "automation_definition", mirror_id
+        )
+        assert outcome.status == "pending"
+        copy_id = outcome.row_id
+        assert copy_id is not None
+        assert copy_id != mirror_id
+
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # `_load_local_automations` only ever shows a `server_id`-less
+            # row (survey §3): the copy, not the mirror -- the mirror is
+            # the SERVER fetch half's row, and this harness's fake server
+            # client has no `list_automation_definitions` (out of this
+            # test's scope; the mirror-side assertion below reads the DB
+            # directly instead of depending on the table showing it).
+            assert table.row_count == 1
+            copy_index = next(
+                index
+                for index, definition in enumerate(workbench._automations)
+                if str(definition.get("id")) == copy_id
+            )
+            table.cursor_coordinate = (copy_index, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._runs_on_cancel_button.display is True
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_definition(copy_id) is None
+            mirror = db.get_automation_definition(mirror_id)
+            assert mirror is not None
+            assert mirror["transfer_state"] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
+    """Definition-pane twin of the reminder-side Retry test."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Nightly digest automation",
+            schedule={"kind": "one_time", "run_at": "2030-01-01T00:00:00+00:00"},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        db.set_transfer_state(
+            "automation_definition", definition_id, "to_server_failed",
+            expected=(None,),
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._runs_on_retry_button.display is True
+            detail._runs_on_retry_button.press()
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row_after = db.get_automation_definition(definition_id)
+            assert row_after["transfer_state"] == "to_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexist(
+    tmp_path,
+):
+    """Definition-pane twin of the reminder-side coexistence test -- the
+    Automations tab has no per-row transfer BUTTONS (spec §6, PR-5 task
+    7's own design: `m`/`M`/`y`/`k` keybindings instead), so "coexistence"
+    here means the keybinding-driven legacy flow
+    (`action_move_automation_to_server`/`_cancel_automation_transfer`)
+    and the NEW Runs-on row read/write the SAME underlying state."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Nightly digest automation",
+            schedule={"kind": "one_time", "run_at": "2030-01-01T00:00:00+00:00"},
+            input={"question": "What shipped?"},
+            config={"scope": {"mode": "all_searchable_library"}},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Legacy surface: begin via the EXISTING keybinding, untouched.
+            workbench.action_move_automation_to_server()
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                db.get_automation_definition(definition_id)["transfer_state"]
+                == "to_server_pending"
+            )
+            # NEW surface reflects the state the LEGACY keybinding wrote.
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._runs_on_cancel_button.display is True
+            assert detail._runs_on_row.affordance is True
+
+            # NEW surface: cancel via the row's own affordance.
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            fresh_row = db.get_automation_definition(definition_id)
+            assert fresh_row["transfer_state"] is None
+            # The LEGACY surface's own refusal check (`cancel_refusal`,
+            # what `_cancel_automation_transfer`'s keybinding path itself
+            # calls) sees the SAME state -- no drift between the two
+            # surfaces. Read directly rather than firing a second
+            # keybinding action: that action's own success/refusal notice
+            # is transient and gets overwritten by the very refresh it
+            # triggers (`_show_automations_inline_reason`'s own documented
+            # behavior), racy to assert on here.
+            assert service.cancel_refusal(fresh_row) is not None
+    finally:
+        db.close()
+
+
+# --- redesign PR-3, final review fix wave (I2/I3/I4, M5, M12) --------------
+
+
+@pytest.mark.asyncio
+async def test_repaint_with_another_task_closes_the_open_editor():
+    """Final review F2/I2. The reminder pane repaints on every tick and
+    `_update_detail_for_index` falls back to index 0 whenever the selected
+    row leaves the filter -- so an open editor could end up mounted over a
+    DIFFERENT reminder and commit its typed value onto that one.
+
+    Probe output against the branch before this fix:
+    `editor still open after repaint with another task: True` /
+    `edit posted for task id: ['task-B']`.
+    """
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        task_a = _frequency_reminder(id="task-A", title="A")
+        task_b = _frequency_reminder(id="task-B", title="B")
+        detail.set_task(task_a)
+        await pilot.pause()
+
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+
+        detail.set_task(task_b)
+        await pilot.pause()
+
+        assert not row.query(Select), "editor survived a repaint with another task"
+
+        # Belt: a commit that crossed the repaint in flight is discarded,
+        # never written onto whichever task is painted now.
+        with patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            detail._commit_timezone_edit(
+                Select.Changed(Select([("UTC", "UTC")], value="UTC"), "UTC")
+            )
+            assert not any(
+                isinstance(call.args[0], ReminderFieldEditRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_same_row_repaint_preserves_an_open_editor_and_its_typed_text():
+    """The other half of I2: the reminder pane repaints on EVERY tick, so
+    closing the editor on a same-row repaint would make typing
+    impossible. The value region is skipped for the editing row instead
+    (`DetailValueRow.update_value`)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        task = _frequency_reminder(
+            id="task-A",
+            schedule_kind=ScheduleKind.ONE_TIME,
+            cron=None,
+            timezone=None,
+            run_at=datetime(2099, 9, 9, 9, 0, tzinfo=timezone.utc),
+        )
+        detail.set_task(task)
+        await pilot.pause()
+
+        row = detail._at_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Input)
+        editor.value = "2026-09-09 08:30"
+
+        # Five ticks' worth of same-row repaints.
+        for _ in range(5):
+            detail.set_task(task)
+            await pilot.pause()
+
+        assert row.query_one(Input) is editor
+        assert editor.value == "2026-09-09 08:30"
+
+
+@pytest.mark.asyncio
+async def test_repaint_with_another_task_clears_a_stale_row_error():
+    """Final review F3/I3: `show_error` was only ever cleared by
+    reactivating that row or by a successful commit, so B's Frequency
+    group kept accusing a value of A's that B never had. Probe output
+    before the fix: `stale error still displayed on the new task's row:
+    True | Unknown timezone: Mars/Olympus`."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(id="task-A"))
+        await pilot.pause()
+
+        row = detail._timezone_row
+        row.show_error("Unknown timezone: Mars/Olympus")
+        await pilot.pause()
+        assert row.query_one(".detail-value-row-error", Static).display is True
+
+        detail.set_task(_frequency_reminder(id="task-B"))
+        await pilot.pause()
+
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is False
+        assert "Mars/Olympus" not in str(error.renderable)
+
+
+@pytest.mark.asyncio
+async def test_definition_pane_repaint_with_another_row_closes_editor_and_error():
+    """The definition pane's twin of I2/I3 -- same mechanism, same
+    row-identity trigger."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(id="def-A"))
+        await pilot.pause()
+
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+        detail._sources_row.show_error("Choose at least one source.")
+
+        detail.set_definition(_editable_definition(id="def-B"))
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert (
+            detail._sources_row.query_one(
+                ".detail-value-row-error", Static
+            ).display
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_owner_actions_row_reserves_no_line_without_a_transfer():
+    """Final review F5/M5: `.detail-value-row-owner-actions` had a fixed
+    `height: 1` on an always-mounted container whose two buttons are
+    `.display`-toggled, so every reminder and every definition carried one
+    dead line inside its Details group. Probe before the fix:
+    `Region(x=3, y=12, width=75, height=1)`."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state=None))
+        await pilot.pause()
+
+        actions = detail.query_one(".detail-value-row-owner-actions")
+        assert actions.region.height == 0
+
+        detail.set_task(
+            _frequency_reminder(id="task-moving", transfer_state="to_server_pending")
+        )
+        await pilot.pause()
+        assert detail.query_one(".detail-value-row-owner-actions").region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_editable_rows_carry_a_row_key_for_per_row_worker_groups():
+    """Final review F12/M12: both edit workers group per ROW now, so
+    committing a second row's editor cannot cancel the first commit
+    mid-write. The group name is built from `row.row_key`, so every
+    editable row needs a distinct one -- a `None` key would collapse them
+    all back into one group without failing anything visibly."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        keys = [row.row_key for row in pilot.app.query_one(TaskDetail)._editable_rows()]
+    assert keys and None not in keys and len(set(keys)) == len(keys)
+
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        keys = [
+            row.row_key
+            for row in pilot.app.query_one(DefinitionDetail)._editable_rows()
+        ]
+    assert keys and None not in keys and len(set(keys)) == len(keys)
+
+
+@pytest.mark.asyncio
+async def test_queue_definition_pane_repaints_after_a_successful_in_pane_edit(tmp_path):
+    """Final review F4/I4. `DefinitionDetail` is mounted TWICE and the
+    edit success path only refreshed the Automations one; the Queue tab's
+    instance is painted from `_update_detail_for_index`, which
+    early-returns for the same row on a tick. So a user editing from the
+    Queue tab saw the editor close, the OLD value come back, and no error
+    -- indefinitely, even though the edit had persisted."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    try:
+        service = SchedulingService(db=db, server_client=None, runtime_source="local")
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily Q",
+            schedule={"kind": "interval", "every_seconds": 3600},
+            input={"question": "What shipped?"},
+            config={"generation_mode": "optional"},
+        )
+        definition = db.get_automation_definition(definition_id)
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            queue_detail = pilot.app.screen.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            # The Queue tab has this definition's row selected and painted.
+            workbench._selected_row_id = f"definition:{definition_id}"
+            queue_detail.set_definition(definition)
+            await pilot.pause()
+            row = queue_detail._generation_row
+            assert "Only when something new is found" == str(
+                row.query_one(
+                    "#scheduling-automation-detail-generation", Static
+                ).renderable
+            )
+
+            payload = _definition_edit_payload(
+                definition, config={"generation_mode": "required"}
+            )
+            workbench._edit_definition_field(definition, payload, row)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                db.get_automation_definition(definition_id)["config"][
+                    "generation_mode"
+                ]
+                == "required"
+            )
+            painted = str(
+                row.query_one(
+                    "#scheduling-automation-detail-generation", Static
+                ).renderable
+            )
+            assert painted == "Always generate a draft", (
+                f"the Queue tab's definition pane still shows {painted!r}"
+            )
+    finally:
+        db.close()

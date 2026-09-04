@@ -30,6 +30,19 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 #: `_RESULT_REVIEW_PRIMITIVE`'s review-pushback shape.
 _DEFINITION_PRIMITIVE = "automation_definition"
 
+#: Pending pause/resume/archive mutations, in their OWN queue slot --
+#: matches `ScheduledTasksDB._LIFECYCLE_PRIMITIVE`/`SchedulingService.
+#: _LIFECYCLE_PRIMITIVE` (Qodo findings 5+6; see the DB constant's comment
+#: for why a lifecycle change cannot share the definition primitive's
+#: `UNIQUE(local_id, primitive, owner_id)` slot with an edit).
+_LIFECYCLE_PRIMITIVE = "automation_lifecycle"
+
+#: The `payload["action"]` verbs `_push_definition_lifecycle` replays --
+#: matches `SchedulingService._LIFECYCLE_ACTIONS`'s keys. Still an action
+#: set (not just "everything in `_LIFECYCLE_PRIMITIVE`") because the push
+#: loop dispatches on `action` and reports per-action outcomes.
+_DEFINITION_LIFECYCLE_ACTIONS = frozenset({"pause", "resume", "archive"})
+
 #: Matches ScheduledTasksDB._RESULT_REVIEW_PRIMITIVE -- pending mutations
 #: recorded when a local review is made on a server-mirrored result
 #: (Task 5) are replayed to the server here.
@@ -229,21 +242,33 @@ class SyncEngine:
         # inside this phase's own transaction, so the definitions pull
         # right after matches it by (owner_id, server_id) instead of
         # inserting a duplicate mirror row (Task 3 pull-ordering note).
-        error, definition_push_counts = await self._run_phase(
+        error, definition_push_result = await self._run_phase(
             target_owner,
             "Automation definition push",
             self._replay_definition_mutations,
         )
         if error:
             phase_errors.append(error)
+        definition_push_counts, pushed_lifecycle_server_ids = (
+            definition_push_result
+            if definition_push_result is not None
+            else ({}, frozenset())
+        )
         if definition_push_counts:
             logger.info(
                 f"Automation definition push for {target_owner}: "
                 f"{definition_push_counts}"
             )
-
+        # Task 2 same-cycle echo (mirrors `skip_review_server_ids` above):
+        # thread the server_definition_ids just pushed above into this SAME
+        # definitions pull so a stale same-cycle echo of the pre-transition
+        # lifecycle can't revert what was just pushed -- see the design
+        # comment on `ScheduledTasksDB.upsert_automation_definitions_from_server`.
         error, counts = await self._run_phase(
-            target_owner, "Automation definitions pull", self._pull_definitions
+            target_owner,
+            "Automation definitions pull",
+            self._pull_definitions,
+            skip_lifecycle_server_ids=pushed_lifecycle_server_ids,
         )
         if error:
             phase_errors.append(error)
@@ -419,11 +444,12 @@ class SyncEngine:
             A ``(error, result)`` tuple. ``error`` is ``None`` on success
             or a policy refusal (not an error); otherwise the message that
             was also recorded via `_record_sync_error`. ``result`` is the
-            phase's own return value (an upsert-count dict, or the
-            pushed-review-ids set for the pushback phase) on success, or
-            ``None`` when the phase raised or returned nothing -- callers
-            use it so a truncated/failed phase never silently discards
-            what did land (F2/F8).
+            phase's own return value (an upsert-count dict; the pushed-
+            review-ids set for the review pushback phase; or the
+            ``(counts, pushed_lifecycle_server_ids)`` tuple for the
+            definition push phase) on success, or ``None`` when the phase
+            raised or returned nothing -- callers use it so a truncated/
+            failed phase never silently discards what did land (F2/F8).
         """
         try:
             result = await phase(owner_id, **phase_kwargs)
@@ -489,8 +515,30 @@ class SyncEngine:
             pushed_server_ids.add(server_result_id)
         return frozenset(pushed_server_ids)
 
-    async def _replay_definition_mutations(self, owner_id: str) -> dict[str, int]:
-        """Replay pending `automation_definition` mutations to the server.
+    async def _replay_definition_mutations(
+        self, owner_id: str
+    ) -> tuple[dict[str, int], frozenset[str]]:
+        """Replay pending automation-definition mutations to the server.
+
+        Reads BOTH definition queue slots -- `_DEFINITION_PRIMITIVE`
+        (create/update/transfer) and `_LIFECYCLE_PRIMITIVE`
+        (pause/resume/archive, its own slot since Qodo findings 5+6) --
+        and settles them in ONE phase rather than two. The dispatch is
+        `payload["action"]`-keyed either way, and one phase keeps the
+        existing containment discipline intact unchanged: one
+        `_run_phase` error entry, one abort-on-retryable-error boundary,
+        one `pushed_lifecycle_server_ids` set threaded into the pull
+        below it.
+
+        Definition mutations are replayed FIRST so that, for a row
+        carrying both, the edit's server echo is adopted while the
+        lifecycle mutation is still queued -- which is exactly when
+        `adopt_server_definition_identity`'s pull-guard withholds the
+        echoed (pre-transition) `lifecycle`. The reverse order converges
+        too: the lifecycle push lands server-side before the edit's
+        round-trip, so the echo already carries the new value. Both
+        orders are pinned (`test_sync_now_replays_a_queued_edit_and_
+        pause_together`).
 
         `create` -> preview(mode="create") -> a `"valid"` preview is
         consumed via `create_automation_definition`, and the response's
@@ -517,14 +565,25 @@ class SyncEngine:
         `_push_definition_mutation`).
 
         Returns:
-            Counts of what happened this cycle (``created``/``updated``/
-            ``invalid``/``orphaned``), for the caller's info log.
+            A ``(counts, pushed_lifecycle_server_ids)`` tuple. ``counts``
+            is what happened this cycle (``created``/``updated``/
+            ``invalid``/``orphaned``/...), for the caller's info log.
+            ``pushed_lifecycle_server_ids`` is the `server_definition_id`s
+            whose `pause`/`resume`/`archive` mutation settled successfully
+            THIS cycle -- `sync_now` feeds this into the definitions pull
+            as `skip_lifecycle_server_ids` (Task 2 same-cycle echo,
+            mirroring `_replay_review_mutations`'s
+            `skip_review_server_ids`) so a stale same-cycle echo of the
+            pre-transition lifecycle can't revert what was just pushed --
+            see the design comment on
+            `ScheduledTasksDB.upsert_automation_definitions_from_server`.
         """
         assert self.server_client is not None
         mutations = self.db.get_pending_mutations(
             owner_id, primitive=_DEFINITION_PRIMITIVE
-        )
+        ) + self.db.get_pending_mutations(owner_id, primitive=_LIFECYCLE_PRIMITIVE)
         counts: dict[str, int] = {}
+        pushed_lifecycle_server_ids: set[str] = set()
         for mutation in mutations:
             payload = mutation.get("payload") or {}
             if payload.get("transfer_errors"):
@@ -534,9 +593,17 @@ class SyncEngine:
                 # retry/cancel via Task 6's facade, not another sync cycle.
                 counts["transfer_skipped"] = counts.get("transfer_skipped", 0) + 1
                 continue
+            action = payload.get("action")
+            server_definition_id = payload.get("server_definition_id")
             outcome = await self._push_definition_mutation(mutation, owner_id)
             counts[outcome] = counts.get(outcome, 0) + 1
-        return counts
+            if (
+                action in _DEFINITION_LIFECYCLE_ACTIONS
+                and outcome == action
+                and server_definition_id
+            ):
+                pushed_lifecycle_server_ids.add(server_definition_id)
+        return counts, frozenset(pushed_lifecycle_server_ids)
 
     async def _push_definition_mutation(self, mutation: dict, owner_id: str) -> str:
         """Replay one pending `automation_definition` mutation. Returns what happened.
@@ -618,8 +685,8 @@ class SyncEngine:
             return "invalid"
 
         logger.warning(
-            f"Unknown pending automation_definition mutation action {action!r} "
-            f"for local {local_id}; dropping"
+            f"Unknown pending {mutation.get('primitive')} mutation action "
+            f"{action!r} for local {local_id}; dropping"
         )
         self.db.delete_pending_mutation(mutation_id)
         return "unknown"
@@ -789,8 +856,18 @@ class SyncEngine:
             return f"{action}_not_found"
 
         response = response if isinstance(response, dict) else {}
-        self.db.upsert_automation_definitions_from_server(owner_id, [response])
+        # Delete BEFORE mirroring the echo (Task 2 lifecycle pull-guard):
+        # this mutation is what the guard's own pending-mutation check
+        # would key off (same local_id/owner_id in `_LIFECYCLE_
+        # PRIMITIVE`'s slot) -- if it were still present
+        # when `upsert_automation_definitions_from_server` runs, the guard
+        # would (correctly, in general) withhold `lifecycle` from THIS
+        # write too, and the just-confirmed transition would never reach
+        # the local row. Clearing it first means the guard sees nothing
+        # pending for this row and the echo's `lifecycle` writes through
+        # normally, exactly as it did before the guard existed.
         self.db.delete_pending_mutation(mutation_id)
+        self.db.upsert_automation_definitions_from_server(owner_id, [response])
         return action
 
     async def _push_definition_release(
@@ -1066,7 +1143,11 @@ class SyncEngine:
         )
         self.db.delete_pending_mutation(mutation_id)
 
-    async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
+    async def _pull_definitions(
+        self,
+        owner_id: str,
+        skip_lifecycle_server_ids: frozenset[str] = frozenset(),
+    ) -> dict[str, int]:
         """Page up to `_SYNC_MAX_PAGES` of the server's automation definitions.
 
         Upserted per page (not batched to the end) so a later page's
@@ -1075,6 +1156,11 @@ class SyncEngine:
         Stops early on an empty page or `has_more=False`; logs (info) when
         the cap was hit with more remaining, so a truncated pull is never
         silent (F4: this was an unbounded `while True` against the server).
+
+        ``skip_lifecycle_server_ids`` (Task 2 same-cycle echo) is
+        forwarded unchanged to every page's upsert call -- see the design
+        comment on
+        `ScheduledTasksDB.upsert_automation_definitions_from_server`.
         """
         assert self.server_client is not None
         totals: dict[str, int] = {}
@@ -1086,7 +1172,9 @@ class SyncEngine:
             if not isinstance(response, dict):
                 response = {}
             page = list(response.get("items") or [])
-            counts = self.db.upsert_automation_definitions_from_server(owner_id, page)
+            counts = self.db.upsert_automation_definitions_from_server(
+                owner_id, page, skip_lifecycle_server_ids=skip_lifecycle_server_ids
+            )
             for key, value in counts.items():
                 totals[key] = totals.get(key, 0) + value
             offset += len(page)
