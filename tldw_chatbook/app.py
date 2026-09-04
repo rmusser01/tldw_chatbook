@@ -1128,8 +1128,8 @@ class ThemeProvider(Provider):
                 help="Open theme selection menu",
             )
 
-        # The two Textual built-ins always, then every registered theme:
-        # shipped ALL_THEMES and the user's saved themes (TASK-31250).
+        # The two Textual built-ins, the shipped ALL_THEMES catalog, then any
+        # other registered theme -- the user's saved themes (TASK-31250).
         # custom_<name> is the editor's process-only Apply registration;
         # switching persists the default, and that name would not exist at
         # the next launch.
@@ -1138,6 +1138,10 @@ class ThemeProvider(Provider):
                 [
                     "textual-dark",
                     "textual-light",
+                    *(
+                        theme.name if hasattr(theme, "name") else str(theme)
+                        for theme in ALL_THEMES
+                    ),
                     *(
                         name
                         for name in getattr(self.app, "available_themes", {})
