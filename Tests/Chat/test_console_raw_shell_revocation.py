@@ -234,9 +234,7 @@ def test_disarm_clears_returned_approval_stamp_before_provider_invoke(
     call = ToolCall("shell_exec", {"command": "printf approved"}, "raw-call")
     pending = provider.pending_gate_for(call)
     assert pending is not None
-    provider.apply_batch_decisions(
-        "raw-run", {"raw-call": "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("raw-run", {"raw-call": "approve_once"}, [pending])
 
     runtime.disarm()
 
@@ -282,9 +280,7 @@ def test_disarm_invalidates_an_approval_hidden_by_nested_run_scope(
     call = ToolCall("shell_exec", {"command": "printf old"}, "raw-call")
     pending = provider.pending_gate_for(call)
     assert pending is not None
-    provider.apply_batch_decisions(
-        "raw-run", {"raw-call": "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("raw-run", {"raw-call": "approve_once"}, [pending])
 
     with provider.stamp_scope("raw-run"):
         runtime.disarm()

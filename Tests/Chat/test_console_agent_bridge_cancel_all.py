@@ -126,9 +126,7 @@ def test_cancel_all_takes_the_published_services_child_and_a_retained_survivor(
     assert bridge.fleet_snapshot("conv-1") == []
 
 
-def test_cancel_all_reaches_a_survivor_with_no_run_in_flight(
-    tmp_path, monkeypatch
-):
+def test_cancel_all_reaches_a_survivor_with_no_run_in_flight(tmp_path, monkeypatch):
     """The retained-owner-only tier: no published service exists at all.
 
     The turn is over, so `_fleet_services` has no entry -- the ONLY way

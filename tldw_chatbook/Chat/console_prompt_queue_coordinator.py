@@ -251,9 +251,7 @@ class ConsolePromptQueueCoordinator:
         if current is not None and current != owner:
             return False
         self._dispatch_recoveries[session_id] = owner
-        self._recovered_logical_outcomes[session_id] = (
-            f"queue-chain:{preparation_id}"
-        )
+        self._recovered_logical_outcomes[session_id] = f"queue-chain:{preparation_id}"
         snapshot = self.registry.snapshot(session_id)
         if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
             paused = self.registry.pause(
@@ -443,10 +441,7 @@ class ConsolePromptQueueCoordinator:
         if chain is None:
             if origin is ConsoleSubmissionOrigin.MANUAL:
                 return
-            if (
-                origin is ConsoleSubmissionOrigin.AGENT_WAKE
-                and entry_id is None
-            ):
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE and entry_id is None:
                 # A wake was never queued, so there is no claim to settle and
                 # no chain to require. It reaches here after `leave_console`
                 # tombstoned this visit's chains; that method's own owner

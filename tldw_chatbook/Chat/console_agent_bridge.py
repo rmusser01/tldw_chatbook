@@ -102,6 +102,7 @@ from tldw_chatbook.Agents.native_tools import (
 )
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
+
 # task-24458: these six refusal STRINGS were the last module-scope edge
 # from the Console onto `Agents.local_tool_provider`, and through it the
 # whole workspace tool-execution cluster (`Tools.workspace_tool_executor`,
@@ -116,6 +117,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
+
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` and
 # `Agents.run_tool_policy` are imported lazily at their per-run use site in
 # `_compose_registry` so they stay out of the UI-ready module census (this
@@ -218,6 +220,8 @@ from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
+
+
 def _retire_generation_attempt_after_reply(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -344,6 +348,7 @@ def build_change_review_dispatch_gate(
             on_timeout()
 
     return gate
+
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -3066,15 +3071,19 @@ class _StreamingModelAdapter:
                 watch_content_stalls,
             )
 
-            async for chunk in watch_content_stalls(self._gateway.stream_chat(
-                self._resolution,
-                dispatch_messages,
-                route=route,
-                route_actor_id=route_actor_id,
-                route_chain_id=route_chain_id,
-                capture_mode=self._capture_mode,
-                **stream_kwargs,
-            ), _stall_timeout_seconds(), provider=self._resolution.provider):
+            async for chunk in watch_content_stalls(
+                self._gateway.stream_chat(
+                    self._resolution,
+                    dispatch_messages,
+                    route=route,
+                    route_actor_id=route_actor_id,
+                    route_chain_id=route_chain_id,
+                    capture_mode=self._capture_mode,
+                    **stream_kwargs,
+                ),
+                _stall_timeout_seconds(),
+                provider=self._resolution.provider,
+            ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
@@ -3837,8 +3846,7 @@ def _console_first_request_runtime_context(
 ) -> tuple[tuple[AgentDefinition, ...], int]:
     """Return the exact named-agent roster and fleet gate for one turn."""
     definitions = tuple(
-        definition_from_row(row)
-        for row in db.list_agent_definitions(enabled_only=True)
+        definition_from_row(row) for row in db.list_agent_definitions(enabled_only=True)
     )
     max_live = agent_service_module._coerce_max_live_subagents(
         agent_service_module._setting(
@@ -4732,13 +4740,11 @@ class ConsoleAgentBridge:
         # id in before handing it to `LoopDeps`.
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
-        on_steer_ready: Callable[[Callable[[str], str | None]], None]
-        | None = None,
+        on_steer_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         # TASK-28227: fired once the run's mailbox registers, with a bound
         # `redirect(text) -> refusal | None` -- the Redirect button's and
         # /redirect's hook, exactly like on_steer_ready is /steer's.
-        on_redirect_ready: Callable[[Callable[[str], str | None]], None]
-        | None = None,
+        on_redirect_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         change_roots: Sequence[Path] | None = None,
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
@@ -5079,9 +5085,7 @@ class ConsoleAgentBridge:
                     self._skills_service.get_skill(skill_name, mode="local")
                 )
             )
-            prepare_managed_skill_promotion_tool = (
-                managed_skill_promotion_gate.invoke
-            )
+            prepare_managed_skill_promotion_tool = managed_skill_promotion_gate.invoke
         # task-5 (skills-fork-reachability): seed this run's own bindings
         # with the names the CONTROLLER already resolved/spliced for the
         # triggering turn (a leading `$skill` mention, or embedded mentions
@@ -5923,7 +5927,7 @@ class ConsoleAgentBridge:
             adapter._primary_stream_abort = abort_probe
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
-        
+
         service = AgentService(
             self._db,
             registry,
@@ -5941,9 +5945,7 @@ class ConsoleAgentBridge:
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
-            prepare_managed_skill_promotion_tool=(
-                prepare_managed_skill_promotion_tool
-            ),
+            prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
             run_skill_script_tool=run_skill_script_tool,
             run_log_writer=run_log_writer,
             run_log_request_plan=first_request_plan.run_log,
@@ -6134,7 +6136,10 @@ class ConsoleAgentBridge:
                         _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
                         _touched_paths = list(
                             dict.fromkeys(
-                                (*_primary_paths, *sorted(child_change_state.touched_paths))
+                                (
+                                    *_primary_paths,
+                                    *sorted(child_change_state.touched_paths),
+                                )
                             )
                         )
                         finalization = self._change_finalization_coordinator.finalize(
@@ -6147,16 +6152,11 @@ class ConsoleAgentBridge:
                                 else CHANGE_KIND_TURN
                             ),
                             has_live_survivors=(
-                                self._live_child_count_for_turn(
-                                    assistant_message_id
-                                )
+                                self._live_child_count_for_turn(assistant_message_id)
                                 > 0
                             ),
                         )
-                        if (
-                            finalization
-                            is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE
-                        ):
+                        if finalization is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE:
                             error = (
                                 change_reservation.admission_error
                                 or "change-review finalization queue unavailable"
@@ -6175,9 +6175,7 @@ class ConsoleAgentBridge:
                                     ),
                                 )
                     else:
-                        self._change_finalization_coordinator.cancel(
-                            change_reservation
-                        )
+                        self._change_finalization_coordinator.cancel(change_reservation)
                 except Exception:  # noqa: BLE001 -- never mask the run outcome
                     logger.opt(exception=True).warning(
                         "change_review: finalization scheduling failed; "
@@ -6582,10 +6580,7 @@ class ConsoleAgentBridge:
                             child_change_state.survivor_key, None
                         )
                         last_for_turn = True
-            if (
-                last_for_turn
-                and self._change_finalization_coordinator is not None
-            ):
+            if last_for_turn and self._change_finalization_coordinator is not None:
                 self._change_finalization_coordinator.settle_survivors(
                     child_change_state.survivor_key
                 )
@@ -7840,8 +7835,7 @@ class ConsoleAgentBridge:
                 )
             )
             if rows is turn_rows and any(
-                str(row.get("kind") or "")
-                == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                str(row.get("kind") or "") == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
                 for row in clean
             ):
                 block.append(
@@ -7877,9 +7871,7 @@ class ConsoleAgentBridge:
         """Return anchored blocks containing only durable Change Review rows."""
         records = [
             record
-            for record in self._db.list_runs(
-                conversation_id, include_superseded=False
-            )
+            for record in self._db.list_runs(conversation_id, include_superseded=False)
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()
@@ -8412,9 +8404,7 @@ class ConsoleAgentBridge:
                 state.presentation,
                 lifecycle_state=lifecycle,
                 elapsed_seconds=(
-                    0.0
-                    if started_at is None
-                    else max(0.0, self._clock() - started_at)
+                    0.0 if started_at is None else max(0.0, self._clock() - started_at)
                 ),
                 exit_code=0 if lifecycle == "exited" else None,
                 cleanup_proven=None,

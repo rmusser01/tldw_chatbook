@@ -297,9 +297,7 @@ def _capture_run_skill_script_tool(
 
 
 @pytest.fixture
-def bridge_closure_env(
-    tmp_path, monkeypatch
-) -> Callable[..., _ClosureEnv]:
+def bridge_closure_env(tmp_path, monkeypatch) -> Callable[..., _ClosureEnv]:
     """Factory fixture: builds a ``_ClosureEnv`` around the REAL closure.
 
     Every keyword configures one seam:
@@ -443,7 +441,9 @@ def test_always_allow_round_trip(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -464,7 +464,9 @@ def test_shutdown_denies_a_pending_confirm(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -474,7 +476,9 @@ def test_shutdown_denies_a_pending_confirm(make_controller):
     assert result["decision"]["allow"] is False
 
 
-def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_controller):
+def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(
+    make_controller,
+):
     """TASK-910 (AC#1/#2): `switch_session` no longer force-denies a pending
     script confirm -- it parks (a background session) or simply re-derives
     the mounted card (the owning session, switched away from and back),
@@ -504,7 +508,9 @@ def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_con
     controller.switch_session(other)
     time.sleep(0.05)
     assert "decision" not in result  # not denied by the switch
-    assert controller.pending_skill_script_payloads[-1] is None  # departing card cleared
+    assert (
+        controller.pending_skill_script_payloads[-1] is None
+    )  # departing card cleared
 
     controller.switch_session(owning)
     # The SAME round's card re-mounts on revisit.
@@ -543,9 +549,7 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
 
     assert parked == [background]
     # Never mounted -- the viewed session's own (empty) surface is untouched.
-    assert all(
-        payload is None for payload in controller.pending_skill_script_payloads
-    )
+    assert all(payload is None for payload in controller.pending_skill_script_payloads)
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
 
@@ -703,7 +707,9 @@ def test_resolve_with_no_request_id_is_dropped(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -833,9 +839,7 @@ def test_tool_is_absent_on_an_unsupported_platform(tmp_path, monkeypatch):
     """
     import tldw_chatbook.Skills_Interop.skill_script_runner as skill_script_runner_module
 
-    monkeypatch.setattr(
-        skill_script_runner_module, "sandbox_supported", lambda: False
-    )
+    monkeypatch.setattr(skill_script_runner_module, "sandbox_supported", lambda: False)
 
     trust_service = _FakeTrustService(granted=False)
     scope = _FakeScopeService(
@@ -1166,9 +1170,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
     worker.join(timeout=5)
     assert not worker.is_alive()
 
-    assert run_calls == [], (
-        "a revoked confirm executed the skill script for real"
-    )
+    assert run_calls == [], "a revoked confirm executed the skill script for real"
     assert trust_service.granted_names == [], (
         "a revoked confirm persisted a standing script-execution grant"
     )

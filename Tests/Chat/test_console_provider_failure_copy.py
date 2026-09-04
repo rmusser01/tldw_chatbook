@@ -8,7 +8,6 @@ same undiagnosable 500 (UX review finding
 j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 """
 
-
 import httpx
 import pytest
 
@@ -81,9 +80,7 @@ async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
     gateway = _ExplodingGateway()
     store = ConsoleChatStore()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -107,9 +104,7 @@ async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
     assert result.accepted is True
 
     messages = store.messages_for_session(session.id)
-    system_rows = [
-        m.content for m in messages if m.role is ConsoleMessageRole.SYSTEM
-    ]
+    system_rows = [m.content for m in messages if m.role is ConsoleMessageRole.SYSTEM]
     assert system_rows, "no failure system row appended"
     failure_row = system_rows[-1]
     assert "provide the mmproj" in failure_row
@@ -160,9 +155,7 @@ async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_chat_generic_failure_without_status_still_defaults_502() -> (
-    None
-):
+async def test_stream_chat_generic_failure_without_status_still_defaults_502() -> None:
     """A failure with no real HTTP status (e.g. a bare RuntimeError from the
     adapter layer) keeps the wrapper's 502 upstream-error default -- there is
     no real status to carry, so this is not a regression of the same bug."""

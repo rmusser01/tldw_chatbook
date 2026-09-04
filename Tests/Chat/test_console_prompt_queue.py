@@ -862,9 +862,7 @@ def test_entry_identity_tracking_is_bounded_to_active_prompts() -> None:
 
     _begin(registry)
     _admit(registry, "fifth")
-    stopped = registry.shutdown(
-        expected_registry_revision=registry.registry_revision
-    )
+    stopped = registry.shutdown(expected_registry_revision=registry.registry_revision)
     assert stopped.status is QueueMutationStatus.APPLIED
     assert registry._active_entry_ids == set()
 

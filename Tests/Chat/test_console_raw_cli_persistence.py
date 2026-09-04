@@ -65,10 +65,13 @@ class _Runtime:
                 agent_kind="local_command",
             )
             assert len(runs) == 1
-            assert self._db.list_runs(
-                request.console_session_id,
-                agent_kind="local_command",
-            ) == []
+            assert (
+                self._db.list_runs(
+                    request.console_session_id,
+                    agent_kind="local_command",
+                )
+                == []
+            )
         callbacks["on_registered"]()
         callbacks["on_started"](1.0)
         return RawCliResult(
@@ -289,9 +292,7 @@ def _controller(
     agent_runs_db: Any,
     persist_session_if_needed: Any = lambda _session_id: "durable-conversation-1",
     active_leaf_anchor: Any = lambda _session_id: "native-leaf-1",
-    persisted_leaf_anchor: Any = (
-        lambda _session_id, _leaf_id: "assistant-leaf-1"
-    ),
+    persisted_leaf_anchor: Any = (lambda _session_id, _leaf_id: "assistant-leaf-1"),
     run_log_access: Any = lambda: None,
     errors: list[str] | None = None,
     updates: list[str] | None = None,

@@ -1,4 +1,5 @@
 """The Console gateway's owned HTTP client honors the app TLS trust policy."""
+
 import ssl
 
 import pytest

@@ -117,7 +117,12 @@ RealtimeLoopState = Literal[
 ]
 
 _VALID_STATES: tuple[RealtimeLoopState, ...] = (
-    "idle", "connecting", "live", "thinking", "speaking", "reconnecting",
+    "idle",
+    "connecting",
+    "live",
+    "thinking",
+    "speaking",
+    "reconnecting",
 )
 
 #: States in which a reply is outstanding -- barge-in (`on_keypress`,
@@ -129,7 +134,10 @@ _REPLY_OUTSTANDING_STATES: tuple[RealtimeLoopState, ...] = ("thinking", "speakin
 #: entered) and `connecting` (the FIRST connect attempt; see
 #: `on_connect_failed` instead) are out of `on_transport_closed`'s contract.
 _TRANSPORT_ACTIVE_STATES: tuple[RealtimeLoopState, ...] = (
-    "live", "thinking", "speaking", "reconnecting",
+    "live",
+    "thinking",
+    "speaking",
+    "reconnecting",
 )
 
 
