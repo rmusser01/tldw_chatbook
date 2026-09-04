@@ -485,12 +485,12 @@ async def test_fresh_personas_screen_reentry_never_overlaps_sync_resolution(
     await app.push_screen(second_screen)
     for _ in range(100):
         await asyncio.sleep(0.01)
-        if second_screen.query("#personas-character-editor-tts #label"):
+        if second_screen.query("#personas-library-rows"):
             break
     else:
-        pytest.fail("second PersonasScreen descendants never finished mounting")
+        pytest.fail("second PersonasScreen shell never finished mounting")
     await second_screen._select_character(str(char_id), "Packed")
-    second_screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
+    await second_screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
     await app.workers.wait_for_complete()
     second_browser = second_screen.query_one(PersonasVisualIdentityPackWidget)
     original_resolve = personas_screen_module.resolve_visual_identity

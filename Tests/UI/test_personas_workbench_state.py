@@ -560,6 +560,9 @@ class TestNonCharacterModeRestore:
             assert (
                 screen2.query_one("#personas-dictionary-detail").display is True
             )
+            assert not list(screen2.query("#ccp-character-editor-view"))
+            assert not list(screen2.query("#ccp-persona-editor-view"))
+            assert not list(screen2.query("#personas-lore-detail"))
 
     async def test_saved_personas_mode_restores_mode_and_selection(
         self, mock_app_instance, stub_characters
@@ -601,6 +604,10 @@ class TestNonCharacterModeRestore:
             assert screen2.state.selected_entity_kind == "persona"
             assert screen2._pending_restore is None
             assert screen2.query_one("#ccp-persona-card-view").display is True
+            assert not list(screen2.query("#ccp-character-editor-view"))
+            assert not list(screen2.query("#ccp-persona-editor-view"))
+            assert not list(screen2.query("#personas-dictionary-detail"))
+            assert not list(screen2.query("#personas-lore-detail"))
 
 
 class TestInvalidRestoreStillAutoSelects:

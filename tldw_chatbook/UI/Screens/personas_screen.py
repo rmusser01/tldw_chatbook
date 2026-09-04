@@ -25,6 +25,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.worker import Worker
 from textual.widgets import (
     Button,
@@ -622,6 +623,26 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-characters-empty",
 )
 
+# TASK-31215: the four expensive center bodies keep their established root IDs,
+# while these stable lightweight slots preserve the detail stack's document
+# order before a workflow first needs them.
+_DEMAND_CENTER_VIEW_ROOTS: dict[str, str] = {
+    "character-editor": "#ccp-character-editor-view",
+    "persona-editor": "#ccp-persona-editor-view",
+    "dictionary-detail": "#personas-dictionary-detail",
+    "lore-detail": "#personas-lore-detail",
+}
+_DEMAND_CENTER_VIEW_SLOTS: dict[str, str] = {
+    "character-editor": "#personas-character-editor-slot",
+    "persona-editor": "#personas-persona-editor-slot",
+    "dictionary-detail": "#personas-dictionary-detail-slot",
+    "lore-detail": "#personas-lore-detail-slot",
+}
+
+
+class _CenterViewMountUnavailable(RuntimeError):
+    """Signal that a restore should retain its intent after a transient mount failure."""
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CharacterVisualIdentityLoadSnapshot:
@@ -1159,6 +1180,11 @@ class PersonasScreen(BaseAppScreen):
         self._pending_restore: dict | None = None
         self._edit_mode: str = "view"
         self._guard_active: bool = False
+        self._center_view_lifecycle_generation = 0
+        self._center_view_mount_locks = {
+            view_key: asyncio.Lock() for view_key in _DEMAND_CENTER_VIEW_ROOTS
+        }
+        self._ready_center_views: dict[str, Widget] = {}
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
         # an in-flight dialog worker (exclusive=True) would orphan a modal
         # pushed via push_screen_wait, whose dismissal then calls
@@ -1393,21 +1419,27 @@ class PersonasScreen(BaseAppScreen):
                     # the old bottom-docked wrapper, which let the two
                     # empty panels displace the card at 100x30 and left a
                     # dead void between them at 170x50.)
-                    # task-2725: the four heavy hidden center views (character
-                    # editor, persona editor, dictionary/lore detail — 290 of
-                    # this screen's ~494 widgets) are NOT composed here. They
-                    # mount hidden, order-anchored, as the first step of
-                    # `_load_after_mount` (`_mount_deferred_center_views`),
-                    # taking their CSS-application cost off the click→paint
-                    # critical path. `_show_center` skips absent selectors and
-                    # `_editor_or_none` returns None, so the compose→load
-                    # window is tolerated by design.
+                    # TASK-31215: stable, zero-demand slots preserve the
+                    # historical document order while their four expensive
+                    # bodies remain absent until a workflow first needs one.
                     with VerticalScroll(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
+                        character_editor_slot = Vertical(
+                            id="personas-character-editor-slot"
+                        )
+                        character_editor_slot.display = False
+                        character_editor_slot.styles.width = "100%"
+                        yield character_editor_slot
                         with Vertical(id="personas-character-attachments"):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
+                        persona_editor_slot = Vertical(
+                            id="personas-persona-editor-slot"
+                        )
+                        persona_editor_slot.display = False
+                        persona_editor_slot.styles.width = "100%"
+                        yield persona_editor_slot
                         with Vertical(id="personas-conversation-actions"):
                             yield Button(
                                 "Resume chat",
@@ -1435,6 +1467,16 @@ class PersonasScreen(BaseAppScreen):
                                     id="personas-conversation-open-library",
                                     classes="console-action-subdued",
                                 )
+                        dictionary_detail_slot = Vertical(
+                            id="personas-dictionary-detail-slot"
+                        )
+                        dictionary_detail_slot.display = False
+                        dictionary_detail_slot.styles.width = "100%"
+                        yield dictionary_detail_slot
+                        lore_detail_slot = Vertical(id="personas-lore-detail-slot")
+                        lore_detail_slot.display = False
+                        lore_detail_slot.styles.width = "100%"
+                        yield lore_detail_slot
                         yield PersonasConversationTranscriptWidget()
                         yield Static(
                             self._mode_placeholder_text("prompts"),
@@ -1557,7 +1599,6 @@ class PersonasScreen(BaseAppScreen):
     async def _apply_pending_restore(self) -> None:
         """Re-apply a selection saved before a navigation round-trip (task-434)."""
         pending = getattr(self, "_pending_restore", None)
-        self._pending_restore = None
         if not pending or not pending.get("id"):
             return
         kind = pending.get("kind")
@@ -1578,10 +1619,22 @@ class PersonasScreen(BaseAppScreen):
             elif kind == "persona":
                 await self._select_profile(entity_id, name)
             elif kind == "dictionary":
-                await self._select_dictionary(entity_id, name)
+                await self._select_dictionary(
+                    entity_id, name, raise_on_mount_failure=True
+                )
             elif kind == "lore":
-                await self._select_lore_entry(entity_id, name)
+                await self._select_lore_entry(
+                    entity_id, name, raise_on_mount_failure=True
+                )
+            self._pending_restore = None
+        except _CenterViewMountUnavailable:
+            # A missing record is terminal in the existing selection paths,
+            # but a failed Textual mount is transient. Keep the exact payload
+            # so an explicit retry can replay it instead of misclassifying the
+            # entity as deleted.
+            return
         except Exception:
+            self._pending_restore = None
             # A stale/deleted entity must degrade to a fully cleared selection,
             # not just a blank center: leaving self.state's selection populated
             # would let _console_action_allowed() keep attach/Start-Chat wrongly
@@ -1621,6 +1674,11 @@ class PersonasScreen(BaseAppScreen):
         if self._character_tts_profile_suggestion is not None:
             return
         if self.state.selected_entity_id:
+            return
+        # A fast user can start authoring while the initial library worker is
+        # still settling. Never let its onboarding auto-selection replace that
+        # newer editor session (demand mounting makes this race easier to hit).
+        if self._edit_mode != "view":
             return
         if self.state.active_mode != "characters":
             return
@@ -1678,41 +1736,89 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
-    async def _mount_deferred_center_views(self) -> None:
-        """Mount the four heavy hidden center views after first paint.
+    @staticmethod
+    def _build_center_view(view_key: str) -> Widget:
+        """Construct one heavy Personas center body for first-use mounting."""
+        if view_key == "character-editor":
+            return PersonasCharacterEditorWidget()
+        if view_key == "persona-editor":
+            return PersonaProfileEditorWidget()
+        if view_key == "dictionary-detail":
+            return PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+        if view_key == "lore-detail":
+            return PersonasLoreDetailWidget(id="personas-lore-detail")
+        raise ValueError(f"Unknown Personas center view: {view_key}")
 
-        task-2725: profiling showed the Roleplay switch cost is widget-mount
-        CSS application, and 290 of the detail stack's 358 widgets sit in
-        views that arrive hidden (`display: False`) anyway. Mounting them
-        here — as `_load_after_mount`'s first step, before
-        `_apply_pending_restore` and auto-select — keeps every downstream
-        query site valid while taking them off the click→paint critical
-        path. Each mounts hidden and order-anchored so the stack's document
-        (scroll) order is exactly what compose used to produce; `_show_
-        center` owns visibility from then on. Idempotent: a re-entered load
-        (e.g. runtime-source switch re-running `_load_after_mount`) skips
-        mounting.
+    def _ready_center_view(self, view_key: str) -> Widget | None:
+        """Return a requested heavy root only after successful hydration."""
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
+        existing = self._ready_center_views.get(view_key)
+        if existing is not None and existing.is_mounted:
+            return existing
+        self._ready_center_views.pop(view_key, None)
+        return None
+
+    def _hydrate_center_view(self, view_key: str, view: Widget) -> None:
+        """Apply screen-owned retained state before a new body is used."""
+        if view_key == "character-editor" and isinstance(
+            view, PersonasCharacterEditorWidget
+        ):
+            for control in view.query(PersonasCharacterTTSWidget):
+                control.apply_state(self._character_tts_presentation)
+        if view_key == "persona-editor" and isinstance(
+            view, PersonaProfileEditorWidget
+        ):
+            view.set_runtime_source(self.persona_handler.current_mode())
+
+    async def _ensure_center_view(self, view_key: str) -> Widget | None:
+        """Mount, hydrate, and cache one heavy center view on first use.
+
+        Concurrent requests for one body serialize through its lock and reuse
+        the first successful widget. Failures leave no readiness marker, so a
+        later user action can retry. A lifecycle-generation check prevents a
+        mount that finishes during teardown from hydrating detached UI.
         """
-        try:
-            stack = self.query_one("#personas-detail-stack", VerticalScroll)
-        except QueryError:
-            return
-        if self.query(PersonasCharacterEditorWidget):
-            return
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
+        existing = self._ready_center_view(view_key)
+        if existing is not None:
+            return existing
 
-        character_editor = PersonasCharacterEditorWidget()
-        persona_editor = PersonaProfileEditorWidget()
-        dictionary_detail = PersonasDictionaryDetailWidget(
-            id="personas-dictionary-detail"
-        )
-        lore_detail = PersonasLoreDetailWidget(id="personas-lore-detail")
-        for view in (character_editor, persona_editor, dictionary_detail, lore_detail):
-            view.display = False
+        async with self._center_view_mount_locks[view_key]:
+            existing = self._ready_center_view(view_key)
+            if existing is not None:
+                return existing
 
-        await stack.mount(character_editor, after="#ccp-character-card-view")
-        await stack.mount(persona_editor, after="#ccp-persona-card-view")
-        await stack.mount(dictionary_detail, after="#personas-conversation-actions")
-        await stack.mount(lore_detail, after="#personas-dictionary-detail")
+            generation = self._center_view_lifecycle_generation
+            body = self._build_center_view(view_key)
+            body.display = False
+            try:
+                slot = self.query_one(_DEMAND_CENTER_VIEW_SLOTS[view_key], Vertical)
+                await slot.mount(body)
+                if (
+                    generation != self._center_view_lifecycle_generation
+                    or not self.is_mounted
+                ):
+                    if body.is_mounted:
+                        await body.remove()
+                    return None
+                self._hydrate_center_view(view_key, body)
+                slot.display = True
+                self._ready_center_views[view_key] = body
+                return body
+            except asyncio.CancelledError:
+                if body.is_mounted:
+                    await body.remove()
+                raise
+            except Exception:
+                if body.is_mounted:
+                    await body.remove()
+                logger.opt(exception=True).warning(
+                    "Personas center view mount failed (view_key={}).", view_key
+                )
+                self._notify("Couldn't open this Personas view. Try again.", "error")
+                return None
 
     async def _load_after_mount(self) -> None:
         """Load the character library once the screen is already on screen."""
@@ -1727,9 +1833,6 @@ class PersonasScreen(BaseAppScreen):
             )
             if callable(ensure_recovery):
                 await asyncio.to_thread(ensure_recovery)
-            # Must precede everything below: `_apply_pending_restore` and the
-            # selection sync assume the full center-view DOM (task-2725).
-            await self._mount_deferred_center_views()
             loading_manager = getattr(self, "loading_manager", None)
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):
@@ -1805,6 +1908,9 @@ class PersonasScreen(BaseAppScreen):
             self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
+        """Invalidate deferred Personas work before releasing screen resources."""
+        self._center_view_lifecycle_generation += 1
+        self._ready_center_views.clear()
         self._advance_persona_buddy_session()
         self._cancel_actor_pack_export()
         self._cancel_actor_pack_import()
@@ -4589,6 +4695,9 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
+        # Explicit user intent supersedes a restore payload retained after a
+        # transient view-mount failure.
+        self._pending_restore = None
         if message.entity_kind == "character":
             await self._run_guarded(
                 lambda: self._select_character(message.entity_id, message.entity_name)
@@ -4802,7 +4911,13 @@ class PersonasScreen(BaseAppScreen):
             session_generation=session_generation,
         )
 
-    async def _select_dictionary(self, entity_id: str, entity_name: str) -> None:
+    async def _select_dictionary(
+        self,
+        entity_id: str,
+        entity_name: str,
+        *,
+        raise_on_mount_failure: bool = False,
+    ) -> None:
         """Load one dictionary into the center detail; inspector shows the selection."""
         self._advance_persona_buddy_session()
         service = self._dictionary_scope_service()
@@ -4817,6 +4932,11 @@ class PersonasScreen(BaseAppScreen):
             )
             self._notify(f"Could not load dictionary: {exc}", "error")
             return
+        detail = await self._ensure_center_view("dictionary-detail")
+        if not isinstance(detail, PersonasDictionaryDetailWidget):
+            if raise_on_mount_failure:
+                raise _CenterViewMountUnavailable("dictionary-detail")
+            return
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         raw_version = record.get("version")
@@ -4826,7 +4946,6 @@ class PersonasScreen(BaseAppScreen):
         self.state.select_entity(
             entity_kind="dictionary", entity_id=entity_id, entity_name=entity_name
         )
-        detail = self.query_one(PersonasDictionaryDetailWidget)
         detail.load_dictionary(record)
         detail.load_statistics(
             self._dictionary_statistics(record, entity_id),
@@ -4876,7 +4995,13 @@ class PersonasScreen(BaseAppScreen):
         entries = manager.get_world_book_entries(book_id)
         return record, entries
 
-    async def _select_lore_entry(self, entity_id: str, entity_name: str) -> None:
+    async def _select_lore_entry(
+        self,
+        entity_id: str,
+        entity_name: str,
+        *,
+        raise_on_mount_failure: bool = False,
+    ) -> None:
         self._advance_persona_buddy_session()
         """Load one lore/world book into the center detail; inspector shows the selection."""
         manager = self._lore_manager()
@@ -4896,6 +5021,11 @@ class PersonasScreen(BaseAppScreen):
         if record is None:
             self._notify("Lore book not found.", "error")
             return
+        detail = await self._ensure_center_view("lore-detail")
+        if not isinstance(detail, PersonasLoreDetailWidget):
+            if raise_on_mount_failure:
+                raise _CenterViewMountUnavailable("lore-detail")
+            return
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         raw_version = record.get("version")
@@ -4907,7 +5037,6 @@ class PersonasScreen(BaseAppScreen):
         self.state.select_entity(
             entity_kind="lore", entity_id=entity_id, entity_name=entity_name
         )
-        detail = self.query_one(PersonasLoreDetailWidget)
         detail.load_book({**record, "entries": entries})
         self._show_center("#personas-lore-detail")
         library = self.query_one(PersonasLibraryPane)
@@ -6996,6 +7125,9 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
         if not self._local_character_actions_allowed():
             return
+        editor = await self._ensure_center_view("character-editor")
+        if not isinstance(editor, PersonasCharacterEditorWidget):
+            return
         self._advance_persona_buddy_session()
         self._discard_visual_identity_authoring()
         self._character_editor_generation += 1
@@ -7011,7 +7143,6 @@ class PersonasScreen(BaseAppScreen):
         self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        editor = self.query_one(PersonasCharacterEditorWidget)
         editor.new_character(actor_pack=actor_pack)
         if actor_pack:
             self._actor_pack_generation += 1
@@ -7042,6 +7173,9 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
         self._invalidate_actor_pack_session()
         self._advance_persona_buddy_session()
         await self._drain_persona_shared_visual_identity_authoring()
@@ -7057,9 +7191,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
-        self.query_one(PersonaProfileEditorWidget).new_persona(
-            runtime_source=self.persona_handler.current_mode()
-        )
+        editor.new_persona(runtime_source=self.persona_handler.current_mode())
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Same identity reset as _begin_create_character: no stale selection.
@@ -7127,6 +7259,9 @@ class PersonasScreen(BaseAppScreen):
         if not choices:
             self._notify("No eligible local portrait Character.", "warning")
             return
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
         self._advance_persona_buddy_session()
         await self._drain_persona_shared_visual_identity_authoring()
         self._persona_shared_visual_identity_authority = None
@@ -7136,7 +7271,6 @@ class PersonasScreen(BaseAppScreen):
         self.state.clear_selection()
         self._profile_save_inflight = False
         self._profile_save_operation_inflight = False
-        editor = self.query_one(PersonaProfileEditorWidget)
         editor.begin_actor_pack_creation(
             tuple((choice.name, choice.character_id) for choice in choices)
         )
@@ -7489,6 +7623,9 @@ class PersonasScreen(BaseAppScreen):
         if service is None:
             self._notify("Dictionaries service is not configured.", "error")
             return
+        detail = await self._ensure_center_view("dictionary-detail")
+        if not isinstance(detail, PersonasDictionaryDetailWidget):
+            return
         name = self._unique_dictionary_name("Untitled dictionary")
         try:
             record = await service.create_dictionary({"name": name}, mode="local")
@@ -7686,6 +7823,9 @@ class PersonasScreen(BaseAppScreen):
                 "Lore is not configured: the database is unavailable.", "error"
             )
             return
+        detail = await self._ensure_center_view("lore-detail")
+        if not isinstance(detail, PersonasLoreDetailWidget):
+            return
         name = self._unique_lore_name("Untitled world book")
         try:
             book_id = await asyncio.to_thread(manager.create_world_book, name)
@@ -7799,6 +7939,9 @@ class PersonasScreen(BaseAppScreen):
             return
         self._advance_persona_buddy_session()
         record = await self._fetch_profile_record(str(message.persona_id))
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
         self._edit_mode = "edit"
         # A new session starts unclaimed (see _begin_create_profile).
         self._profile_save_inflight = False
@@ -7809,7 +7952,6 @@ class PersonasScreen(BaseAppScreen):
         self._persona_shared_visual_identity_authority = None
         await self._discard_persona_visual_authoring_async()
         self._persona_visual_generation += 1
-        editor = self.query_one(PersonaProfileEditorWidget)
         editor.load_persona(
             record,
             runtime_source=self.persona_handler.current_mode(),
@@ -9528,7 +9670,7 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(EditCharacterRequested)
-    def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
+    async def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
         message.stop()
         if not self._local_character_actions_allowed():
             return
@@ -9538,6 +9680,9 @@ class PersonasScreen(BaseAppScreen):
         record = self._full_character_record(str(message.character_id))
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
+            return
+        editor = await self._ensure_center_view("character-editor")
+        if not isinstance(editor, PersonasCharacterEditorWidget):
             return
         self._discard_visual_identity_authoring()
         self._character_editor_generation += 1
@@ -9550,7 +9695,6 @@ class PersonasScreen(BaseAppScreen):
         self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        editor = self.query_one(PersonasCharacterEditorWidget)
         editor.load_character(record, visual_identity_pending=True)
         # Read only active-pack metadata first. Bound characters mount the
         # lazy pack browser; unbound characters take the legacy three-slot
@@ -14644,9 +14788,7 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         rules = [dict(rule) for rule in (message.rules or [])]
         if self.persona_handler.current_mode() != "local":
-            self._notify(
-                "Tool policy rules apply to local personas only.", "warning"
-            )
+            self._notify("Tool policy rules apply to local personas only.", "warning")
             return
         editor = self.query_one(PersonaProfileEditorWidget)
         persona_id = editor.persona_id
