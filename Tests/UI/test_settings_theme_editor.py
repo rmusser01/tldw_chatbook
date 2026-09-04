@@ -739,3 +739,23 @@ async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(t
         assert tree.root.children[0].is_expanded
         assert not tree.root.children[2].is_expanded
         assert [str(c.label) for c in tree.root.children[0].children] == ["ocean"]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_new_copies_current_palette(tmp_path):
+    """TASK-31257: the hint promises 'from the current palette'; New used to load
+    a hardcoded blue set and force dark=True."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("textual-light")
+        await pilot.pause()
+        before = dict(editor.current_theme_data)
+        assert before, "textual-light must resolve to a palette"
+        editor.on_new_theme()
+        await pilot.pause()
+        assert editor.current_theme_name == "new_theme"
+        assert editor.current_theme_data == before
+        assert editor.is_dark_theme is False

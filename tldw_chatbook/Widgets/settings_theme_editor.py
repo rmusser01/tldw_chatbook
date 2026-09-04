@@ -611,9 +611,14 @@ class SettingsThemeEditor(Vertical):
         )
 
     def _new_theme(self) -> None:
-        """Populate a fresh default palette (post-confirmation when modified)."""
-        self.current_theme_name = "new_theme"
-        self.current_theme_data = {
+        """Start a new theme from the current palette (post-confirmation when modified).
+
+        TASK-31257: the tree hint promises "from the current palette" and
+        Clone already works that way; the hardcoded blue set is only the
+        fallback for an editor that has nothing loaded yet. The dark flag is
+        kept as well.
+        """
+        defaults = {
             "primary": "#0099FF",
             "secondary": "#006FB3",
             "accent": "#FFD700",
@@ -625,7 +630,8 @@ class SettingsThemeEditor(Vertical):
             "warning": "#FFD700",
             "error": "#FF0000",
         }
-        self.is_dark_theme = True
+        self.current_theme_name = "new_theme"
+        self.current_theme_data = dict(self.current_theme_data) or defaults
 
         name_input = self.query_one("#settings-theme-name", Input)
         name_input.value = "new_theme"
