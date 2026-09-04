@@ -15,7 +15,7 @@
 - The 73 paths in TASK-26947's Assigned Paths JSON are the exact file allowlist; do not format or change any unassigned Python path.
 - Normalize only ast.TypeIgnore.lineno when comparing AST dumps.
 - Preserve ordered comment tokens, inline directive anchors, standalone Ruff directive adjacency, and fmt-off/fmt-on enclosed-node intervals.
-- Compute each inline directive's significant-token position from its nearest containing AST statement and exclude only parenthesis pairs proven AST-neutral by an independent shadow parse/dump comparison.
+- Compute each inline directive's significant-token position from its nearest logical owner: a uniquely validated same-line `except` clause for an `ExceptHandler` header, otherwise its nearest containing AST statement. Exclude only parenthesis pairs proven AST-neutral by an independent shadow parse/dump comparison.
 - Do not make handwritten production behavior changes.
 - Capture the untouched origin/dev focused-test baseline before formatting and require the post-format failure-key inventory to match it exactly.
 - Use the exact 55 assigned test modules owned by this batch. Do not run the full suite without user opt-in.
@@ -54,7 +54,7 @@
 - Produces: the deterministic Ruff output and a structural parity result.
 
 - [ ] Invoke Ruff 0.15.22 format once with all 73 paths supplied explicitly.
-- [ ] Correct the ephemeral guard's directive-position metric, restore the 73 assigned files to the immutable pre-format blobs, and recapture /tmp/task26947_before.json before rerunning Ruff.
+- [ ] Correct the ephemeral guard's directive-position metric, including the fail-closed `ExceptHandler` header boundary, restore the 73 assigned files to the immutable pre-format blobs, and recapture /tmp/task26947_before.json before rerunning Ruff.
 - [ ] Compare the post-format AST/comment/directive/fmt-range evidence with the corrected /tmp/task26947_before.json and stop on any mismatch.
 - [ ] Assert every changed Python path is in the 73-path allowlist and no assigned path was silently omitted.
 - [ ] Review the formatter diff for handwritten or behavioral changes.
