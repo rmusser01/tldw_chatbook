@@ -95,13 +95,17 @@ async def _mounted_workbench(pilot):
 # `_managed_elsewhere_notice` guard FROM this table with a projection.
 # The guard's own copy generation stays covered by
 # `test_managed_elsewhere_notice_names_the_owning_screen` above (a
-# direct, workbench-free unit test of `_managed_elsewhere_notice` itself);
-# `TaskDetail.set_task`'s "#scheduling-task-detail-managed" ownership-line
-# RENDERING for a `ScheduledTask` has no dedicated test anywhere else in
-# the suite and genuinely loses coverage here -- the code path is now
-# unreachable from this screen (a `ScheduledTask` is never fed to
-# `TaskDetail` from the Queue table any more) but is left in place,
-# unmodified, in case another future caller needs it.
+# direct, workbench-free unit test of `_managed_elsewhere_notice` itself).
+#
+# redesign PR-4 task 5 (ruling 5) closes the loose end this note left
+# open: `TaskDetail.set_task`'s "#scheduling-task-detail-managed"
+# ownership-line rendering was kept "in case another future caller needs
+# it", and no such caller ever appeared. It is now DELETED as provably
+# dead -- `TaskDetail(` is constructed exactly once in the repo, fed only
+# by `list_tasks(include_projections=False)` filtered to `ReminderTask`,
+# so the `else` branch that painted it could never run. The copy
+# GENERATOR (`_managed_elsewhere_notice`) stays: the workbench's own
+# edit/mark/enable refusals still call it, and the test above covers it.
 
 
 @pytest.mark.asyncio

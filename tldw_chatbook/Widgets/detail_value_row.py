@@ -235,7 +235,8 @@ class DetailValueRow(Vertical):
         self.post_message(self.Activated(self))
 
     def _on_key(self, event: events.Key) -> None:
-        """Activate on Enter, or cancel an open editor on Escape.
+        """Activate on Enter, cancel an open editor on Escape, or
+        traverse to the next/previous row on Up/Down.
 
         PR-3 Task 3: Escape while editing closes the editor without
         committing (``end_edit()``, no caller notified) -- checked FIRST
@@ -249,11 +250,38 @@ class DetailValueRow(Vertical):
         for the OPEN case; stopping it here for the EDITING case is safe
         and deliberate, unlike the open-Select-overlay's own Enter, which
         must keep bubbling to resolve via `App`'s BINDINGS chain.
+
+        redesign PR-4, task 4 (spec §12's "Up/Down traverse detail rows
+        when the pane has focus"): guarded by ``self._editor is None``,
+        the SAME editor-open-ownership rule Enter/Escape already use --
+        an open editor (e.g. a mounted `Select`, which binds Up/Down
+        itself to `show_overlay`) owns the arrow keys, not the row. When
+        no editor is open, Up/Down move focus to the previous/next
+        `DetailValueRow` using Textual's OWN focus-chain machinery
+        (`Screen.focus_previous`/`focus_next`, selector-scoped to this
+        widget class) rather than a hand-rolled row registry: `focus_
+        chain` already excludes non-focusable rows (`can_focus=False`)
+        and anything inside a `display:none` ancestor -- a hidden sibling
+        pane (`.pane-hidden`) or a collapsed `DetailGroup` -- for free, so
+        traversal is naturally scoped to THIS pane's currently-visible,
+        focusable rows without this widget needing to know its own
+        container. Wraps at the ends (`_move_focus`'s own modulo
+        wrap-around) rather than stopping -- picked over stopping since
+        it is what the native mechanism gives for free and is the more
+        common list-traversal convention.
         """
         if event.key == "escape" and self._editor is not None:
             event.stop()
             event.prevent_default()
             self.end_edit()
+            return
+        if event.key in ("up", "down") and self._editor is None:
+            event.stop()
+            event.prevent_default()
+            if event.key == "up":
+                self.screen.focus_previous(DetailValueRow)
+            else:
+                self.screen.focus_next(DetailValueRow)
             return
         if event.key != "enter" or not self._affordance or self._editor is not None:
             return

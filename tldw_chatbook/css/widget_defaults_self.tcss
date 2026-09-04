@@ -1530,6 +1530,14 @@
 
 
 
+/* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
+
+    DefinitionAuditView {
+        height: 1fr;
+    }
+
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
     ResultsTab {

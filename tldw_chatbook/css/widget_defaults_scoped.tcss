@@ -1975,6 +1975,14 @@
     }
 
 
+/* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
+
+
+    DefinitionAuditView #scheduling-audit-view-table {
+        height: 1fr;
+    }
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
 
@@ -2055,11 +2063,6 @@
         height: auto;
     }
 
-    TaskDetail .scheduling-detail-managed {
-        color: $text-muted;
-        height: auto;
-        margin-top: 1;
-    }
 
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */

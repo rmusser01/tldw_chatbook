@@ -5,22 +5,20 @@
  * ======================================== */
 
 /* The liveness Static + bottom status strip are auto-height siblings of
- * the TabbedContent; without an explicit 1fr the auto-height TabbedContent
- * measures its fr children against the whole content area and overflows
- * past the footer. */
+ * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
+ * this rationale used to name); without an explicit 1fr the auto-height
+ * workbench row measures its fr children against the whole content area
+ * and overflows past the footer. */
 #schedules-shell {
     height: 1fr;
     min-height: 0;
 }
 
-#scheduling-tabs {
-    height: 1fr;
-}
-
-/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
- * across every tab (not Queue-specific), hosting the existing
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
+ * below the whole workbench, not inside the list pane, hosting the existing
  * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
- * that switches to the Conflicts tab. SyncStatusWidget takes the
+ * that PUSHES the conflicts view over the list (redesign PR-4 task 5: the
+ * Conflicts tab it used to switch to is retired). SyncStatusWidget takes the
  * remaining width so the badge sits flush right; `align` centers the
  * badge (height:1, from .scheduling-queue-chip) against the taller
  * padded SyncStatusWidget row. */
@@ -32,13 +30,6 @@
 
 #scheduling-status-strip > SyncStatusWidget {
     width: 1fr;
-}
-
-SchedulesWorkbench TabbedContent,
-SchedulesWorkbench TabbedContent ContentSwitcher,
-SchedulesWorkbench TabbedContent TabPane {
-    height: 1fr;
-    min-height: 0;
 }
 
 #scheduling-workbench {
@@ -65,55 +56,11 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
-/* Automations tab (ADR-077): definitions list on the left, the selected
- * definition's durable run history on the right -- the same list|detail
- * idiom as the Queue tab's three panes. */
-#scheduling-automations-split {
-    layout: horizontal;
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-automations-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-#scheduling-automation-history-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
- * the definitions detail widget (DefinitionDetail), the same list|detail|
- * inspector idiom as the Queue tab's three panes above.
- *
- * min-width 22, not 30 (final review F5): the three panes' min-widths must
- * SUM to no more than the narrowest width at which all three are still
- * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
- * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
- * Textual's fr layout then gave EVERY pane the full container width,
- * laying the detail and history panes out entirely off-screen; the split
- * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
- * 82 fits 84 with slack. This floor only ever binds inside that band -- at
- * any wider width the 1fr share is larger anyway. */
-#scheduling-automations-detail-pane {
-    width: 1fr;
-    min-width: 22;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
+/* redesign PR-4, task 5: the Automations tab's own three-pane split
+ * (#scheduling-automations-split / -pane / -detail-pane / -history-pane)
+ * is retired with the tab. The ids below that still start with
+ * `#scheduling-automation-detail-` are DefinitionDetail's own CHILD ids,
+ * not that pane's -- they follow the widget wherever it is mounted. */
 #scheduling-automation-detail-empty-state {
     color: $text-muted;
     text-align: center;
@@ -130,19 +77,6 @@ SchedulesWorkbench TabbedContent TabPane {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $text;
-}
-
-#scheduling-automations-table {
-    height: 1fr;
-}
-
-#scheduling-automation-history-table {
-    height: 1fr;
-}
-
-#scheduling-automations-notice,
-#scheduling-automation-history-notice {
-    color: $text-muted;
 }
 
 #scheduling-queue-filter {
@@ -169,26 +103,69 @@ SchedulesWorkbench TabbedContent TabPane {
     background: $surface-darken-1;
 }
 
+/* redesign PR-4, task 6 (spec §11): the collapsed-chip control -- one
+ * button standing in for the four named chips below 84 columns. Same
+ * flat single-row look as the chips it replaces (it deliberately does
+ * NOT carry `.scheduling-queue-chip`: that class is what the compact
+ * rule below hides). `display: none` by default, so it only ever appears
+ * at the widths where the four chips are gone. */
+#scheduling-chip-cycle {
+    display: none;
+    height: 1;
+    border: none;
+    width: auto;
+    min-width: 8;
+    background: $surface-darken-1;
+}
+
 /* Compact mode: the filter's margin row goes to the table (80x24 has
- * exactly one spare row; without this the queue shows only the filter).
- * The chip row is hidden outright at this width rather than squeezed
- * further -- it is a filter convenience, not a required affordance, and
- * the narrow-width floor already prioritizes the table + detail pane. */
+ * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
 }
 
+/* The four chips collapse into the cycling control rather than the whole
+ * row disappearing (ruling 6) -- one row either way, and a mouse user
+ * keeps a filter affordance at the floor. The row's own bottom margin
+ * goes to the table for the same reason the filter's does. */
 #scheduling-workbench.compact #scheduling-queue-chips {
+    margin: 0;
+}
+
+#scheduling-workbench.compact #scheduling-queue-chips .scheduling-queue-chip {
     display: none;
+}
+
+#scheduling-workbench.compact #scheduling-chip-cycle {
+    display: block;
+}
+
+/* With both side panes hidden the rail is the only thing on screen, so it
+ * takes the whole width -- it used to keep the 24-column width the
+ * three-pane compact split gives it, wrapping the queue into a gutter
+ * while 54 columns sat empty -- and drops its own frame: the workbench's
+ * border is already the visible edge, and 4 rows of pane chrome is a
+ * sixth of an 80x24 terminal. */
+#scheduling-workbench.compact #scheduling-list-pane {
+    width: 1fr;
+    min-width: 0;
+    border: none;
+    padding: 0 1;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
     padding: 0;
 }
 
+/* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
+ * left ~20 usable ones -- narrow enough that the header's three Buttons
+ * wrapped their labels, and an auto-height row of wrapped Buttons grew to
+ * SIXTEEN rows, leaving the queue table a single line at 110x40. Sharing
+ * the width with the detail pane (which keeps its own min-width) fits the
+ * header on one row again and gives the table back its space. */
 SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 24;
-    min-width: 20;
+    width: 1fr;
+    min-width: 28;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
@@ -235,19 +212,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin-left: 1;
 }
 
-/* Automations tab header (task-5): same title+button row shape as the
- * Queue pane's #scheduling-list-header above. */
-#scheduling-automations-header {
-    height: auto;
-}
-
-#scheduling-automations-header #scheduling-automations-title {
-    width: 1fr;
-}
-
-#scheduling-new-automation {
+/* redesign PR-4, task 2: the rail's Results relocation affordance,
+ * beside Mark-all-read -- same auto-width row shape, always visible
+ * (never hidden, unlike Mark-all-read). */
+#scheduling-results-badge {
     width: auto;
     min-width: 9;
+    margin-left: 1;
 }
 
 /* Empty state */
@@ -268,15 +239,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-/* Transfer action row (schedules-handoff spec §6, PR-5 task 7) */
-#scheduling-task-detail-transfer {
-    height: auto;
-    padding: 0 0 1 0;
-}
-
-#scheduling-task-detail-transfer Button {
-    margin: 0 1 0 0;
-}
+/* redesign PR-4, task 4: the legacy transfer action row (schedules-
+   handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
+   Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
@@ -285,7 +250,12 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     text-style: bold;
 }
 
-#scheduling-task-detail .follow-why {
+/* Both live instances of the pane: the docked one and, at narrow widths,
+ * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
+ * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which
+ * would be an ancestor-scoped bare-type rule (PR-3's fastpath ratchet). */
+#scheduling-task-detail .follow-why,
+#scheduling-task-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
@@ -305,8 +275,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-#scheduling-automation-detail .follow-why,
-#scheduling-queue-definition-detail .follow-why {
+/* Same pair as the reminder pane's rule above: docked + pushed instance. */
+#scheduling-queue-definition-detail .follow-why,
+#scheduling-definition-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
@@ -401,13 +372,25 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0;
 }
 
-/* Compact mode (see SchedulesWorkbench.on_resize): the Queue tab label
- * already names the pane; the in-pane title/New-button row goes to the
- * table (80x24 has exactly one spare row -- the New button stays reachable
- * via the `c` key, which the footer advertises). Hiding the header hides
- * the title Static nested inside it too. */
-#scheduling-workbench.compact #scheduling-list-header {
+/* Compact mode (see SchedulesWorkbench.on_resize): the screen header
+ * already names the pane, so the in-pane TITLE yields its row -- but the
+ * header's buttons do not. redesign PR-4, task 6 (ruling 6: "the rail
+ * degrades readably at 80"): `Create ▾`, `Mark all read` and `Results`
+ * are the only routes to those operations that need no selected row, and
+ * what made the row unaffordable at the floor was the 3-row bordered
+ * Button box, not the buttons. They flatten to one row instead
+ * (height:1/border:none -- the same idiom the chip row and the Runs-on
+ * mini-bar already use), and the header goes from 3 rows to 1. */
+#scheduling-workbench.compact #scheduling-list-title {
     display: none;
+}
+
+#scheduling-workbench.compact #scheduling-new-task,
+#scheduling-workbench.compact #scheduling-mark-all-read,
+#scheduling-workbench.compact #scheduling-results-badge {
+    height: 1;
+    border: none;
+    background: $surface-darken-1;
 }
 
 /* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
@@ -508,4 +491,18 @@ DetailValueRow .detail-value-row-error {
 DetailGroup {
     background: $ds-surface-panel;
     border-top: hkey $ds-grid-line;
+}
+
+/* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
+ * push pattern, spec §11) hands the factory-built widget this class so it
+ * fills the space between the screen's `Header`/`Footer` regardless of
+ * whether the hosted widget sizes itself (`ConflictsTab` already does,
+ * via its own `BUNDLED_CSS` -- this covers the panes that don't, e.g.
+ * `TaskDetail`/`DefinitionDetail`, once later tasks push those). Bare
+ * class selector, carried only by whatever `WorkbenchHostScreen.compose`
+ * tags with it -- not ancestor-scoped, so it never counts against the
+ * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
+ * rule_count_is_a_ratchet`). */
+.workbench-host-body {
+    height: 1fr;
 }
