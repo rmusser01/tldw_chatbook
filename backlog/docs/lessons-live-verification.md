@@ -1913,3 +1913,51 @@ opt-out fighting an app-tier reset must live at app tier; and a sentinel
 edit used to test code provenance MUST be verified to have landed
 (`assert old in s` before replace) — an unverified no-op replace produced a
 false "app runs foreign code" scare mid-hunt.
+
+## A live report names a SYMPTOM — re-derive the mechanism from code before you fix it (schedules-handoff PR-6 rounds 1-2, 2026-09-02)
+
+**What happened.** A live run is expensive, so its findings arrive with authority: you
+watched the thing fail. That authority attaches to the *symptom*, and PR-6's two fix
+rounds each shipped a wrong mechanism inferred from a correct symptom.
+
+**Mis-diagnosis 1 — results sorted wrong (D4).** The live observation was exact: the
+server emits `2026-09-02T23:25:45.681750Z` while local rows write `+00:00`, and
+`list_automation_results` ordered on the raw string, so `Z` (0x5A) vs `.` (0x2E) inverted
+neighbouring rows. The obvious reading — "the string comparison is the bug, sort by a real
+instant instead" — produced `ORDER BY datetime(created_at)`. That is worse than it looks:
+SQLite's `datetime()` **truncates to whole seconds**, and whole seconds is *precisely* the
+resolution at which a `Z` and a `+00:00` stamp of the same instant can disagree. The fix
+threw away the only information that distinguished the rows, leaving them tied and ordered
+arbitrarily by the UUID tiebreak — and a sync pull mirroring a page of results all stamped
+in the same second is the normal case, not a corner one. The real fix needed sub-second
+precision (`strftime('%Y-%m-%dT%H:%M:%f', …)`, and the docstring records that even `%f` is
+only milliseconds against microsecond local writes). Reading the comparison semantics of
+the function being reached for would have caught it before the round shipped.
+
+**Mis-diagnosis 2 — bracketed content eaten.** Covered in detail in *"The right escape
+function depends on the surface, not the app"* above. Same shape: a correct symptom
+(brackets disappearing), a mechanism generalised from one surface (`Content.from_markup`)
+to a second one it did not describe (`rich.text.Text.from_markup`, lowercase-tag regex),
+and a scope-out justified by "the example I have survives there" rather than by reading
+the second parser. Round 2 found the same bug in the pane the round-1 fix had explicitly
+excluded.
+
+**Why live findings are especially prone to this.** The symptom is vivid and the run was
+costly, so there is real pressure to fix on the spot with the terminal still open. Both
+mis-diagnoses were plausible readings of the evidence actually in hand — the evidence just
+did not reach as far as the mechanism did.
+
+**What to do.**
+
+- Write the symptom and the mechanism as **separate claims**. The live run establishes the
+  symptom; only code establishes the mechanism. A fix round justified by "we saw it fail"
+  has skipped a step.
+- Before reaching for a stdlib/SQL/framework function as the fix, **read what it actually
+  does to your data** — precision, truncation, escaping, ordering. A function that
+  *sounds* like the right abstraction is where these mis-diagnoses land.
+- When a fix is deliberately **scoped out** of a second surface, state the mechanism-level
+  reason ("this parser does not consume that token"), never the example-level one ("the
+  string I tried survives"). An example-level scope-out is exactly how round 1 shipped a
+  fix that round 2 had to make again.
+- Re-derive before re-driving. The cheapest step in a fix round is grepping the call sites
+  of the function you are about to change; the most expensive is a second live gate.
