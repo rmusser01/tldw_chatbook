@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 10:21'
+updated_date: '2026-09-04 12:29'
 labels:
   - vllm
   - lab
@@ -32,6 +32,8 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #3 Tab traversal stays within the active provider pane and lifecycle transitions move focus to the newly relevant action.
 - [x] #4 Provider navigation uses one documented key meaning that does not conflict with the Lab footer.
 - [x] #5 Production-stylesheet compositor and keyboard tests cover first-run, loading, ready, failure, current-versus-next, and handoff states.
+- [x] #6 While vLLM is active, the outer Lab header, status, and visible Inspector project selected profile, ownership, safe verified endpoint/model, persistence scope, Current versus Next state, and the reachable next action; projection refreshes without focus theft and respects compact/medium Inspector collapse.
+- [x] #7 The production-stylesheet evidence matrix covers actual Checking, existing-server discovery and selection, Console/default presentations where applicable, mounted edit -> check -> restart, and presentation recomposition with assertion-level mappings for every claimed outcome.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -72,6 +74,17 @@ Task 6 Fix Round 2:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This is verification-resource hygiene within ADR-117's existing test/evidence contract, not a runtime architecture change.
+
+Final UX fix round:
+3. Expand the RED production-stylesheet matrix with actual Checking, external discovery/selection, Console/default presentations, contextual outer-Lab projection, and complete state-specific focus/containment assertions at 80x24, 100x30, and 120x40.
+4. Add RED mounted tests for focus-preserving contextual refresh, collapsed Inspector behavior, safe canonical Current/Next copy, and the real active-runtime edit -> Check draft -> Restart flow using a controlled process owner.
+5. Implement the smallest vLLM view/outer-Lab projection and `_lab.tcss` source changes; regenerate the modular bundle and keep the first viewport's next action reachable without forbidden bindings.
+6. Run the Impeccable detector once after UI completion, then execute sequential focused GREEN nodes, the qualified primary and incumbent compatibility matrices, geometry/Tab matrices, CSS sync twice, statics, inventories, live isolated qualification, and diff review.
+7. Replace every stale evidence-map claim with an assertion-level mapping to the exact new node/case, record honest live limitations, check the new ACs only when verified, and restore Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This round directly completes ADR-117's already accepted contextual Lab, responsive, focus, and evidence obligations; it adds no new application structure or ownership boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -124,7 +137,7 @@ same node name).
 **State model**
 
 1. Not configured — `test_initial_vllm_setup_is_guided_and_blocks_start`, geometry `setup_incomplete`.
-2. Checking — `test_owned_settlement_requires_token_bound_to_the_launch_claim` proves the current owner remains Checking until a claim-bound settlement.
+2. Checking — geometry `checking`, `test_checking_exposes_generation_bound_cancel_action`, and `test_mounted_cancel_check_only_cancels_current_generation` prove the visible current-generation Cancel action and owner settlement boundary.
 3. Ready to start — `test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success`, geometry `preflight_ready`.
 4. Launching — geometry `launching`, `test_explicit_vllm_state_transition_focuses_phase_action[launching-vllm-stop]`.
 5. Loading model — `test_ready_requires_health_and_exact_models_identity`, geometry `loading`.
@@ -154,12 +167,12 @@ same node name).
 
 **Responsive and keyboard contract**
 
-1. Wide body composition, horizontal-capable setup, and above-fold readiness/action — `test_every_visible_focusable_is_inside_its_owner[state-size2]` across all eight states (`size2` is 120x40); the spec permits rather than requires both rails to remain open.
-2. Medium Inspector collapse, stacked overflowing groups, and conditional fold cue — `test_every_visible_focusable_is_inside_its_owner[state-size1]` across all eight states (`size1` is 100x30).
-3. Compact persisted catalog collapse plus painted standard reopen action — `test_every_visible_focusable_is_inside_its_owner[state-size0]` across all eight states (`size0` is 80x24).
+1. Wide body composition, horizontal-capable setup, and above-fold readiness/action — `test_every_visible_focusable_is_inside_its_owner[state-size2]` across all eleven states (`size2` is 120x40); the spec permits rather than requires both rails to remain open.
+2. Medium Inspector collapse, stacked overflowing groups, and conditional fold cue — `test_every_visible_focusable_is_inside_its_owner[state-size1]` across all eleven states (`size1` is 100x30).
+3. Compact persisted catalog collapse plus painted standard reopen action — `test_every_visible_focusable_is_inside_its_owner[state-size0]` across all eleven states (`size0` is 80x24).
 4. Compact complete rows/full-width Browse/owned focus geometry — `test_every_visible_focusable_is_inside_its_owner[profile_management-size0]`, including local Browse; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` proves the real deletion dialog's controls remain inside both direct owner and modal viewport at 80x24, 100x30, and 120x40.
 5. Compact readiness plus current next action and fold cue in the first paint — `test_every_visible_focusable_is_inside_its_owner[state-size0]` asserts the state action and `more below` are rendered.
-6. Displayed/enabled controls only, no hidden provider bodies, cyclic active-pane Tab order — `test_complete_tab_walk_stays_in_active_vllm_provider` for the exact eight-state by three-size matrix.
+6. Displayed/enabled controls only, no hidden provider bodies, cyclic active-pane Tab order — `test_complete_tab_walk_stays_in_active_vllm_provider` for the exact eleven-state by three-size matrix, including Check/Cancel, external selector, Use in Console, and Make default presentations where applicable.
 7. Explicit transition focus and passive refresh preservation — `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
 8. Provider selection remains Arrow/Enter and Escape remains the existing Lab convention — `Tests/UI/test_lab_frame_mode_keys.py` and `Tests/UI/test_lab_frame.py` in the compatibility matrix.
 9. Brackets retain Lab mode-focus ownership; provider digits/brackets are absent — `test_provider_child_has_no_bracket_or_digit_bindings`, `Tests/UI/test_lab_frame_mode_keys.py`.
@@ -179,7 +192,7 @@ same node name).
 10. Mounted session adoption without config writes — `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
 11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31268.
 12. Recomposition/profile restore/obsolete-worker invalidation — `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
-13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, and `profile_management` at 80x24, 100x30, and 120x40, with every visible enabled focusable fully inside both its direct owner and the active vLLM viewport; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` applies the same rule to the real modal.
+13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `checking`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, `profile_management`, `existing_discovery`, and `existing_ready` at 80x24, 100x30, and 120x40, with per-state outcome copy and first-action assertions plus every visible enabled focusable fully inside both its direct owner and the active vLLM viewport; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` applies the same rule to the real modal.
 14. Complete Tab walk/hidden providers/lifecycle landing — `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
 15. Live evidence — production `TldwCli` was driven under disposable HOME/XDG/config/data/cache roots at all three sizes. The host has cached `Qwen/Qwen2.5-0.5B-Instruct`, but neither a `vllm` executable nor importable `vllm` package; therefore no real server/model was launched and loopback tests are contract verification, not real-vLLM qualification. Real config and data aggregate fingerprints were unchanged before/after.
 
@@ -255,4 +268,49 @@ stable at `12 -> 15` total rather than linear growth. The final qualified
 primary with `TLDW_TEST_FD_GROWTH_LIMIT=200` passed `273` tests in `263.28s`
 with no FD warning. No production lifecycle change or new ADR was warranted;
 ADR-117 already owns the test/evidence contract.
+
+The final UX fix round makes the outer Lab frame contextual while vLLM is
+active. Its header, status chips, and wide Inspector project selected profile,
+runtime ownership, the safe canonical verified endpoint/model, persistence
+scope, Current versus Next, and the reachable action; generic destination rows
+are hidden for this provider. Selection, lifecycle, draft, and passive
+recomposition refresh that projection without focus theft, while compact and
+medium layouts keep the Inspector collapsed. The production-stylesheet matrix
+now asserts eleven real states at 80x24, 100x30, and 120x40: setup incomplete,
+checking, preflight ready, launching, loading, ready, failed, dirty restart,
+profile management, external discovery, and external ready. Each cell asserts
+state copy, first reachable action, selector null/exact state where relevant,
+containment, and the complete active-pane Tab order.
+`test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft` maps
+contextual chrome; `test_mounted_external_selection_starts_fresh_exact_probe`
+and `test_mounted_external_changed_list_clears_and_fences_stale_selection` map
+external selection; `test_mounted_edit_check_and_restart_uses_exact_live_claim`
+maps edit/check/restart; and
+`test_mounted_recomposition_preserves_exact_readiness_but_detach_invalidates`
+maps presentation recomposition. The matrix's repeated factory apps explicitly
+close their Library Collections, Workspace, Subscriptions, and Evaluations
+database owners after each mount; the previously offending 120x40 slice moved
+from `+42` descriptors to no warning under a tightened `20`-descriptor limit
+without reducing any state/size assertions. No new ADR or generalized lesson:
+ADR-117 already owns the contextual Lab/evidence requirements, and the existing
+testing lesson already records repeated-app SQLite-owner cleanup.
+
+Final qualification: `308` primary tests passed in `428.25s` with the full
+eleven-state by three-size geometry/Tab matrix and no descriptor-growth warning.
+Production CSS build/sync/staleness passed `39` tests; the bundle was generated
+twice from `_lab.tcss` with identical SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`.
+The broader compatibility run passed `358` with three unrelated failures, all
+reproduced on exact base `d3d6a031379d5ffbd6545b4463e798c2ed83dd84`
+(Settings origin helper absent, existing-chat terminal persistence baseline,
+and Research-to-Library destination mapping). The static/inventory matrix
+passed `136`, skipped `1`, and retained five exact-base failures in untouched
+persistent-diagnostic/timer ownership; direct profile-path and diagnostic
+inventory checks pass with no drift. A broad CSS class-coverage probe likewise
+retains only existing Console/Library missing-style debt in untouched sources;
+the generated bundle diff contains only the Lab additions. Impeccable's
+post-edit detector reported no findings. Format, critical Ruff, `py_compile`,
+privacy/scope review, and `git diff --check` pass. The host has no installed or
+importable vLLM, so live server qualification remains unavailable and no
+unrelated service or model was downloaded or started.
 <!-- SECTION:NOTES:END -->

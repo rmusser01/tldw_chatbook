@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 10:35'
+updated_date: '2026-09-04 12:29'
 labels:
   - vllm
   - lab
@@ -28,6 +28,9 @@ Prevent predictable first-run vLLM launch failures by making environment, model-
 - [x] #3 Start is disabled with a visible field-adjacent reason until required checks pass.
 - [x] #4 Managed host, port, and model flags cannot be duplicated or overridden through raw arguments.
 - [x] #5 Focused unit and mounted Textual tests cover success, failure, preservation, and recovery states.
+- [x] #6 Guided readiness remains a persistent four-row Environment, vLLM installation, Model, and Network checklist with row-specific status, bounded adjacent recovery, resolved versions on success, Python-environment Browse, and a Cancel check action bound to the current worker generation.
+- [x] #7 Advanced exposes editable typed dtype, tensor parallel size, maximum model length, GPU memory utilization, and trust-remote-code controls with adjacent validation/consequence copy; raw arguments remain under a separate nested Advanced arguments disclosure.
+- [x] #8 Existing-server setup shows credential-source status without values, discovers only bounded admissible model IDs after an explicit Check connection, requires explicit model selection, and does not publish readiness until the selected exact model is re-probed for the current generation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -67,6 +70,16 @@ ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This extends ADR-117's existing managed-argument boundary to one
 official spelling of an already-owned structured option.
+
+Final UX fix round:
+12. Add sequential RED mounted tests for the persistent four-row checklist, field-adjacent recovery/version copy, established Python-environment picker, current-generation Cancel check, typed Advanced controls, nested raw arguments, and profile-repair adjacency.
+13. Add sequential RED pure/mounted tests for bounded external discovery, credential-source status, explicit model selection, empty/missing/changed lists, and exact selected-model reprobe before readiness publication.
+14. Implement the smallest view/controller and connection-result changes that satisfy those contracts without changing the established launch, persistence, credential, or handoff security boundaries.
+15. Run each focused node RED then GREEN, the complete vLLM primary and compatibility matrices, responsive geometry, generated-CSS, inventory, static, privacy, and diff gates before checking the new ACs and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already requires the persistent guided setup, structured expert fields, bounded explicit discovery, user-selected existing-server model, and exact current-generation reprobe; this round implements those accepted outcomes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -123,6 +136,31 @@ passed`; setup/profile/lifecycle was `173 passed`; focused Ruff, `py_compile`,
 diagnostic/profile inventories, and `git diff --check` passed. No new ADR or
 lesson: this is one official spelling of the structured option already owned
 by ADR-117.
+
+The final UX fix round makes readiness continuously legible instead of
+collapsing it into one global result. Environment, vLLM installation, Model,
+and Network remain visible as four independently projected rows; successful
+local checks include bounded Python and vLLM versions, failures recover beside
+their owning field, and the established picker updates the Python-environment
+field. Cancel check carries the rendered generation and can cancel only that
+generation's live worker. Advanced now owns editable typed dtype, tensor
+parallel size, maximum model length, GPU memory utilization, and
+trust-remote-code controls, with consequence/validation copy beside each
+field; raw arguments are a separate nested disclosure. Existing-server Check
+connection publishes only a bounded admissible candidate list, never an
+implicit READY target; the user must choose a returned ID and complete a fresh
+exact-generation probe. The focused new nodes were first observed RED for the
+missing checklist projection, typed controls, picker/cancel behavior, and
+discovery-selection contract, then GREEN after the view/controller and bounded
+probe-result changes. No new ADR: this is the guided setup and explicit
+selection flow already accepted by ADR-117.
+
+Final shared qualification for this round: the setup/connection/profile and
+mounted workflow/geometry primary passed `308` tests in `428.25s` with no
+descriptor-growth warning; the production CSS build/sync/staleness gate passed
+`39`; format, critical Ruff, `py_compile`, both profile/diagnostic inventories,
+and `git diff --check` passed. The host still has neither a `vllm` executable
+nor an importable `vllm` package, so no live server was downloaded or launched.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

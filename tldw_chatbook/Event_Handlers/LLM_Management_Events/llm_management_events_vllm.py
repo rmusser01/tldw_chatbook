@@ -164,6 +164,7 @@ __all__ = [
     "handle_vllm_setup_start_requested",
     "handle_vllm_setup_stop_requested",
     "handle_vllm_local_directory_browse_requested",
+    "handle_vllm_python_environment_browse_requested",
 ]
 
 ###############################################################################
@@ -314,6 +315,24 @@ async def handle_vllm_local_directory_browse_requested(
             context="vllm_models",
         ),
         callback=_make_path_update_callback(window, app, "vllm-local-model-directory"),
+    )
+
+
+async def handle_vllm_python_environment_browse_requested(
+    window: "LLMManagementWindow", app: "TldwCli", event: Any
+) -> None:
+    """Open the established file picker beside the guided environment field."""
+
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home()),
+            title="Select Python interpreter for vLLM",
+            filters=Filters(
+                ("Python executable", lambda path: path.name.startswith("python"))
+            ),
+            context="vllm_models",
+        ),
+        callback=_make_path_update_callback(window, app, "vllm-python-environment"),
     )
 
 

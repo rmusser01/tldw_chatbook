@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import replace
 
 from textual import on
@@ -36,10 +37,12 @@ _PREFLIGHT_HELP_TARGETS = {
     "bind_address": "vllm-bind-address-help",
     "port": "vllm-port-help",
     "existing_server_url": "vllm-existing-server-url-help",
+    "dtype": "vllm-dtype-help",
     "raw_arguments": "vllm-raw-arguments-help",
-    "tensor_parallel_size": "vllm-profile-help",
-    "maximum_model_length": "vllm-profile-help",
-    "gpu_memory_utilization": "vllm-profile-help",
+    "tensor_parallel_size": "vllm-tensor-parallel-size-help",
+    "maximum_model_length": "vllm-maximum-model-length-help",
+    "gpu_memory_utilization": "vllm-gpu-memory-utilization-help",
+    "trust_remote_code": "vllm-trust-remote-code-error",
 }
 _PREFLIGHT_ISSUE_COPY = {
     "missing_python_environment": "Choose a Python interpreter or virtual environment.",
@@ -55,9 +58,7 @@ _PREFLIGHT_ISSUE_COPY = {
         "vLLM cannot be imported from this Python environment. Repair it "
         "or choose another environment."
     ),
-    "invalid_hugging_face_model": (
-        "Enter a Hugging Face model as organization/model."
-    ),
+    "invalid_hugging_face_model": ("Enter a Hugging Face model as organization/model."),
     "invalid_model_directory": "Choose an existing local model directory.",
     "invalid_bind_address": "Enter an IP address or localhost.",
     "invalid_port": "Enter a port from 1 to 65535.",
@@ -69,6 +70,7 @@ _PREFLIGHT_ISSUE_COPY = {
     "arguments_conflict": (
         "Advanced arguments duplicate a managed setting. Remove the duplicate option."
     ),
+    "invalid_dtype": "Choose one of the supported dtype values.",
     "invalid_tensor_parallel_size": (
         "The saved tensor parallel size must be a positive whole number."
     ),
@@ -78,6 +80,7 @@ _PREFLIGHT_ISSUE_COPY = {
     "invalid_gpu_memory_utilization": (
         "The saved GPU memory utilization must be greater than 0 and at most 1."
     ),
+    "invalid_trust_remote_code": "Choose whether remote model code is allowed.",
 }
 
 
@@ -90,6 +93,17 @@ def _preflight_issue_copy(issue: VllmIssue) -> str:
     )
 
 
+def _draft_network_exposed(draft: VllmLaunchDraft) -> bool:
+    """Classify only syntactically valid non-loopback local bind addresses."""
+
+    if draft.mode is not VllmMode.LOCAL or draft.bind_address == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(draft.bind_address).is_loopback
+    except ValueError:
+        return False
+
+
 class VllmSetupView(VerticalScroll):
     """Collect a vLLM draft and render only current preflight evidence."""
 
@@ -100,6 +114,7 @@ class VllmSetupView(VerticalScroll):
 
     _WIDTH_CLASSES = ("vllm-wide", "vllm-medium", "vllm-compact")
     _FOCUS_TARGETS = {
+        VllmReadinessState.CHECKING: "vllm-cancel-check",
         VllmReadinessState.READY_TO_START: "vllm-start",
         VllmReadinessState.LAUNCHING: "vllm-stop",
         VllmReadinessState.LOADING_MODEL: "vllm-stop",
@@ -127,6 +142,11 @@ class VllmSetupView(VerticalScroll):
         def __init__(self, draft: VllmLaunchDraft) -> None:
             super().__init__()
             self.draft = draft
+
+    class CancelCheckRequested(Message):
+        def __init__(self, generation: int) -> None:
+            super().__init__()
+            self.generation = generation
 
     class StartRequested(Message):
         def __init__(self, draft: VllmLaunchDraft) -> None:
@@ -189,6 +209,14 @@ class VllmSetupView(VerticalScroll):
     class LocalDirectoryBrowseRequested(Message):
         """Request a local model-directory picker without exposing a path globally."""
 
+    class PythonEnvironmentBrowseRequested(Message):
+        """Request an interpreter picker using the established bounded file dialog."""
+
+    class ExternalModelSelected(Message):
+        def __init__(self, model_id: str) -> None:
+            super().__init__()
+            self.model_id = model_id
+
     class DraftChanged(Message):
         def __init__(self, draft: VllmLaunchDraft) -> None:
             super().__init__()
@@ -212,6 +240,8 @@ class VllmSetupView(VerticalScroll):
         )
         self._current_launch_snapshot: VllmLaunchSnapshot | None = None
         self._runtime_active = False
+        self._discovered_model_ids: tuple[str, ...] = ()
+        self._credential_configured = False
         self._rendering = False
 
     def compose(self) -> ComposeResult:
@@ -221,13 +251,19 @@ class VllmSetupView(VerticalScroll):
             classes="description",
         )
         yield Label("Setup incomplete", id="vllm-readiness-state")
+        with Container(id="vllm-readiness-checklist"):
+            yield Label("○ Environment · not checked", id="vllm-check-environment")
+            yield Label(
+                "○ vLLM installation · not checked", id="vllm-check-installation"
+            )
+            yield Label("○ Model · choose a model", id="vllm-check-model")
+            yield Label("○ Network · not checked", id="vllm-check-network")
         with Horizontal(id="vllm-next-action", classes="vllm-action-bar"):
             yield Button("Check setup", id="vllm-check-setup")
+            yield Button("Cancel check", id="vllm-cancel-check")
             yield Button("Start", id="vllm-start", disabled=True)
             yield Button("Stop", id="vllm-stop", disabled=True)
-            yield Button(
-                "Retry check", id="vllm-recovery-primary", disabled=True
-            )
+            yield Button("Retry check", id="vllm-recovery-primary", disabled=True)
             yield Button("Restart with draft", id="vllm-restart", disabled=True)
             yield Button("Use in Console", id="vllm-use-console", disabled=True)
         yield Label("▼ more below — scroll", id="vllm-fold-cue")
@@ -254,6 +290,11 @@ class VllmSetupView(VerticalScroll):
             id="vllm-profile-name",
             placeholder="Profile name",
         )
+        yield Label(
+            "",
+            id="vllm-profile-name-help",
+            classes="prereq-hint vllm-field-help",
+        )
         with Horizontal(classes="vllm-profile-actions"):
             yield Button("New profile", id="vllm-profile-create-button")
             yield Button("Save changes", id="vllm-profile-save-button")
@@ -262,11 +303,17 @@ class VllmSetupView(VerticalScroll):
             yield Button("Delete", id="vllm-profile-delete-button")
         with Container(id="vllm-local-setup"):
             yield Label("Python environment", classes="inline-label")
-            yield Input(
-                value=self._draft.python_environment,
-                id="vllm-python-environment",
-                placeholder="python or /path/to/venv/bin/python",
-            )
+            with Horizontal(classes="vllm-picker-row"):
+                yield Input(
+                    value=self._draft.python_environment,
+                    id="vllm-python-environment",
+                    placeholder="python or /path/to/venv/bin/python",
+                )
+                yield Button(
+                    "Browse",
+                    id="vllm-browse-python-environment",
+                    classes="browse_button",
+                )
             yield Label(
                 "",
                 id="vllm-python-environment-help",
@@ -295,9 +342,7 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-browse-local-model-directory-button",
                 classes="browse_button",
             )
-            yield Label(
-                "", id="vllm-model-help", classes="prereq-hint vllm-field-help"
-            )
+            yield Label("", id="vllm-model-help", classes="prereq-hint vllm-field-help")
             yield Label("Network", classes="section_label")
             yield Label("Bind address", classes="inline-label")
             yield Input(value=self._draft.bind_address, id="vllm-bind-address")
@@ -308,9 +353,7 @@ class VllmSetupView(VerticalScroll):
             )
             yield Label("Port", classes="inline-label")
             yield Input(value=str(self._draft.port), id="vllm-port")
-            yield Label(
-                "", id="vllm-port-help", classes="prereq-hint vllm-field-help"
-            )
+            yield Label("", id="vllm-port-help", classes="prereq-hint vllm-field-help")
         with Container(id="vllm-existing-setup"):
             yield Label("Existing server URL", classes="inline-label")
             yield Input(
@@ -323,9 +366,24 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-existing-server-url-help",
                 classes="prereq-hint vllm-field-help",
             )
-        yield Label(
-            "", id="vllm-profile-help", classes="prereq-hint vllm-field-help"
-        )
+            yield Label(
+                "Credential source · not configured",
+                id="vllm-credential-status",
+                classes="description",
+            )
+            yield Label("Returned model", classes="inline-label")
+            yield Select(
+                [],
+                allow_blank=True,
+                prompt="Check connection, then choose a model",
+                id="vllm-existing-model",
+            )
+            yield Label(
+                "Check connection to load available model IDs.",
+                id="vllm-existing-model-help",
+                classes="prereq-hint",
+            )
+        yield Label("", id="vllm-profile-help", classes="prereq-hint vllm-field-help")
         yield Label("", id="vllm-start-blocker", classes="prereq-hint")
         with Container(id="vllm-current-server"):
             yield Label("Current server", classes="section-title")
@@ -346,16 +404,87 @@ class VllmSetupView(VerticalScroll):
         )
         advanced._title.id = "vllm-advanced-toggle"
         with advanced:
-            yield Label(
-                "Launch only · not saved in profiles.",
-                id="vllm-raw-arguments-scope",
+            yield Label("dtype", classes="inline-label")
+            yield Select(
+                [
+                    ("Auto", ""),
+                    ("Half", "half"),
+                    ("float16", "float16"),
+                    ("bfloat16", "bfloat16"),
+                    ("float32", "float32"),
+                ],
+                value="",
+                allow_blank=False,
+                id="vllm-dtype",
             )
-            yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
             yield Label(
                 "",
-                id="vllm-raw-arguments-help",
+                id="vllm-dtype-help",
                 classes="prereq-hint vllm-field-help",
             )
+            yield Label("Tensor parallel size", classes="inline-label")
+            yield Input(id="vllm-tensor-parallel-size", placeholder="Automatic")
+            yield Label(
+                "Number of GPUs used together for each model replica.",
+                classes="description",
+            )
+            yield Label(
+                "",
+                id="vllm-tensor-parallel-size-help",
+                classes="prereq-hint vllm-field-help",
+            )
+            yield Label("Maximum model length", classes="inline-label")
+            yield Input(id="vllm-maximum-model-length", placeholder="Model default")
+            yield Label(
+                "Limits the model context length; larger values use more GPU memory.",
+                classes="description",
+            )
+            yield Label(
+                "",
+                id="vllm-maximum-model-length-help",
+                classes="prereq-hint vllm-field-help",
+            )
+            yield Label("GPU memory utilization", classes="inline-label")
+            yield Input(id="vllm-gpu-memory-utilization", placeholder="vLLM default")
+            yield Label(
+                "Fraction from greater than 0 through 1; higher values leave less headroom.",
+                classes="description",
+            )
+            yield Label(
+                "",
+                id="vllm-gpu-memory-utilization-help",
+                classes="prereq-hint vllm-field-help",
+            )
+            yield Button("Trust remote code · Disabled", id="vllm-trust-remote-code")
+            yield Label(
+                "Disabled is safer. Enable only when you trust the model code source.",
+                id="vllm-trust-remote-code-help",
+                classes="description",
+            )
+            yield Label(
+                "",
+                id="vllm-trust-remote-code-error",
+                classes="prereq-hint vllm-field-help",
+            )
+            arguments = Collapsible(
+                title="Advanced arguments",
+                id="vllm-advanced-arguments",
+                collapsed=True,
+            )
+            arguments._title.id = "vllm-advanced-arguments-toggle"
+            with arguments:
+                yield Label(
+                    "Launch only · not saved in profiles. Managed and secret flags are rejected.",
+                    id="vllm-raw-arguments-scope",
+                )
+                yield TextArea(
+                    id="vllm-raw-arguments", classes="additional_args_textarea"
+                )
+                yield Label(
+                    "",
+                    id="vllm-raw-arguments-help",
+                    classes="prereq-hint vllm-field-help",
+                )
         with Horizontal(classes="vllm-console-actions"):
             yield Button(
                 "Make default for new chats",
@@ -367,7 +496,6 @@ class VllmSetupView(VerticalScroll):
             id="vllm-console-scope-copy",
         )
 
-
     def apply_state(
         self,
         *,
@@ -378,6 +506,8 @@ class VllmSetupView(VerticalScroll):
         current_launch_snapshot: VllmLaunchSnapshot | None = None,
         profiles: VllmProfileDocumentV1 | None = None,
         runtime_active: bool | None = None,
+        discovered_model_ids: tuple[str, ...] | None = None,
+        credential_configured: bool | None = None,
     ) -> None:
         self._draft = draft
         self._state = state
@@ -388,6 +518,10 @@ class VllmSetupView(VerticalScroll):
             self._profiles = profiles
         if runtime_active is not None:
             self._runtime_active = runtime_active
+        if discovered_model_ids is not None:
+            self._discovered_model_ids = discovered_model_ids
+        if credential_configured is not None:
+            self._credential_configured = credential_configured
         if self.is_mounted:
             self._render_projection()
 
@@ -537,6 +671,50 @@ class VllmSetupView(VerticalScroll):
 
         return self._preflight
 
+    def show_profile_validation_error(self, field: str) -> None:
+        """Place bounded profile repair beside the exact editable control."""
+
+        targets = {
+            "name": ("vllm-profile-name-help", "vllm-profile-name"),
+            "python_environment": (
+                "vllm-python-environment-help",
+                "vllm-python-environment",
+            ),
+            "model_value": ("vllm-model-help", "vllm-hf-model"),
+            "bind_address": ("vllm-bind-address-help", "vllm-bind-address"),
+            "port": ("vllm-port-help", "vllm-port"),
+            "dtype": ("vllm-dtype-help", "vllm-dtype"),
+            "tensor_parallel_size": (
+                "vllm-tensor-parallel-size-help",
+                "vllm-tensor-parallel-size",
+            ),
+            "maximum_model_length": (
+                "vllm-maximum-model-length-help",
+                "vllm-maximum-model-length",
+            ),
+            "gpu_memory_utilization": (
+                "vllm-gpu-memory-utilization-help",
+                "vllm-gpu-memory-utilization",
+            ),
+            "trust_remote_code": (
+                "vllm-trust-remote-code-error",
+                "vllm-trust-remote-code",
+            ),
+        }
+        help_id, control_id = targets.get(field, targets["name"])
+        if field == "name":
+            copy = "Enter a valid unique profile name."
+        elif field == "profile":
+            copy = "Profile data needs repair or reload before it can be used."
+        else:
+            copy = "Repair this profile value before saving."
+            self.query_one("#vllm-advanced-options", Collapsible).collapsed = False
+        help_label = self.query_one(f"#{help_id}", Label)
+        help_label.update(copy)
+        help_label.display = True
+        control = self.query_one(f"#{control_id}", Widget)
+        self.call_after_refresh(control.focus)
+
     def _render_projection(self) -> None:
         self._rendering = True
         try:
@@ -554,6 +732,34 @@ class VllmSetupView(VerticalScroll):
             self.query_one("#vllm-mode-summary", Label).update(
                 "Start on this computer" if local else "Connect to existing server"
             )
+            check = self.query_one("#vllm-check-setup", Button)
+            cancel_check = self.query_one("#vllm-cancel-check", Button)
+            check.label = "Check setup" if local else "Check connection"
+            self.query_one("#vllm-credential-status", Label).update(
+                "Credential source · configured"
+                if self._credential_configured
+                else "Credential source · not configured"
+            )
+            external_model = self.query_one("#vllm-existing-model", Select)
+            selected_external_model = (
+                self._draft.existing_model_id
+                if self._draft.existing_model_id in self._discovered_model_ids
+                else Select.NULL
+            )
+            with external_model.prevent(Select.Changed):
+                external_model.set_options(
+                    [(model_id, model_id) for model_id in self._discovered_model_ids]
+                )
+                if external_model.value != selected_external_model:
+                    external_model.value = selected_external_model
+            external_model.disabled = not self._discovered_model_ids
+            external_help = self.query_one("#vllm-existing-model-help", Label)
+            if self._discovered_model_ids and selected_external_model is Select.NULL:
+                external_help.update("Select a returned model to verify it exactly.")
+            elif selected_external_model is not Select.NULL:
+                external_help.update("Selection requires an exact fresh verification.")
+            else:
+                external_help.update("Check connection to load available model IDs.")
             projected_inputs = {
                 "#vllm-python-environment": self._draft.python_environment,
                 "#vllm-hf-model": self._draft.model_value,
@@ -561,16 +767,44 @@ class VllmSetupView(VerticalScroll):
                 "#vllm-bind-address": self._draft.bind_address,
                 "#vllm-port": str(self._draft.port),
                 "#vllm-existing-server-url": self._draft.existing_server_url,
+                "#vllm-tensor-parallel-size": (
+                    ""
+                    if self._draft.tensor_parallel_size is None
+                    else str(self._draft.tensor_parallel_size)
+                ),
+                "#vllm-maximum-model-length": (
+                    ""
+                    if self._draft.maximum_model_length is None
+                    else str(self._draft.maximum_model_length)
+                ),
+                "#vllm-gpu-memory-utilization": (
+                    ""
+                    if self._draft.gpu_memory_utilization is None
+                    else str(self._draft.gpu_memory_utilization)
+                ),
             }
-            profile_select = self.query_one("#vllm-profile-select", Select)
-            profile_select.set_options(
-                [
-                    (profile.name, profile.profile_id)
-                    for profile in self._profiles.profiles
-                ]
+            advanced_options = self.query_one("#vllm-advanced-options", Collapsible)
+            advanced_options.display = local
+            dtype = self.query_one("#vllm-dtype", Select)
+            projected_dtype = "" if self._draft.dtype == "auto" else self._draft.dtype
+            if dtype.value != projected_dtype:
+                with dtype.prevent(Select.Changed):
+                    dtype.value = projected_dtype
+            trust = self.query_one("#vllm-trust-remote-code", Button)
+            trust.label = (
+                "Trust remote code · Enabled"
+                if self._draft.trust_remote_code
+                else "Trust remote code · Disabled"
             )
-            if profile_select.value != self._profiles.selected_profile_id:
-                with profile_select.prevent(Select.Changed):
+            profile_select = self.query_one("#vllm-profile-select", Select)
+            with profile_select.prevent(Select.Changed):
+                profile_select.set_options(
+                    [
+                        (profile.name, profile.profile_id)
+                        for profile in self._profiles.profiles
+                    ]
+                )
+                if profile_select.value != self._profiles.selected_profile_id:
                     profile_select.value = self._profiles.selected_profile_id
             selected_profile = next(
                 profile
@@ -602,15 +836,14 @@ class VllmSetupView(VerticalScroll):
             restart = self.query_one("#vllm-restart", Button)
             use_in_console = self.query_one("#vllm-use-console", Button)
             make_default = self.query_one("#vllm-make-default", Button)
-            check = self.query_one("#vllm-check-setup", Button)
-            start.disabled = not (local and is_current_success and not self._runtime_active)
+            start.disabled = not (
+                local and is_current_success and not self._runtime_active
+            )
             stop.disabled = not self._runtime_active
             retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
             target = self._connection.target if self._connection is not None else None
             token = (
-                self._connection.current_token
-                if self._connection is not None
-                else None
+                self._connection.current_token if self._connection is not None else None
             )
             current_target = bool(
                 self._state is VllmReadinessState.READY
@@ -650,17 +883,24 @@ class VllmSetupView(VerticalScroll):
                 show_current and dirty and local and is_current_success
             )
             dirty_restart = bool(show_current and dirty)
-            check.display = (
-                not dirty_restart
-                and not self._runtime_active
-                and self._state
-                in {
-                    VllmReadinessState.NOT_CONFIGURED,
-                    VllmReadinessState.CHECKING,
-                    VllmReadinessState.READY_TO_START,
-                }
+            check.label = (
+                "Check draft"
+                if dirty_restart
+                else ("Check setup" if local else "Check connection")
             )
+            check.display = (
+                not self._runtime_active or dirty_restart
+            ) and self._state in {
+                VllmReadinessState.NOT_CONFIGURED,
+                VllmReadinessState.READY_TO_START,
+            }
             check.disabled = self._state is VllmReadinessState.CHECKING
+            cancel_check.display = self._state is VllmReadinessState.CHECKING
+            cancel_check.disabled = not (
+                token is not None
+                and self._connection is not None
+                and self._connection.state is VllmReadinessState.CHECKING
+            )
             start.display = bool(is_current_success and not self._runtime_active)
             stop.display = self._runtime_active
             retry.display = self._state is VllmReadinessState.NEEDS_ATTENTION
@@ -669,7 +909,15 @@ class VllmSetupView(VerticalScroll):
             make_default.display = current_target
             visible_primary_actions = sum(
                 button.display
-                for button in (check, start, stop, retry, restart, use_in_console)
+                for button in (
+                    check,
+                    cancel_check,
+                    start,
+                    stop,
+                    retry,
+                    restart,
+                    use_in_console,
+                )
             )
             self.set_class(visible_primary_actions > 1, "vllm-two-actions")
             self._render_readiness()
@@ -682,9 +930,18 @@ class VllmSetupView(VerticalScroll):
                 issue = self._preflight.issues[0]
                 target_id = _PREFLIGHT_HELP_TARGETS.get(issue.field)
                 if target_id is not None:
+                    if issue.field in {
+                        "dtype",
+                        "tensor_parallel_size",
+                        "maximum_model_length",
+                        "gpu_memory_utilization",
+                        "trust_remote_code",
+                        "raw_arguments",
+                    }:
+                        advanced_options.collapsed = False
                     if issue.field == "raw_arguments":
                         self.query_one(
-                            "#vllm-advanced-options", Collapsible
+                            "#vllm-advanced-arguments", Collapsible
                         ).collapsed = False
                     help_label = self.query_one(f"#{target_id}", Label)
                     help_label.update(_preflight_issue_copy(issue))
@@ -692,11 +949,19 @@ class VllmSetupView(VerticalScroll):
                 blocker.update(
                     "Fix the highlighted setup field, then retry the setup check."
                 )
+            elif dirty_restart and not is_current_success:
+                blocker.update(
+                    "Network exposed: Check draft before Restart is available."
+                    if _draft_network_exposed(self._draft)
+                    else "Check draft before Restart is available."
+                )
             elif not is_current_success:
                 blocker.update("Check setup before Start is available.")
             elif self._preflight is not None and self._preflight.network_exposed:
                 blocker.update(
-                    "Network exposed: this server accepts non-loopback connections."
+                    "Network exposed: Restart will accept non-loopback connections."
+                    if dirty_restart
+                    else "Network exposed: Start will accept non-loopback connections."
                 )
             else:
                 blocker.update(
@@ -729,6 +994,7 @@ class VllmSetupView(VerticalScroll):
                 else "Ready · Existing vLLM server"
             )
         self.query_one("#vllm-readiness-state", Label).update(readiness)
+        self._render_readiness_checklist()
 
         activity_copy = {
             "cancelled": "Check cancelled",
@@ -746,6 +1012,7 @@ class VllmSetupView(VerticalScroll):
             "loading_model": "Loading model",
             "model_checking": "Checking served model",
             "model_missing": "Expected chat model is unavailable",
+            "models_discovered": "Choose one returned model",
             "process_alive": "Server process is running",
             "process_exited": "Server process exited",
             "preflight_failed": "Setup check needs attention",
@@ -771,8 +1038,91 @@ class VllmSetupView(VerticalScroll):
         if self._state is VllmReadinessState.NEEDS_ATTENTION:
             details.collapsed = False
 
+    def _render_readiness_checklist(self) -> None:
+        """Keep four stable setup checks visible with bounded recovery copy."""
+
+        local = self._draft.mode is VllmMode.LOCAL
+        checking = self._state is VllmReadinessState.CHECKING
+        current_preflight = bool(
+            self._preflight is not None
+            and self._preflight.fingerprint == semantic_fingerprint(self._draft)
+        )
+        issues = self._preflight.issues if current_preflight and self._preflight else ()
+        issue_fields = {issue.field for issue in issues}
+
+        if not local:
+            environment = "— Environment · managed by existing server"
+            installation = "— vLLM installation · managed by existing server"
+        elif checking:
+            environment = "… Environment · checking"
+            installation = "… vLLM installation · checking"
+        elif current_preflight:
+            environment = (
+                "✕ Environment · choose or repair Python"
+                if "python_environment" in issue_fields
+                else "✓ Environment · "
+                + (self._preflight.python_version or "Python resolved")
+            )
+            installation = (
+                "✕ vLLM installation · install or repair vLLM"
+                if any(
+                    issue.code in {"vllm_cli_unavailable", "vllm_import_unavailable"}
+                    for issue in issues
+                )
+                else "✓ vLLM installation · "
+                + (self._preflight.vllm_version or "vLLM resolved")
+            )
+        else:
+            environment = "○ Environment · not checked"
+            installation = "○ vLLM installation · not checked"
+
+        connection = self._connection
+        if checking:
+            model = "… Model · checking"
+            network = "… Network · checking"
+        elif connection is not None and connection.target is not None:
+            model = "✓ Model · exact selection verified"
+            network = "✓ Network · API reachable"
+        elif not local and connection is not None and connection.discovered_model_ids:
+            model = "○ Model · choose one returned model"
+            network = "✓ Network · API reachable"
+        elif current_preflight:
+            model = (
+                "✕ Model · choose or repair the model"
+                if "model_value" in issue_fields or "model" in issue_fields
+                else "✓ Model · selected"
+            )
+            if "bind_address" in issue_fields or "port" in issue_fields:
+                network = "✕ Network · repair bind address or port"
+            elif self._preflight.network_exposed:
+                network = "! Network · reachable beyond this computer"
+            else:
+                network = "✓ Network · local only"
+        else:
+            model = (
+                "○ Model · choose a model"
+                if local and not self._draft.model_value.strip()
+                else "○ Model · not checked"
+            )
+            network = (
+                "! Network · draft reaches beyond this computer"
+                if _draft_network_exposed(self._draft)
+                else "○ Network · not checked"
+            )
+
+        for widget_id, copy in (
+            ("vllm-check-environment", environment),
+            ("vllm-check-installation", installation),
+            ("vllm-check-model", model),
+            ("vllm-check-network", network),
+        ):
+            self.query_one(f"#{widget_id}", Label).update(copy)
+
     def _change_draft(self, **changes: object) -> None:
-        self._draft = replace(self._draft, **changes)
+        candidate = replace(self._draft, **changes)
+        if semantic_fingerprint(candidate) == semantic_fingerprint(self._draft):
+            return
+        self._draft = candidate
         self._preflight = None
         self._state = VllmReadinessState.NOT_CONFIGURED
         self._render_projection()
@@ -798,6 +1148,27 @@ class VllmSetupView(VerticalScroll):
             except ValueError:
                 port = 0
             self._change_draft(port=port)
+        elif event.input.id in {
+            "vllm-tensor-parallel-size",
+            "vllm-maximum-model-length",
+        }:
+            field = {
+                "vllm-tensor-parallel-size": "tensor_parallel_size",
+                "vllm-maximum-model-length": "maximum_model_length",
+            }[event.input.id]
+            try:
+                value: object = int(event.value) if event.value.strip() else None
+            except ValueError:
+                value = event.value
+            self._change_draft(**{field: value})
+        elif event.input.id == "vllm-gpu-memory-utilization":
+            try:
+                utilization: object = (
+                    float(event.value) if event.value.strip() else None
+                )
+            except ValueError:
+                utilization = event.value
+            self._change_draft(gpu_memory_utilization=utilization)
 
     @on(TextArea.Changed, "#vllm-raw-arguments")
     def _on_raw_arguments_changed(self, event: TextArea.Changed) -> None:
@@ -810,6 +1181,22 @@ class VllmSetupView(VerticalScroll):
         if self._rendering or not isinstance(event.value, str):
             return
         self.post_message(self.ProfileSelected(event.value))
+
+    @on(Select.Changed, "#vllm-dtype")
+    def _on_dtype_selected(self, event: Select.Changed) -> None:
+        if self._rendering or not isinstance(event.value, str):
+            return
+        self._change_draft(dtype=event.value)
+
+    @on(Select.Changed, "#vllm-existing-model")
+    def _on_external_model_selected(self, event: Select.Changed) -> None:
+        if (
+            self._rendering
+            or not isinstance(event.value, str)
+            or event.value not in self._discovered_model_ids
+        ):
+            return
+        self.post_message(self.ExternalModelSelected(event.value))
 
     @on(Button.Pressed)
     def _on_button_pressed(self, event: Button.Pressed) -> None:
@@ -825,8 +1212,20 @@ class VllmSetupView(VerticalScroll):
                 self._change_draft(model_source=VllmModelSource.LOCAL_DIRECTORY)
             case "vllm-browse-local-model-directory-button":
                 self.post_message(self.LocalDirectoryBrowseRequested())
+            case "vllm-browse-python-environment":
+                self.post_message(self.PythonEnvironmentBrowseRequested())
+            case "vllm-trust-remote-code":
+                self._change_draft(trust_remote_code=not self._draft.trust_remote_code)
             case "vllm-check-setup":
                 self.post_message(self.CheckRequested(self._draft))
+            case "vllm-cancel-check":
+                token = (
+                    self._connection.current_token
+                    if self._connection is not None
+                    else None
+                )
+                if token is not None:
+                    self.post_message(self.CancelCheckRequested(token.generation))
             case "vllm-start":
                 self.post_message(self.StartRequested(self._draft))
             case "vllm-stop":
@@ -864,9 +1263,7 @@ class VllmSetupView(VerticalScroll):
                 )
             case "vllm-profile-duplicate-button":
                 self.post_message(
-                    self.DuplicateProfileRequested(
-                        self._profiles.selected_profile_id
-                    )
+                    self.DuplicateProfileRequested(self._profiles.selected_profile_id)
                 )
             case "vllm-profile-delete-button":
                 self.post_message(

@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -22,6 +23,7 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, get_current_worker
 
 from ...Constants import TAB_CHAT, TAB_SETTINGS
+from ...config import get_api_key
 from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
     current_server_claim,
@@ -99,6 +101,7 @@ from ..LLM_Management.vllm_setup import (
     SERVED_MODEL_NAME,
     VllmIssue,
     VllmLaunchDraft,
+    VllmLaunchSnapshot,
     VllmMode,
     VllmModelSource,
     VllmPreflightResult,
@@ -331,6 +334,7 @@ class LLMScreen(LabScreen):
         self._vllm_preflight: VllmPreflightResult | None = None
         self._vllm_preflight_worker: Worker | None = None
         self._vllm_probe_worker: Worker | None = None
+        self._vllm_external_models: tuple[str, ...] = ()
         self._vllm_server_worker: Worker | None = None
         current_vllm_claim, current_vllm_process = server_lifecycle_snapshot(
             app_instance, "vllm"
@@ -588,6 +592,27 @@ class LLMScreen(LabScreen):
         Returns:
             Header state whose ``status`` reflects current server liveness.
         """
+        if self._vllm_is_active_view():
+            snapshot = self._vllm_owner.snapshot()
+            status, status_label = {
+                VllmReadinessState.NOT_CONFIGURED: ("blocked", "Setup incomplete"),
+                VllmReadinessState.CHECKING: ("loading", "Checking"),
+                VllmReadinessState.READY_TO_START: ("ready", "Ready to start"),
+                VllmReadinessState.LAUNCHING: ("running", "Starting"),
+                VllmReadinessState.LOADING_MODEL: ("running", "Loading model"),
+                VllmReadinessState.READY: ("ready", "Ready"),
+                VllmReadinessState.STOPPING: ("running", "Stopping"),
+                VllmReadinessState.NEEDS_ATTENTION: (
+                    "error",
+                    "Needs attention",
+                ),
+            }[snapshot.state]
+            return WorkbenchHeaderState(
+                title="vLLM",
+                subtitle="Launch locally or connect to an existing API.",
+                status=status,
+                status_label=status_label,
+            )
         rows = self._current_server_rows()
         return WorkbenchHeaderState(
             title="Models",
@@ -601,6 +626,17 @@ class LLMScreen(LabScreen):
         Returns:
             Chips summarising local servers and managed-model installation.
         """
+        if self._vllm_is_active_view():
+            return (
+                LabStatusChip(
+                    chip_id="servers",
+                    text=f"Profile: {self._vllm_profile_name()}",
+                ),
+                LabStatusChip(
+                    chip_id="model-install",
+                    text=f"Next: {self._vllm_next_action()}",
+                ),
+            )
         rows = self._current_server_rows()
         if self._model_install_active:
             phase = {
@@ -2524,6 +2560,117 @@ class LLMScreen(LabScreen):
         except Exception:
             return None
 
+    def _vllm_is_active_view(self) -> bool:
+        """Return whether the Models workbench is presenting its vLLM pane."""
+
+        return self.llm_window is not None and self.llm_window.active_view == "vllm"
+
+    def _vllm_profile_name(self) -> str:
+        """Return the validated selected device-local profile name."""
+
+        return self._selected_vllm_profile().name
+
+    def _vllm_runtime_context(
+        self,
+    ) -> tuple[bool, VllmLaunchSnapshot | None]:
+        """Return exact owned-process liveness and its immutable launch snapshot."""
+
+        claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
+        runtime_active = bool(
+            claim is not None
+            and self._vllm_owner.owns_launch_claim(claim)
+            and (
+                process_is_running(process)
+                or (process is None and not claim.cancel_event.is_set())
+            )
+        )
+        launch_snapshot = (
+            self._vllm_owner.bound_launch_snapshot(claim)
+            if runtime_active and claim is not None
+            else None
+        )
+        return runtime_active, launch_snapshot
+
+    def _vllm_next_action(self) -> str:
+        """Return one bounded next action derived from current vLLM evidence."""
+
+        snapshot = self._vllm_owner.snapshot()
+        runtime_active, launch_snapshot = self._vllm_runtime_context()
+        changed = bool(
+            launch_snapshot is not None
+            and changed_launch_field_labels(launch_snapshot, self._vllm_draft)
+        )
+        if snapshot.state is VllmReadinessState.CHECKING:
+            return "Cancel check"
+        if snapshot.state is VllmReadinessState.READY and snapshot.target is not None:
+            return "Use in Console"
+        if snapshot.state is VllmReadinessState.READY_TO_START:
+            return "Restart vLLM" if runtime_active and changed else "Start vLLM"
+        if snapshot.state in {
+            VllmReadinessState.LAUNCHING,
+            VllmReadinessState.LOADING_MODEL,
+        }:
+            return "Stop vLLM"
+        if snapshot.state is VllmReadinessState.STOPPING:
+            return "Wait for stop"
+        if snapshot.state is VllmReadinessState.NEEDS_ATTENTION:
+            return "Retry check"
+        if (
+            self._vllm_draft.mode is VllmMode.EXISTING
+            and self._vllm_external_models
+            and not self._vllm_draft.existing_model_id
+        ):
+            return "Select a returned model"
+        if runtime_active and changed:
+            return "Check draft"
+        return (
+            "Check connection"
+            if self._vllm_draft.mode is VllmMode.EXISTING
+            else "Check setup"
+        )
+
+    def _vllm_inspector_rows(self) -> tuple[LabInspectorRow, ...]:
+        """Return contextual vLLM rows without exposing draft paths or secrets."""
+
+        snapshot = self._vllm_owner.snapshot()
+        runtime_active, launch_snapshot = self._vllm_runtime_context()
+        target = snapshot.target
+        if runtime_active:
+            ownership = "Chatbook process"
+        elif target is not None and target.runtime_owner == "external":
+            ownership = "External server"
+        elif self._vllm_draft.mode is VllmMode.EXISTING:
+            ownership = "External server"
+        else:
+            ownership = "Chatbook managed"
+        verified = (
+            f"{target.api_url} · {target.model_id}"
+            if target is not None
+            else "Not available"
+        )
+        if target is not None and target.runtime_owner == "external":
+            configuration = "Current · Verified external; Next · Matches"
+        elif launch_snapshot is not None:
+            configuration = (
+                "Current · Running; Next · Modified"
+                if changed_launch_field_labels(launch_snapshot, self._vllm_draft)
+                else "Current · Running; Next · Matches"
+            )
+        else:
+            configuration = "Current · None; Next · Draft"
+        rows = (
+            ("lab-vllm-profile", f"Profile · {self._vllm_profile_name()}"),
+            ("lab-vllm-ownership", f"Ownership · {ownership}"),
+            ("lab-vllm-target", f"Verified · {verified}"),
+            (
+                "lab-vllm-persistence",
+                "Persistence · Not adopted; defaults unchanged",
+            ),
+            ("lab-vllm-configuration", configuration),
+            ("lab-vllm-next-action", f"Next action · {self._vllm_next_action()}"),
+        )
+        return tuple(LabInspectorRow(row_id=row_id, text=text) for row_id, text in rows)
+
     def _cancel_vllm_workers(self) -> None:
         """Cancel screen-owned evidence workers; the app-owned process survives."""
 
@@ -2596,10 +2743,12 @@ class LLMScreen(LabScreen):
             current_launch_snapshot=current_launch_snapshot,
             profiles=self._vllm_profiles,
             runtime_active=runtime_active,
+            discovered_model_ids=self._vllm_external_models,
+            credential_configured=bool(get_api_key("vllm")),
         )
-        if not focus:
-            return
-        view.focus_state_action(state)
+        self.refresh_lab_status()
+        if focus:
+            view.focus_state_action(state)
 
     def _selected_vllm_profile(self) -> VllmLaunchProfileV1:
         return next(
@@ -2631,6 +2780,9 @@ class LLMScreen(LabScreen):
         try:
             document = await asyncio.to_thread(self._vllm_profile_repository.load)
         except (VllmProfileCorrupt, VllmProfileFutureVersion, OSError):
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error("profile")
             self.notify(
                 "vLLM profiles could not be read safely.",
                 severity="error",
@@ -2653,6 +2805,9 @@ class LLMScreen(LabScreen):
             VllmProfileValidationError,
             OSError,
         ):
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error("profile")
             self.notify(
                 "vLLM profile change was not saved; reload profiles and retry.",
                 severity="error",
@@ -2692,6 +2847,9 @@ class LLMScreen(LabScreen):
         try:
             profile = profile_from_draft(event.name, event.draft)
         except VllmProfileValidationError:
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error("name")
             self.notify("Choose a valid unique profile name.", severity="error")
             return
         self._start_vllm_profile_mutation(
@@ -2721,7 +2879,28 @@ class LLMScreen(LabScreen):
                 event.draft,
                 profile_id=selected.profile_id,
             )
-        except VllmProfileValidationError:
+        except VllmProfileValidationError as error:
+            field = next(
+                (
+                    candidate
+                    for candidate in (
+                        "python_environment",
+                        "model_value",
+                        "bind_address",
+                        "port",
+                        "dtype",
+                        "tensor_parallel_size",
+                        "maximum_model_length",
+                        "gpu_memory_utilization",
+                        "trust_remote_code",
+                    )
+                    if candidate in str(error)
+                ),
+                "name",
+            )
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error(field)
             self.notify("Profile fields need repair before saving.", severity="error")
             return
         self._start_vllm_profile_mutation(
@@ -2820,6 +2999,7 @@ class LLMScreen(LabScreen):
         self._vllm_handoff_departure_generation = None
         self._vllm_draft = event.draft
         self._vllm_preflight = None
+        self._vllm_external_models = ()
         self._vllm_owner.invalidate("target_changed")
         self._cancel_vllm_workers()
         self._apply_vllm_view_state(focus=False)
@@ -2901,24 +3081,56 @@ class LLMScreen(LabScreen):
 
         event.stop()
         self._cancel_vllm_workers()
-        self._vllm_draft = event.draft
+        draft = event.draft
+        if draft.mode is VllmMode.EXISTING:
+            draft = replace(draft, existing_model_id="")
+            self._vllm_external_models = ()
+        self._vllm_draft = draft
         self._vllm_preflight = None
-        runtime_owner = "chatbook" if event.draft.mode is VllmMode.LOCAL else "external"
+        runtime_owner = "chatbook" if draft.mode is VllmMode.LOCAL else "external"
         selected = self._selected_vllm_profile()
         token = self._vllm_owner.begin(
-            event.draft,
+            draft,
             runtime_owner=runtime_owner,
             profile_id=(selected.profile_id if runtime_owner == "chatbook" else None),
             profile_name=selected.name,
         )
         self._apply_vllm_view_state(focus=False)
         self._vllm_preflight_worker = self.run_worker(
-            self._run_vllm_preflight_generation(token, event.draft),
+            self._run_vllm_preflight_generation(token, draft),
             group="vllm_preflight",
             description="Checking vLLM setup",
             exclusive=True,
             exit_on_error=False,
         )
+
+    @on(VllmSetupView.CancelCheckRequested)
+    def _on_vllm_cancel_check_requested(
+        self, event: VllmSetupView.CancelCheckRequested
+    ) -> None:
+        """Cancel only the unfinished check for the exact visible generation."""
+
+        event.stop()
+        snapshot = self._vllm_owner.snapshot()
+        token = snapshot.current_token
+        if (
+            token is None
+            or snapshot.state is not VllmReadinessState.CHECKING
+            or token.generation != event.generation
+        ):
+            return
+        workers = tuple(
+            worker
+            for worker in (self._vllm_preflight_worker, self._vllm_probe_worker)
+            if worker is not None and not worker.is_finished
+        )
+        if not workers:
+            return
+        for worker in workers:
+            worker.cancel()
+        self._vllm_preflight = None
+        self._vllm_owner.invalidate("cancelled")
+        self._apply_vllm_view_state(focus=False)
 
     async def _run_vllm_preflight_generation(
         self, token: VllmOperationToken, draft: VllmLaunchDraft
@@ -3028,13 +3240,16 @@ class LLMScreen(LabScreen):
 
     def _current_vllm_restart_candidate(
         self, draft: VllmLaunchDraft
-    ) -> tuple[
-        tuple[str, ...],
-        VllmOperationToken,
-        ServerLaunchClaim,
-        object,
-        tuple[str, ...],
-    ] | None:
+    ) -> (
+        tuple[
+            tuple[str, ...],
+            VllmOperationToken,
+            ServerLaunchClaim,
+            object,
+            tuple[str, ...],
+        ]
+        | None
+    ):
         """Return a fully current safe restart candidate or fail closed."""
 
         claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
@@ -3072,9 +3287,7 @@ class LLMScreen(LabScreen):
         return command, token, claim, process, changed_fields
 
     @on(VllmSetupView.RestartRequested)
-    def _on_vllm_restart_requested(
-        self, event: VllmSetupView.RestartRequested
-    ) -> None:
+    def _on_vllm_restart_requested(self, event: VllmSetupView.RestartRequested) -> None:
         """Confirm one current restart using allowlisted labels only."""
 
         event.stop()
@@ -3093,14 +3306,10 @@ class LLMScreen(LabScreen):
                 confirm_label="Restart",
                 cancel_label="Cancel",
             ),
-            lambda confirmed: self._confirm_vllm_restart(
-                bool(confirmed), event.draft
-            ),
+            lambda confirmed: self._confirm_vllm_restart(bool(confirmed), event.draft),
         )
 
-    def _confirm_vllm_restart(
-        self, confirmed: bool, draft: VllmLaunchDraft
-    ) -> None:
+    def _confirm_vllm_restart(self, confirmed: bool, draft: VllmLaunchDraft) -> None:
         if not confirmed:
             return
         self.run_worker(
@@ -3252,6 +3461,26 @@ class LLMScreen(LabScreen):
             exit_on_error=False,
         )
 
+    @on(VllmSetupView.ExternalModelSelected)
+    def _on_vllm_external_model_selected(
+        self, event: VllmSetupView.ExternalModelSelected
+    ) -> None:
+        """Fence a deliberate returned-model choice behind a fresh exact probe."""
+
+        event.stop()
+        if (
+            self._vllm_draft.mode is not VllmMode.EXISTING
+            or event.model_id not in self._vllm_external_models
+        ):
+            return
+        self._cancel_vllm_workers()
+        draft = replace(self._vllm_draft, existing_model_id=event.model_id)
+        self._vllm_draft = draft
+        self._vllm_preflight = None
+        token = self._vllm_owner.begin(draft, runtime_owner="external")
+        self._apply_vllm_view_state(focus=False)
+        self._start_vllm_probe(token, draft, claim=None)
+
     async def _probe_vllm_generation(
         self,
         token: VllmOperationToken,
@@ -3327,7 +3556,9 @@ class LLMScreen(LabScreen):
                     token=token,
                     api_url=api_url,
                     expected_model_id=(
-                        SERVED_MODEL_NAME if claim is not None else None
+                        SERVED_MODEL_NAME
+                        if claim is not None
+                        else (draft.existing_model_id or None)
                     ),
                     cancellation_requested=(
                         claim.cancel_event.is_set if claim is not None else None
@@ -3345,6 +3576,15 @@ class LLMScreen(LabScreen):
             if self._vllm_owner.snapshot().current_token != token:
                 return
             last_result = result
+            if claim is None:
+                self._vllm_external_models = result.discovered_model_ids
+                if (
+                    result.issue is not None
+                    and result.issue.code == "model_missing"
+                    and draft.existing_model_id
+                    and draft.existing_model_id not in result.discovered_model_ids
+                ):
+                    self._vllm_draft = replace(draft, existing_model_id="")
             if result.state is VllmReadinessState.READY:
                 self._vllm_owner.settle(token, result)
                 self._apply_vllm_view_state(focus=False)
@@ -3364,8 +3604,7 @@ class LLMScreen(LabScreen):
             progress = tuple(
                 activity
                 for activity in result.activity
-                if activity.code
-                in {"health_checking", "health_ok", "model_checking"}
+                if activity.code in {"health_checking", "health_ok", "model_checking"}
             )
             self._vllm_owner.settle(
                 token,
@@ -3421,9 +3660,8 @@ class LLMScreen(LabScreen):
                 )
             self._apply_vllm_view_state(focus=True)
             return
-        if (
-            current_claim is not None
-            and self._vllm_owner.owns_launch_claim(current_claim)
+        if current_claim is not None and self._vllm_owner.owns_launch_claim(
+            current_claim
         ):
             token = self._vllm_owner.begin_claim_retry(current_claim)
             if token is None:
@@ -4245,14 +4483,33 @@ class LLMScreen(LabScreen):
                 yield row
 
     def compose_lab_inspector(self) -> ComposeResult:
-        """Yield the running-server list."""
-        yield Static("Running servers", classes="lab-rail-section")
+        """Yield generic server rows plus the stable contextual vLLM projection."""
+        yield Static(
+            "Running servers",
+            classes="lab-rail-section lab-generic-inspector-row",
+        )
         for row in self._current_server_rows():
             yield Static(
                 server_row_text(row),
                 id=server_row_id(row.name),
+                classes="lab-generic-inspector-row",
                 markup=False,
             )
+        context_heading = Static(
+            "vLLM context",
+            classes="lab-rail-section lab-vllm-inspector",
+        )
+        context_heading.display = False
+        yield context_heading
+        for row in self._vllm_inspector_rows():
+            context_row = Static(
+                row.text,
+                id=row.row_id,
+                classes="lab-vllm-inspector lab-vllm-inspector-row",
+                markup=False,
+            )
+            context_row.display = False
+            yield context_row
 
     def lab_inspector_rows(self) -> tuple[LabInspectorRow, ...]:
         """Return the running-server rows to refresh in place.
@@ -4261,10 +4518,21 @@ class LLMScreen(LabScreen):
         (``on_lab_body_ready``'s ``set_interval``), so the inspector never
         lags the chip the way it did when only the chip refreshed.
         """
+        if self._vllm_is_active_view():
+            return self._vllm_inspector_rows()
         return tuple(
             LabInspectorRow(row_id=server_row_id(row.name), text=server_row_text(row))
             for row in self._current_server_rows()
         )
+
+    def _sync_vllm_inspector_visibility(self, active_view: str) -> None:
+        """Swap stable Inspector projections without remounting focused widgets."""
+
+        vllm_active = active_view == "vllm"
+        for row in self.query(".lab-vllm-inspector").results(Static):
+            row.display = vllm_active
+        for row in self.query(".lab-generic-inspector-row").results(Static):
+            row.display = not vllm_active
 
     def build_lab_body(self) -> Widget:
         """Build the legacy management window.
@@ -4301,9 +4569,9 @@ class LLMScreen(LabScreen):
         """
         if self.llm_window is None:
             return
-        if self._vllm_body_mounts:
-            self._vllm_owner.invalidate("recomposed")
-            self._cancel_vllm_workers()
+        # Presentation-only recomposition does not change the app-scoped
+        # operation token, process claim, or verified target. The fresh view
+        # is hydrated from that exact evidence below.
         self._vllm_body_mounts += 1
         self.watch(self.llm_window, "active_view", self._sync_rail_active, init=True)
         self.refresh_lab_status()
@@ -4322,8 +4590,7 @@ class LLMScreen(LabScreen):
         if self._model_install_presentation_pending():
             self.call_after_refresh(self._hydrate_model_install_progress)
         if not self._vllm_profiles_loaded and (
-            self._vllm_profile_worker is None
-            or self._vllm_profile_worker.is_finished
+            self._vllm_profile_worker is None or self._vllm_profile_worker.is_finished
         ):
             self._vllm_profile_worker = self.run_worker(
                 self._load_vllm_profiles(),
@@ -4439,6 +4706,8 @@ class LLMScreen(LabScreen):
             row.set_class(
                 getattr(row, "lab_view_key", None) == active_view, "is-active"
             )
+        self._sync_vllm_inspector_visibility(active_view)
+        self.refresh_lab_status()
         if active_view == "vllm":
             self.call_after_refresh(self._adapt_vllm_rails)
 

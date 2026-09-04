@@ -54,6 +54,7 @@ from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers i
 from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
     VLLM_BUTTON_HANDLERS,
     handle_vllm_local_directory_browse_requested,
+    handle_vllm_python_environment_browse_requested,
 )
 from .LLM_Management.vllm_setup_view import VllmSetupView
 from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
@@ -625,9 +626,7 @@ class LLMManagementWindow(Container):
         Ollama autofill, UX-078). Sequencing adds the ordering guarantee;
         it must not add failure coupling.
         """
-        for step in (
-            self._initialize_view,
-        ):
+        for step in (self._initialize_view,):
             try:
                 result = step()
                 if inspect.isawaitable(result):
@@ -1948,7 +1947,17 @@ class LLMManagementWindow(Container):
     async def _on_vllm_local_directory_browse_requested(
         self, event: VllmSetupView.LocalDirectoryBrowseRequested
     ) -> None:
-        await handle_vllm_local_directory_browse_requested(self, self.app_instance, event)
+        await handle_vllm_local_directory_browse_requested(
+            self, self.app_instance, event
+        )
+
+    @on(VllmSetupView.PythonEnvironmentBrowseRequested)
+    async def _on_vllm_python_environment_browse_requested(
+        self, event: VllmSetupView.PythonEnvironmentBrowseRequested
+    ) -> None:
+        await handle_vllm_python_environment_browse_requested(
+            self, self.app_instance, event
+        )
 
     def _recover_failed_action(self, action_id: str, exc: Exception) -> None:
         """Restore truthful controls and surface bounded, non-sensitive recovery."""

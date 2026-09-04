@@ -83,6 +83,7 @@ class VllmLaunchDraft:
     bind_address: str = "127.0.0.1"
     port: int = 8000
     existing_server_url: str = ""
+    existing_model_id: str = ""
     dtype: str = ""
     tensor_parallel_size: int | None = None
     maximum_model_length: int | None = None
@@ -277,6 +278,8 @@ def _validate_draft_structure(draft: VllmLaunchDraft) -> tuple[VllmIssue, ...]:
         issues.append(VllmIssue("invalid_port", "port"))
     if type(draft.existing_server_url) is not str:
         issues.append(VllmIssue("invalid_existing_server_url", "existing_server_url"))
+    if type(draft.existing_model_id) is not str or len(draft.existing_model_id) > 120:
+        issues.append(VllmIssue("invalid_model_value", "model"))
     if type(draft.dtype) is not str or draft.dtype not in _DTYPE_VALUES:
         issues.append(VllmIssue("invalid_dtype", "dtype"))
     if draft.tensor_parallel_size is not None and (
@@ -448,7 +451,9 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
             if not readable:
                 _terminate_and_reap_probe(process)
                 return False, None
-            chunk = os.read(process.stdout.fileno(), _MAX_PROBE_OUTPUT_BYTES - len(output) + 1)
+            chunk = os.read(
+                process.stdout.fileno(), _MAX_PROBE_OUTPUT_BYTES - len(output) + 1
+            )
             if not chunk:
                 break
             output.extend(chunk)
@@ -574,7 +579,11 @@ def run_vllm_preflight(
         version_ok, vllm_version = _run_probe(run, [str(cli_path), "--version"])
         if not version_ok or vllm_version is None:
             issues.append(VllmIssue("vllm_cli_unavailable", "python_environment"))
-    import_ok, _ = _run_probe(run, [str(python_path), "-c", "import vllm"]) if python_path else (False, None)
+    import_ok, _ = (
+        _run_probe(run, [str(python_path), "-c", "import vllm"])
+        if python_path
+        else (False, None)
+    )
     if not import_ok:
         issues.append(VllmIssue("vllm_import_unavailable", "python_environment"))
     return VllmPreflightResult(

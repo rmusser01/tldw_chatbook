@@ -33,6 +33,7 @@ RuntimeOwner = Literal["chatbook", "external"]
 CredentialSource = Literal["none", "configured", "environment"]
 
 _ACTIVITY_LIMIT = 32
+_DISCOVERED_MODELS_LIMIT = 100
 _MODELS_RESPONSE_LIMIT_BYTES = 64 * 1024
 _MAX_TIMEOUT_SECONDS = 120.0
 _WINDOWS_ROOT = re.compile(r"^[A-Za-z]:[/\\]")
@@ -53,6 +54,7 @@ _ACTIVITY_CODES = frozenset(
         "loading_model",
         "model_checking",
         "model_missing",
+        "models_discovered",
         "process_alive",
         "process_exited",
         "preflight_failed",
@@ -222,6 +224,7 @@ class VllmProbeResult:
     target: VllmConnectionTarget | None
     issue: VllmIssue | None
     activity: tuple[VllmActivityEvent, ...] = ()
+    discovered_model_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.token, VllmOperationToken):
@@ -242,6 +245,16 @@ class VllmProbeResult:
             raise ValueError("activity must be a bounded tuple")
         if any(not isinstance(event, VllmActivityEvent) for event in self.activity):
             raise TypeError("activity contains an invalid event")
+        if (
+            not isinstance(self.discovered_model_ids, tuple)
+            or len(self.discovered_model_ids) > _DISCOVERED_MODELS_LIMIT
+            or len(set(self.discovered_model_ids)) != len(self.discovered_model_ids)
+            or any(
+                not _is_admissible_model_id(model_id)
+                for model_id in self.discovered_model_ids
+            )
+        ):
+            raise ValueError("discovered model identifiers must be bounded and unique")
         ready = self.state is VllmReadinessState.READY
         if ready != (self.target is not None):
             raise ValueError("a ready result requires exactly one target")
@@ -276,6 +289,7 @@ class VllmConnectionSnapshot:
     target: VllmConnectionTarget | None
     issue: VllmIssue | None
     activity: tuple[VllmActivityEvent, ...] = ()
+    discovered_model_ids: tuple[str, ...] = ()
 
     @property
     def token(self) -> VllmOperationToken | None:
@@ -453,6 +467,7 @@ class VllmConnectionOwner:
                     target=result.target,
                     issue=result.issue,
                     activity=result.activity,
+                    discovered_model_ids=result.discovered_model_ids,
                 )
             except (TypeError, ValueError):
                 return False
@@ -476,19 +491,17 @@ class VllmConnectionOwner:
                 )
                 if (
                     launched_endpoint.errors
-                    or launched_endpoint.persisted_endpoint
-                    != validated.target.api_url
+                    or launched_endpoint.persisted_endpoint != validated.target.api_url
                 ):
                     return False
-            activity = (self._snapshot.activity + validated.activity)[
-                -_ACTIVITY_LIMIT:
-            ]
+            activity = (self._snapshot.activity + validated.activity)[-_ACTIVITY_LIMIT:]
             self._snapshot = replace(
                 self._snapshot,
                 state=validated.state,
                 target=validated.target,
                 issue=validated.issue,
                 activity=activity,
+                discovered_model_ids=validated.discovered_model_ids,
             )
             return True
 
@@ -517,6 +530,7 @@ def _failure(
     field: str,
     started_at: float,
     *events: VllmActivityEvent,
+    discovered_model_ids: tuple[str, ...] = (),
 ) -> VllmProbeResult:
     return VllmProbeResult(
         token=request.token,
@@ -524,6 +538,7 @@ def _failure(
         target=None,
         issue=VllmIssue(code, field),
         activity=events + (_activity(code, started_at),),
+        discovered_model_ids=discovered_model_ids,
     )
 
 
@@ -669,10 +684,13 @@ async def probe_vllm_target(
                     model_event,
                 )
             model_ids = tuple(
-                entry.get("id")
-                for entry in data
-                if isinstance(entry, dict) and _is_admissible_model_id(entry.get("id"))
-            )
+                dict.fromkeys(
+                    entry.get("id")
+                    for entry in data
+                    if isinstance(entry, dict)
+                    and _is_admissible_model_id(entry.get("id"))
+                )
+            )[:_DISCOVERED_MODELS_LIMIT]
             if request.expected_model_id is not None:
                 selected_model = (
                     request.expected_model_id
@@ -680,7 +698,29 @@ async def probe_vllm_target(
                     else None
                 )
             else:
-                selected_model = model_ids[0] if model_ids else None
+                if not model_ids:
+                    return _failure(
+                        request,
+                        "model_missing",
+                        "model",
+                        started_at,
+                        health_event,
+                        health_ok,
+                        model_event,
+                    )
+                return VllmProbeResult(
+                    token=request.token,
+                    state=VllmReadinessState.NOT_CONFIGURED,
+                    target=None,
+                    issue=None,
+                    activity=(
+                        health_event,
+                        health_ok,
+                        model_event,
+                        _activity("models_discovered", started_at),
+                    ),
+                    discovered_model_ids=model_ids,
+                )
             if selected_model is None:
                 return _failure(
                     request,
@@ -690,6 +730,7 @@ async def probe_vllm_target(
                     health_event,
                     health_ok,
                     model_event,
+                    discovered_model_ids=model_ids,
                 )
             if request.cancellation_requested and request.cancellation_requested():
                 return _failure(
@@ -731,6 +772,7 @@ async def probe_vllm_target(
                     model_event,
                     _activity("ready", started_at),
                 ),
+                discovered_model_ids=model_ids,
             )
     except (TimeoutError, httpx.TimeoutException, httpx.TransportError):
         return _failure(

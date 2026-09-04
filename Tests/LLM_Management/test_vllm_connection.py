@@ -175,6 +175,90 @@ async def test_ready_requires_health_and_exact_models_identity(loopback_vllm):
     assert loopback_vllm.seen_paths == ["/health", "/v1/models"]
 
 
+@pytest.mark.asyncio
+async def test_external_discovery_never_publishes_an_implicit_ready_target(
+    loopback_vllm,
+):
+    """Discovery evidence is bounded data, not permission to choose model zero."""
+
+    loopback_vllm.health_status = 200
+    loopback_vllm.models = [
+        {"id": "org/first"},
+        {"id": "org/second"},
+        {"id": "org/first"},
+        {"id": "bad\nmodel"},
+        {"object": "model"},
+    ]
+
+    result = await probe_vllm_target(
+        probe_request(
+            loopback_vllm.url,
+            token=VllmConnectionOwner().begin(
+                replace(
+                    local_draft(),
+                    mode=VllmMode.EXISTING,
+                    existing_server_url=loopback_vllm.url,
+                ),
+                runtime_owner="external",
+            ),
+            expected_model_id=None,
+        )
+    )
+
+    assert result.state is VllmReadinessState.NOT_CONFIGURED
+    assert result.target is None
+    assert result.issue is None
+    assert result.discovered_model_ids == ("org/first", "org/second")
+    assert tuple(event.code for event in result.activity) == (
+        "health_checking",
+        "health_ok",
+        "model_checking",
+        "models_discovered",
+    )
+
+
+@pytest.mark.asyncio
+async def test_external_discovery_bounds_candidates_and_rejects_an_empty_list(
+    loopback_vllm,
+):
+    loopback_vllm.health_status = 200
+    loopback_vllm.models = [{"id": f"org/model-{index}"} for index in range(105)]
+    owner = VllmConnectionOwner()
+    token = owner.begin(
+        replace(
+            local_draft(),
+            mode=VllmMode.EXISTING,
+            existing_server_url=loopback_vllm.url,
+        ),
+        runtime_owner="external",
+    )
+
+    bounded = await probe_vllm_target(
+        probe_request(
+            loopback_vllm.url,
+            token=token,
+            expected_model_id=None,
+        )
+    )
+    assert len(bounded.discovered_model_ids) == 100
+    assert bounded.discovered_model_ids[0] == "org/model-0"
+    assert bounded.discovered_model_ids[-1] == "org/model-99"
+    assert bounded.target is None
+
+    loopback_vllm.models = []
+    empty = await probe_vllm_target(
+        probe_request(
+            loopback_vllm.url,
+            token=token,
+            expected_model_id=None,
+        )
+    )
+    assert empty.state is VllmReadinessState.NEEDS_ATTENTION
+    assert empty.issue == VllmIssue("model_missing", "model")
+    assert empty.discovered_model_ids == ()
+    assert empty.target is None
+
+
 def test_older_generation_cannot_replace_newer_owner_state():
     owner = VllmConnectionOwner()
     old = owner.begin(local_draft(), runtime_owner="chatbook")
@@ -200,9 +284,10 @@ def test_live_claim_retry_keeps_exact_launch_after_non_network_draft_edit():
 
     assert retry is not None
     assert retry.fingerprint == launched.fingerprint
-    assert retry.fingerprint != owner.begin(
-        edited_draft, runtime_owner="chatbook"
-    ).fingerprint
+    assert (
+        retry.fingerprint
+        != owner.begin(edited_draft, runtime_owner="chatbook").fingerprint
+    )
 
     # Restore the exact live-claim retry after the comparison generation.
     retry = owner.begin_claim_retry(claim)
@@ -337,8 +422,7 @@ def test_owner_settlement_revalidates_a_mutated_result_fail_closed():
         replace(
             result.target,
             api_url=(
-                "http://user:CREDENTIAL_CANARY@127.0.0.1:8000/"
-                "v1/chat/completions"
+                "http://user:CREDENTIAL_CANARY@127.0.0.1:8000/v1/chat/completions"
             ),
         ),
     )
@@ -568,17 +652,22 @@ async def test_existing_server_rejects_path_like_or_noncanonical_model_ids(
 
 
 @pytest.mark.asyncio
-async def test_existing_server_accepts_namespace_model_id(loopback_vllm):
+async def test_existing_server_accepts_exact_selected_namespace_model_id(loopback_vllm):
     loopback_vllm.health_status = 200
     loopback_vllm.models = [{"id": "organization/model"}]
     token = VllmConnectionOwner().begin(local_draft(), runtime_owner="external")
 
     result = await probe_vllm_target(
-        probe_request(loopback_vllm.url, token=token, expected_model_id=None)
+        probe_request(
+            loopback_vllm.url,
+            token=token,
+            expected_model_id="organization/model",
+        )
     )
 
     assert result.target is not None
     assert result.target.model_id == "organization/model"
+    assert result.discovered_model_ids == ("organization/model",)
 
 
 def test_owner_keeps_only_current_operation_bounded_allowlisted_activity():

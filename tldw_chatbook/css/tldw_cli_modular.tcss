@@ -17920,6 +17920,37 @@ VllmSetupView #vllm-readiness-state {
     text-style: bold;
 }
 
+VllmSetupView #vllm-readiness-checklist {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+VllmSetupView #vllm-readiness-checklist > Label {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+}
+
+VllmSetupView .vllm-picker-row {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+}
+
+VllmSetupView .vllm-picker-row > Input {
+    width: 1fr;
+    min-width: 0;
+}
+
+VllmSetupView .vllm-picker-row > Button {
+    width: auto;
+    min-width: 10;
+    margin-left: 1;
+}
+
 VllmSetupView > .section-title,
 VllmSetupView > .section_label,
 VllmSetupView > .description {
@@ -17999,6 +18030,7 @@ VllmSetupView.vllm-medium .vllm-source-actions,
 VllmSetupView.vllm-compact .vllm-mode-actions,
 VllmSetupView.vllm-compact .vllm-profile-actions,
 VllmSetupView.vllm-compact .vllm-source-actions,
+VllmSetupView.vllm-compact .vllm-picker-row,
 VllmSetupView.vllm-compact #vllm-next-action {
     layout: vertical;
 }
@@ -18009,12 +18041,21 @@ VllmSetupView.vllm-medium .vllm-source-actions > Button,
 VllmSetupView.vllm-compact .vllm-mode-actions > Button,
 VllmSetupView.vllm-compact .vllm-profile-actions > Button,
 VllmSetupView.vllm-compact .vllm-source-actions > Button,
+VllmSetupView.vllm-compact .vllm-picker-row > Button,
 VllmSetupView.vllm-compact #vllm-next-action > Button,
 VllmSetupView.vllm-compact #vllm-browse-local-model-directory-button,
 VllmSetupView.vllm-compact .vllm-console-actions > Button {
     width: 100%;
     min-width: 0;
     margin: 0 0 1 0;
+}
+
+VllmSetupView.vllm-compact .vllm-picker-row {
+    height: auto;
+}
+
+VllmSetupView.vllm-compact .vllm-picker-row > Input {
+    width: 100%;
 }
 
 VllmSetupView.vllm-compact > .section-title {

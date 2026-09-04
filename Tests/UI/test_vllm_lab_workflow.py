@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Input, Label, Select, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
@@ -119,6 +119,160 @@ async def test_initial_vllm_setup_is_guided_and_blocks_start():
         assert "checkpoint" not in copy.lower()
 
 
+async def test_guided_readiness_keeps_four_recoverable_rows_and_python_browse():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        expected_rows = {
+            "vllm-check-environment": "Environment",
+            "vllm-check-installation": "vLLM installation",
+            "vllm-check-model": "Model",
+            "vllm-check-network": "Network",
+        }
+        for row_id, label in expected_rows.items():
+            row = view.query_one(f"#{row_id}", Label)
+            assert row.display
+            assert label in str(row.renderable)
+        assert view.query_one("#vllm-browse-python-environment", Button).display
+
+        draft = replace(
+            view.draft,
+            model_value="org/model",
+        )
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.READY_TO_START,
+            preflight=VllmPreflightResult(
+                generation=1,
+                fingerprint=semantic_fingerprint(draft),
+                issues=(),
+                python_version="Python 3.12.8",
+                vllm_version="vLLM 0.9.1",
+            ),
+        )
+        assert "Python 3.12.8" in str(
+            view.query_one("#vllm-check-environment", Label).renderable
+        )
+        assert "vLLM 0.9.1" in str(
+            view.query_one("#vllm-check-installation", Label).renderable
+        )
+
+
+async def test_advanced_structured_profile_values_are_visible_editable_and_adjacent():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        draft = replace(
+            view.draft,
+            dtype="bfloat16",
+            tensor_parallel_size=2,
+            maximum_model_length=8192,
+            gpu_memory_utilization=0.75,
+            trust_remote_code=True,
+            raw_arguments="--enable-prefix-caching",
+        )
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+        )
+        advanced = view.query_one("#vllm-advanced-options", Collapsible)
+        advanced.collapsed = False
+
+        assert view.query_one("#vllm-dtype", Select).value == "bfloat16"
+        assert view.query_one("#vllm-tensor-parallel-size", Input).value == "2"
+        assert view.query_one("#vllm-maximum-model-length", Input).value == "8192"
+        assert view.query_one("#vllm-gpu-memory-utilization", Input).value == "0.75"
+        assert "Enabled" in str(view.query_one("#vllm-trust-remote-code", Button).label)
+        consequence = str(
+            view.query_one("#vllm-trust-remote-code-help", Label).renderable
+        )
+        assert "model code" in consequence
+        assert view.query_one("#vllm-advanced-arguments", Collapsible).collapsed
+        assert view.query_one("#vllm-raw-arguments", TextArea).text == (
+            "--enable-prefix-caching"
+        )
+
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            preflight=VllmPreflightResult(
+                generation=2,
+                fingerprint=semantic_fingerprint(draft),
+                issues=(
+                    VllmIssue("invalid_tensor_parallel_size", "tensor_parallel_size"),
+                ),
+            ),
+        )
+        help_copy = view.query_one("#vllm-tensor-parallel-size-help", Label)
+        assert help_copy.display
+        assert "positive whole number" in str(help_copy.renderable)
+
+
+async def test_existing_server_discovery_requires_explicit_model_selection():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        draft = replace(
+            view.draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+        )
+        owner = VllmConnectionOwner()
+        token = owner.begin(draft, runtime_owner="external")
+        assert owner.settle(
+            token,
+            VllmProbeResult(
+                token=token,
+                state=VllmReadinessState.NOT_CONFIGURED,
+                target=None,
+                issue=None,
+                activity=(VllmActivityEvent("models_discovered", "under_1s"),),
+                discovered_model_ids=("org/first", "org/second"),
+            ),
+        )
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            connection=owner.snapshot(),
+            discovered_model_ids=("org/first", "org/second"),
+            credential_configured=True,
+        )
+
+        selector = view.query_one("#vllm-existing-model", Select)
+        assert selector.value is Select.NULL
+        assert "Select a returned model" in str(
+            view.query_one("#vllm-existing-model-help", Label).renderable
+        )
+        assert (
+            "configured"
+            in str(view.query_one("#vllm-credential-status", Label).renderable).lower()
+        )
+        assert "Check connection" in str(
+            view.query_one("#vllm-check-setup", Button).label
+        )
+        assert owner.snapshot().target is None
+
+
+async def test_checking_exposes_generation_bound_cancel_action():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        owner = VllmConnectionOwner()
+        token = owner.begin(view.draft, runtime_owner="chatbook")
+        view.apply_state(
+            draft=view.draft,
+            state=VllmReadinessState.CHECKING,
+            preflight=None,
+            connection=owner.snapshot(),
+        )
+        assert not view.query_one("#vllm-cancel-check", Button).disabled
+        assert view.query_one("#vllm-cancel-check", Button).display
+        assert not view.query_one("#vllm-check-setup", Button).display
+        assert token.generation > 0
+
+
 async def test_current_server_is_separate_from_modified_next_restart_without_path_leak():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
@@ -170,6 +324,9 @@ async def test_current_server_is_separate_from_modified_next_restart_without_pat
         assert "Local GPU" in current_copy
         assert "Modified for next restart" in next_copy
         assert changed_copy == "Changed: Model · Port · Advanced arguments"
+        assert app.query_one("#vllm-check-setup", Button).display
+        assert "Check draft" in str(app.query_one("#vllm-check-setup", Button).label)
+        assert app.query_one("#vllm-stop", Button).display
         assert not app.query_one("#vllm-restart", Button).disabled
         safe_projection = f"{current_copy} {next_copy} {changed_copy}"
         assert not any(
@@ -434,9 +591,7 @@ async def test_profile_delete_queued_terminal_actions_settle_once(
         assert app.screen is screen
         assert tuple(app.screen_stack) == underlying_stack
         assert app.screen is not dialog
-        assert callback_calls == [
-            (confirmed, profile.profile_id, claim.revision)
-        ]
+        assert callback_calls == [(confirmed, profile.profile_id, claim.revision)]
         assert dialog.result is confirmed
         if confirmed:
             assert delete_calls == [(profile.profile_id, claim.revision)]
@@ -654,6 +809,77 @@ async def test_restart_proves_old_process_dead_and_released_before_new_generatio
         assert screen._vllm_owner.owns_launch_claim(new_claim)
         assert screen._vllm_owner.snapshot().generation > token.generation
         assert order == ["stop", "reserve", "launch"]
+
+
+async def test_mounted_edit_check_and_restart_uses_exact_live_claim(monkeypatch):
+    """Exercise the user-visible edit → Check draft → Restart path."""
+
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
+        current = replace(
+            screen._vllm_draft,
+            model_value="org/current",
+        )
+        old_token = screen._vllm_owner.begin(current, runtime_owner="chatbook")
+        old_claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert old_claim is not None
+        assert screen._vllm_owner.bind_launch_claim(old_token, old_claim)
+        assert publish_server_process(app, "vllm", old_claim, process)
+        assert screen._vllm_owner.settle(old_token, _ready_result(old_token))
+        screen._vllm_draft = current
+        screen._apply_vllm_view_state()
+
+        view.query_one("#vllm-hf-model", Input).value = "org/next"
+        await pilot.pause()
+        assert view.query_one("#vllm-check-setup", Button).display
+        assert "Check draft" in str(view.query_one("#vllm-check-setup", Button).label)
+        assert view.query_one("#vllm-stop", Button).display
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+            lambda candidate, generation: VllmPreflightResult(
+                generation=generation,
+                fingerprint=semantic_fingerprint(candidate),
+                issues=(),
+                cli_path=Path("/safe/vllm"),
+            ),
+        )
+        await pilot.click("#vllm-check-setup")
+        for _ in range(40):
+            await pilot.pause()
+            if screen._vllm_owner.snapshot().state is (
+                VllmReadinessState.READY_TO_START
+            ):
+                break
+        assert not view.query_one("#vllm-restart", Button).disabled
+
+        launches = []
+        monkeypatch.setattr(
+            screen,
+            "_start_vllm_process_workers",
+            lambda command, claim, token, draft: launches.append(
+                (command, claim, token, draft)
+            ),
+        )
+        await pilot.click("#vllm-restart")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        for _ in range(60):
+            await pilot.pause()
+            if launches:
+                break
+
+        assert not process.running
+        assert launches
+        new_claim, _ = server_lifecycle_snapshot(app, "vllm")
+        assert new_claim is launches[0][1]
+        assert new_claim is not old_claim
+        assert launches[0][3].model_value == "org/next"
+        assert release_server_claim(app, "vllm", new_claim)
 
 
 async def test_restart_termination_failure_keeps_old_snapshot_and_never_reserves(
@@ -925,26 +1151,354 @@ async def test_mounted_draft_edit_fences_old_readiness_generation():
         assert raw_edit.activity[-1].code == "target_changed"
 
 
-async def test_mounted_recomposition_and_detach_invalidate_readiness_generation():
+async def test_mounted_external_selection_starts_fresh_exact_probe(monkeypatch):
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.EXISTING,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="",
+            existing_server_url="http://127.0.0.1:8000/v1",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        screen._vllm_draft = draft
+        requests = []
+
+        async def fake_probe(request):
+            requests.append(request)
+            if request.expected_model_id is None:
+                return VllmProbeResult(
+                    token=request.token,
+                    state=VllmReadinessState.NOT_CONFIGURED,
+                    target=None,
+                    issue=None,
+                    activity=(VllmActivityEvent("models_discovered", "under_1s"),),
+                    discovered_model_ids=("org/first", "org/second"),
+                )
+            return VllmProbeResult(
+                token=request.token,
+                state=VllmReadinessState.READY,
+                target=VllmConnectionTarget(
+                    provider_key="vllm",
+                    api_url="http://127.0.0.1:8000/v1/chat/completions",
+                    model_id=request.expected_model_id,
+                    runtime_owner="external",
+                    generation=request.token.generation,
+                    credential_source="none",
+                ),
+                issue=None,
+                activity=(VllmActivityEvent("ready", "under_1s"),),
+                discovered_model_ids=("org/first", "org/second"),
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.probe_vllm_target", fake_probe
+        )
+        await screen._probe_vllm_generation(token, draft, None)
+        assert screen._vllm_owner.snapshot().target is None
+        selector = view.query_one("#vllm-existing-model", Select)
+        assert selector.value is Select.NULL
+
+        selector.value = "org/second"
+        for _ in range(20):
+            await pilot.pause()
+            if screen._vllm_owner.snapshot().target is not None:
+                break
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert [request.expected_model_id for request in requests] == [
+            None,
+            "org/second",
+        ]
+        assert requests[1].token.generation == token.generation + 1
+        assert snapshot.state is VllmReadinessState.READY
+        assert snapshot.target is not None
+        assert snapshot.target.model_id == "org/second"
+        assert screen._vllm_external_models == ("org/first", "org/second")
+        assert selector.value == "org/second"
+
+
+async def test_mounted_external_changed_list_clears_and_fences_stale_selection(
+    monkeypatch,
+):
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.EXISTING,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="",
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="org/old",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        screen._vllm_draft = draft
+        screen._vllm_external_models = ("org/old",)
+
+        async def changed_probe(request):
+            return VllmProbeResult(
+                token=request.token,
+                state=VllmReadinessState.NEEDS_ATTENTION,
+                target=None,
+                issue=VllmIssue("model_missing", "model"),
+                activity=(VllmActivityEvent("model_missing", "under_1s"),),
+                discovered_model_ids=("org/new",),
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.probe_vllm_target",
+            changed_probe,
+        )
+        await screen._probe_vllm_generation(token, draft, None)
+
+        assert screen._vllm_draft.existing_model_id == ""
+        assert screen._vllm_external_models == ("org/new",)
+        assert screen._vllm_owner.snapshot().target is None
+        selector = view.query_one("#vllm-existing-model", Select)
+        assert selector.value is Select.NULL
+        assert "Select a returned model" in str(
+            view.query_one("#vllm-existing-model-help", Label).renderable
+        )
+
+        generation = screen._vllm_owner.snapshot().generation
+        screen._on_vllm_external_model_selected(
+            VllmSetupView.ExternalModelSelected("org/old")
+        )
+        assert screen._vllm_owner.snapshot().generation == generation
+
+        exact_starts = []
+        monkeypatch.setattr(
+            screen,
+            "_start_vllm_probe",
+            lambda exact_token, exact_draft, claim: exact_starts.append(
+                (exact_token, exact_draft, claim)
+            ),
+        )
+        screen._on_vllm_external_model_selected(
+            VllmSetupView.ExternalModelSelected("org/new")
+        )
+        assert len(exact_starts) == 1
+        assert exact_starts[0][0].generation == generation + 1
+        assert exact_starts[0][1].existing_model_id == "org/new"
+        assert exact_starts[0][2] is None
+
+
+async def test_mounted_cancel_check_only_cancels_current_generation():
+    class _PendingWorker:
+        is_finished = False
+
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, _ = await _mount_vllm_screen(app, pilot)
+        token = screen._vllm_owner.begin(screen._vllm_draft, runtime_owner="chatbook")
+        worker = _PendingWorker()
+        screen._vllm_preflight_worker = worker
+
+        screen._on_vllm_cancel_check_requested(
+            VllmSetupView.CancelCheckRequested(token.generation - 1)
+        )
+        assert not worker.cancelled
+        assert screen._vllm_owner.snapshot().generation == token.generation
+
+        screen._on_vllm_cancel_check_requested(
+            VllmSetupView.CancelCheckRequested(token.generation)
+        )
+        snapshot = screen._vllm_owner.snapshot()
+        assert worker.cancelled
+        assert snapshot.generation == token.generation + 1
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.activity[-1].code == "cancelled"
+
+
+async def test_mounted_profile_validation_error_is_field_adjacent():
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._on_vllm_create_profile(
+            VllmSetupView.CreateProfileRequested("", screen._vllm_draft)
+        )
+        await pilot.pause()
+
+        help_copy = view.query_one("#vllm-profile-name-help", Label)
+        assert help_copy.display
+        assert "profile name" in str(help_copy.renderable).lower()
+        assert app.focused is view.query_one("#vllm-profile-name", Input)
+
+
+async def test_mounted_python_environment_browse_updates_the_guided_field(
+    monkeypatch,
+):
+    """Use the established file picker and return only to the current pane."""
+
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        _, _, view = await _mount_vllm_screen(app, pilot)
+        pushed = []
+
+        async def capture_picker(screen, callback=None):
+            pushed.append((screen, callback))
+
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            capture_picker,
+        )
+
+        await pilot.click("#vllm-browse-python-environment")
+        await pilot.pause()
+        picker, picked = pushed.pop()
+        assert isinstance(picker, EnhancedFileOpen)
+        assert picker.filters is not None
+        assert picker.filters[0](Path("python3.12")) is True
+        assert picker.filters[0](Path("pip3")) is False
+
+        selected = Path("/safe/venv/bin/python3.12")
+        await picked(selected)
+        await pilot.pause()
+        assert view.query_one("#vllm-python-environment", Input).value == str(selected)
+
+
+async def test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft():
+    """Project the active vLLM profile, target, scope, and next action in Lab."""
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        target = VllmConnectionTarget(
+            provider_key="vllm",
+            api_url="http://127.0.0.1:8000/v1/chat/completions",
+            model_id="org/model",
+            runtime_owner="external",
+            generation=token.generation,
+            credential_source="none",
+        )
+        result = VllmProbeResult(
+            token=token,
+            state=VllmReadinessState.READY,
+            target=target,
+            issue=None,
+            activity=(VllmActivityEvent("ready", "under_1s"),),
+        )
+        assert screen._vllm_owner.settle(token, result)
+        screen._vllm_draft = draft
+        url = view.query_one("#vllm-existing-server-url", Input)
+        url.focus()
+        screen._apply_vllm_view_state(focus=False)
+        await pilot.pause()
+
+        assert app.focused is url
+        assert (
+            str(
+                screen.query_one(
+                    "#lab-destination-header #workbench-header-title", Static
+                ).renderable
+            )
+            == "vLLM"
+        )
+        assert "Ready" in str(
+            screen.query_one(
+                "#lab-destination-header #workbench-header-status", Static
+            ).renderable
+        )
+        assert "Default vLLM" in str(
+            screen.query_one("#lab-status-chip-servers", Static).renderable
+        )
+        assert "Use in Console" in str(
+            screen.query_one("#lab-status-chip-model-install", Static).renderable
+        )
+
+        inspector = {
+            row.id: str(row.renderable)
+            for row in screen.query(".lab-vllm-inspector-row").results(Static)
+        }
+        assert inspector == {
+            "lab-vllm-profile": "Profile · Default vLLM",
+            "lab-vllm-ownership": "Ownership · External server",
+            "lab-vllm-target": (
+                "Verified · http://127.0.0.1:8000/v1/chat/completions · org/model"
+            ),
+            "lab-vllm-persistence": "Persistence · Not adopted; defaults unchanged",
+            "lab-vllm-configuration": "Current · Verified external; Next · Matches",
+            "lab-vllm-next-action": "Next action · Use in Console",
+        }
+        assert all(row.display for row in screen.query(".lab-vllm-inspector-row"))
+        assert not any(
+            row.display for row in screen.query(".lab-generic-inspector-row")
+        )
+
+        url.value = "http://127.0.0.1:8001/v1"
+        await pilot.pause()
+        assert app.focused is url
+        assert "Setup incomplete" in str(
+            screen.query_one(
+                "#lab-destination-header #workbench-header-status", Static
+            ).renderable
+        )
+        assert (
+            str(screen.query_one("#lab-vllm-target", Static).renderable)
+            == "Verified · Not available"
+        )
+        assert (
+            str(screen.query_one("#lab-vllm-next-action", Static).renderable)
+            == "Next action · Check connection"
+        )
+
+
+async def test_mounted_recomposition_preserves_exact_readiness_but_detach_invalidates():
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
         draft = screen._vllm_draft
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
-        claim = _bind_local_claim(screen._vllm_owner, token)
+        _bind_local_claim(screen._vllm_owner, token)
         assert screen._vllm_owner.settle(token, _ready_result(token))
 
         await screen.recompose()
         for _ in range(8):
             await pilot.pause()
         recomposed = screen._vllm_owner.snapshot()
-        assert recomposed.generation == token.generation + 1
-        assert recomposed.target is None
-        assert recomposed.activity[-1].code == "recomposed"
+        assert recomposed.generation == token.generation
+        assert recomposed.target is not None
+        assert recomposed.target.generation == token.generation
+        assert screen.llm_window is not None
+        screen.llm_window.active_view = "vllm"
+        for _ in range(20):
+            await pilot.pause()
+            replacement_views = list(screen.query(VllmSetupView))
+            if replacement_views:
+                break
+        else:
+            raise AssertionError("recomposed vLLM view did not mount")
+        replacement_view = screen._vllm_view()
+        assert replacement_view is not None
+        assert screen._vllm_owner.snapshot().state is VllmReadinessState.READY
+        screen._apply_vllm_view_state(focus=False)
+        for _ in range(8):
+            await pilot.pause()
+            if not replacement_view.query_one("#vllm-use-console", Button).disabled:
+                break
+        assert not replacement_view.query_one("#vllm-use-console", Button).disabled
 
-        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
-        assert screen._vllm_owner.bind_launch_claim(token, claim)
-        assert screen._vllm_owner.settle(token, _ready_result(token))
         await app.pop_screen()
         await pilot.pause()
         detached = screen._vllm_owner.snapshot()
@@ -1040,9 +1594,7 @@ async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replac
         else:
             raise AssertionError("replacement vLLM setup view did not mount")
         replacement._apply_vllm_view_state()
-        assert not replacement_views[0].query_one(
-            "#vllm-stop", Button
-        ).disabled
+        assert not replacement_views[0].query_one("#vllm-stop", Button).disabled
 
         process.running = False
         assert clear_server_process(app, "vllm", claim, process)
@@ -1075,9 +1627,7 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
 
         snapshot = screen._vllm_owner.snapshot()
         assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
-        assert snapshot.issue == VllmIssue(
-            "python_unavailable", "python_environment"
-        )
+        assert snapshot.issue == VllmIssue("python_unavailable", "python_environment")
         assert snapshot.activity[-1].code == "preflight_failed"
         assert "Needs attention" in str(
             view.query_one("#vllm-readiness-state", Label).renderable
@@ -1212,9 +1762,7 @@ async def test_vllm_failure_details_never_cross_logs_notifications_or_global_sta
         assert "vLLM profile change was not saved" in notification_text
         assert "category=resource_close_failed" in log_text
         assert current_server_claim(app, "vllm") is None
-        all_surfaces = " ".join(
-            (notification_text, visible_text, state_text, log_text)
-        )
+        all_surfaces = f"{notification_text} {visible_text} {state_text} {log_text}"
         for canary in (
             "CREDENTIAL_CANARY",
             "PATH_CANARY",
@@ -1436,9 +1984,7 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
             lambda message: seen.append(message) or True,
         )
 
-        screen._on_vllm_use_in_console_requested(
-            VllmSetupView.UseInConsoleRequested()
-        )
+        screen._on_vllm_use_in_console_requested(VllmSetupView.UseInConsoleRequested())
         screen._on_vllm_make_default_requested(VllmSetupView.MakeDefaultRequested())
 
         assert [(message.screen_name, message.screen_context) for message in seen] == [
@@ -1453,9 +1999,7 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
 
         screen._vllm_owner.invalidate("target_changed")
         app.pending_handoffs.clear_pending(HandoffChannel.VLLM_CONSOLE)
-        screen._on_vllm_use_in_console_requested(
-            VllmSetupView.UseInConsoleRequested()
-        )
+        screen._on_vllm_use_in_console_requested(VllmSetupView.UseInConsoleRequested())
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         monkeypatch.setattr(screen, "post_message", original_post_message)
 
@@ -1463,8 +2007,6 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
         _bind_local_claim(screen._vllm_owner, token)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         monkeypatch.setattr(screen, "post_message", lambda _message: False)
-        screen._on_vllm_use_in_console_requested(
-            VllmSetupView.UseInConsoleRequested()
-        )
+        screen._on_vllm_use_in_console_requested(VllmSetupView.UseInConsoleRequested())
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         monkeypatch.setattr(screen, "post_message", original_post_message)

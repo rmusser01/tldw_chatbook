@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 10:21'
+updated_date: '2026-09-04 12:29'
 labels:
   - vllm
   - lab
@@ -28,6 +28,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #3 Users can create, select, rename, duplicate, and delete named vLLM profiles containing only approved non-secret launch fields.
 - [x] #4 The last selected vLLM view and profile restore across screen recomposition and application restart.
 - [x] #5 Storage, migration if required, privacy, and profile lifecycle tests cover invalid, stale, and recovery states.
+- [x] #6 Profile-loaded structured expert values are always visible and editable under Advanced, invalid/repairable profile fields receive adjacent recovery, and active-runtime Current versus Next restart context stays accurate through selection, lifecycle, and draft changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,6 +66,16 @@ Task 6 Fix Round 2:
 ADR required: no new ADR
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 remains the accepted device-local profile/CAS boundary; this round enforces bounded strict reads and privacy-safe atomic outcomes without changing the architecture.
+
+Final UX fix round:
+19. Add RED mounted profile tests proving every persisted structured expert value is projected into a visible editable control and every invalid/repairable field receives bounded adjacent recovery.
+20. Add RED current-versus-next projection tests across profile selection, draft edits, checks, lifecycle changes, and presentation recomposition.
+21. Implement only the view/controller projection needed for those outcomes; retain the exact V1 schema, CAS, atomic-write, privacy, and launch-only raw-argument boundaries.
+22. Run focused RED/GREEN nodes sequentially and the complete primary, compatibility, responsive, profile/privacy, static, inventory, CSS, and diff gates before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already defines these structured profile fields and immutable Current versus editable Next ownership; this round repairs their presentation without changing storage.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -93,6 +104,27 @@ failed, 59 deselected` and GREEN with the preservation control as `3 passed, 58
 deselected`. Atomic replace, restrictive mode, held-lock identity, no-follow,
 inode revalidation, and CAS ordering are unchanged. No new ADR: ADR-117 already
 owns this exact private profile repository boundary.
+
+The final UX fix round projects every profile-backed structured expert value
+into its editable Advanced control, so loading a profile can no longer hide
+dtype, tensor parallelism, maximum model length, GPU utilization, or remote
+code trust behind launch-only state. Profile-name validation and repair
+failures now appear beside the profile field and move focus there. Outer Lab
+context and the vLLM body refresh Current versus Next after profile selection,
+draft mutation, lifecycle settlement, and presentation recomposition without
+stealing focus; active-runtime edits retain the immutable current snapshot and
+make the checked next-launch draft available to Restart. The new profile-value,
+field-adjacent repair, outer-context, recomposition, and mounted restart nodes
+were RED before projection changes and GREEN afterward. The V1 device-local
+schema, CAS/atomic storage, secret exclusion, and launch-only raw-argument
+boundary are unchanged, so ADR-117 remains sufficient.
+
+Final shared qualification for this round: the setup/connection/profile and
+mounted workflow/geometry primary passed `308` tests in `428.25s` with no
+descriptor-growth warning; the production CSS build/sync/staleness gate passed
+`39`; format, critical Ruff, `py_compile`, both profile/diagnostic inventories,
+and `git diff --check` passed. No profile schema/storage file or Console/Settings
+persistence boundary was changed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
