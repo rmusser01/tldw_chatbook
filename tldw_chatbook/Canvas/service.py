@@ -102,6 +102,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         if reopen_hint not in defaults:
@@ -187,6 +189,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         return CanvasCreateResult(
@@ -234,6 +238,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         return CanvasMutationResult(
@@ -280,6 +286,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         return CanvasMutationResult(revision=self._revision_info(revision))
@@ -337,6 +345,8 @@ class CanvasService:
         except CanvasServiceError:
             raise
         except (CharactersRAGDBError, sqlite3.Error):
+            storage_failed = True
+        except Exception:  # noqa: BLE001 - sanitize database boundary failures
             storage_failed = True
         if storage_failed:
             raise CanvasServiceError("storage_failure")
@@ -416,6 +426,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         return revision
@@ -430,6 +442,8 @@ class CanvasService:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):
             repository_error = CanvasServiceError("storage_failure")
+        except Exception:  # noqa: BLE001 - sanitize dependency boundary failures
+            repository_error = CanvasServiceError("operation_failed")
         if repository_error is not None:
             raise repository_error
         return metadata

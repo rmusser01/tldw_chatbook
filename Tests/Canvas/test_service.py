@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.limits import (
     MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
     CanvasRepositoryLimits,
@@ -165,7 +166,15 @@ def _assert_sanitized_service_error(
     code: str,
     sentinel: str,
 ) -> None:
+    expected_messages = {
+        "document_incompatible": (
+            "Canvas document is incompatible with the canvas-v1 runtime."
+        ),
+        "operation_failed": "Canvas operation could not be completed.",
+        "storage_failure": "Canvas storage is temporarily unavailable.",
+    }
     assert error.code == code
+    assert str(error) == expected_messages[code]
     assert error.__cause__ is None
     assert error.__context__ is None
     for projection in (str(error), repr(error), repr(error.issues)):
@@ -1163,3 +1172,292 @@ def test_compiler_preserves_terminal_base_exceptions(db, terminal_error) -> None
             source=_html("unused"),
         )
     assert _canvas_count(db) == 0
+
+
+_REPOSITORY_FAILURE_CASES = (
+    ("list", "list_revision_metadata", ("list_revision_metadata",)),
+    (
+        "list",
+        "get_reopen_hint",
+        ("list_revision_metadata", "get_reopen_hint"),
+    ),
+    ("read", "list_revision_metadata", ("list_revision_metadata",)),
+    (
+        "read",
+        "read_revision",
+        ("list_revision_metadata", "read_revision"),
+    ),
+    ("create", "create_canvas", ("compile", "create_canvas")),
+    ("update", "list_revision_metadata", ("list_revision_metadata",)),
+    (
+        "update",
+        "append_revision",
+        ("list_revision_metadata", "compile", "append_revision"),
+    ),
+    ("rename", "list_revision_metadata", ("list_revision_metadata",)),
+    (
+        "rename",
+        "read_revision",
+        ("list_revision_metadata", "read_revision"),
+    ),
+    (
+        "rename",
+        "append_revision",
+        ("list_revision_metadata", "read_revision", "append_revision"),
+    ),
+)
+
+
+def _invoke_service_operation(
+    service: CanvasService,
+    operation: str,
+    scope: CanvasScope,
+    canvas_id: str,
+    revision_id: str,
+) -> object:
+    if operation == "list":
+        return service.list_canvases(scope)
+    if operation == "read":
+        return service.read_canvas(scope, canvas_id)
+    if operation == "create":
+        return service.create_canvas(
+            scope,
+            title="New Canvas",
+            source=_html("new source"),
+        )
+    if operation == "update":
+        return service.update_canvas(
+            scope,
+            canvas_id,
+            expected_parent_revision_id=revision_id,
+            source=_html("updated source"),
+        )
+    if operation == "rename":
+        return service.rename_canvas(
+            scope,
+            canvas_id,
+            expected_parent_revision_id=revision_id,
+            title="Renamed Canvas",
+        )
+    raise AssertionError(f"unknown test operation: {operation}")
+
+
+@pytest.mark.parametrize(
+    ("operation", "failure_seam", "expected_events"),
+    _REPOSITORY_FAILURE_CASES,
+)
+@pytest.mark.parametrize("failure_type", (RuntimeError, KeyboardInterrupt, SystemExit))
+def test_repository_seams_bound_exceptions_without_crossing_the_failure_point(
+    db,
+    monkeypatch,
+    operation,
+    failure_seam,
+    expected_events,
+    failure_type,
+) -> None:
+    """Missing one final Exception handler must expose that seam's sentinel."""
+
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "root")
+    repository = CanvasRepository(db)
+    created = _create_canvas(
+        repository,
+        conversation_id,
+        message_id,
+        title="Existing Canvas",
+        source=_html("existing source"),
+        run_id="run-existing",
+    )
+    scope = _scope(
+        conversation_id,
+        message_id,
+        selected_canvas_id=created.identity.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+    )
+    before = (_canvas_count(db), _revision_count(db))
+    sentinel = f"source-secret-{operation}-{failure_seam}-{failure_type.__name__}"
+    events: list[str] = []
+    repository_seams = (
+        "list_revision_metadata",
+        "get_reopen_hint",
+        "read_revision",
+        "create_canvas",
+        "append_revision",
+    )
+    real_calls = {name: getattr(repository, name) for name in repository_seams}
+
+    def tracked_repository_call(name: str):
+        def call(*args, **kwargs):
+            events.append(name)
+            if name == failure_seam:
+                raise failure_type(sentinel)
+            return real_calls[name](*args, **kwargs)
+
+        return call
+
+    for seam in repository_seams:
+        monkeypatch.setattr(repository, seam, tracked_repository_call(seam))
+
+    def tracked_compile(source: str):
+        events.append("compile")
+        return compile_canvas_document(source)
+
+    service = CanvasService(db, repository=repository, compiler=tracked_compile)
+
+    def invoke():
+        return _invoke_service_operation(
+            service,
+            operation,
+            scope,
+            created.identity.canvas_id,
+            created.revision.revision_id,
+        )
+
+    if failure_type is RuntimeError:
+        with pytest.raises(CanvasServiceError) as failed:
+            invoke()
+        _assert_sanitized_service_error(
+            failed.value,
+            code="operation_failed",
+            sentinel=sentinel,
+        )
+    else:
+        with pytest.raises(failure_type, match=sentinel):
+            invoke()
+
+    assert tuple(events) == expected_events
+    assert (_canvas_count(db), _revision_count(db)) == before
+
+
+class _ScopeQueryResult:
+    def __init__(self, cursor, failure_point, failure_type, sentinel) -> None:
+        self._cursor = cursor
+        self._failure_point = failure_point
+        self._failure_type = failure_type
+        self._sentinel = sentinel
+
+    def fetchone(self):
+        if self._failure_point == "owner_fetch":
+            raise self._failure_type(self._sentinel)
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        if self._failure_point == "path_fetch":
+            raise self._failure_type(self._sentinel)
+        return self._cursor.fetchall()
+
+
+class _ScopeConnection:
+    def __init__(self, connection, failure_point, failure_type, sentinel) -> None:
+        self._connection = connection
+        self._failure_point = failure_point
+        self._failure_type = failure_type
+        self._sentinel = sentinel
+
+    def execute(self, query, parameters=()):
+        is_owner_query = "FROM conversations" in query
+        is_path_query = "FROM messages" in query
+        if self._failure_point == "owner_query" and is_owner_query:
+            raise self._failure_type(self._sentinel)
+        if self._failure_point == "path_query" and is_path_query:
+            raise self._failure_type(self._sentinel)
+        cursor = self._connection.execute(query, parameters)
+        return _ScopeQueryResult(
+            cursor,
+            self._failure_point if is_owner_query or is_path_query else None,
+            self._failure_type,
+            self._sentinel,
+        )
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    ("acquisition", "owner_query", "owner_fetch", "path_query", "path_fetch"),
+)
+@pytest.mark.parametrize("failure_type", (RuntimeError, KeyboardInterrupt, SystemExit))
+def test_scope_database_seams_bound_exceptions_before_compile_or_write(
+    db,
+    monkeypatch,
+    failure_point,
+    failure_type,
+) -> None:
+    """A scope database failure must stop all later mutation work."""
+
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "root")
+    real_connection = db.get_connection()
+    repository = CanvasRepository(db)
+    before = (
+        int(
+            real_connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[
+                0
+            ]
+        ),
+        int(
+            real_connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[
+                0
+            ]
+        ),
+    )
+    sentinel = f"source-secret-scope-{failure_point}-{failure_type.__name__}"
+    events: list[str] = []
+    scope_connection = _ScopeConnection(
+        real_connection,
+        failure_point,
+        failure_type,
+        sentinel,
+    )
+
+    def acquire_scope_connection():
+        if failure_point == "acquisition":
+            raise failure_type(sentinel)
+        return scope_connection
+
+    real_create = repository.create_canvas
+
+    def tracked_compile(source: str):
+        events.append("compile")
+        return compile_canvas_document(source)
+
+    def tracked_create(*args, **kwargs):
+        events.append("create_canvas")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(db, "get_connection", acquire_scope_connection)
+    monkeypatch.setattr(repository, "create_canvas", tracked_create)
+    service = CanvasService(db, repository=repository, compiler=tracked_compile)
+
+    if failure_type is RuntimeError:
+        with pytest.raises(CanvasServiceError) as failed:
+            service.create_canvas(
+                _scope(conversation_id, message_id),
+                title="Must not exist",
+                source=_html("must not compile"),
+            )
+        _assert_sanitized_service_error(
+            failed.value,
+            code="storage_failure",
+            sentinel=sentinel,
+        )
+    else:
+        with pytest.raises(failure_type, match=sentinel):
+            service.create_canvas(
+                _scope(conversation_id, message_id),
+                title="Must not exist",
+                source=_html("must not compile"),
+            )
+
+    after = (
+        int(
+            real_connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[
+                0
+            ]
+        ),
+        int(
+            real_connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[
+                0
+            ]
+        ),
+    )
+    assert events == []
+    assert after == before
