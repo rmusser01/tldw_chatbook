@@ -1111,12 +1111,15 @@ class LibraryScreen(BaseAppScreen):
     #: Cancel button), landing on the plain viewer, not the list. A second
     #: Escape is then needed to actually reach the list. Deliberately one
     #: generic, honest label rather than three sub-state-specific ones --
-    #: "back a step" is accurate for all three without tripling the constant
-    #: count for a wording-only difference.
+    #: one word is accurate for all three without tripling the constant
+    #: count for a wording-only difference. task-31272: that word is
+    #: "close", the same one the find bar and the More menu use, so the
+    #: Reader's whole Escape vocabulary is four words (see
+    #: ``_library_media_escape_label``).
     LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("esc", "back a step"),
+        ("esc", "close"),
     )
 
     #: task-3020 AC4: the skill editor's own working keys -- Ctrl+S saves,
@@ -3642,7 +3645,13 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     if self.check_action(gated_action, ()):
                         shortcuts.append((key, label))
-                shortcuts.append(("esc", self._library_media_escape_label()))
+                # task-31272: "" where Escape is inert (the rail row in the
+                # three-pane shell), mirroring the Conversations branch
+                # above -- an advertised key that does nothing is the same
+                # lie task-31271 closed at the other four seams.
+                escape_label = self._library_media_escape_label()
+                if escape_label:
+                    shortcuts.append(("esc", escape_label))
                 return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
@@ -7615,6 +7624,13 @@ class LibraryScreen(BaseAppScreen):
             receipt = self._library_pending_list_entry_media_return
             if self._library_media_return_candidate(receipt):
                 self._arm_library_media_return_settlement(receipt)
+            # task-31272: the Reader's "‹ Back" control and its Escape chip
+            # both derive from this layout, and the first settled
+            # measurement always arrives AFTER the viewer was composed
+            # against __init__'s zero-width sentinel. The viewer sync is a
+            # no-op unless a compose input genuinely changed.
+            if self._library_media_view == "viewer":
+                self._sync_library_media_viewer_or_recompose()
         if hidden_focus_target is not None:
             self._focus_library_media_grip_if_current(
                 generation,
@@ -38691,14 +38707,33 @@ class LibraryScreen(BaseAppScreen):
             focused is shell.items or shell.items in focused.ancestors
         ):
             if layout.library_open:
-                self._focus_library_rail_action("#library-search-input")
+                # task-31272 (critique #4, A cap 20): the ACTIVE RAIL ROW,
+                # never "#library-search-input" -- landing in the rail's
+                # text field made the NEXT Escape (and every letter after
+                # it) typing, so leaving the Reader took three presses and
+                # the middle one was invisible.
+                self._focus_library_rail_action(
+                    f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+                )
+                self._register_footer_shortcuts()
             else:
                 self._exit_library_media_viewer()
             return
         if focused is not None and (
             focused is shell.library or shell.library in focused.ancestors
         ):
-            self._exit_library_media_viewer()
+            # task-31272: in the three-pane shell the rail row is the
+            # ladder's terminus. Exiting from here used to set
+            # ``_library_media_view = "list"`` while the Reader kept
+            # painting the document (that layout's Items pane already shows
+            # the list, so the flip changed no pixels) -- and every Reader
+            # binding is gated on that flag, so Escape, ] and [ all died on
+            # identical pixels (critique #4, A cap 25/31/39, and the
+            # "close more" that did nothing at B cap_106).
+            # ``_library_media_escape_label`` returns "" there so the
+            # footer advertises no chip for a key that does nothing.
+            if self._library_media_reader_exit_available(layout):
+                self._exit_library_media_viewer()
             return
         # Qodo on #2367: an open Find bar is a reader substate regardless
         # of where focus sits INSIDE the reader region (F6 to the content
@@ -38716,7 +38751,9 @@ class LibraryScreen(BaseAppScreen):
         if layout.items_open:
             self._focus_library_media_items_pane()
         elif layout.library_open:
-            self._focus_library_rail_action("#library-search-input")
+            self._focus_library_rail_action(
+                f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+            )
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
@@ -39905,20 +39942,56 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return True, None
 
+    def _library_media_reader_exit_available(
+        self, layout: MediaReaderEffectiveLayout | None = None
+    ) -> bool:
+        """Whether a "back to list" exit means anything in this layout.
+
+        task-31272: the three-pane shell shows the media list in its Items
+        pane at all times, so ``_library_media_view = "list"`` changes no
+        pixels there -- it only revokes every Reader binding gated on that
+        flag (Escape, ] and [ died on identical pixels: critique #4, A cap
+        25/31/39). Every other layout genuinely returns focus to a visible
+        list, so its exit -- the "‹ Back" control, which composes exactly
+        where this is True, and Escape's compact branch -- is unchanged.
+
+        Args:
+            layout: Effective shell layout to judge; read from the mounted
+                shell (falling back to the screen's own copy) when omitted.
+
+        Returns:
+            True when the Reader has a real exit to offer.
+        """
+        if layout is None:
+            try:
+                layout = self.query_one(
+                    "#library-media-reader-shell", LibraryMediaReaderShell
+                ).effective_layout
+            except (NoMatches, QueryError):
+                layout = self._library_media_reader_layout
+        return not (layout.library_open and layout.items_open)
+
     def _library_media_escape_label(self) -> str:
-        """Describe the action Escape will take from the current effective role."""
+        """Describe the action Escape will take from the current effective role.
+
+        task-31272: exactly four words -- "close" (find bar, More menu, or
+        an armed delete/edit cancel), "focus Items", "focus Library" and
+        "back" (the compact exit) -- plus "" where Escape does nothing and
+        the footer must therefore advertise nothing. Critique #4 counted
+        eight distinct ``esc …`` chips live.
+        """
         session = self._library_media_reader_session
         if self._library_media_confirming_delete:
-            return "cancel delete"
+            return "close"
         if session.more_open:
-            return "close more"
+            return "close"
         focused = self.focused
         try:
             shell = self.query_one(
                 "#library-media-reader-shell", LibraryMediaReaderShell
             )
         except (NoMatches, QueryError):
-            return "back to list"
+            return "back"
         # task-31271 seam (a): the bar's LIVE state, not its DOM presence
         # (critique #4, A cap 08/23, B cap_21) -- and the same seam Escape
         # itself reads, so the chip and the key can never disagree.
@@ -39928,7 +40001,7 @@ class LibraryScreen(BaseAppScreen):
             and focused is not None
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
-            return "close find"
+            return "close"
         if focused is not None and (
             focused is shell.items or shell.items in focused.ancestors
         ):
@@ -39936,12 +40009,18 @@ class LibraryScreen(BaseAppScreen):
         if focused is not None and (
             focused is shell.library or shell.library in focused.ancestors
         ):
-            return "back"
+            # task-31272: no chip where Escape is inert (see the matching
+            # branch in ``action_library_media_viewer_back``).
+            return (
+                "back"
+                if self._library_media_reader_exit_available(shell.effective_layout)
+                else ""
+            )
         # Qodo on #2367: with the Find bar open, a reader-region Escape
         # closes it first (see action_library_media_viewer_back) -- the
         # label says so even when focus has left the bar (F6 to content).
         if find_open:
-            return "close find"
+            return "close"
         if shell.effective_layout.items_open:
             return "focus Items"
         if shell.effective_layout.library_open:
@@ -40645,6 +40724,7 @@ class LibraryScreen(BaseAppScreen):
             image_preview_available=preview_available,
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
+            back_visible=self._library_media_reader_exit_available(),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -40860,9 +40940,14 @@ class LibraryScreen(BaseAppScreen):
         # task-30045: the review banner is a compose input like any other --
         # without it here, m/walk syncs kept the stale (or absent) banner.
         review_banner = self._active_review_set_banner() or ""
+        # task-31272: a compose input like any other -- the layout that
+        # decides it changes under resizes and pane toggles, and a viewer
+        # attribute missing from this compare silently never updates.
+        back_visible = self._library_media_reader_exit_available()
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
+            and viewer.back_visible == back_visible
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -40931,6 +41016,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_available = preview_available
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
+            viewer.back_visible = back_visible
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail

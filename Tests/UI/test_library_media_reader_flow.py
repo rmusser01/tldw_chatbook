@@ -472,7 +472,9 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
         assert not screen.query("#library-media-edit")
         assert not screen.query("#library-media-delete")
 
-        screen.query_one("#library-media-back", Button).press()
+        # task-31272: "‹ Back" is not composed in the three-pane shell,
+        # so drive the exit seam the button and Escape both share.
+        screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: not screen._library_media_reader_session.external_detail,
@@ -1171,6 +1173,11 @@ def _escape_fake(
     fake._library_media_find_state = MethodType(
         LibraryScreen._library_media_find_state, fake
     )
+    # task-31272: both the Escape ladder and its chip ask whether a "back
+    # to list" exit exists in this layout.
+    fake._library_media_reader_exit_available = MethodType(
+        LibraryScreen._library_media_reader_exit_available, fake
+    )
     return fake, calls, shell, find
 
 
@@ -1184,7 +1191,7 @@ def test_escape_and_its_label_read_the_same_find_state():
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=True, find_open=False
     )
-    assert LibraryScreen._library_media_escape_label(fake) != "close find"
+    assert LibraryScreen._library_media_escape_label(fake) != "close"
     LibraryScreen.action_library_media_viewer_back(fake)
     assert calls[:1] == [("items-pane",)]  # graduated panes, did not close find
 
@@ -1192,7 +1199,7 @@ def test_escape_and_its_label_read_the_same_find_state():
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=False, find_open=True
     )
-    assert LibraryScreen._library_media_escape_label(fake) == "close find"
+    assert LibraryScreen._library_media_escape_label(fake) == "close"
     LibraryScreen.action_library_media_viewer_back(fake)
     assert fake._library_media_find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
@@ -1245,7 +1252,7 @@ def test_escape_closes_an_open_find_bar_from_anywhere_in_the_reader():
     # An Items-pane Escape never consumes the reader's find bar.
     fake, calls, shell, _find = _escape_fake(region="items", find_mounted=True)
     LibraryScreen.action_library_media_viewer_back(fake)
-    assert calls == [("rail", "#library-search-input")]
+    assert calls == [("rail", "#library-row-browse-media"), "footer"]
 
 
 def test_escape_label_names_close_find_while_the_bar_is_open():
@@ -1253,7 +1260,7 @@ def test_escape_label_names_close_find_while_the_bar_is_open():
     fake, _calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=True
     )
-    assert LibraryScreen._library_media_escape_label(fake) == "close find"
+    assert LibraryScreen._library_media_escape_label(fake) == "close"
 
 
 def test_escape_moves_reader_to_items_then_library_then_screen_back():
@@ -1267,10 +1274,20 @@ def test_escape_moves_reader_to_items_then_library_then_screen_back():
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
     calls.clear()
     LibraryScreen.action_library_media_viewer_back(fake)
-    assert calls == [("rail", "#library-search-input")]
+    # task-31272: the ACTIVE RAIL ROW, never the rail's search Input --
+    # the old target made the next Escape (and every letter) typing.
+    assert calls == [("rail", "#library-row-browse-media"), "footer"]
 
+    # task-31272: the rail row is the terminus in the three-pane shell.
+    # Exiting from there flipped the view flag while the Reader kept
+    # painting the document, revoking Escape / ] / [ on identical pixels.
     fake.focused = SimpleNamespace(ancestors=(shell.library,))
     calls.clear()
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == []
+
+    # With the Items pane collapsed the exit is real again, so it stays.
+    shell.effective_layout.items_open = False
     LibraryScreen.action_library_media_viewer_back(fake)
     assert calls == ["back"]
 
@@ -1280,7 +1297,7 @@ def test_escape_skips_responsively_collapsed_panes():
     fake, calls, shell, _find = _escape_fake(region="reader")
     shell.effective_layout.items_open = False
     LibraryScreen.action_library_media_viewer_back(fake)
-    assert calls[:1] == [("rail", "#library-search-input")]
+    assert calls[:1] == [("rail", "#library-row-browse-media")]
 
     calls.clear()
     shell.effective_layout.library_open = False

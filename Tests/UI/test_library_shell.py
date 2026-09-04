@@ -9332,9 +9332,13 @@ async def test_library_shell_media_back_returns_to_list():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-back")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only -- in this three-pane layout
+        # the Items pane already shows the list, so the control changed no
+        # pixels while revoking every Reader binding gated on the view flag.
+        assert not screen.query("#library-media-back")
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -9808,7 +9812,9 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_browse_controller.applied_result is None
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; this drives the seam it
+        # shares with Escape's compact exit.
+        screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -11757,7 +11763,8 @@ async def test_library_shell_media_content_search_resets_on_back():
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
         assert screen._library_media_content_query == "budget"
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; the exit seam is shared.
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -27079,11 +27086,14 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
 
 @pytest.mark.asyncio
 async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail():
-    """Escape unwinds the adaptive Reader before returning to list and rail.
+    """Escape unwinds the adaptive Reader without ever landing in an Input.
 
-    Items yields to Library first when both panes are open. Leaving the
-    Reader then re-focuses the first list row; one more Escape from that list
-    moves focus to the same rail search target used by `/` and F6.
+    task-31272 (critique #4, A cap 20): the old ladder handed the Reader's
+    Escape to the rail's "Search Library…" box, so the NEXT Escape (and
+    every letter after it) was typed text and leaving took three presses.
+    The ladder is now Reader -> the loaded Items ROW -> the ACTIVE RAIL
+    ROW, and the Reader stays live the whole way (the three-pane shell has
+    no list mode of its own, so ] / [ keep working from the row).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -27097,24 +27107,33 @@ async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
         await pilot.pause()
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-back")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_view == "viewer"
+        assert not screen.query("#library-media-back")
 
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_media_view == "viewer"
-        assert screen.query_one("#library-search-input", Input).has_focus
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert screen._library_media_view == "list"
-        await _wait_for_selector(screen, pilot, "#library-media-row-0")
-        await pilot.pause()
         assert screen.query_one("#library-media-row-0", Button).has_focus
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen.query_one("#library-search-input", Input).has_focus
+        assert screen._library_media_view == "viewer"
+        assert not isinstance(screen.focused, Input), screen.focused
+        assert (
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
+        )
+
+        # The rail row is the terminus: a further Escape is inert, so it
+        # cannot strand the view flag out from under the visible Reader.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_media_view == "viewer"
+        assert (
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
+        )
 
 
 @pytest.mark.asyncio
