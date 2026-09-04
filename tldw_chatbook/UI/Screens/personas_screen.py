@@ -25,6 +25,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.worker import Worker
 from textual.widgets import (
     Button,
@@ -622,6 +623,22 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-characters-empty",
 )
 
+# TASK-31215: the four expensive center bodies keep their established root IDs,
+# while these stable lightweight slots preserve the detail stack's document
+# order before a workflow first needs them.
+_DEMAND_CENTER_VIEW_ROOTS: dict[str, str] = {
+    "character-editor": "#ccp-character-editor-view",
+    "persona-editor": "#ccp-persona-editor-view",
+    "dictionary-detail": "#personas-dictionary-detail",
+    "lore-detail": "#personas-lore-detail",
+}
+_DEMAND_CENTER_VIEW_SLOTS: dict[str, str] = {
+    "character-editor": "#personas-character-editor-slot",
+    "persona-editor": "#personas-persona-editor-slot",
+    "dictionary-detail": "#personas-dictionary-detail-slot",
+    "lore-detail": "#personas-lore-detail-slot",
+}
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CharacterVisualIdentityLoadSnapshot:
@@ -1159,6 +1176,10 @@ class PersonasScreen(BaseAppScreen):
         self._pending_restore: dict | None = None
         self._edit_mode: str = "view"
         self._guard_active: bool = False
+        self._center_view_lifecycle_generation = 0
+        self._center_view_mount_locks = {
+            view_key: asyncio.Lock() for view_key in _DEMAND_CENTER_VIEW_ROOTS
+        }
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
         # an in-flight dialog worker (exclusive=True) would orphan a modal
         # pushed via push_screen_wait, whose dismissal then calls
@@ -1393,21 +1414,27 @@ class PersonasScreen(BaseAppScreen):
                     # the old bottom-docked wrapper, which let the two
                     # empty panels displace the card at 100x30 and left a
                     # dead void between them at 170x50.)
-                    # task-2725: the four heavy hidden center views (character
-                    # editor, persona editor, dictionary/lore detail — 290 of
-                    # this screen's ~494 widgets) are NOT composed here. They
-                    # mount hidden, order-anchored, as the first step of
-                    # `_load_after_mount` (`_mount_deferred_center_views`),
-                    # taking their CSS-application cost off the click→paint
-                    # critical path. `_show_center` skips absent selectors and
-                    # `_editor_or_none` returns None, so the compose→load
-                    # window is tolerated by design.
+                    # TASK-31215: stable, zero-demand slots preserve the
+                    # historical document order while their four expensive
+                    # bodies remain absent until a workflow first needs one.
                     with VerticalScroll(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
+                        character_editor_slot = Vertical(
+                            id="personas-character-editor-slot"
+                        )
+                        character_editor_slot.display = False
+                        character_editor_slot.styles.height = "auto"
+                        character_editor_slot.styles.width = "100%"
+                        yield character_editor_slot
                         with Vertical(id="personas-character-attachments"):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
+                        persona_editor_slot = Vertical(id="personas-persona-editor-slot")
+                        persona_editor_slot.display = False
+                        persona_editor_slot.styles.height = "auto"
+                        persona_editor_slot.styles.width = "100%"
+                        yield persona_editor_slot
                         with Vertical(id="personas-conversation-actions"):
                             yield Button(
                                 "Resume chat",
@@ -1435,6 +1462,18 @@ class PersonasScreen(BaseAppScreen):
                                     id="personas-conversation-open-library",
                                     classes="console-action-subdued",
                                 )
+                        dictionary_detail_slot = Vertical(
+                            id="personas-dictionary-detail-slot"
+                        )
+                        dictionary_detail_slot.display = False
+                        dictionary_detail_slot.styles.height = "auto"
+                        dictionary_detail_slot.styles.width = "100%"
+                        yield dictionary_detail_slot
+                        lore_detail_slot = Vertical(id="personas-lore-detail-slot")
+                        lore_detail_slot.display = False
+                        lore_detail_slot.styles.height = "auto"
+                        lore_detail_slot.styles.width = "100%"
+                        yield lore_detail_slot
                         yield PersonasConversationTranscriptWidget()
                         yield Static(
                             self._mode_placeholder_text("prompts"),
@@ -1678,41 +1717,83 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
-    async def _mount_deferred_center_views(self) -> None:
-        """Mount the four heavy hidden center views after first paint.
+    @staticmethod
+    def _build_center_view(view_key: str) -> Widget:
+        """Construct one heavy Personas center body for first-use mounting."""
+        if view_key == "character-editor":
+            return PersonasCharacterEditorWidget()
+        if view_key == "persona-editor":
+            return PersonaProfileEditorWidget()
+        if view_key == "dictionary-detail":
+            return PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+        if view_key == "lore-detail":
+            return PersonasLoreDetailWidget(id="personas-lore-detail")
+        raise ValueError(f"Unknown Personas center view: {view_key}")
 
-        task-2725: profiling showed the Roleplay switch cost is widget-mount
-        CSS application, and 290 of the detail stack's 358 widgets sit in
-        views that arrive hidden (`display: False`) anyway. Mounting them
-        here — as `_load_after_mount`'s first step, before
-        `_apply_pending_restore` and auto-select — keeps every downstream
-        query site valid while taking them off the click→paint critical
-        path. Each mounts hidden and order-anchored so the stack's document
-        (scroll) order is exactly what compose used to produce; `_show_
-        center` owns visibility from then on. Idempotent: a re-entered load
-        (e.g. runtime-source switch re-running `_load_after_mount`) skips
-        mounting.
-        """
+    def _mounted_center_view(self, view_key: str) -> Widget | None:
+        """Return a requested heavy root when it is already mounted."""
+        selector = _DEMAND_CENTER_VIEW_ROOTS.get(view_key)
+        if selector is None:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
         try:
-            stack = self.query_one("#personas-detail-stack", VerticalScroll)
+            return self.query_one(selector)
         except QueryError:
-            return
-        if self.query(PersonasCharacterEditorWidget):
-            return
+            return None
 
-        character_editor = PersonasCharacterEditorWidget()
-        persona_editor = PersonaProfileEditorWidget()
-        dictionary_detail = PersonasDictionaryDetailWidget(
-            id="personas-dictionary-detail"
-        )
-        lore_detail = PersonasLoreDetailWidget(id="personas-lore-detail")
-        for view in (character_editor, persona_editor, dictionary_detail, lore_detail):
-            view.display = False
+    def _hydrate_center_view(self, view_key: str, view: Widget) -> None:
+        """Apply screen-owned retained state before a new body is used."""
+        if view_key == "persona-editor" and isinstance(
+            view, PersonaProfileEditorWidget
+        ):
+            view.set_runtime_source(self.persona_handler.current_mode())
 
-        await stack.mount(character_editor, after="#ccp-character-card-view")
-        await stack.mount(persona_editor, after="#ccp-persona-card-view")
-        await stack.mount(dictionary_detail, after="#personas-conversation-actions")
-        await stack.mount(lore_detail, after="#personas-dictionary-detail")
+    async def _ensure_center_view(self, view_key: str) -> Widget | None:
+        """Mount, hydrate, and cache one heavy center view on first use.
+
+        Concurrent requests for one body serialize through its lock and reuse
+        the first successful widget. Failures leave no readiness marker, so a
+        later user action can retry. A lifecycle-generation check prevents a
+        mount that finishes during teardown from hydrating detached UI.
+        """
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
+        existing = self._mounted_center_view(view_key)
+        if existing is not None:
+            return existing
+
+        async with self._center_view_mount_locks[view_key]:
+            existing = self._mounted_center_view(view_key)
+            if existing is not None:
+                return existing
+
+            generation = self._center_view_lifecycle_generation
+            body = self._build_center_view(view_key)
+            body.display = False
+            try:
+                slot = self.query_one(_DEMAND_CENTER_VIEW_SLOTS[view_key], Vertical)
+                await slot.mount(body)
+                if (
+                    generation != self._center_view_lifecycle_generation
+                    or not self.is_mounted
+                ):
+                    if body.is_mounted:
+                        await body.remove()
+                    return None
+                self._hydrate_center_view(view_key, body)
+                slot.display = True
+                return body
+            except asyncio.CancelledError:
+                if body.is_mounted:
+                    await body.remove()
+                raise
+            except Exception:
+                if body.is_mounted:
+                    await body.remove()
+                logger.opt(exception=True).warning(
+                    "Personas center view mount failed (view_key={}).", view_key
+                )
+                self._notify("Couldn't open this Personas view. Try again.", "error")
+                return None
 
     async def _load_after_mount(self) -> None:
         """Load the character library once the screen is already on screen."""
@@ -1727,9 +1808,6 @@ class PersonasScreen(BaseAppScreen):
             )
             if callable(ensure_recovery):
                 await asyncio.to_thread(ensure_recovery)
-            # Must precede everything below: `_apply_pending_restore` and the
-            # selection sync assume the full center-view DOM (task-2725).
-            await self._mount_deferred_center_views()
             loading_manager = getattr(self, "loading_manager", None)
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):

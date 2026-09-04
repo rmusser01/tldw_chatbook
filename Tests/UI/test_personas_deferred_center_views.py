@@ -1,11 +1,8 @@
-"""task-2725: the four heavy hidden center views mount after first paint.
+"""TASK-31215: heavy Personas center views mount only on first use.
 
-Profiling (task file) showed the Roleplay switch cost is widget-mount CSS
-application, with 290 of the detail stack's 358 widgets in four views that
-arrive hidden: the character editor (132), dictionary detail (67), lore
-detail (60), and persona profile editor (31). They now mount as the first
-step of `_load_after_mount` — off the click→paint critical path — instead
-of inside compose.
+TASK-2725 moved four hidden bodies past first paint, but still mounted all of
+them during the initial load. TASK-31215 keeps stable slots in document order
+and mounts only the body an editor/detail workflow first requests.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.widgets import Input
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import (
@@ -37,17 +35,17 @@ _DEFERRED_TYPES = (
     PersonaProfileEditorWidget,
 )
 
-#: The stack's document order — scroll flow depends on it, so the deferred
-#: mounts must land exactly where compose used to put them.
+#: The stack's document order — scroll flow depends on it, so the lightweight
+#: slots must occupy exactly the positions their bodies historically used.
 _EXPECTED_STACK_ORDER = [
     "ccp-character-card-view",
-    "ccp-character-editor-view",
+    "personas-character-editor-slot",
     "personas-character-attachments",
     "ccp-persona-card-view",
-    "ccp-persona-editor-view",
+    "personas-persona-editor-slot",
     "personas-conversation-actions",
-    "personas-dictionary-detail",
-    "personas-lore-detail",
+    "personas-dictionary-detail-slot",
+    "personas-lore-detail-slot",
     "personas-conversation-transcript-view",
     "personas-mode-placeholder",
     "personas-characters-empty",
@@ -80,9 +78,8 @@ async def test_first_paint_excludes_the_four_heavy_center_views(monkeypatch):
         )
 
 
-async def test_load_mounts_all_four_hidden_in_document_order():
-    """After the real load, the full DOM exists exactly as compose built it
-    pre-change: every deferred view present, hidden, in historical order."""
+async def test_settled_initial_load_keeps_heavy_views_unmounted():
+    """The real load must settle without constructing inactive heavy bodies."""
     from Tests.UI.app_factory import _build_test_app
 
     app = _build_test_app()
@@ -94,12 +91,38 @@ async def test_load_mounts_all_four_hidden_in_document_order():
             await pilot.pause()
 
         for deferred_type in _DEFERRED_TYPES:
-            found = list(screen.query(deferred_type))
-            assert len(found) == 1, f"{deferred_type.__name__} missing after load"
-            assert found[0].display is False, (
-                f"{deferred_type.__name__} arrived visible — it must stay "
-                "hidden until _show_center reveals it"
+            assert not list(screen.query(deferred_type)), (
+                f"{deferred_type.__name__} mounted during initial load — "
+                "inactive bodies must wait for first use"
             )
 
         stack = screen.query_one("#personas-detail-stack")
         assert [child.id for child in stack.children] == _EXPECTED_STACK_ORDER
+
+
+async def test_first_use_mounts_only_requested_view_and_caches_it():
+    """One requested body mounts once and retains its in-screen form state."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen = PersonasScreen(app)
+        await app.push_screen(screen)
+        for _ in range(6):
+            await pilot.pause()
+
+        first = await screen._ensure_center_view("character-editor")
+        assert isinstance(first, PersonasCharacterEditorWidget)
+        name = first.query_one("#personas-char-editor-name", Input)
+        name.value = "Keep this draft"
+
+        second = await screen._ensure_center_view("character-editor")
+
+        assert second is first
+        assert second.query_one("#personas-char-editor-name", Input).value == (
+            "Keep this draft"
+        )
+        assert not list(screen.query(PersonaProfileEditorWidget))
+        assert not list(screen.query(PersonasDictionaryDetailWidget))
+        assert not list(screen.query(PersonasLoreDetailWidget))
