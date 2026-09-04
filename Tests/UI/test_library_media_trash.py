@@ -4387,3 +4387,113 @@ async def test_trash_header_paints_in_full():
         heading = screen.query_one("#library-media-trash-heading")
         painted = _painted(host, heading.region)
         assert "Local Trash · 1 item" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_trash_status_fold_recaps_the_list_so_actions_stay_inside():
+    """A status fold appearing re-measures the cap (task-28015 review).
+
+    The fold row is composed hidden and flips to shown one refresh later, so
+    a cap measured before the flip is one row too generous -- with a full
+    page (the cap binding) that pushed the actions toolbar past the canvas's
+    ``overflow: hidden`` bottom and clipped Restore away entirely.
+    """
+    from Tests.UI.test_library_shell import _wait_for_condition, _wait_for_selector
+
+    long_copy = (
+        "Could not load this Trash page. The local source stayed available "
+        "but its full recovery detail does not fit in the compact status area."
+    )
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _forty_trash_items())
+        controller = screen._library_media_trash_browse_controller
+        scope = controller.state.requested_scope
+        controller.state = fail_media_trash_request(
+            begin_media_trash_request(controller.state, scope, origin="next"),
+            scope,
+            copy=long_copy,
+        )
+        screen._sync_library_media_trash_state(None)
+        await _wait_for_selector(screen, pilot, "#library-media-trash-status-fold")
+        # Query fresh every poll: the sync recomposes the canvas, so a
+        # captured child reference goes stale mid-wait.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-trash-status-fold").display,
+            message="Long status never folded.",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        fold = screen.query_one("#library-media-trash-status-fold", Static)
+        canvas = screen.query_one("#library-media-trash-canvas")
+        trash_list = screen.query_one("#library-media-trash-list")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert len(screen.query(".library-media-trash-row")) == 20
+        assert trash_list.max_scroll_y > 0  # the cap is binding
+        assert actions.region.bottom <= canvas.region.bottom, (
+            f"actions={actions.region!r}, canvas={canvas.region!r}, "
+            f"list={trash_list.region!r}, fold={fold.region!r}"
+        )
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "Restore" in painted
+
+
+@pytest.mark.asyncio
+async def test_trash_list_cap_follows_a_resize():
+    """Shrinking the terminal re-measures the cap and keeps Restore inside."""
+    from Tests.UI.test_library_shell import _wait_for_condition
+
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _forty_trash_items())
+        trash_list = screen.query_one("#library-media-trash-list")
+        wide_cap = trash_list.styles.max_height.value
+
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        if not screen._library_media_reader_layout.items_open:
+            grip = screen.query_one("#library-media-items-grip", Button)
+            grip.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_reader_layout.items_open,
+                message="Items pane never reopened after the resize.",
+            )
+        trash_list = screen.query_one("#library-media-trash-list")
+        await _wait_for_condition(
+            pilot,
+            lambda: trash_list.styles.max_height.value < wide_cap,
+            message="The list cap never shrank with the terminal.",
+        )
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-media-trash-canvas")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert actions.region.bottom <= canvas.region.bottom, (
+            f"actions={actions.region!r}, canvas={canvas.region!r}"
+        )
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "Restore" in painted
+
+
+@pytest.mark.asyncio
+async def test_tab_reaches_restore_from_a_trash_row():
+    """AC#2: a keyboard path leads from a trash row to Restore."""
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        screen.query_one("#library-media-trash-row-0", Button).focus()
+        await pilot.pause()
+        seen = []
+        for _ in range(6):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = host.focused
+            seen.append(getattr(focused, "id", None))
+            assert not isinstance(focused, Input), seen
+            if seen[-1] == "library-media-trash-restore":
+                break
+        assert seen[-1] == "library-media-trash-restore", seen

@@ -211,6 +211,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             ),
             default=trash_list.region.bottom,
         ) - trash_list.region.bottom
+        # Floor: never collapse the list to nothing when the chrome alone
+        # fills the pane -- one row of items stays visible and scrollable.
         cap = max(2, available - above - below)
         if cap != self._list_cap:
             self._list_cap = cap
@@ -228,7 +230,16 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         width = status.content_size.width or status.region.width
         if width < 1:
             return
-        fold.display = status.visual.get_height(status.styles, width) > 2
+        folded = status.visual.get_height(status.styles, width) > 2
+        if folded == fold.display:
+            return
+        fold.display = folded
+        # The fold owns a row ABOVE the list, and `compose` always mounts it
+        # hidden -- so the cap measured a moment ago is one row too generous
+        # and the actions toolbar would land past the pane's hidden overflow
+        # (task-28015 review). A display flip fires neither `on_resize` nor
+        # `_after_recompose`, so re-measure explicitly.
+        self.call_after_refresh(self._cap_trash_list)
 
     def compose(self) -> ComposeResult:
         """Render the heading, status/notice lines, trash rows, and Restore.
