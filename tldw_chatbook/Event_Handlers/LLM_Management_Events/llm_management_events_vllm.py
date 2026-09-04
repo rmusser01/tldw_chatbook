@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import (
     _make_path_update_callback,
 )
-from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileOpen as FileOpen,
+    EnhancedSelectDirectory,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from .server_lifecycle import (
     ServerLaunchClaim,
@@ -233,123 +236,9 @@ def run_vllm_server_worker(
 async def handle_start_vllm_server_button_pressed(
     window: "LLMManagementWindow", app: "TldwCli", event: Button.Pressed
 ) -> None:
-    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
-    logger.info("User requested to start vLLM server.")
+    """Reject the retired launcher; vLLM starts only from a checked draft."""
 
-    try:
-        python_path_input = window.query_one("#vllm-python-path", Input)
-        model_path_input = window.query_one("#vllm-model-path", Input)
-        host_input = window.query_one("#vllm-host", Input)
-        port_input = window.query_one("#vllm-port", Input)
-        additional_args_input = window.query_one("#vllm-additional-args", TextArea)
-        log_output_widget = window.query_one("#vllm-log-output", RichLog)
-
-        python_path = python_path_input.value.strip() or "python"
-        model_path = (
-            model_path_input.value.strip()
-        )  # Can be repo ID, so Path().exists() might not apply
-        host = (
-            host_input.value.strip() or "127.0.0.1"
-        )  # Default from snippet was 127.0.0.1
-        port = (
-            port_input.value.strip() or "8000"
-        )  # Default from snippet was 8000, not 8002
-        additional_args_str = additional_args_input.text.strip()
-
-        # Validate all inputs to prevent command injection
-        if not validate_python_path(python_path):
-            app.notify(
-                "Invalid Python executable path.",
-                severity="error",
-            )
-            python_path_input.focus()
-            return
-
-        if not validate_model_path(model_path):
-            app.notify(
-                "Invalid model path.",
-                severity="error",
-            )
-            model_path_input.focus()
-            return
-
-        if not validate_host(host):
-            app.notify(
-                "Invalid vLLM host.",
-                severity="error",
-            )
-            host_input.focus()
-            return
-
-        if not validate_port(port):
-            app.notify(
-                "Invalid vLLM port.",
-                severity="error",
-            )
-            port_input.focus()
-            return
-
-        if not validate_additional_args(additional_args_str):
-            app.notify(
-                "Invalid additional arguments. Arguments contain unsafe shell metacharacters.",
-                severity="error",
-            )
-            additional_args_input.focus()
-            return
-
-        command = [
-            python_path,
-            "-m",
-            "vllm.entrypoints.api_server",  # Corrected entrypoint
-            "--host",
-            host,
-            "--port",
-            port,
-        ]
-        if model_path:  # model_path is required for vLLM server
-            command.extend(["--model", model_path])
-        else:
-            app.notify(
-                "Model path (or HuggingFace Repo ID) is required for vLLM.",
-                severity="error",
-            )
-            model_path_input.focus()
-            return
-
-        if additional_args_str:
-            command.extend(shlex.split(additional_args_str))
-
-        claim = reserve_server_launch(app, "vllm")
-        if claim is None:
-            window._sync_process_controls("vllm")
-            app.notify(
-                "vLLM server is already starting or running.", severity="warning"
-            )
-            return
-        log_output_widget.clear()
-        log_output_widget.write("Starting vLLM server.\n")
-
-        worker_callable = functools.partial(
-            run_vllm_server_worker,
-            app,
-            command,
-            claim,
-        )
-        app.run_worker(
-            worker_callable,
-            group="vllm_server",
-            description="Running vLLM API server",
-            exclusive=True,
-            thread=True,
-        )
-        window._sync_process_controls("vllm")
-        app.notify("vLLM server starting…")
-    except Exception as err:  # pragma: no cover
-        if "claim" in locals():
-            release_server_claim(app, "vllm", claim)
-        window._sync_process_controls("vllm")
-        logger.error("vLLM start failed (category={}).", type(err).__name__)
-        app.notify("Error setting up vLLM server start.", severity="error")
+    app.notify("Use Check setup before starting vLLM.", severity="warning")
 
 
 async def handle_stop_vllm_server_button_pressed(
@@ -379,7 +268,10 @@ def handle_vllm_setup_check_requested(
         result = run_vllm_preflight(draft, generation)
 
         def apply_result() -> None:
-            if semantic_fingerprint(view.draft) != result.fingerprint:
+            if (
+                generation != window._vllm_preflight_generation
+                or semantic_fingerprint(view.draft) != result.fingerprint
+            ):
                 return
             state = (
                 VllmReadinessState.READY_TO_START
@@ -407,7 +299,11 @@ def handle_vllm_setup_start_requested(
     view = window.query_one("#vllm-setup-view")
     preflight = view.preflight
     try:
-        command = build_vllm_command(event.draft, preflight)  # type: ignore[arg-type]
+        command = build_vllm_command(
+            event.draft,
+            preflight,  # type: ignore[arg-type]
+            current_generation=window._vllm_preflight_generation,
+        )
     except ValueError:
         view.apply_state(
             draft=event.draft,
@@ -449,11 +345,11 @@ async def handle_vllm_setup_stop_requested(
         state=VllmReadinessState.STOPPING,
         preflight=view.preflight,
     )
-    await stop_server_process(app, "vllm", "vLLM server")
+    stopped = await stop_server_process(app, "vllm", "vLLM server")
     view.apply_state(
         draft=view.draft,
-        state=VllmReadinessState.NOT_CONFIGURED,
-        preflight=None,
+        state=(VllmReadinessState.NOT_CONFIGURED if stopped else VllmReadinessState.NEEDS_ATTENTION),
+        preflight=(None if stopped else view.preflight),
     )
 
 
@@ -463,10 +359,9 @@ async def handle_vllm_local_directory_browse_requested(
     """Open a local-only directory picker for the vLLM source field."""
 
     await app.push_screen(
-        FileOpen(
+        EnhancedSelectDirectory(
             location=str(Path.home()),
             title="Select local vLLM model directory",
-            filters=Filters(("Directories", lambda path: path.is_dir())),
             context="vllm_models",
         ),
         callback=_make_path_update_callback(window, app, "vllm-local-model-directory"),
@@ -474,12 +369,7 @@ async def handle_vllm_local_directory_browse_requested(
 
 
 # --- Button Handler Map ---
-VLLM_BUTTON_HANDLERS = {
-    "vllm-browse-python-button": handle_vllm_browse_python_button_pressed,
-    "vllm-browse-model-button": handle_vllm_browse_model_button_pressed,
-    "vllm-start-server-button": handle_start_vllm_server_button_pressed,
-    "vllm-stop-server-button": handle_stop_vllm_server_button_pressed,
-}
+VLLM_BUTTON_HANDLERS: dict[str, object] = {}
 
 #
 # End of llm_management_events_vllm.py

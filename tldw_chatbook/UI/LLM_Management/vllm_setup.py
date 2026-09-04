@@ -24,6 +24,8 @@ _HF_REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9.
 _MANAGED_OR_SECRET_FLAGS = frozenset(
     {"--host", "--port", "--model", "--served-model-name", "--api-key", "--hf-token"}
 )
+_MAX_PROBE_OUTPUT_BYTES = 256
+_VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
 
 
 class VllmMode(StrEnum):
@@ -185,31 +187,54 @@ def _validate_existing_url(value: str) -> VllmIssue | None:
     return None
 
 
-def _run_probe(
-    run: Callable[..., object], argv: list[str],
-) -> tuple[bool, str | None]:
+def _classify_probe_version(output: object) -> str | None:
+    """Keep a short printable version classification, never child output."""
+
+    text = str(output).strip()
+    if not text or len(text.encode("utf-8")) > _MAX_PROBE_OUTPUT_BYTES:
+        return None
+    if "\n" in text or "\r" in text or not _VERSION_OUTPUT.fullmatch(text):
+        return None
+    return text
+
+
+def _run_probe(run: Callable[..., object], argv: list[str]) -> tuple[bool, str | None]:
+    """Run one bounded probe and retain only a classified version string."""
+
     try:
-        completed = run(argv, capture_output=True, text=True, timeout=5, check=False)
+        completed = run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return False, None
     if getattr(completed, "returncode", 1) != 0:
         return False, None
-    stdout = getattr(completed, "stdout", "")
-    return True, str(stdout).strip() or None
+    return True, _classify_probe_version(getattr(completed, "stdout", ""))
 
 
-def _matching_vllm_cli(
+def _resolve_python_environment(
     python_environment: str, which: Callable[[str], str | None]
 ) -> Path | None:
-    """Resolve vLLM beside an explicit interpreter, never from another env."""
+    """Resolve the selected interpreter before deriving its matching CLI."""
 
-    python_path = Path(python_environment)
-    if python_path.parent != Path("."):
-        candidate = python_path.parent / "vllm"
-        return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
-    value = which("vllm")
-    candidate = Path(value) if value else None
-    return candidate if candidate and candidate.is_file() and os.access(candidate, os.X_OK) else None
+    selected = Path(python_environment)
+    if selected.parent == Path("."):
+        resolved = which(python_environment)
+        selected = Path(resolved) if resolved else Path()
+    selected = selected.absolute()
+    return selected if selected.is_file() and os.access(selected, os.X_OK) else None
+
+
+def _matching_vllm_cli(python_path: Path) -> Path | None:
+    """Resolve vLLM only beside the selected resolved interpreter."""
+
+    candidate = python_path.with_name("vllm")
+    return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
 
 
 def run_vllm_preflight(
@@ -268,22 +293,27 @@ def run_vllm_preflight(
         issues.append(VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization"))
     issues.extend(validate_raw_arguments(draft.raw_arguments))
 
+    python_path: Path | None = None
     python_version: str | None = None
     if not draft.python_environment.strip():
         issues.append(VllmIssue("missing_python_environment", "python_environment"))
     else:
-        python_ok, python_version = _run_probe(run, [draft.python_environment, "--version"])
-        if not python_ok:
+        python_path = _resolve_python_environment(draft.python_environment, which)
+        if python_path is None:
             issues.append(VllmIssue("python_unavailable", "python_environment"))
-    cli_path = _matching_vllm_cli(draft.python_environment, which)
+        else:
+            python_ok, python_version = _run_probe(run, [str(python_path), "--version"])
+            if not python_ok or python_version is None:
+                issues.append(VllmIssue("python_unavailable", "python_environment"))
+    cli_path = _matching_vllm_cli(python_path) if python_path is not None else None
     if cli_path is None:
         issues.append(VllmIssue("vllm_cli_unavailable", "python_environment"))
     vllm_version: str | None = None
     if cli_path is not None:
         version_ok, vllm_version = _run_probe(run, [str(cli_path), "--version"])
-        if not version_ok:
+        if not version_ok or vllm_version is None:
             issues.append(VllmIssue("vllm_cli_unavailable", "python_environment"))
-    import_ok, _ = _run_probe(run, [draft.python_environment, "-c", "import vllm"])
+    import_ok, _ = _run_probe(run, [str(python_path), "-c", "import vllm"]) if python_path else (False, None)
     if not import_ok:
         issues.append(VllmIssue("vllm_import_unavailable", "python_environment"))
     return VllmPreflightResult(
@@ -298,7 +328,10 @@ def run_vllm_preflight(
 
 
 def build_vllm_command(
-    draft: VllmLaunchDraft, preflight: VllmPreflightResult
+    draft: VllmLaunchDraft,
+    preflight: VllmPreflightResult,
+    *,
+    current_generation: int | None = None,
 ) -> tuple[str, ...]:
     """Build the public vLLM command after successful current preflight only."""
 
@@ -306,6 +339,8 @@ def build_vllm_command(
         raise ValueError("build_vllm_command requires successful current preflight")
     if preflight.fingerprint != semantic_fingerprint(draft):
         raise ValueError("build_vllm_command requires matching fingerprint")
+    if current_generation is not None and preflight.generation != current_generation:
+        raise ValueError("build_vllm_command requires current generation")
     if draft.mode is not VllmMode.LOCAL:
         raise ValueError("build_vllm_command is only valid for local mode")
     command = [

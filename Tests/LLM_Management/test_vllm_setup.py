@@ -20,6 +20,8 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     semantic_fingerprint,
     validate_raw_arguments,
 )
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedSelectDirectory
+from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 
 
 def local_draft(**changes: object) -> VllmLaunchDraft:
@@ -39,13 +41,98 @@ def passing_preflight(
     cli_path.parent.mkdir(parents=True, exist_ok=True)
     cli_path.touch()
     cli_path.chmod(0o755)
+    python_path = (
+        Path(draft.python_environment)
+        if Path(draft.python_environment).parent != Path(".")
+        else cli_path.with_name("python")
+    )
+    python_path.touch()
+    python_path.chmod(0o755)
+
+    def probe(argv, **kwargs):
+        version = "Python 3.12.0" if argv[0] == str(python_path) else "vLLM 0.9.0"
+        return type("Result", (), {"returncode": 0, "stdout": version})()
+
     return run_vllm_preflight(
         draft,
         4,
-        which=lambda name: str(cli_path) if name == "vllm" else None,
-        run=lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "0.9.0\n"})(),
+        which=lambda name: str(python_path) if name == draft.python_environment else None,
+        run=probe,
         port_available=lambda host, port: True,
     )
+
+
+def test_preflight_rejects_oversize_or_unclassified_probe_output(tmp_path):
+    cli_path = tmp_path / "bin/vllm"
+    python_path = tmp_path / "bin/python"
+    cli_path.parent.mkdir()
+    cli_path.touch()
+    python_path.touch()
+    cli_path.chmod(0o755)
+    python_path.chmod(0o755)
+
+    def noisy_run(argv, **kwargs):
+        return type("Result", (), {"returncode": 0, "stdout": "CANARY_SECRET_" + "x" * 2048})()
+
+    result = run_vllm_preflight(
+        local_draft(python_environment=str(python_path)),
+        4,
+        which=lambda _: None,
+        run=noisy_run,
+        port_available=lambda host, port: True,
+    )
+    assert result.python_version is None
+    assert result.vllm_version is None
+    assert all("CANARY_SECRET" not in issue.detail for issue in result.issues)
+
+
+def test_bare_python_requires_sibling_vllm_not_path_lookup(tmp_path):
+    python_path = tmp_path / "venv/bin/python"
+    unrelated_vllm = tmp_path / "other/vllm"
+    python_path.parent.mkdir(parents=True)
+    unrelated_vllm.parent.mkdir()
+    python_path.touch()
+    unrelated_vllm.touch()
+    python_path.chmod(0o755)
+    unrelated_vllm.chmod(0o755)
+    result = run_vllm_preflight(
+        local_draft(),
+        4,
+        which=lambda name: str(python_path) if name == "python" else str(unrelated_vllm),
+        run=lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "Python 3.12.0"})(),
+        port_available=lambda host, port: True,
+    )
+    assert VllmIssue("vllm_cli_unavailable", "python_environment") in result.issues
+
+
+@pytest.mark.asyncio
+async def test_local_directory_picker_returns_selected_directory_through_callback(tmp_path):
+    selected = tmp_path / "model"
+    selected.mkdir()
+    received = {}
+
+    class Input:
+        value = ""
+
+    input_widget = Input()
+    window = type(
+        "Window",
+        (),
+        {"is_mounted": True, "query_one": lambda self, selector, kind: input_widget},
+    )()
+
+    class App:
+        screen_stack = [type("Screen", (), {"llm_window": window})()]
+
+        async def push_screen(self, picker, callback):
+            received["picker"] = picker
+            received["callback"] = callback
+
+    app = App()
+    await vllm_events.handle_vllm_local_directory_browse_requested(window, app, object())
+    assert isinstance(received["picker"], EnhancedSelectDirectory)
+    await received["callback"](selected)
+    assert input_widget.value == str(selected)
 
 
 def test_explicit_environment_rejects_unrelated_global_vllm_cli(tmp_path):
@@ -200,6 +287,58 @@ def test_command_rejects_stale_or_failed_preflight(tmp_path):
     successful = passing_preflight(draft, cli_path=tmp_path / "vllm")
     with pytest.raises(ValueError, match="matching fingerprint"):
         build_vllm_command(replace(draft, port=8001), successful)
+    with pytest.raises(ValueError, match="current generation"):
+        build_vllm_command(draft, successful, current_generation=5)
+
+
+def test_legacy_vllm_buttons_are_not_registered():
+    assert vllm_events.VLLM_BUTTON_HANDLERS == {}
+
+
+def test_same_draft_old_success_cannot_launch_after_newer_check_failed(tmp_path):
+    draft = local_draft()
+    old_success = passing_preflight(draft, cli_path=tmp_path / "vllm")
+
+    class View:
+        preflight = old_success
+
+        def apply_state(self, **kwargs):
+            self.state = kwargs["state"]
+
+    view = View()
+    window = type(
+        "Window",
+        (),
+        {"_vllm_preflight_generation": 5, "query_one": lambda self, selector: view},
+    )()
+
+    class App:
+        def __init__(self):
+            self.workers = []
+
+        def run_worker(self, *args, **kwargs):
+            self.workers.append((args, kwargs))
+
+    event = type("Event", (), {"draft": draft})()
+    app = App()
+    vllm_events.handle_vllm_setup_start_requested(window, app, event)
+    assert app.workers == []
+    assert view.state is VllmReadinessState.NEEDS_ATTENTION
+
+
+def test_lifecycle_sync_projects_vllm_without_legacy_button_queries():
+    projections = []
+
+    class View:
+        def project_lifecycle(self, **kwargs):
+            projections.append(kwargs)
+
+    window = LLMManagementWindow.__new__(LLMManagementWindow)
+    window.query_one = lambda selector, kind: View()
+    window._server_active = lambda provider: provider == "vllm"
+    window.app_instance = type("App", (), {"notify": lambda *args, **kwargs: None})()
+    window._handle_server_process_state_change("vllm", "process exited")
+    assert projections == [{"active": True, "status": "process exited"}]
 
 
 @pytest.mark.asyncio
@@ -226,9 +365,35 @@ async def test_stop_request_settles_the_owned_server_without_opening_a_picker(mo
 
     async def fake_stop(app, provider, display_name):
         calls.append((provider, display_name))
+        return True
 
     monkeypatch.setattr(vllm_events, "stop_server_process", fake_stop)
     await vllm_events.handle_vllm_setup_stop_requested(window, object(), object())
 
     assert calls == [("vllm", "vLLM server")]
     assert states == [VllmReadinessState.STOPPING, VllmReadinessState.NOT_CONFIGURED]
+
+
+@pytest.mark.asyncio
+async def test_failed_stop_keeps_recovery_state(monkeypatch):
+    draft = local_draft()
+    states = []
+
+    class View:
+        preflight = None
+
+        def __init__(self) -> None:
+            self.draft = draft
+
+        def apply_state(self, **kwargs):
+            states.append(kwargs["state"])
+
+    view = View()
+    window = type("Window", (), {"query_one": lambda self, selector: view})()
+
+    async def failed_stop(app, provider, display_name):
+        return False
+
+    monkeypatch.setattr(vllm_events, "stop_server_process", failed_stop)
+    await vllm_events.handle_vllm_setup_stop_requested(window, object(), object())
+    assert states == [VllmReadinessState.STOPPING, VllmReadinessState.NEEDS_ATTENTION]

@@ -127,6 +127,29 @@ class VllmSetupView(VerticalScroll):
         if self.is_mounted:
             self._render_projection()
 
+    def project_lifecycle(self, *, active: bool, status: str | None = None) -> None:
+        """Project app-owned process truth without inventing API readiness."""
+
+        if active:
+            state = self._state
+            if state not in {
+                VllmReadinessState.LAUNCHING,
+                VllmReadinessState.LOADING_MODEL,
+                VllmReadinessState.READY,
+                VllmReadinessState.STOPPING,
+            }:
+                state = VllmReadinessState.LAUNCHING
+        elif self._state in {
+            VllmReadinessState.LAUNCHING,
+            VllmReadinessState.LOADING_MODEL,
+            VllmReadinessState.READY,
+            VllmReadinessState.STOPPING,
+        }:
+            state = VllmReadinessState.NEEDS_ATTENTION
+        else:
+            state = self._state
+        self.apply_state(draft=self._draft, state=state, preflight=self._preflight)
+
     def on_mount(self) -> None:
         self._render_projection()
 
@@ -177,6 +200,7 @@ class VllmSetupView(VerticalScroll):
                 VllmReadinessState.LAUNCHING,
                 VllmReadinessState.LOADING_MODEL,
                 VllmReadinessState.READY,
+                VllmReadinessState.NEEDS_ATTENTION,
             }
             blocker = self.query_one("#vllm-start-blocker", Label)
             if self._preflight and self._preflight.issues:

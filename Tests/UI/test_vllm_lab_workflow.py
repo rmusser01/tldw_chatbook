@@ -74,3 +74,13 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
         )
         assert app.query_one("#vllm-start-button", Button).disabled
         assert "Check setup" in str(app.query_one("#vllm-start-blocker", Label).renderable)
+
+
+async def test_lifecycle_projection_survives_remount_and_process_exit():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        view.project_lifecycle(active=True)
+        assert not app.query_one("#vllm-stop-button", Button).disabled
+        view.project_lifecycle(active=False, status="process exited")
+        assert app.query_one("#vllm-stop-button", Button).disabled is False

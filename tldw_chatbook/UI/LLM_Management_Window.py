@@ -534,7 +534,6 @@ class LLMManagementWindow(Container):
     SERVER_CONTROLS = {
         "llamacpp": ("llamacpp-start-server-button", "llamacpp-stop-server-button"),
         "llamafile": ("llamafile-start-server-button", "llamafile-stop-server-button"),
-        "vllm": ("vllm-start-server-button", "vllm-stop-server-button"),
         "onnx": ("onnx-start-server-button", "onnx-stop-server-button"),
         "mlx": ("mlx-start-server-button", "mlx-stop-server-button"),
         "ollama": ("ollama-start-service-button", "ollama-stop-service-button"),
@@ -737,6 +736,8 @@ class LLMManagementWindow(Container):
             raise RuntimeError(f"Deferred body for {view_name!r} is unavailable")
 
         self._populated_views.add(view_name)
+        if view_name == "vllm":
+            self._sync_vllm_lifecycle()
         self.call_after_refresh(self._view_population_ready, view_name)
 
     def _view_population_ready(self, view_name: str) -> None:
@@ -2066,7 +2067,10 @@ class LLMManagementWindow(Container):
     ) -> None:
         """Refresh one destination and surface only bounded worker status."""
 
-        self._sync_process_controls(provider)
+        if provider == "vllm":
+            self._sync_vllm_lifecycle(status)
+        else:
+            self._sync_process_controls(provider)
         if status is not None:
             self.app_instance.notify(status[:200], severity="error")
 
@@ -2075,6 +2079,16 @@ class LLMManagementWindow(Container):
 
         for provider in self.SERVER_CONTROLS:
             self._sync_process_controls(provider)
+        self._sync_vllm_lifecycle()
+
+    def _sync_vllm_lifecycle(self, status: str | None = None) -> None:
+        """Project app lifecycle state into the mounted vLLM setup view."""
+
+        try:
+            view = self.query_one("#vllm-setup-view", VllmSetupView)
+        except QueryError:
+            return
+        view.project_lifecycle(active=self._server_active("vllm"), status=status)
 
     def _begin_async_presentation(self, channel: str) -> int:
         """Reserve the next local completion generation for one output channel."""
