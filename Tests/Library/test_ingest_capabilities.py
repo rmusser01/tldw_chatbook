@@ -1371,8 +1371,11 @@ def test_import_behavior_header_summarises_its_analysis_state():
 
 def test_the_collapsed_generic_title_carries_the_analysis_state():
     """The wiring, not just the helper: the title the Collapsible actually
-    renders (and the screen's in-place update assigns) leads with the
-    state, and never stutters it a second time as a changed-value pair."""
+    renders leads with the state, and never stutters it a second time as a
+    changed-value pair. (Toggling the checkbox takes the recompose branch of
+    ``handle_library_ingest_option_value_changed``, so this same builder is
+    what repaints the header -- the in-place ``panel.title`` path is only for
+    text/number/textarea edits.)"""
     from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
         build_type_group_title,
     )

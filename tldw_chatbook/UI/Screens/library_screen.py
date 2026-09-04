@@ -40846,7 +40846,13 @@ class LibraryScreen(BaseAppScreen):
             ),
             editing_analysis=self._library_media_editing_analysis,
             generating_analysis=self._library_media_generating_analysis,
-            analysis_provider_reason=self._library_media_analysis_provider_reason(),
+            # Review I1: gated on the tab that renders it -- see the twin
+            # gate in ``_sync_library_media_viewer_state``.
+            analysis_provider_reason=(
+                self._library_media_analysis_provider_reason()
+                if self._library_media_reader_session.mode == "analysis"
+                else ""
+            ),
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -41092,7 +41098,19 @@ class LibraryScreen(BaseAppScreen):
         back_visible = self._library_media_reader_exit_available()
         # task-28007 AC#5: a compose input like any other -- resolved once
         # per sync and read by both halves below.
-        analysis_provider_reason = self._library_media_analysis_provider_reason()
+        # Review I1: only ``_compose_analysis`` consumes this, and
+        # ``resolve_ingest_analysis_provider`` is not always cheap -- for
+        # ``provider = "Anthropic"`` with ``auth_source =
+        # "claude_subscription"`` readiness shells out to the macOS keychain
+        # behind a 5s TTL, which human-paced Reader gestures would miss on
+        # every sync. So it is resolved only on the tab that shows it. The
+        # compare stays honest: ``reader_mode`` is itself a compose input,
+        # so switching tabs recomposes and picks the reason up.
+        analysis_provider_reason = (
+            self._library_media_analysis_provider_reason()
+            if self._library_media_reader_session.mode == "analysis"
+            else ""
+        )
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner

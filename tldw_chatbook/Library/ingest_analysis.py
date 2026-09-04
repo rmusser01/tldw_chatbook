@@ -241,7 +241,11 @@ def analysis_unavailable_reason(resolution: IngestAnalysisResolution) -> str:
     """
     if resolution.ready:
         return ""
-    reason = (resolution.short_reason or NO_ANALYSIS_PROVIDER_REASON).strip()
+    # Strip BEFORE the fallback: a whitespace-only short_reason is truthy,
+    # and stripping it afterwards left "" for `reason[0]` to raise on. No
+    # resolution the resolver builds is blank today, but this is a public
+    # seam other gates feed resolutions into.
+    reason = (resolution.short_reason or "").strip() or NO_ANALYSIS_PROVIDER_REASON
     sentence = reason[0].upper() + reason[1:]
     return sentence if sentence.endswith(".") else f"{sentence}."
 

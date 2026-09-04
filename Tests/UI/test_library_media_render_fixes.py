@@ -1352,20 +1352,45 @@ async def test_media_filter_placeholder_names_the_fields_it_searches():
 # ---------------------------------------------------------------------------
 
 
+def _analysed_host() -> LibraryProductionCSSHarness:
+    """Two local items, each already carrying a current analysis version.
+
+    Drives the "Regenerate" spelling of the same action, which is gated by
+    the same reason and would otherwise go unpinned.
+    """
+    app = _build_media_test_app()
+    items = _two_media_items()
+    for index, item in enumerate(items, 1):
+        item["versions"] = [
+            {"version_number": 1, "analysis_content": f"Analysis of item {index}"}
+        ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.parametrize(
+    ("host_factory", "expected_label"),
+    [(_host, "○ Generate"), (_analysed_host, "○ Regenerate")],
+)
 @pytest.mark.asyncio
-async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configured():
+async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configured(
+    host_factory, expected_label
+):
     """Critique #4 P1: the Reader's Generate learned that no analysis
     provider is configured only AFTER the click, as a toast. It now wears
     the resolver's own reason, in the ``○``-with-reason grammar PR A gave
-    Find -- and the post-click guard still refuses with the same words."""
-    host = _host()  # the test config configures no analysis provider
+    Find -- and the post-click guard still refuses with the same words.
+    Both spellings of the action ("Generate" / "Regenerate") are gated."""
+    host = host_factory()  # the test config configures no analysis provider
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
         await _switch_to_analysis(screen, pilot)
         generate = screen.query_one("#library-media-analysis-generate", Button)
         assert generate.disabled is True
-        assert str(generate.label) == "○ Generate"
+        assert str(generate.label) == expected_label
+        # The marker is not just on the widget -- it reaches the glass.
+        assert expected_label in _painted(host, generate.region)
         assert str(generate.tooltip) == "No analysis provider is configured."
         # Belt and braces: the handler refuses with the same sentence.
         warnings: list[str] = []
@@ -1376,6 +1401,60 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         await pilot.pause()
         assert warnings == ["No analysis provider is configured."]
         assert screen._library_media_generating_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
+    monkeypatch,
+):
+    """Review I1: ``resolve_ingest_analysis_provider`` can shell out to the
+    macOS keychain (Anthropic subscription auth, 5s TTL) -- so resolving it
+    on EVERY viewer sync would put a synchronous subprocess on the Textual
+    event loop for every Reader gesture. Only ``_compose_analysis`` consumes
+    the reason, so only the Analysis tab pays for it."""
+    from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
+    calls: list[object] = []
+    not_ready = IngestAnalysisResolution(
+        provider="",
+        api_key=None,
+        ready=False,
+        short_reason="no analysis provider is configured",
+        hint="",
+    )
+
+    def _recording_resolver(config):
+        calls.append(config)
+        return not_ready
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "resolve_ingest_analysis_provider",
+        _recording_resolver,
+    )
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        calls.clear()
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        assert calls == [], (
+            f"the Read tab resolved the analysis provider {len(calls)} time(s)"
+        )
+
+        await _switch_to_analysis(screen, pilot)
+        calls.clear()
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        assert len(calls) == 1, (
+            f"the Analysis tab resolved the provider {len(calls)} times per sync"
+        )
+        # And the gate did not cost the feature: the reason still lands.
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is True
 
 
 @pytest.mark.asyncio
