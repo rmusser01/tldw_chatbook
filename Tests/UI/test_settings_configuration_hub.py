@@ -43,6 +43,7 @@ from Tests.UI.test_console_session_settings import (
     _bare_console_state_screen,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -4425,7 +4426,11 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
             model_count=3,
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4473,7 +4478,11 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
             category="connection_refused",
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4516,7 +4525,11 @@ async def test_settings_provider_test_does_not_treat_missing_models_route_as_cha
             summary="Model listing unavailable; chat endpoint not tested",
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4553,7 +4566,11 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
         probe_calls.append(base_url)
         return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4586,7 +4603,11 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
         probe_calls.append(base_url)
         return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -10304,7 +10325,11 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
             model_count=3,
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:

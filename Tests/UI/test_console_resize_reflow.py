@@ -362,7 +362,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "Cancel",
             "Save as provider defaults",
             "Default for new chats",
-            "Use in this conversation",
+            "Use for this conversation",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width

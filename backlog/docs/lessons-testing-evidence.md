@@ -11103,3 +11103,20 @@ hex literal. And never verify a color fix by arithmetic on configuration
 values — check the resolved paint (rule-match probe or live capture); the
 dict-value contrast test in PR #2374 passed while the app painted the
 opposite.
+
+## Patch the owner of a lazy dependency, not a stale consumer alias (TASK-31301, 2026-09-04)
+
+**What happened.** Conversation Settings endpoint tests patched
+`settings_screen.probe_settings_endpoint` and
+`chat_screen.probe_settings_endpoint` after the production call sites had moved
+those imports inside their methods for the boot-budget boundary. One patch used
+`raising=False`, which silently installed an attribute the production code never
+read. The test then reached a real localhost endpoint instead of its fake; only
+the network guard exposed that the apparently isolated test no longer controlled
+its dependency.
+
+**What to do.** When production lazily imports a dependency inside a method,
+patch the symbol on the module that owns it. Do not use `raising=False` to make a
+missing consumer alias patchable. Pair the fake-driven test with one explicit,
+owned-loopback integration test so both isolation and the real call path remain
+observable.
