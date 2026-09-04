@@ -700,10 +700,10 @@ class TaskDetail(Vertical):
                 # hide the row's own value Static, which the existing
                 # transfer-badge rendering pins verbatim).
                 self._runs_on_cancel_button = Button(
-                    "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning"
+                    "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
                 )
                 self._runs_on_retry_button = Button(
-                    "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning"
+                    "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
                 )
                 runs_on_actions = Horizontal(
                     self._runs_on_cancel_button,

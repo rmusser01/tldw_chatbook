@@ -606,6 +606,7 @@ class DefinitionDetail(Vertical):
                     "Pause",
                     id="scheduling-automation-pause-resume",
                     variant="warning",
+                    classes="detail-lifecycle-button",
                 )
                 yield self._pause_resume_button
             # Visible when the lifecycle button (or an editable row) is
@@ -664,10 +665,10 @@ class DefinitionDetail(Vertical):
             # (`.display`-toggled) rather than `begin_edit`-mounted into
             # the row itself.
             self._runs_on_cancel_button = Button(
-                "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning"
+                "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
             )
             self._runs_on_retry_button = Button(
-                "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning"
+                "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
             )
             runs_on_actions = Horizontal(
                 self._runs_on_cancel_button,

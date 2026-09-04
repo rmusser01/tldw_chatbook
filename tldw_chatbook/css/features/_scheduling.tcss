@@ -301,7 +301,7 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0 0 1 0;
 }
 
-#scheduling-automation-detail-lifecycle Button {
+#scheduling-automation-detail-lifecycle .detail-lifecycle-button {
     margin: 0 1 0 0;
 }
 
@@ -498,7 +498,7 @@ DetailValueRow .detail-value-row-error {
     align: right middle;
 }
 
-.detail-value-row-owner-actions Button {
+.detail-value-row-owner-actions .detail-owner-action-button {
     height: 1;
     min-width: 8;
     border: none;
