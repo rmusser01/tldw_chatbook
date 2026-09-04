@@ -608,10 +608,13 @@ behave exactly as before.)*
 Media ▸ Select mode gained an **Analyze** bulk action on its own row under
 Clear/Export/Review. It generates an analysis for every checked item in
 one run, in list order, and reports progress in place ("Analyzing 3 of 40 ·
-2 failed", then "✓ analyzed · 38 of 40 · 2 failed") with **Retry failed**
-and **Dismiss**. Items that already have an analysis are never overwritten
-silently: the first press offers "N already analysed — **Skip them** |
-**Overwrite**" in that same row. With no analysis provider configured the
-action renders disabled as "○ Analyze" carrying the resolver's own reason
-as its tooltip, and a second press while a run is in flight says "Analysis
-already running" instead of starting a second one.)*
+2 failed", then "✓ analyzed · 38 of 40 · 2 failed", or "✕ analyzed · 0 of 3
+· 3 failed" when nothing succeeded) with **Retry failed** and **Dismiss**.
+Items that already have an analysis are never overwritten silently: the
+first press offers "N of M already analysed" with **Skip them** /
+**Overwrite**. With no analysis provider configured the action renders
+disabled as "○ Analyze" carrying the resolver's own reason as its tooltip;
+a second press while a run is in flight says "Analysis already running";
+and leaving Library mid-run stops it with a notice naming where it got to.
+Details on the [media & conversations](library/media-and-conversations.md)
+page.)*

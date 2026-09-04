@@ -968,14 +968,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             analyze_running = getattr(self.canvas, "analyze_receipt_running", False)
             failed_copy = f" · {analyze_failed} failed" if analyze_failed else ""
             if analyze_choice:
-                analyze_copy = f"{analyze_choice} already analysed — "
+                # R3: no dangling dash -- the buttons are on the row BELOW,
+                # so a trailing "— " pointed at nothing. ``analyze_total``
+                # is the pressed selection's own size on this path.
+                analyze_copy = (
+                    f"{analyze_choice} of {analyze_total} already analysed"
+                )
             elif analyze_running:
                 # 1-based position of the item being analyzed right now.
                 position = min(analyze_done + analyze_failed + 1, analyze_total)
                 analyze_copy = f"Analyzing {position} of {analyze_total}{failed_copy}"
             else:
+                # A run where NOTHING succeeded must not lead with a tick.
+                glyph = "✓" if analyze_done else "✕"
                 analyze_copy = (
-                    f"✓ analyzed · {analyze_done} of {analyze_total}{failed_copy}"
+                    f"{glyph} analyzed · {analyze_done} of {analyze_total}"
+                    f"{failed_copy}"
                 )
             analyze_receipt = Vertical(
                 id="library-media-analyze-receipt",

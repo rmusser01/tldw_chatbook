@@ -18,9 +18,12 @@ the chooser bug needs the screen's focus-on-open):
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
+from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
@@ -436,6 +439,73 @@ async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
 
 
 @pytest.mark.asyncio
+async def test_analyze_receipt_paints_the_running_copy():
+    """Review round 1 (I6): the frozen running copy had no test at all."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_running = True
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 0
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "Analyzing 3 of 40 \u00b7 2 failed" in painted, painted
+        # A run in flight offers neither action: nothing to retry yet, and a
+        # Dismiss that did not cancel would lie.
+        assert "Retry failed" not in painted, painted
+        assert "Dismiss" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_omits_the_failed_segment_and_retry_at_zero():
+    """Review round 1 (I6): the clean-run form -- no "· 0 failed", no Retry."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 40
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "\u2713 analyzed \u00b7 40 of 40" in painted, painted
+        assert "failed" not in painted, painted
+        assert "Retry failed" not in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
+    """Review round 1 (I5): "\u2713 analyzed \u00b7 0 of 3" was a checkmark over a
+    total failure. Retry is still offered -- only the glyph was dishonest."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 3
+        screen._library_media_analyze_done = 0
+        screen._library_media_analyze_failed_ids = ("a", "b", "c")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "\u2715 analyzed \u00b7 0 of 3 \u00b7 3 failed" in painted, painted
+        assert "\u2713" not in painted, painted
+        assert "Retry failed" in painted, painted
+
+
+@pytest.mark.asyncio
 async def test_analyze_overwrite_choice_paints_both_options():
     """task-28007 AC#3: the already-analysed choice is armed IN the receipt row."""
     host = _host()
@@ -453,7 +523,8 @@ async def test_analyze_overwrite_choice_paints_both_options():
         await pilot.pause()
         assert receipt.region.width <= _items_pane_width(screen)
         painted = _painted(host, receipt.region)
-        assert "1 already analysed" in painted, painted
+        assert "1 of 2 already analysed" in painted, painted
+        assert "—" not in painted, painted  # R3: no dangling dash
         assert "Skip them" in painted, painted
         assert "Overwrite" in painted, painted
 
@@ -484,6 +555,113 @@ async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
         assert "Review" in painted, painted
         analyze_painted = _painted(host, analyze_row.region)
         assert "Analyze" in analyze_painted, analyze_painted
+
+
+@pytest.mark.asyncio
+async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
+    """Review round 1 (I4 + the missing end-to-end pin): the REAL button
+    press must drop the select-mode toolbar at once (not one partition
+    pass later) and the finished run must paint its own receipt -- the
+    other painted tests set the canvas fields by hand."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        analyzed = []
+
+        async def _one(media_id, *, resolution):
+            analyzed.append(media_id)
+            return True
+
+        screen._analyze_one_library_media_item = _one
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._toggle_library_media_select_mode()
+            await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-selected"
+            )
+            screen.query_one("#library-media-row-0").press()
+            screen.query_one("#library-media-row-1").press()
+            await pilot.pause()
+            screen.query_one("#library-media-analyze-selected", Button).press()
+            await pilot.pause()
+            assert not screen.query("#library-media-select-actions")
+            assert not screen.query("#library-media-select-analyze")
+            receipt = await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-receipt"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_analyze_running is False,
+                message="the run never settled",
+            )
+            await pilot.pause()
+            painted = _painted(host, receipt.region)
+        assert len(analyzed) == 2, analyzed
+        assert "\u2713 analyzed \u00b7 2 of 2" in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
+    """Review round 1 (I2): the worker is owned by this screen, so Textual
+    cancels it on unmount, and navigating back builds a NEW LibraryScreen
+    whose receipt fields start empty -- an arbitrary prefix would be
+    analysed with nothing on screen ever saying so."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def _one(media_id, *, resolution):
+            if media_id != "b":
+                return True
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return True
+
+        screen._analyze_one_library_media_item = _one
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._start_library_media_analyze(("a", "b", "c"), overwrite=True)
+        worker = next(
+            candidate
+            for candidate in host.workers
+            if candidate.group
+            == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+        )
+        await _wait_for_condition(
+            pilot, entered.is_set, message="the run never reached item 2"
+        )
+        await host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert cancelled.is_set(), "the in-flight item must be cancelled"
+        assert worker.state is WorkerState.CANCELLED
+        assert notices, "a cancelled run must say where it stopped"
+        assert notices[0][0] == (
+            "Analysis stopped at 1 of 3 · reopen Select ▸ Analyze to "
+            "continue; finished items are skipped"
+        ), notices
+        assert notices[0][1].get("severity") == "warning"
 
 
 @pytest.mark.asyncio

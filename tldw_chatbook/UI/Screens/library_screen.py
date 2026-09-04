@@ -9672,6 +9672,23 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        if self._library_media_analyze_running:
+            # task-28007 AC#4: this screen owns the bulk-Analyze worker, so
+            # Textual cancels it here (Widget._on_unmount -> cancel_node),
+            # and navigating back builds a NEW LibraryScreen, so the
+            # receipt's five fields die with this instance. Say where it
+            # stopped BEFORE any await below, while the counts are still
+            # true -- the cancelled worker cannot resume until this handler
+            # yields. Finished items persisted; the rest simply never ran,
+            # and a fresh run skips what is already analysed.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    f"Analysis stopped at {self._library_media_analyze_done} "
+                    f"of {self._library_media_analyze_total} · reopen "
+                    "Select ▸ Analyze to continue; finished items are skipped",
+                    severity="warning",
+                )
         self._disarm_library_list_entry_focus()
         self._invalidate_library_notes_tree_for_unmount()
         self._conversations_state.reader_mounted_authority = False
@@ -15539,7 +15556,13 @@ class LibraryScreen(BaseAppScreen):
         """Canvas inputs for the bulk-Analyze receipt (task-28007 AC#3/AC#4)."""
         choice = self._library_media_analyze_choice
         return {
-            "analyze_receipt_total": self._library_media_analyze_total,
+            # On the armed-choice path the total IS the pressed selection
+            # ("N of M already analysed"); no run has set a total yet.
+            "analyze_receipt_total": (
+                len(choice[0])
+                if choice is not None
+                else self._library_media_analyze_total
+            ),
             "analyze_receipt_done": self._library_media_analyze_done,
             "analyze_receipt_failed": len(self._library_media_analyze_failed_ids),
             "analyze_receipt_running": self._library_media_analyze_running,
@@ -42059,8 +42082,13 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _save_library_media_analysis(
-        self, media_id: str, *, content: str, analysis_content: str
-    ) -> None:
+        self,
+        media_id: str,
+        *,
+        content: str,
+        analysis_content: str,
+        viewer_owned: bool = True,
+    ) -> bool:
         """Persist an analysis edit as a new document version, then re-fetch detail.
 
         Guards against a missing ``save_analysis_version`` service or a
@@ -42074,10 +42102,20 @@ class LibraryScreen(BaseAppScreen):
             content: The current document content, sent unchanged alongside
                 the edited analysis (``save_analysis_version`` requires it).
             analysis_content: The edited analysis text to persist.
+            viewer_owned: False when the caller is the task-28007 bulk run
+                rather than the Reader. A bulk item must not clear the
+                Reader's editing flag, must not raise one toast per item
+                (its receipt counts the failure), and must not re-fetch a
+                detail nobody is reading.
+
+        Returns:
+            True when the analysis actually persisted. The bulk run counts
+            a failed save as a failed item -- this used to be swallowed.
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         save_analysis_version = getattr(service, "save_analysis_version", None)
         service_media_id = self._library_media_backing_id(media_id)
+        saved = False
         if callable(save_analysis_version):
             try:
                 await self._run_library_service_call(
@@ -42088,19 +42126,29 @@ class LibraryScreen(BaseAppScreen):
                     analysis_content=analysis_content,
                     isolate_in_worker=True,
                 )
+                saved = True
             except Exception:
                 logger.opt(exception=True).warning(
                     f"Failed to save Library media analysis for {media_id!r}."
                 )
-                self._notify_library_media_analysis_warning(
-                    "Could not save analysis changes; showing the latest saved version."
-                )
-        else:
+                if viewer_owned:
+                    self._notify_library_media_analysis_warning(
+                        "Could not save analysis changes; showing the latest "
+                        "saved version."
+                    )
+        elif viewer_owned:
             self._notify_library_media_analysis_warning(
                 "Analysis editing is unavailable."
             )
-        self._library_media_editing_analysis = False
-        await self._refresh_library_media_detail(media_id)
+        if viewer_owned:
+            self._library_media_editing_analysis = False
+        if viewer_owned or media_id == self._selected_media_id:
+            # A bulk item nobody is reading needs no detail re-fetch (that
+            # call pulls the whole document and then discards it for any id
+            # that is not the open selection); the OPEN item still refreshes
+            # so the Reader never shows a stale analysis.
+            await self._refresh_library_media_detail(media_id)
+        return saved
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.
@@ -42108,11 +42156,6 @@ class LibraryScreen(BaseAppScreen):
         Args:
             message: Human-readable warning text to notify with.
         """
-        if getattr(self, "_library_media_analyze_running", False):
-            # task-28007 AC#4: a bulk run over N items would raise up to N
-            # of these for ONE gesture. Its receipt carries the failure
-            # count instead, which is the honest per-set report.
-            return
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
@@ -42167,7 +42210,12 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _generate_library_media_analysis(
-        self, media_id: str, *, content: str, resolution: Any
+        self,
+        media_id: str,
+        *,
+        content: str,
+        resolution: Any,
+        viewer_owned: bool = True,
     ) -> bool:
         """Dispatch the analysis LLM call off-thread, then persist the result.
 
@@ -42180,6 +42228,10 @@ class LibraryScreen(BaseAppScreen):
             content: The document content to analyze.
             resolution: The ready ``IngestAnalysisResolution`` describing the
                 provider, credential, and sampling parameters.
+            viewer_owned: False when the task-28007 bulk run is the caller.
+                A bulk item must not clear the Reader's "Generating
+                analysis…" state (a concurrent Reader generation owns it),
+                must not recompose the Reader, and must not toast per item.
 
         Returns:
             True when an analysis was produced and handed to the save seam.
@@ -42196,17 +42248,21 @@ class LibraryScreen(BaseAppScreen):
             )
             analysis_text = ""
         analysis_text = (analysis_text or "").strip()
-        self._library_media_generating_analysis = False
+        if viewer_owned:
+            self._library_media_generating_analysis = False
         if not analysis_text:
-            self._notify_library_media_analysis_warning(
-                "Analysis generation returned nothing; the item is unchanged."
-            )
-            self._sync_library_media_viewer_or_recompose()
+            if viewer_owned:
+                self._notify_library_media_analysis_warning(
+                    "Analysis generation returned nothing; the item is unchanged."
+                )
+                self._sync_library_media_viewer_or_recompose()
             return False
-        await self._save_library_media_analysis(
-            media_id, content=content, analysis_content=analysis_text
+        return await self._save_library_media_analysis(
+            media_id,
+            content=content,
+            analysis_content=analysis_text,
+            viewer_owned=viewer_owned,
         )
-        return True
 
     def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
         """Call the resolved provider once and return the analysis text.
@@ -42343,7 +42399,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             media_ids: Ids to analyze, already in browse order.
             overwrite: Whether items that already carry an analysis are
-                included (AC#3: only ever True by an explicit choice).
+                included. True SKIPS the AC#3 partition entirely, so a
+                caller passing True owns that gate: only pass it for an id
+                set the user has already chosen (Overwrite), or one already
+                known to carry no analysis (Skip them, Retry failed).
         """
         if self._library_media_analyze_running:
             notify = getattr(self.app_instance, "notify", None)
@@ -42361,11 +42420,15 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_analysis_warning(reason)
             return
         self._library_media_analyze_reason_cache = None
-        if self._library_media_select_mode:
-            # task-31233's precedent: a bulk action that runs leaves select
-            # mode, so the receipt lands on the list the user returns to.
-            self._exit_library_media_select_mode(announce_discard=False)
         self._clear_library_media_analyze_receipt()
+        if self._library_media_select_mode:
+            # task-31233's precedent, including its canvas sync: a bulk
+            # action that runs leaves select mode, and without the repaint
+            # the checkbox toolbar stays on screen over an already-cleared
+            # selection until the worker's first sync -- a whole partition
+            # pass (one DB read per selected id) later.
+            self._exit_library_media_select_mode(announce_discard=False)
+            _sync_library_canvas(self, "media")
         self._library_media_analyze_running = True
         self.run_worker(
             self._analyze_library_media_selection(
@@ -42419,7 +42482,11 @@ class LibraryScreen(BaseAppScreen):
                 _sync_library_canvas(self, "media", allow_screen_fallback=False)
         finally:
             self._library_media_analyze_running = False
-            _sync_library_canvas(self, "media")
+            # Same no-fallback rule as the progress syncs: this also runs
+            # on the cancellation path, i.e. while the screen is being
+            # unmounted, where a whole-screen recompose is both useless and
+            # unsafe. A canvas composed later reads these fields anyway.
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
 
     async def _analyze_one_library_media_item(
         self, media_id: str, *, resolution: Any
@@ -42440,7 +42507,7 @@ class LibraryScreen(BaseAppScreen):
         if not content.strip():
             return False
         return await self._generate_library_media_analysis(
-            media_id, content=content, resolution=resolution
+            media_id, content=content, resolution=resolution, viewer_owned=False
         )
 
     async def _library_media_unanalyzed_ids(

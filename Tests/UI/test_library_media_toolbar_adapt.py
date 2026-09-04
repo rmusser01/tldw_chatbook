@@ -160,10 +160,14 @@ async def test_select_mode_bulk_actions_are_words_not_markers():
         assert len(actions_row.query(Button)) == 3  # Clear, Export, Review
 
 
+@pytest.mark.parametrize("size", [(40, 34), (100, 30)])
 @pytest.mark.asyncio
-async def test_select_mode_rows_fit_the_pane_floor():
+async def test_select_mode_rows_fit_the_pane_floor(size):
+    """task-28007 AC#4: Analyze joins the budget, at the floor AND at the
+    100x30 shell width -- it rides its own row precisely because the pane
+    (36 cells here) could not carry a fourth action beside Export/Review."""
     app = _CanvasApp(_select_state(selected_count=1))
-    async with app.run_test(size=(40, 34)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await pilot.pause()
         canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
         right = canvas.region.x + canvas.region.width
@@ -172,11 +176,25 @@ async def test_select_mode_rows_fit_the_pane_floor():
             "#library-media-select-clear",
             "#library-media-export-selected",
             "#library-media-review-selected",
+            "#library-media-analyze-selected",
             "#library-media-delete-selected",
+            "#library-media-row-0",
         ):
             button = app.query_one(selector, Button)
             assert button.region.width > 0, selector
             assert button.region.x + button.region.width <= right, selector
+        # Painted, not just placed: Analyze and Delete both readable, and
+        # the list still paints under them.
+        strips = list(app.screen._compositor.render_strips())
+        painted = "\n".join(
+            strips[y].crop(canvas.region.x, canvas.region.right).text
+            for y in range(canvas.region.y, min(canvas.region.bottom, len(strips)))
+        )
+        assert "Analyze" in painted, painted
+        assert "Delete" in painted, painted
+        # (The list's own paint is pinned on the real screen -- this bare
+        # canvas fixture carries an ``empty_copy`` and renders the status
+        # line in place of its rows; the row geometry above is the pin here.)
 
 
 @pytest.mark.asyncio

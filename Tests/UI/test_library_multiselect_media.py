@@ -2245,7 +2245,10 @@ def _analyze_fake(
     fake._fetch_library_media_analysis_detail = _detail
     generated = []
 
-    async def _generate(media_id, *, content, resolution):
+    async def _generate(media_id, *, content, resolution, viewer_owned=True):
+        # Review round 1 (I3): the bulk loop owns none of the Reader's
+        # state, so it always passes viewer_owned=False.
+        assert viewer_owned is False, "a bulk item must not be viewer-owned"
         generated.append(media_id)
         return True if generate is None else generate(media_id)
 
@@ -2411,3 +2414,100 @@ async def test_analyze_skip_with_nothing_left_to_run_retires_the_choice(monkeypa
     assert len(fake._worker_calls) == 1  # nothing to run
     assert fake._library_media_analyze_choice is None
     assert fake._generated == []
+
+
+def test_analyze_press_repaints_the_canvas_when_it_leaves_select_mode(monkeypatch):
+    """Review round 1 (I4): leaving select mode without a canvas sync left
+    the checkbox toolbar painted over an already-cleared selection until
+    the worker's first sync -- a whole partition pass (one DB read per
+    selected id) later. task-31233's precedent syncs on the same line."""
+    fake = _analyze_fake(monkeypatch)
+    assert fake._syncs == []
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+
+    assert fake._library_media_select_mode is False
+    assert fake._syncs, "leaving select mode must repaint the canvas at once"
+    assert len(fake._worker_calls) == 1
+    fake._worker_calls[0][0].close()  # the captured coroutine is never run here
+
+
+@pytest.mark.asyncio
+async def test_bulk_run_never_touches_reader_state_and_counts_a_failed_save(
+    monkeypatch,
+):
+    """Review round 1 (I3): the generator is SHARED with the Reader's own
+    Generate. A bulk item must not clear the Reader's "Generating
+    analysis…" / editing flags, must not recompose the Reader once per
+    item (its empty-analysis path falls back to a whole-screen recompose),
+    and must not raise one toast per item. A save that fails is a FAILED
+    item -- it used to be swallowed and counted as done."""
+    fake = _analyze_fake(monkeypatch)
+    for name in (
+        "_generate_library_media_analysis",
+        "_save_library_media_analysis",
+        "_notify_library_media_analysis_warning",
+    ):
+        setattr(fake, name, types.MethodType(getattr(LibraryScreen, name), fake))
+    # id "1" returns nothing (the viewer-recompose path); the others reach
+    # the save, which fails (the swallowed-failure path).
+    fake._dispatch_library_media_analysis = (
+        lambda content, resolution: "" if content.endswith("1") else "an analysis"
+    )
+    fake._library_media_backing_id = lambda media_id: media_id
+    fake._selected_media_id = ""
+    fake._library_media_generating_analysis = True  # a Reader run in flight
+    fake._library_media_editing_analysis = True
+    recomposes = []
+    fake._sync_library_media_viewer_or_recompose = lambda: recomposes.append(1)
+    refreshed = []
+
+    async def _refresh(media_id, **_kwargs):
+        refreshed.append(media_id)
+
+    fake._refresh_library_media_detail = _refresh
+
+    async def _service_call(_callable, **_kwargs):
+        raise RuntimeError("media service is down")
+
+    fake._run_library_service_call = _service_call
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        save_analysis_version=lambda **_kwargs: None
+    )
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    assert recomposes == [], "a bulk item must never recompose the Reader"
+    assert refreshed == [], "and must not re-fetch a detail nobody is reading"
+    assert fake._library_media_generating_analysis is True
+    assert fake._library_media_editing_analysis is True
+    assert fake._notified == [], "the receipt is the per-set report, not N toasts"
+    assert fake._library_media_analyze_done == 0
+    assert fake._library_media_analyze_failed_ids == ("3", "1", "2")
+
+
+@pytest.mark.asyncio
+async def test_reader_generate_keeps_its_own_state_and_warning(monkeypatch):
+    """The other half of I3: with ``viewer_owned`` defaulting True the
+    Reader's own Generate still clears its flag, recomposes, and warns."""
+    fake = _analyze_fake(monkeypatch)
+    fake._generate_library_media_analysis = types.MethodType(
+        LibraryScreen._generate_library_media_analysis, fake
+    )
+    fake._notify_library_media_analysis_warning = types.MethodType(
+        LibraryScreen._notify_library_media_analysis_warning, fake
+    )
+    fake._dispatch_library_media_analysis = lambda content, resolution: ""
+    recomposes = []
+    fake._sync_library_media_viewer_or_recompose = lambda: recomposes.append(1)
+    fake._library_media_generating_analysis = True
+
+    persisted = await fake._generate_library_media_analysis(
+        "7", content="body", resolution=SimpleNamespace(ready=True)
+    )
+
+    assert persisted is False
+    assert fake._library_media_generating_analysis is False
+    assert recomposes == [1]
+    assert fake._notified and "returned nothing" in fake._notified[0][0]
