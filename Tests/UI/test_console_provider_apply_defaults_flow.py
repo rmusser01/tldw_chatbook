@@ -1227,6 +1227,9 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         before = console._session._active_console_session_settings()
         session_id = session_store.active_session_id
         assert before is not None and session_id is not None
+        session = session_store.ensure_session()
+        assert session.id == session_id
+        assert session.has_user_work is False
         controller = console._ensure_console_chat_controller()
         controller_before = (
             controller.provider,
@@ -1256,6 +1259,7 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         assert console.consume_pending_vllm_console_intent() is False
         assert session_store.active_session_id == session_id
         assert session_store.session_settings(session_id) == before
+        assert session.has_user_work is False
         assert (
             controller.provider,
             controller.model,
@@ -1265,6 +1269,74 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
         monkeypatch.setattr(console, "_sync_console_settings_summary", original_sync)
+        assert console.consume_pending_vllm_console_intent() is True
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failing_sync",
+    ("_sync_console_chat_core_state", "_sync_console_settings_summary"),
+)
+async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fails(
+    monkeypatch,
+    failing_sync,
+) -> None:
+    """Released retries must not leave any forward vLLM projection visible."""
+
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _console_app()
+    _, target = _install_ready_vllm_target(app)
+    harness = _ConsoleFlowHarness(app)
+
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        session_store = console._ensure_console_chat_store()
+        before = console._session._active_console_session_settings()
+        session_id = session_store.active_session_id
+        assert before is not None and session_id is not None
+        controller = console._ensure_console_chat_controller()
+        controller_before = (
+            controller.provider,
+            controller.model,
+            controller.base_url,
+        )
+        summary_widget = console.query_one(
+            "#console-settings-summary",
+            ConsoleSettingsSummary,
+        )
+        summary_before = summary_widget.state
+        original_sync = getattr(console, failing_sync)
+        calls = 0
+
+        def apply_forward_then_fail_rollback():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                original_sync()
+            raise RuntimeError("controlled forward and rollback sync failure")
+
+        monkeypatch.setattr(console, failing_sync, apply_forward_then_fail_rollback)
+        app.pending_handoffs.stage(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent.from_target(target),
+        )
+
+        assert console.consume_pending_vllm_console_intent() is False
+        monkeypatch.setattr(console, failing_sync, original_sync)
+        assert calls == 2
+        assert session_store.session_settings(session_id) == before
+        assert (
+            controller.provider,
+            controller.model,
+            controller.base_url,
+        ) == controller_before
+        assert summary_widget.state == summary_before
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         assert console.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 

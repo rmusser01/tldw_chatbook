@@ -7445,6 +7445,11 @@ class ChatScreen(BaseAppScreen):
         session_store = None
         session_id = None
         current = None
+        next_settings = None
+        current_has_user_work = None
+        current_controller = None
+        current_provider_selection = None
+        current_summary_state = None
         replacement_started = False
         try:
             intent = claim.value
@@ -7460,6 +7465,13 @@ class ChatScreen(BaseAppScreen):
             session_id = session_store.active_session_id
             if session_id is None:
                 raise RuntimeError("Console active session is unavailable")
+            active_session = session_store.ensure_session()
+            if active_session.id != session_id:
+                raise RuntimeError("Console active session changed before adoption")
+            current_has_user_work = active_session.has_user_work
+            current_controller = self._console_chat_controller
+            current_provider_selection = self._build_console_provider_selection()
+            current_summary_state = self._build_console_settings_summary_state()
             next_settings = replace(
                 current,
                 provider="vllm",
@@ -7487,12 +7499,42 @@ class ChatScreen(BaseAppScreen):
                 replacement_started
                 and session_store is not None
                 and session_id is not None
+                and next_settings is not None
+                and current is not None
+                and current_has_user_work is not None
             ):
                 try:
-                    session_store.replace_session_settings(session_id, current)
+                    restored = session_store.rollback_session_settings_replacement(
+                        session_id,
+                        expected_settings=next_settings,
+                        prior_settings=current,
+                        prior_has_user_work=current_has_user_work,
+                    )
+                    if not restored:
+                        raise RuntimeError(
+                            "vLLM Console rollback lost its session fence"
+                        )
                     if session_store.active_session_id == session_id:
-                        self._sync_console_chat_core_state()
-                        self._sync_console_settings_summary()
+                        try:
+                            self._sync_console_chat_core_state()
+                        except BaseException:
+                            if current_controller is None:
+                                if self._console_chat_controller is not None:
+                                    raise
+                            elif current_provider_selection is None:
+                                raise
+                            else:
+                                current_controller.update_provider_selection(
+                                    current_provider_selection
+                                )
+                        try:
+                            self._sync_console_settings_summary()
+                        except BaseException:
+                            if current_summary_state is None:
+                                raise
+                            self._apply_console_settings_summary_state(
+                                current_summary_state
+                            )
                 except BaseException:
                     logger.warning(
                         "vLLM Console handoff rollback failed "
@@ -7751,7 +7793,15 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
-        summary_state = self._build_console_settings_summary_state()
+        self._apply_console_settings_summary_state(
+            self._build_console_settings_summary_state()
+        )
+
+    def _apply_console_settings_summary_state(
+        self,
+        summary_state: ConsoleSettingsSummaryState,
+    ) -> None:
+        """Apply one already-derived settings summary to its mounted owners."""
         try:
             summary = self.query_one(
                 "#console-settings-summary", ConsoleSettingsSummary

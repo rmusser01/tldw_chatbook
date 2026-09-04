@@ -8615,6 +8615,39 @@ class ConsoleChatStore:
             self._bump_settings_revision(session_id)
         return session
 
+    def rollback_session_settings_replacement(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+        prior_settings: ConsoleSessionSettings,
+        prior_has_user_work: bool,
+    ) -> bool:
+        """Compensate one exact failed settings replacement.
+
+        The normal replacement path deliberately marks a changed session as
+        user-owned. A failed cross-screen adoption must restore that ownership
+        bit along with the settings or a pristine default session can no longer
+        follow later default refreshes.
+        """
+
+        if (
+            not isinstance(expected_settings, ConsoleSessionSettings)
+            or not isinstance(prior_settings, ConsoleSessionSettings)
+            or type(prior_has_user_work) is not bool
+        ):
+            raise TypeError("Exact Console settings rollback state is required.")
+        with self._fork_source_transition(session_id):
+            session = self._session_or_raise(session_id)
+            if session.settings == prior_settings:
+                session.has_user_work = prior_has_user_work
+                return True
+            if session.settings != expected_settings:
+                return False
+            session = self._replace_session_settings(session_id, prior_settings)
+            session.has_user_work = prior_has_user_work
+            return True
+
     def session_draft(self, session_id: str) -> str:
         """Return the in-memory composer draft for a native Console session."""
         return self._session_or_raise(session_id).draft
