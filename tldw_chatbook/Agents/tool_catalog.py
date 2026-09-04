@@ -96,6 +96,9 @@ PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
         "profile_promote",
     }
 )
+CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
+)
 
 
 class ToolExecutionPolicy(StrEnum):
@@ -1442,6 +1445,8 @@ class ToolCatalogRegistry:
         self._providers: list[ToolProvider] = []
         self._builtin_library_provider: ToolProvider | None = None
         self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._canvas_provider: ToolProvider | None = None
+        self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
         # saved locally"). Enforced in `invoke_by_name` -- the one choke
         # point every provider's `invoke()` is reached through -- rather
@@ -1540,6 +1545,50 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
         return True
 
+    def register_canvas_provider(self, provider: object, authority: object) -> bool:
+        """Register only an exact live scoped Canvas provider and capability.
+
+        Canvas names are reserved even while Canvas is unavailable.  Neither
+        matching names/source strings nor a structural protocol lookalike can
+        acquire the reversible-conversation-local approval classification.
+        """
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        if type(provider) is not CanvasToolProvider:
+            return False
+        assert isinstance(provider, CanvasToolProvider)
+        if (
+            type(authority) is not CanvasToolRegistrationAuthority
+            or authority.classification
+            is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            or not provider.authenticates_registration_authority(authority)
+            or not provider.scope_is_current()
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != CANVAS_RESERVED_TOOL_NAMES
+            or any(entry.source != "canvas" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._canvas_provider is not None:
+                return False
+            self._canvas_provider = provider
+            self._canvas_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
     def _authenticated_builtin_library_name(
         self, provider: ToolProvider, name: str
     ) -> bool:
@@ -1552,6 +1601,24 @@ class ToolCatalogRegistry:
             and authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
             and name in LIBRARY_RESERVED_TOOL_NAMES
             and provider.authenticates_builtin_authority(authority)
+        )
+
+    def _authenticated_canvas_name(self, provider: ToolProvider, name: str) -> bool:
+        """Return whether one reserved name has its exact live Canvas owner."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        authority = self._canvas_authority
+        return bool(
+            provider is self._canvas_provider
+            and type(provider) is CanvasToolProvider
+            and type(authority) is CanvasToolRegistrationAuthority
+            and name in CANVAS_RESERVED_TOOL_NAMES
+            and provider.authenticates_registration_authority(authority)
+            and provider.scope_is_current()
         )
 
     def reset_catalog_cache(self) -> None:
@@ -1632,6 +1699,11 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    entry.name in CANVAS_RESERVED_TOOL_NAMES
+                    and not self._authenticated_canvas_name(provider, entry.name)
+                ):
+                    continue
                 if (
                     self._ephemeral
                     and entry.source == "library"
@@ -1720,6 +1792,29 @@ class ToolCatalogRegistry:
             record.provider, ToolRecordProjectionProvider
         )
 
+    def is_canvas_reversible_conversation_local_mutation(self, name: str) -> bool:
+        """Return the narrow nominal pre-authorization for Canvas mutations."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+        )
+
+        record = self._owner_record_for_name(name)
+        if (
+            record is None
+            or type(record.provider) is not CanvasToolProvider
+            or not self._authenticated_canvas_name(record.provider, name)
+        ):
+            return False
+        try:
+            return (
+                record.provider.approval_classification_for(record.tool_id)
+                is CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            )
+        except Exception:  # noqa: BLE001 - approval classification fails closed
+            return False
+
     def project_tool_record(
         self,
         audience: ToolProjectionAudience,
@@ -1784,6 +1879,15 @@ class ToolCatalogRegistry:
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        if name in CANVAS_RESERVED_TOOL_NAMES:
+            if not self._authenticated_canvas_name(provider, name):
+                return ToolResult.blocked("Canvas authority is unavailable.")
+            if name in {"canvas_create", "canvas_update"} and not (
+                self.is_canvas_reversible_conversation_local_mutation(name)
+            ):
+                return ToolResult.blocked(
+                    "Canvas reversible conversation-local authority is unavailable."
+                )
         # TASK-26005: repair arguments the model JSON-encoded as strings before
         # anything downstream sees them. Placed here rather than at either
         # `provider.invoke` below because this method has two dispatch sites and
@@ -1809,6 +1913,8 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         if self._ephemeral:
+            if self._authenticated_canvas_name(provider, name):
+                return provider.invoke(tool_id, args)
             if self._authenticated_builtin_library_name(provider, name):
                 return provider.invoke(tool_id, args)
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
