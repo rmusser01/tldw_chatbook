@@ -32,6 +32,7 @@ from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
     DefinitionOwnerActionRequested,
+    DefinitionRunNowRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
@@ -45,6 +46,7 @@ from ....Scheduling.events import (
     SyncFailed,
     TransferToLocalRequested,
     TransferToServerRequested,
+    ViewDefinitionAuditRequested,
     ViewDefinitionResultsRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask
@@ -84,6 +86,7 @@ from ....Widgets.detail_value_row import DetailValueRow
 # so the DataTable render call site below and the pre-existing
 # `test_execution_target_label_matrix` test (which imports
 # `automation_execution_target_label` from THIS module) keep working.
+from .definition_audit_view import DefinitionAuditView, audit_notice_text, fetch_definition_audit
 from .definition_detail import (
     DefinitionDetail,
     _definition_transfer_suffix,
@@ -2126,6 +2129,62 @@ class SchedulesWorkbench(BaseAppScreen):
             )
         )
 
+    @on(DefinitionRunNowRequested)
+    def _on_definition_run_now_requested(
+        self, event: DefinitionRunNowRequested
+    ) -> None:
+        """A definition pane's `Run now` button was pressed (redesign
+        PR-4, task 3 -- the retired Automations-tab `r` key's live
+        replacement, ruling 2). Fires from either sibling
+        `DefinitionDetail` instance (Queue or Automations tab); routed
+        through the existing owner-routed dispatch unchanged."""
+        event.stop()
+        self._run_automation_now(event.definition)
+
+    @on(ViewDefinitionAuditRequested)
+    def _on_view_definition_audit_requested(
+        self, event: ViewDefinitionAuditRequested
+    ) -> None:
+        """A definition pane's `Last run` row was activated (redesign
+        PR-4, task 3 -- the retired Automations-tab third pane's live
+        replacement). Fires from either sibling `DefinitionDetail`
+        instance (Queue or Automations tab)."""
+        event.stop()
+        self._push_definition_audit_overlay(event.definition)
+
+    def _push_definition_audit_overlay(self, definition: dict[str, Any]) -> None:
+        """Push a standalone `DefinitionAuditView` via `WorkbenchHostScreen`.
+
+        Unlike `_push_conflicts_overlay`/`_push_results_overlay`, the
+        fetch here is unavoidably async (`server_client.list_automation_
+        definition_audit`) -- there is no synchronous value to pre-read
+        before pushing, so the widget fetches its OWN data on mount
+        (`DefinitionAuditView.on_mount`) rather than being handed one.
+        Read-only (no r/d/o/a-shaped mutation surface), so the plain
+        `WorkbenchHostScreen` hosts it directly -- no dedicated Screen
+        subclass, no `dismissed` hook needed (nothing here can go stale
+        by being viewed).
+        """
+        service = self._service()
+        name = str(
+            definition.get("name") or definition.get("id") or "Untitled automation"
+        )
+
+        def _factory() -> DefinitionAuditView:
+            return DefinitionAuditView(
+                service, dict(definition), id="scheduling-audit-view-overlay"
+            )
+
+        # The `Screen.title` -> `Header` route renders through `Content
+        # (title)` (a LITERAL constructor, unlike `Static.update(str)` ->
+        # `Content.from_markup`) -- verified against Textual's own
+        # `App.format_title`/`Content.__init__` -- so the definition's
+        # name needs no `escape_markup` here, unlike `ResultsTab`'s own
+        # `heading` Static.
+        self.app.push_screen(
+            WorkbenchHostScreen(_factory, title=f"Run history — {name}")
+        )
+
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
         """Hand off the active schedule run or digest output to the Console."""
@@ -2993,7 +3052,11 @@ class SchedulesWorkbench(BaseAppScreen):
         Results tab's ``r`` marks the selected result read instead
         (schedules-handoff PR-6 task 3 -- a natural reading of the same
         key); everywhere else it is the local reminder Run-now
-        (task-18938).
+        (task-18938) OR, redesign PR-4 task 3, a Queue definition row's
+        own run-now (same owner-routed dispatch the Automations tab's
+        ``r`` uses -- `_run_automation_now` is family-agnostic, so this
+        works for every definition family, not just `recurring_
+        question`).
         """
         try:
             active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
@@ -3008,14 +3071,16 @@ class SchedulesWorkbench(BaseAppScreen):
             self._review_selected_result("read")
             return
         task = self._selected_reminder_task()
-        if task is None:
-            # Never swallow the key silently (final review F8): on a
-            # definition row `r` did nothing at all, with no message.
-            self.app_instance.notify(
-                self._no_task_notice("run"), severity="warning"
-            )
+        if task is not None:
+            self._run_reminder_now(task)
             return
-        self._run_reminder_now(task)
+        definition = self._selected_queue_definition()
+        if definition is not None:
+            self._run_automation_now(definition)
+            return
+        # Never swallow the key silently (final review F8): nothing at
+        # all under the cursor did nothing, with no message.
+        self.app_instance.notify(self._no_task_notice("run"), severity="warning")
 
     def _selected_reminder_task(self) -> ReminderTask | None:
         """Return the highlighted task when it is a reminder (not a projection)."""
@@ -3023,6 +3088,28 @@ class SchedulesWorkbench(BaseAppScreen):
             if task.id == self._selected_task_id and isinstance(task, ReminderTask):
                 return task
         return None
+
+    def _selected_queue_definition(self) -> dict[str, Any] | None:
+        """Return the automation definition under the QUEUE cursor, if any.
+
+        redesign PR-4, task 3: the Queue-row counterpart of `_selected_
+        automation` (which reads the Automations tab's own table) --
+        `_selected_task`'s own row-index routing (the two lists diverge
+        whenever a definition row precedes the cursor), but returning the
+        DEFINITION instead of `None` for a definition row rather than
+        `_selected_task`'s "nothing to act on" contract, since Queue
+        definition rows now have run-now/edit actions of their own.
+        """
+        if not self._visible_rows:
+            return None
+        table = self.query_one("#scheduling-task-table", DataTable)
+        row_index = table.cursor_row
+        if row_index is None or not (0 <= row_index < len(self._visible_rows)):
+            return None
+        row = self._visible_rows[row_index]
+        if row.kind != "definition":
+            return None
+        return row.source_row
 
     def _run_reminder_now(self, task: ReminderTask) -> None:
         """Dispatch one reminder through the scheduler's own path (task-18938)."""
@@ -3373,7 +3460,15 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     async def _load_automation_history(self, definition_id: str) -> None:
-        """Fetch and render one definition's durable execution-audit trail."""
+        """Fetch and render one definition's durable execution-audit trail.
+
+        The fetch+branch logic is `definition_audit_view.fetch_
+        definition_audit` (redesign PR-4, task 3: factored out so the
+        new pushed `DefinitionAuditView` shares it rather than
+        duplicating this method's own five-way branch) -- this method
+        keeps its own paint code (this pane's own DataTable/notice/title
+        ids, plus the staleness re-checks a background worker needs)
+        unchanged."""
         table = self.query_one("#scheduling-automation-history-table", DataTable)
         notice = self.query_one("#scheduling-automation-history-notice", Static)
         title = self.query_one("#scheduling-automation-history-title", Static)
@@ -3389,57 +3484,16 @@ class SchedulesWorkbench(BaseAppScreen):
         table.clear()
         self._update_static_content(notice, "Loading run history…")
 
-        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
-
-        owner_id = (definition or {}).get("owner_id")
-        if (definition or {}).get("pending_sync"):
-            # Never synced: the audit endpoint has no id to look up, and
-            # asking it with a local uuid would render a bare error.
-            table.clear()
-            self._update_static_content(
-                notice,
-                "This automation hasn't synced to the server yet, so it has "
-                "no run history.",
-            )
-            return
-        if not is_server_scoped_owner(owner_id):
-            # Honest gap (task-5 fix round): local automation runs are not
-            # tracked in a durable audit trail yet -- only the server side
-            # is. Never claim a server-shaped history for a local row.
-            table.clear()
-            self._update_static_content(
-                notice, "Local automation history isn't available yet."
-            )
-            return
-
-        service = self._scheduling_service
-        server_client = getattr(service, "server_client", None) if service else None
-        if server_client is None:
-            table.clear()
-            self._update_static_content(
-                notice, "Run history needs a connected server."
-            )
-            return
-        try:
-            response = await server_client.list_automation_definition_audit(
-                definition_id
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "Failed to load automation audit trail (definition_id={})",
-                definition_id,
-            )
-            table.clear()
-            self._update_static_content(
-                notice, "Could not load the run history — see the log."
-            )
-            return
+        result = await fetch_definition_audit(
+            self._scheduling_service, definition or {"id": definition_id}
+        )
         if definition_id != self._selected_automation_id:
             return
-        items = list(response.get("items", []))
-        total = int(response.get("total", len(items)) or 0)
         table.clear()
-        for event in items:
+        if result.notice_override is not None:
+            self._update_static_content(notice, result.notice_override)
+            return
+        for event in result.items:
             created = str(event.get("created_at") or "")
             # Keep the timestamp compact: date and minute-level time,
             # no microseconds or timezone noise in a table cell.
@@ -3454,12 +3508,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 Text(str(event.get("event_type") or "?")),
                 Text(summary),
             )
-        suffix = f" of {total}" if total > len(items) else ""
         self._update_static_content(
-            notice,
-            f"{len(items)} event{'' if len(items) == 1 else 's'}{suffix}."
-            if items
-            else "No recorded events for this automation yet.",
+            notice, audit_notice_text(result.items, result.total)
         )
 
     def _request_automation_detail(self, definition_id: str) -> None:
@@ -3819,14 +3869,26 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-run-automation-now",
         )  # type: ignore[arg-type]
 
-    def _edit_selected_automation(self) -> None:
-        """Open the selected automation definition for editing (e key).
+    def _edit_selected_automation(
+        self, definition: dict[str, Any] | None = None
+    ) -> None:
+        """Open an automation definition for editing (e key).
 
         `agent_task` rows are excluded -- only `recurring_question`
         authoring exists (the same v1 scope guard `save_definition`
         itself enforces via `_reject_unsupported_family`).
+
+        Args:
+            definition: The definition to edit, already resolved by the
+                caller. Defaults to `_selected_automation()` (the
+                Automations tab's own highlighted row) -- every pre-
+                task-3 call site omits this and is unaffected. redesign
+                PR-4, task 3's Queue-row routing passes `_selected_queue_
+                definition()`'s result instead, reusing this same
+                resolve-id/open-form body rather than a second copy.
         """
-        definition = self._selected_automation()
+        if definition is None:
+            definition = self._selected_automation()
         if definition is None:
             self.app_instance.notify(
                 "Nothing to edit — select an automation first.",
@@ -4945,7 +5007,11 @@ class SchedulesWorkbench(BaseAppScreen):
         Routes by active tab, same shape as `action_run_task_now`: the
         Automations tab's `e` opens `AutomationDefinitionForm` pre-filled
         for a `recurring_question` row (either owner); everywhere else it
-        is the existing reminder edit flow.
+        is the existing reminder edit flow OR, redesign PR-4 task 3, a
+        Queue definition row's own edit-in-full -- `_edit_selected_
+        automation` itself refuses honestly for a non-`recurring_question`
+        row (the same refusal the Automations tab's `e` already gives),
+        so a Queue `agent_task` row's `e` reads the identical copy.
         """
         try:
             active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
@@ -4955,23 +5021,27 @@ class SchedulesWorkbench(BaseAppScreen):
             self._edit_selected_automation()
             return
         task = self._selected_task()
-        if task is None:
-            self.app_instance.notify(
-                self._no_task_notice("edit"),
-                severity="warning",
-            )
+        if task is not None:
+            if not isinstance(task, ReminderTask):
+                # task-23106: say who owns the row instead of exposing the
+                # internal reminder/projection split.
+                self.app_instance.notify(
+                    _managed_elsewhere_notice(task, verb="edit"),
+                    severity="warning",
+                )
+                return
+            if self._refuse_if_transfer_locked(task, "edit this task"):
+                return
+            self.post_message(EditTaskRequested(task))
             return
-        if not isinstance(task, ReminderTask):
-            # task-23106: say who owns the row instead of exposing the
-            # internal reminder/projection split.
-            self.app_instance.notify(
-                _managed_elsewhere_notice(task, verb="edit"),
-                severity="warning",
-            )
+        definition = self._selected_queue_definition()
+        if definition is not None:
+            self._edit_selected_automation(definition)
             return
-        if self._refuse_if_transfer_locked(task, "edit this task"):
-            return
-        self.post_message(EditTaskRequested(task))
+        self.app_instance.notify(
+            self._no_task_notice("edit"),
+            severity="warning",
+        )
 
     def action_mark_task(self) -> None:
         """Mark/unmark the highlighted task for bulk actions (x key).

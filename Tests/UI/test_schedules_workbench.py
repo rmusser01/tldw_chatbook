@@ -21,12 +21,16 @@ from textual.widgets import (
 )
 from textual.widgets._collapsible import CollapsibleTitle
 
+from textual import on
+
 from tldw_chatbook.Scheduling.events import (
+    DefinitionRunNowRequested,
     DeleteTaskRequested,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
+    ViewDefinitionAuditRequested,
     ViewDefinitionResultsRequested,
 )
 from tldw_chatbook.Scheduling.models import (
@@ -925,6 +929,90 @@ def _editable_definition(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+class _CapturingDefinitionDetailApp(ConsolidatedCSSApp):
+    """`_BareDefinitionDetailApp`'s twin with its own message capture
+    (redesign PR-4, task 3): a plain bare harness cannot observe a
+    posted `Message` bubbling past it -- an `@on` handler on the App
+    itself records what `DefinitionDetail` posts, no workbench needed."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.run_now_events: list = []
+        self.audit_events: list = []
+
+    def compose(self):
+        yield DefinitionDetail()
+
+    @on(DefinitionRunNowRequested)
+    def _capture_run_now(self, event: DefinitionRunNowRequested) -> None:
+        self.run_now_events.append(event.definition)
+
+    @on(ViewDefinitionAuditRequested)
+    def _capture_audit(self, event: ViewDefinitionAuditRequested) -> None:
+        self.audit_events.append(event.definition)
+
+
+@pytest.mark.asyncio
+async def test_run_now_button_posts_definition_run_now_requested():
+    """redesign PR-4, task 3, ruling 2: the header `Run now` button
+    (the retired Automations-tab `r` key's live replacement) posts
+    `DefinitionRunNowRequested` carrying the painted definition -- never
+    gated on the lifecycle lock or family note, same as the tab's own
+    `r` key never was."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        run_now = detail.query_one("#scheduling-automation-run-now", Button)
+        assert run_now.disabled is False
+        detail.on_button_pressed(Button.Pressed(run_now))
+        await pilot.pause()
+
+        assert pilot.app.run_now_events == [definition]
+
+
+@pytest.mark.asyncio
+async def test_run_now_button_is_a_no_op_with_nothing_painted():
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail._request_run_now()
+        await pilot.pause()
+        assert pilot.app.run_now_events == []
+
+
+@pytest.mark.asyncio
+async def test_last_run_row_activation_posts_view_definition_audit_requested():
+    """redesign PR-4, task 3 (audit-view relocation): the `Last run` row
+    -- whose own copy already says "...see Run history" for a
+    server-owned definition -- is a live activation now, posting
+    `ViewDefinitionAuditRequested` rather than opening an editor.
+    Unconditionally activatable regardless of family/lifecycle lock,
+    same as `Unread results` (task 2's own precedent): viewing history
+    is not an edit."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        # A non-`recurring_question` row -- editors are gated for this
+        # family, but the audit activation must still fire.
+        definition = _editable_definition(family="agent_task")
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        row = detail._last_run_row
+        assert row.affordance is True
+        assert row.can_focus is True
+        row.post_message(DetailValueRow.Activated(row))
+        await pilot.pause()
+
+        assert pilot.app.audit_events == [definition]
+        # Never opened an in-place editor for this row.
+        assert not row.query(Input)
+        assert not row.query(Select)
 
 
 @pytest.mark.asyncio

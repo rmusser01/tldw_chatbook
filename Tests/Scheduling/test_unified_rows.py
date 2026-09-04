@@ -59,9 +59,8 @@ def _definition(**overrides) -> dict:
         server_id=None,
         owner_id="local",
         name="A Definition",
-        # Qodo MEDIUM: `build_unified_rows` now filters definitions to
-        # `family == "recurring_question"` (unknown/agent_task families
-        # must not render as pseudo-recurring rows) -- every real
+        # PR-4 ruling 1: `build_unified_rows` lists every definition
+        # family now (not just `recurring_question`) -- every real
         # definition row carries a family, so the helper must too.
         family="recurring_question",
         lifecycle="configured",
@@ -324,21 +323,55 @@ def test_archived_lifecycle_definition_is_completed():
     assert rows[0].bucket == "completed"
 
 
-def test_agent_task_definition_yields_no_unified_row():
-    """Qodo MEDIUM: `definitions` is never family-filtered upstream (the
-    server can return `agent_task` rows too), so `build_unified_rows`
-    itself must drop anything that is not `recurring_question` -- an
-    `agent_task` row has no recurring semantics behind it and would
-    otherwise render as a pseudo-recurring Queue entry. It stays visible
-    on the Automations tab, which is family-agnostic and unaffected by
-    this filter."""
+def test_agent_task_definition_is_included_and_bucketed_honestly():
+    """PR-4 ruling 1 (was: Qodo MEDIUM dropping non-`recurring_question`
+    rows entirely): the Automations tab -- the only other all-families
+    surface -- is retired by PR-4, so `build_unified_rows` must list
+    every definition family or an `agent_task` row loses its only
+    remaining home. Bucket/glyph read the SAME `lifecycle`/`schedule`
+    fields every family shares (verified against the real server
+    fixture, `Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json`, whose `agent_task` entry carries
+    the identical `schedule`/`lifecycle` shape a `recurring_question`
+    row does) -- an `agent_task` row therefore buckets/glyphs exactly
+    like any other `configured`+`cron` definition, no special-casing."""
     rows = build_unified_rows([], [_definition(family="agent_task")], [])
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].kind == "definition"
+    assert rows[0].bucket == "active"
+    assert rows[0].glyph == "○"
 
 
-def test_unknown_family_definition_yields_no_unified_row():
+def test_unknown_family_definition_is_also_included():
     rows = build_unified_rows([], [_definition(family="something_new")], [])
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].bucket == "active"
+
+
+def test_agent_task_definition_with_no_recurring_question_shape_degrades_honestly():
+    """Bucket sanity for the shape an `agent_task` row is MORE likely to
+    carry than a full cron schedule: no `input.question` (recurring-
+    question's own field) and an absent/minimal `schedule`. Every
+    formatter already degrades to an honest placeholder for a shape it
+    doesn't recognize (`unified_rows.py`'s own defensive-read rule) --
+    pinned here so a future family-specific field never needs a
+    `unified_rows.py` change to stay crash-free."""
+    definition = _definition(
+        family="agent_task",
+        schedule={},
+        input={"source_collection": "library://default"},
+    )
+    rows = build_unified_rows([], [definition], [])
+    assert len(rows) == 1
+    row = rows[0]
+    # No recognized `schedule.kind` -> the honest "-" fallbacks, not a
+    # crash or a guessed cadence.
+    assert row.schedule_summary == "-"
+    assert row.bucket == "active"
+    assert row.glyph == "▶"
+    # No `input.question` -> falls back through description/name, never
+    # raises on the missing key.
+    assert "A Definition" in row.search_blob
 
 
 # ---------------------------------------------------------------------------

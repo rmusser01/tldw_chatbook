@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from textual.widgets import DataTable, Input, Select, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
@@ -26,9 +26,15 @@ from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientValidationError,
 )
 from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
+from tldw_chatbook.UI.Screens.scheduling.definition_audit_view import (
+    DefinitionAuditView,
+)
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import DefinitionDetail
 from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
     AutomationDefinitionForm,
+)
+from tldw_chatbook.UI.Screens.scheduling.workbench_host_screen import (
+    WorkbenchHostScreen,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 
@@ -352,7 +358,15 @@ async def test_run_now_refusal_surfaces_without_raising():
 
 
 @pytest.mark.asyncio
-async def test_run_now_on_queue_tab_never_reaches_server_client():
+async def test_run_now_on_queue_tab_routes_a_definition_row_to_its_owner():
+    """redesign PR-4, task 3 (supersedes this test's old pin): Queue
+    definition rows now have their own run-now -- PR-2 ruling 1 made them
+    action-less, but PR-4 ruling 1 gives every family a home on the Queue
+    and task 3 wires run-now/edit onto those rows. `r` on the Queue's
+    first row (the server-owned "Morning brief" definition, `def-1`)
+    reaches the SAME server-run seam the Automations tab's own `r`
+    uses, routed by owner exactly like `_run_automation_now` already
+    routes there."""
     server_client = AutomationsServerClient()
     app = AutomationsTestApp(AutomationsMockService(server_client))
     async with app.run_test() as pilot:
@@ -360,10 +374,11 @@ async def test_run_now_on_queue_tab_never_reaches_server_client():
         await pilot.pause()
         workbench = pilot.app.screen
 
-        # Queue tab is active by default; r must not reach the server client.
+        # Queue tab is active by default; its first row is the
+        # server-owned "Morning brief" definition (def-1).
         workbench.action_run_task_now()
         await pilot.pause()
-        server_client.run_automation_definition_now.assert_not_awaited()
+        server_client.run_automation_definition_now.assert_awaited_once_with("def-1")
 
 
 @pytest.mark.asyncio
@@ -1572,3 +1587,221 @@ async def test_automations_panes_stay_on_screen_across_the_detail_hide_boundary(
                     f"W={width}: {pane.id} runs off-screen "
                     f"(x={pane.region.x}, width={pane.region.width})"
                 )
+
+
+# --- redesign PR-4, task 3: Queue definition-row actions + all-families
+# listing + audit-view relocation ------------------------------------------
+
+
+def _isolated_local_service(definitions):
+    """An `AutomationsMockService` whose server side returns NO
+    definitions -- isolates the Queue's first row to a single LOCAL
+    definition so a test can assert on a deterministic cursor position
+    without also contending with the server fixture's own two rows."""
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={"items": [], "total": 0}
+    )
+    return AutomationsMockService(server_client, local_definitions=definitions), server_client
+
+
+@pytest.mark.asyncio
+async def test_run_now_on_queue_tab_dispatches_a_local_definition_locally():
+    """PR-4 task 3: the Queue's own run-now routes a LOCAL definition
+    through `SchedulingService.run_automation_now` (never the server
+    client) -- the same owner routing `_run_automation_now` already
+    applies for the Automations tab's own `r`."""
+    service, server_client = _isolated_local_service([_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        service.run_automation_now.assert_awaited_once_with("local-def-1")
+        server_client.run_automation_definition_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_edit_on_queue_tab_opens_the_form_for_a_recurring_question_row():
+    """PR-4 task 3: `e` on a Queue definition row opens the SAME
+    `AutomationDefinitionForm` the Automations tab's own `e` opens,
+    prefilled for that row."""
+    service, _server_client = _isolated_local_service([_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
+
+
+@pytest.mark.asyncio
+async def test_edit_on_queue_tab_refuses_a_non_recurring_question_row():
+    """PR-4 task 3: an `agent_task` Queue row's `e` refuses honestly
+    (the SAME copy the Automations tab's own family gate already gives)
+    instead of opening a form that only knows how to author `recurring_
+    question`."""
+    agent_def = _local_definition(
+        id="local-agent-1", family="agent_task", name="Nightly agent run"
+    )
+    service, _server_client = _isolated_local_service([agent_def])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+
+        assert pilot.app.screen is workbench
+        notifications = list(pilot.app._notifications)
+        assert any("recurring-question" in n.message for n in notifications), [
+            n.message for n in notifications
+        ]
+
+
+@pytest.mark.asyncio
+async def test_agent_task_queue_row_is_visible_and_read_only_with_honest_note():
+    """PR-4 ruling 1 + task 3: an `agent_task` definition now has a home
+    on the Queue (it was invisible there entirely before PR-4) and
+    renders with `DefinitionDetail`'s existing `_UNSUPPORTED_FAMILY_NOTE`
+    fallback -- no editable row lights up for it, the same as on the
+    Automations tab (`test_non_recurring_question_definition_exposes_no_
+    editors`)."""
+    agent_def = _local_definition(
+        id="local-agent-1", family="agent_task", name="Nightly agent run"
+    )
+    service, _server_client = _isolated_local_service([agent_def])
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        # Column 0 is the glyph, column 1 is "Title" (`add_columns("",
+        # "Title", "Details")`) -- prefixed with the owner label
+        # (`automation_name_cell`).
+        assert "Nightly agent run" in rendered_row_cells(table, 0)[1]
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        detail = workbench.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        )
+        assert detail._definition["family"] == "agent_task"
+        assert [
+            row.row_key for row in detail._editable_rows() if row.affordance
+        ] == []
+        why = detail.query_one("#scheduling-automation-detail-why", Static)
+        assert "isn't a recurring question" in why.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_last_run_row_activation_pushes_audit_view_with_painted_events():
+    """PR-4 task 3 (audit-view relocation): the Queue's own
+    `DefinitionDetail` sibling's `Last run` row activation pushes a
+    `DefinitionAuditView` scoped to the highlighted (server-owned)
+    definition, reusing the SAME `list_automation_definition_audit` seam
+    the retiring Automations-tab pane already calls."""
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        detail = workbench.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        )
+        row = detail._last_run_row
+        assert row.affordance is True
+        row.post_message(DetailValueRow.Activated(row))
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, WorkbenchHostScreen)
+        assert str(pilot.app.screen.title).startswith("Run history — Morning brief")
+        overlay = pilot.app.screen.query_one(DefinitionAuditView)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        audit_table = overlay.query_one("#scheduling-audit-view-table", DataTable)
+        assert audit_table.row_count == 2
+        assert rendered_row_cells(audit_table, 0)[2] == "Run succeeded."
+
+
+@pytest.mark.asyncio
+async def test_run_now_button_on_queue_definition_pane_dispatches_locally():
+    """PR-4 task 3, ruling 2: the retired Automations-tab `r` key
+    relocates to a `Run now` button beside Pause/Resume on the pane
+    itself -- pressing it on the Queue's own `DefinitionDetail` sibling
+    reaches the SAME local dispatch seam the key used to."""
+    service, _server_client = _isolated_local_service([_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        detail = workbench.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        )
+        run_now = detail.query_one("#scheduling-automation-run-now", Button)
+        detail.on_button_pressed(Button.Pressed(run_now))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        service.run_automation_now.assert_awaited_once_with("local-def-1")

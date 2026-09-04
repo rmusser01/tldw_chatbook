@@ -232,6 +232,36 @@ class ViewDefinitionResultsRequested(Message):
         self.definition = definition
 
 
+class DefinitionRunNowRequested(Message):
+    """Posted when a definition pane's header 'Run now' button is pressed
+    (redesign PR-4, task 3 -- the retired Automations-tab `r` key's live
+    replacement, ruling 2). ``definition`` is the raw dict
+    `DefinitionDetail.set_definition` was last painted with; the workbench
+    routes it to the existing owner-routed dispatch
+    (`SchedulesWorkbench._run_automation_now`) unchanged.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        super().__init__()
+        self.definition = definition
+
+
+class ViewDefinitionAuditRequested(Message):
+    """Posted when a definition pane's 'Last run' row is activated
+    (redesign PR-4, task 3 -- the retired Automations-tab's third
+    (run-history/audit) pane's live replacement; the row's own "...see
+    Run history" copy for a server-owned definition is the pointer this
+    activation makes live). ``definition`` is the raw dict
+    `DefinitionDetail.set_definition` was last painted with; the
+    workbench pushes a `definition_audit_view.DefinitionAuditView` scoped
+    to this one definition.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        super().__init__()
+        self.definition = definition
+
+
 class SyncCompleted(Message):
     """Posted when a non-failing sync attempt completes.
 
