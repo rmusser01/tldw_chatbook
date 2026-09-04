@@ -240,6 +240,9 @@ class VllmSetupView(VerticalScroll):
         self._profiles = VllmProfileDocumentV1(
             1, 0, initial_profile.profile_id, (initial_profile,)
         )
+        self._active_profile_id = self._profiles.selected_profile_id
+        self._profile_repair_only = False
+        self._profile_store_requires_repair = False
         self._current_launch_snapshot: VllmLaunchSnapshot | None = None
         self._runtime_active = False
         self._discovered_model_ids: tuple[str, ...] = ()
@@ -509,6 +512,9 @@ class VllmSetupView(VerticalScroll):
         connection: VllmConnectionSnapshot | None = None,
         current_launch_snapshot: VllmLaunchSnapshot | None = None,
         profiles: VllmProfileDocumentV1 | None = None,
+        active_profile_id: str | None = None,
+        profile_repair_only: bool | None = None,
+        profile_store_requires_repair: bool | None = None,
         runtime_active: bool | None = None,
         discovered_model_ids: tuple[str, ...] | None = None,
         credential_configured: bool | None = None,
@@ -522,6 +528,12 @@ class VllmSetupView(VerticalScroll):
         self._current_launch_snapshot = current_launch_snapshot
         if profiles is not None:
             self._profiles = profiles
+        if active_profile_id is not None:
+            self._active_profile_id = active_profile_id
+        if profile_repair_only is not None:
+            self._profile_repair_only = profile_repair_only
+        if profile_store_requires_repair is not None:
+            self._profile_store_requires_repair = profile_store_requires_repair
         if runtime_active is not None:
             self._runtime_active = runtime_active
         if discovered_model_ids is not None:
@@ -885,6 +897,19 @@ class VllmSetupView(VerticalScroll):
                 else "Trust remote code · Disabled"
             )
             profile_select = self.query_one("#vllm-profile-select", Select)
+            active_profile = next(
+                (
+                    profile
+                    for profile in self._profiles.profiles
+                    if profile.profile_id == self._active_profile_id
+                ),
+                next(
+                    profile
+                    for profile in self._profiles.profiles
+                    if profile.profile_id == self._profiles.selected_profile_id
+                ),
+            )
+            self._active_profile_id = active_profile.profile_id
             with profile_select.prevent(Select.Changed):
                 profile_select.set_options(
                     [
@@ -892,29 +917,36 @@ class VllmSetupView(VerticalScroll):
                         for profile in self._profiles.profiles
                     ]
                 )
-                if profile_select.value != self._profiles.selected_profile_id:
-                    profile_select.value = self._profiles.selected_profile_id
+                if profile_select.value != self._active_profile_id:
+                    profile_select.value = self._active_profile_id
             profile_select.disabled = not local or not self._profiles_ready
-            selected_profile = next(
-                profile
-                for profile in self._profiles.profiles
-                if profile.profile_id == self._profiles.selected_profile_id
-            )
             profile_name = self.query_one("#vllm-profile-name", Input)
-            if profile_name.value != selected_profile.name:
+            if profile_name.value != active_profile.name:
                 with profile_name.prevent(Input.Changed):
-                    profile_name.value = selected_profile.name
-            profile_name.disabled = not local or not self._profiles_ready
+                    profile_name.value = active_profile.name
+            base_profile_disabled = not local or not self._profiles_ready
+            profile_name.disabled = (
+                base_profile_disabled or self._profile_store_requires_repair
+            )
+            self.query_one("#vllm-profile-create-button", Button).disabled = (
+                base_profile_disabled or self._profile_store_requires_repair
+            )
             for profile_action_id in (
-                "vllm-profile-create-button",
-                "vllm-profile-save-button",
                 "vllm-profile-rename-button",
                 "vllm-profile-duplicate-button",
-                "vllm-profile-delete-button",
             ):
                 self.query_one(f"#{profile_action_id}", Button).disabled = (
-                    not local or not self._profiles_ready
+                    base_profile_disabled or self._profile_store_requires_repair
                 )
+            repair_action_disabled = base_profile_disabled or (
+                self._profile_store_requires_repair and not self._profile_repair_only
+            )
+            self.query_one(
+                "#vllm-profile-save-button", Button
+            ).disabled = repair_action_disabled
+            self.query_one(
+                "#vllm-profile-delete-button", Button
+            ).disabled = repair_action_disabled
             for selector, value in projected_inputs.items():
                 input_widget = self.query_one(selector, Input)
                 if input_widget.value != value:
@@ -941,11 +973,13 @@ class VllmSetupView(VerticalScroll):
                 and local
                 and is_current_success
                 and not self._runtime_active
+                and not self._profile_repair_only
             )
             stop.disabled = not self._runtime_active
             retry.disabled = (
                 not self._profiles_ready
                 or self._state is not VllmReadinessState.NEEDS_ATTENTION
+                or self._profile_repair_only
             )
             target = self._connection.target if self._connection is not None else None
             token = (
@@ -992,6 +1026,7 @@ class VllmSetupView(VerticalScroll):
                 and dirty
                 and local
                 and is_current_success
+                and not self._profile_repair_only
             )
             dirty_restart = bool(show_current and dirty)
             check.label = (
@@ -1006,7 +1041,9 @@ class VllmSetupView(VerticalScroll):
                 VllmReadinessState.READY_TO_START,
             }
             check.disabled = (
-                not self._profiles_ready or self._state is VllmReadinessState.CHECKING
+                not self._profiles_ready
+                or self._state is VllmReadinessState.CHECKING
+                or self._profile_repair_only
             )
             cancel_check.display = self._state is VllmReadinessState.CHECKING
             cancel_check.disabled = not (
@@ -1059,6 +1096,12 @@ class VllmSetupView(VerticalScroll):
                 profile_help.update(
                     "Profiles are for local starts. Switch to Start on this computer "
                     "to edit them."
+                )
+                profile_help.display = True
+            elif self._profile_store_requires_repair and not self._profile_repair_only:
+                profile_help = self.query_one("#vllm-profile-help", Label)
+                profile_help.update(
+                    "A saved profile needs repair. Select it to repair or delete it."
                 )
                 profile_help.display = True
             if self._preflight and self._preflight.issues:
@@ -1418,22 +1461,16 @@ class VllmSetupView(VerticalScroll):
                 self.post_message(self.CreateProfileRequested(name, self._draft))
             case "vllm-profile-save-button":
                 self.post_message(
-                    self.SaveProfileRequested(
-                        self._profiles.selected_profile_id, self._draft
-                    )
+                    self.SaveProfileRequested(self._active_profile_id, self._draft)
                 )
             case "vllm-profile-rename-button":
                 name = self.query_one("#vllm-profile-name", Input).value
                 self.post_message(
-                    self.RenameProfileRequested(
-                        self._profiles.selected_profile_id, name
-                    )
+                    self.RenameProfileRequested(self._active_profile_id, name)
                 )
             case "vllm-profile-duplicate-button":
                 self.post_message(
-                    self.DuplicateProfileRequested(self._profiles.selected_profile_id)
+                    self.DuplicateProfileRequested(self._active_profile_id)
                 )
             case "vllm-profile-delete-button":
-                self.post_message(
-                    self.DeleteProfileRequested(self._profiles.selected_profile_id)
-                )
+                self.post_message(self.DeleteProfileRequested(self._active_profile_id))

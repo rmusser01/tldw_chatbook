@@ -464,6 +464,16 @@ def _revalidate_profile(profile: VllmLaunchProfileV1) -> VllmLaunchProfileV1:
     )
 
 
+def profile_requires_repair(profile: VllmLaunchProfileV1) -> bool:
+    """Return whether an exactly decoded profile cannot cross the write boundary."""
+
+    try:
+        _revalidate_profile(profile)
+    except VllmProfileValidationError:
+        return True
+    return False
+
+
 def _effective_user_id() -> int:
     """Resolve an owner identity before I/O, or raise a cause-free safe error."""
 

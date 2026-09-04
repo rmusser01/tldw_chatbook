@@ -431,6 +431,83 @@ def test_legacy_invalid_bind_loads_for_source_aware_repair(tmp_path: Path) -> No
     assert path.read_text(encoding="utf-8") == serialized
 
 
+def test_legacy_invalid_nonselected_profile_blocks_persisted_selection(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.json"
+    valid = profile_named("Selected")
+    invalid = profile_named("Repair bind", bind_address="not a host")
+    payload = {
+        "version": 1,
+        "revision": 7,
+        "selected_profile_id": valid.profile_id,
+        "profiles": [
+            profile_storage._profile_payload(valid),
+            profile_storage._profile_payload(invalid),
+        ],
+    }
+    serialized = json.dumps(payload)
+    path.write_text(serialized, encoding="utf-8")
+    path.chmod(0o600)
+    repository = VllmProfileRepository(path)
+
+    blocked_mutations = (
+        lambda: repository.select(invalid.profile_id, expected_revision=7),
+        lambda: repository.save(replace(valid, port=8001), expected_revision=7),
+        lambda: repository.rename(valid.profile_id, "Renamed", expected_revision=7),
+        lambda: repository.duplicate(valid.profile_id, expected_revision=7),
+        lambda: repository.delete(valid.profile_id, expected_revision=7),
+    )
+    for mutate in blocked_mutations:
+        with pytest.raises(
+            VllmProfileValidationError,
+            match="bind_address must be an IP or localhost",
+        ):
+            mutate()
+        assert path.read_text(encoding="utf-8") == serialized
+
+    reopened = VllmProfileRepository(path).load()
+    assert reopened.selected_profile_id == valid.profile_id
+    assert reopened.profiles == (valid, invalid)
+
+
+@pytest.mark.parametrize("repair_action", ["save", "delete"])
+def test_legacy_invalid_nonselected_profile_can_be_repaired_atomically(
+    tmp_path: Path,
+    repair_action: str,
+) -> None:
+    path = tmp_path / "profiles.json"
+    valid = profile_named("Selected")
+    invalid = profile_named("Repair bind", bind_address="not a host")
+    payload = {
+        "version": 1,
+        "revision": 7,
+        "selected_profile_id": valid.profile_id,
+        "profiles": [
+            profile_storage._profile_payload(valid),
+            profile_storage._profile_payload(invalid),
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
+    repository = VllmProfileRepository(path)
+
+    if repair_action == "save":
+        receipt = repository.save(
+            replace(invalid, bind_address="127.0.0.1"),
+            expected_revision=7,
+        )
+        assert receipt.document.selected_profile_id == invalid.profile_id
+        assert receipt.profile.bind_address == "127.0.0.1"
+        assert receipt.document.profiles[0] == valid
+    else:
+        receipt = repository.delete(invalid.profile_id, expected_revision=7)
+        assert receipt.document.selected_profile_id == valid.profile_id
+        assert receipt.document.profiles == (valid,)
+
+    assert VllmProfileRepository(path).load() == receipt.document
+
+
 def test_decode_revalidates_model_source_without_disclosing_rejected_value(
     tmp_path: Path,
 ):

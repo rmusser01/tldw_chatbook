@@ -262,6 +262,18 @@ revalidates every profile fail-closed. Persistence tests cover empty, URL,
 host:port, path, whitespace/invalid host, oversized values, plus IPv4, IPv6,
 and localhost success. This is direct ADR-117 enforcement; no new ADR or schema
 change is required.
+
+Final repair-selection closure keeps an invalid non-selected legacy profile as
+an ephemeral UI target instead of attempting to persist its selection. The
+durable selected ID, revision, and bytes remain unchanged while the invalid
+profile is projected beside its field-level repair copy; only correcting and
+saving that target or deleting it can cross the repository boundary. Every
+other mutation and lifecycle check remains blocked by the existing all-profile
+validation rule. A corrected save atomically validates the full document and
+may then select the repaired profile, while deletion preserves the prior valid
+selection. Reopening restores durable selection truth because repair selection
+is never stored. This is direct hardening under ADR-117; no new ADR, schema, or
+generalized lesson is required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from dataclasses import replace
@@ -801,6 +802,167 @@ async def test_selected_profile_projects_invalid_bind_repair_without_any_probe(
         assert "IP address" in str(help_copy.renderable)
         assert view.query_one("#vllm-check-setup", Button).display
         assert view.query_one("#vllm-start", Button).disabled
+
+
+def _write_multi_profile_legacy_bind_store(
+    path: Path,
+) -> tuple[
+    VllmProfileRepository,
+    VllmProfileDocumentV1,
+    object,
+    object,
+    bytes,
+]:
+    valid = default_vllm_profile()
+    invalid = replace(
+        default_vllm_profile(),
+        profile_id="00000000-0000-4000-8000-000000000002",
+        name="Repair bind",
+        bind_address="not a host",
+    )
+
+    def payload(profile) -> dict[str, object]:
+        return {
+            "profile_id": profile.profile_id,
+            "name": profile.name,
+            "python_environment": profile.python_environment,
+            "model_source": profile.model_source.value,
+            "model_value": profile.model_value,
+            "bind_address": profile.bind_address,
+            "port": profile.port,
+            "dtype": profile.dtype,
+            "tensor_parallel_size": profile.tensor_parallel_size,
+            "maximum_model_length": profile.maximum_model_length,
+            "gpu_memory_utilization": profile.gpu_memory_utilization,
+            "trust_remote_code": profile.trust_remote_code,
+        }
+
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 7,
+                "selected_profile_id": valid.profile_id,
+                "profiles": [payload(valid), payload(invalid)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    repository = VllmProfileRepository(path)
+    original = path.read_bytes()
+    return repository, repository.load(), valid, invalid, original
+
+
+async def test_invalid_nonselected_profile_enters_nonpersisting_repair_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repository, document, valid, invalid, original = (
+        _write_multi_profile_legacy_bind_store(tmp_path / "profiles.json")
+    )
+    runtime_calls: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+        lambda *_args, **_kwargs: runtime_calls.append("preflight"),
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(document)
+        scheduled: list[object] = []
+        monkeypatch.setattr(screen, "_start_vllm_profile_mutation", scheduled.append)
+
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(invalid.profile_id)
+        )
+        await pilot.pause()
+
+        assert scheduled == []
+        assert runtime_calls == []
+        assert screen._vllm_repair_profile_id == invalid.profile_id
+        assert screen._vllm_draft.bind_address == "not a host"
+        assert screen._vllm_preflight is not None
+        assert screen._vllm_preflight.repair_only
+        assert (
+            view.query_one("#vllm-profile-select", Select).value == invalid.profile_id
+        )
+        bind_help = view.query_one("#vllm-bind-address-help", Label)
+        assert bind_help.display
+        assert "IP address" in str(bind_help.renderable)
+        assert not view.query_one("#vllm-profile-save-button", Button).disabled
+        assert not view.query_one("#vllm-profile-delete-button", Button).disabled
+        assert view.query_one("#vllm-profile-create-button", Button).disabled
+        assert view.query_one("#vllm-profile-rename-button", Button).disabled
+        assert view.query_one("#vllm-profile-duplicate-button", Button).disabled
+        assert view.query_one("#vllm-check-setup", Button).disabled
+        assert repository.path.read_bytes() == original
+        reopened = VllmProfileRepository(repository.path).load()
+        assert reopened.selected_profile_id == valid.profile_id
+        assert reopened.profiles == document.profiles
+
+        screen._on_vllm_create_profile(
+            VllmSetupView.CreateProfileRequested("Blocked", screen._vllm_draft)
+        )
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(valid.profile_id, screen._vllm_draft)
+        )
+        screen._on_vllm_rename_profile(
+            VllmSetupView.RenameProfileRequested(valid.profile_id, "Blocked")
+        )
+        screen._on_vllm_duplicate_profile(
+            VllmSetupView.DuplicateProfileRequested(valid.profile_id)
+        )
+        screen._on_vllm_delete_profile(
+            VllmSetupView.DeleteProfileRequested(valid.profile_id)
+        )
+        assert scheduled == []
+        assert repository.path.read_bytes() == original
+
+
+@pytest.mark.parametrize("repair_action", ["save", "delete"])
+async def test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_state(
+    repair_action: str,
+    tmp_path: Path,
+) -> None:
+    repository, document, valid, invalid, _ = _write_multi_profile_legacy_bind_store(
+        tmp_path / "profiles.json"
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(document)
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(invalid.profile_id)
+        )
+        await pilot.pause()
+
+        if repair_action == "save":
+            screen._on_vllm_save_profile(
+                VllmSetupView.SaveProfileRequested(
+                    invalid.profile_id,
+                    replace(screen._vllm_draft, bind_address="127.0.0.1"),
+                )
+            )
+        else:
+            screen._on_vllm_delete_profile(
+                VllmSetupView.DeleteProfileRequested(invalid.profile_id)
+            )
+            await _wait_for_profile_confirmation(app, pilot)
+            await pilot.click("#confirm-button")
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        reopened = VllmProfileRepository(repository.path).load()
+        assert screen._vllm_repair_profile_id is None
+        assert reopened.profiles[0] == valid
+        if repair_action == "save":
+            assert reopened.selected_profile_id == invalid.profile_id
+            assert reopened.profiles[1].bind_address == "127.0.0.1"
+        else:
+            assert reopened.selected_profile_id == valid.profile_id
+            assert reopened.profiles == (valid,)
 
 
 async def test_preflight_exception_settles_current_generation_for_retry(

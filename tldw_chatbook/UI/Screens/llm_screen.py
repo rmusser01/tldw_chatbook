@@ -96,6 +96,7 @@ from ..LLM_Management.vllm_profiles import (
     default_vllm_profile,
     draft_from_profile,
     profile_from_draft,
+    profile_requires_repair,
 )
 from ..LLM_Management.vllm_setup import (
     SERVED_MODEL_NAME,
@@ -376,6 +377,7 @@ class LLMScreen(LabScreen):
         )
         self._vllm_profile_repository = VllmProfileRepository()
         self._vllm_profiles_loaded = False
+        self._vllm_repair_profile_id: str | None = None
         self._vllm_profile_store_error = False
         self._vllm_profile_worker: Worker | None = None
         self._vllm_preflight: VllmPreflightResult | None = None
@@ -2625,9 +2627,9 @@ class LLMScreen(LabScreen):
         return self.llm_window is not None and self.llm_window.active_view == "vllm"
 
     def _vllm_profile_name(self) -> str:
-        """Return the validated selected device-local profile name."""
+        """Return the active durable or repair-only profile name."""
 
-        return self._selected_vllm_profile().name
+        return self._active_vllm_profile().name
 
     def _vllm_runtime_context(
         self,
@@ -2827,6 +2829,9 @@ class LLMScreen(LabScreen):
             connection=snapshot if self._vllm_profiles_loaded else None,
             current_launch_snapshot=current_launch_snapshot,
             profiles=self._vllm_profiles,
+            active_profile_id=self._active_vllm_profile_id(),
+            profile_repair_only=self._vllm_repair_profile_id is not None,
+            profile_store_requires_repair=self._vllm_profiles_require_repair(),
             runtime_active=runtime_active,
             discovered_model_ids=self._vllm_external_models,
             credential_configured=bool(get_api_key("vllm")),
@@ -2842,6 +2847,31 @@ class LLMScreen(LabScreen):
             profile
             for profile in self._vllm_profiles.profiles
             if profile.profile_id == self._vllm_profiles.selected_profile_id
+        )
+
+    def _active_vllm_profile_id(self) -> str:
+        """Return the ephemeral repair target or durable selected profile ID."""
+
+        repair_id = self._vllm_repair_profile_id
+        if repair_id is not None and any(
+            profile.profile_id == repair_id for profile in self._vllm_profiles.profiles
+        ):
+            return repair_id
+        return self._vllm_profiles.selected_profile_id
+
+    def _active_vllm_profile(self) -> VllmLaunchProfileV1:
+        active_id = self._active_vllm_profile_id()
+        return next(
+            profile
+            for profile in self._vllm_profiles.profiles
+            if profile.profile_id == active_id
+        )
+
+    def _vllm_profiles_require_repair(self) -> bool:
+        """Return whether any loaded profile cannot cross the commit boundary."""
+
+        return any(
+            profile_requires_repair(profile) for profile in self._vllm_profiles.profiles
         )
 
     def _initial_vllm_profile_matches_live_launch(
@@ -2915,6 +2945,9 @@ class LLMScreen(LabScreen):
         previous_fingerprint = semantic_fingerprint(self._vllm_draft)
         self._vllm_profiles = document
         selected = self._selected_vllm_profile()
+        self._vllm_repair_profile_id = (
+            selected.profile_id if profile_requires_repair(selected) else None
+        )
         self._vllm_draft = draft_from_profile(
             selected,
             raw_arguments=self._vllm_draft.raw_arguments,
@@ -2980,6 +3013,7 @@ class LLMScreen(LabScreen):
             receipt = await asyncio.to_thread(operation)
         except VllmProfileValidationError as error:
             field, classification = _classify_vllm_profile_validation(error)
+            self._apply_vllm_view_state(focus=False)
             view = self._vllm_view()
             if view is not None:
                 view.show_profile_validation_error(field, classification)
@@ -2994,6 +3028,7 @@ class LLMScreen(LabScreen):
             VllmProfileFutureVersion,
             OSError,
         ):
+            self._apply_vllm_view_state(focus=False)
             view = self._vllm_view()
             if view is not None:
                 view.show_profile_validation_error("profile")
@@ -3026,6 +3061,53 @@ class LLMScreen(LabScreen):
         event.stop()
         if not self._vllm_profile_mutations_allowed():
             return
+        profile = next(
+            (
+                candidate
+                for candidate in self._vllm_profiles.profiles
+                if candidate.profile_id == event.profile_id
+            ),
+            None,
+        )
+        if profile is None:
+            return
+        if profile_requires_repair(profile):
+            self._vllm_repair_profile_id = profile.profile_id
+            self._vllm_draft = draft_from_profile(
+                profile,
+                raw_arguments=self._vllm_draft.raw_arguments,
+            )
+            generation = self._vllm_owner.invalidate("target_changed")
+            self._cancel_vllm_workers()
+            self._vllm_preflight = run_vllm_profile_repair_check(
+                self._vllm_draft,
+                generation,
+            )
+            self._apply_vllm_view_state(focus=False)
+            return
+        if (
+            self._vllm_repair_profile_id is not None
+            and profile.profile_id == self._vllm_profiles.selected_profile_id
+        ):
+            self._vllm_repair_profile_id = None
+            self._vllm_draft = draft_from_profile(
+                profile,
+                raw_arguments=self._vllm_draft.raw_arguments,
+            )
+            generation = self._vllm_owner.invalidate("target_changed")
+            self._cancel_vllm_workers()
+            self._vllm_preflight = run_vllm_profile_repair_check(
+                self._vllm_draft,
+                generation,
+            )
+            self._apply_vllm_view_state(focus=False)
+            return
+        if self._vllm_profiles_require_repair():
+            self._apply_vllm_view_state(focus=False)
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error("profile")
+            return
         revision = self._vllm_profiles.revision
         self._start_vllm_profile_mutation(
             partial(
@@ -3040,7 +3122,10 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.CreateProfileRequested
     ) -> None:
         event.stop()
-        if not self._vllm_profile_mutations_allowed():
+        if (
+            not self._vllm_profile_mutations_allowed()
+            or self._vllm_profiles_require_repair()
+        ):
             return
         try:
             profile = profile_from_draft(event.name, event.draft)
@@ -3063,6 +3148,11 @@ class LLMScreen(LabScreen):
     def _on_vllm_save_profile(self, event: VllmSetupView.SaveProfileRequested) -> None:
         event.stop()
         if not self._vllm_profile_mutations_allowed():
+            return
+        if (
+            self._vllm_profiles_require_repair()
+            and event.profile_id != self._vllm_repair_profile_id
+        ):
             return
         selected = next(
             (
@@ -3100,7 +3190,10 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.RenameProfileRequested
     ) -> None:
         event.stop()
-        if not self._vllm_profile_mutations_allowed():
+        if (
+            not self._vllm_profile_mutations_allowed()
+            or self._vllm_profiles_require_repair()
+        ):
             return
         self._start_vllm_profile_mutation(
             partial(
@@ -3116,7 +3209,10 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.DuplicateProfileRequested
     ) -> None:
         event.stop()
-        if not self._vllm_profile_mutations_allowed():
+        if (
+            not self._vllm_profile_mutations_allowed()
+            or self._vllm_profiles_require_repair()
+        ):
             return
         self._start_vllm_profile_mutation(
             partial(
@@ -3134,7 +3230,12 @@ class LLMScreen(LabScreen):
         if not self._vllm_profile_mutations_allowed():
             return
         document = self._vllm_profiles
-        if event.profile_id != document.selected_profile_id or not any(
+        if (
+            self._vllm_profiles_require_repair()
+            and event.profile_id != self._vllm_repair_profile_id
+        ):
+            return
+        if event.profile_id != self._active_vllm_profile_id() or not any(
             profile.profile_id == event.profile_id for profile in document.profiles
         ):
             return
@@ -3166,7 +3267,11 @@ class LLMScreen(LabScreen):
             or not self.is_attached
             or not self._vllm_profile_mutations_allowed()
             or current.revision != revision
-            or current.selected_profile_id != profile_id
+            or self._active_vllm_profile_id() != profile_id
+            or (
+                self._vllm_profiles_require_repair()
+                and profile_id != self._vllm_repair_profile_id
+            )
             or not any(profile.profile_id == profile_id for profile in current.profiles)
         ):
             view = self._vllm_view()
@@ -3335,7 +3440,7 @@ class LLMScreen(LabScreen):
         """Start one bounded preflight generation from an immutable draft."""
 
         event.stop()
-        if not self._vllm_profiles_loaded:
+        if not self._vllm_profiles_loaded or self._vllm_repair_profile_id is not None:
             return
         self._cancel_vllm_workers()
         draft = event.draft
@@ -3450,7 +3555,7 @@ class LLMScreen(LabScreen):
         """Reserve and launch only the exact successfully checked generation."""
 
         event.stop()
-        if not self._vllm_profiles_loaded:
+        if not self._vllm_profiles_loaded or self._vllm_repair_profile_id is not None:
             return
         snapshot = self._vllm_owner.snapshot()
         token = snapshot.current_token
@@ -3574,7 +3679,7 @@ class LLMScreen(LabScreen):
         """Confirm one current restart using allowlisted labels only."""
 
         event.stop()
-        if not self._vllm_profiles_loaded:
+        if not self._vllm_profiles_loaded or self._vllm_repair_profile_id is not None:
             return
         candidate = self._current_vllm_restart_candidate(event.draft)
         if candidate is None:
@@ -3941,7 +4046,7 @@ class LLMScreen(LabScreen):
         """Retry verification as a fresh generation, never reuse old evidence."""
 
         event.stop()
-        if not self._vllm_profiles_loaded:
+        if not self._vllm_profiles_loaded or self._vllm_repair_profile_id is not None:
             return
         self._cancel_vllm_workers()
         current_claim = current_server_claim(self.app_instance, "vllm")
