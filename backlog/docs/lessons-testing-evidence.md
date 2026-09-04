@@ -11219,7 +11219,7 @@ just watched the feature not work, and both passed on the broken build.
 
 ## Textual projection writes must suppress their own deferred change messages
 
-**TASK-31215, 2026-09-03.** The mounted vLLM generation-fencing test initially
+**TASK-31265, 2026-09-03.** The mounted vLLM generation-fencing test initially
 hung after one model edit and advanced the connection generation thousands of
 times. The view's `_rendering` flag covered the synchronous `Input.value` writes,
 but Textual delivered their `Input.Changed` messages after the flag had already

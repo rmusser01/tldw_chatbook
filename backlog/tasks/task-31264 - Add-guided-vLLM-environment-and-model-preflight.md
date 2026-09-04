@@ -1,5 +1,5 @@
 ---
-id: TASK-31214
+id: TASK-31264
 title: Add guided vLLM environment and model preflight
 status: Done
 assignee:
@@ -11,7 +11,7 @@ labels:
   - lab
   - onboarding
 dependencies:
-  - TASK-31213
+  - TASK-31263
 priority: high
 ---
 
@@ -35,7 +35,7 @@ Prevent predictable first-run vLLM launch failures by making environment, model-
 <!-- SECTION:PLAN:BEGIN -->
 Source: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-1-brief.md
 ADR required: no
-ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This task directly implements the accepted runtime and UX boundaries.
 
 1. Add pure vLLM launch/preflight contract tests first, then record their expected RED result.
@@ -52,7 +52,17 @@ Implemented the immutable vLLM launch/preflight contracts and focused deferred s
 
 Tests: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/LLM_Management/test_vllm_setup.py Tests/UI/test_vllm_lab_workflow.py -k "preflight or initial or mode or command or source" (19 passed, 10 deselected); /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/LLM_Management/test_gguf_server_sources.py Tests/UI/test_llm_deferred_views.py (78 passed); full focused vLLM files (29 passed); compileall and git diff --check passed.
 
-ADR required: no. Existing ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md. Reason: directly implements accepted runtime and UX boundaries.
+ADR required: no. Existing ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md. Reason: directly implements accepted runtime and UX boundaries.
 
 Modified: tldw_chatbook/UI/LLM_Management/{__init__.py,vllm_setup.py,vllm_setup_view.py}, tldw_chatbook/UI/LLM_Management_Window.py, tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_vllm.py, and focused tests.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-31214. During the branch integration sweep,
+current `origin/dev` already shipped `task-31214 -
+Prevent-main-PyPI-workflow-from-publishing-stale-versions.md` at add commit
+`3d2d5403e2994a717674f6f6e0217cc41c1c6e26`. The unmerged vLLM task therefore
+moved to collision-free TASK-31264, carrying every dependency and documentation
+reference with it. The vLLM record was originally added by
+`ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.

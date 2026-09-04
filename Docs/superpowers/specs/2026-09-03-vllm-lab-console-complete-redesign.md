@@ -4,9 +4,9 @@
 
 **Status:** Approved on 2026-09-03
 
-**Tasks:** TASK-31213, TASK-31214, TASK-31215, TASK-31217, TASK-31219, TASK-31221
+**Tasks:** TASK-31263, TASK-31264, TASK-31265, TASK-31266, TASK-31267, TASK-31268
 
-**Decision:** [ADR-115](../../../backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md)
+**Decision:** [ADR-117](../../../backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md)
 
 ## Summary
 
@@ -545,16 +545,16 @@ do not describe loopback fixtures as real vLLM qualification.
 
 ## Delivery sequence
 
-1. **TASK-31213 — Contract:** ADR-115 and this specification only.
-2. **TASK-31214 — Guided preflight:** launch/connect modes, source-specific setup,
+1. **TASK-31263 — Contract:** ADR-117 and this specification only.
+2. **TASK-31264 — Guided preflight:** launch/connect modes, source-specific setup,
    environment/network checks, safe public CLI builder.
-3. **TASK-31215 — Readiness:** app-scoped connection owner, current snapshot,
+3. **TASK-31265 — Readiness:** app-scoped connection owner, current snapshot,
    generation fencing, health/model probing, Activity.
-4. **TASK-31217 — Console adoption:** session Apply, Settings default delegation,
+4. **TASK-31266 — Console adoption:** session Apply, Settings default delegation,
    navigation, stale/rollback behavior.
-5. **TASK-31219 — Profiles:** device-local repository, management actions,
+5. **TASK-31267 — Profiles:** device-local repository, management actions,
    current-versus-next projection, restart with draft.
-6. **TASK-31221 — Responsive completion:** compact composition, Inspector behavior,
+6. **TASK-31268 — Responsive completion:** compact composition, Inspector behavior,
    focus containment, production-stylesheet matrix, final end-to-end evidence.
 
 Each task is one reviewable PR and may begin only after its listed dependencies are
@@ -565,7 +565,7 @@ to close an earlier PR.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md`
+ADR path: `backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md`
 
 Reason: the redesign changes provider/runtime ownership, cross-screen service
 contracts, device-local persistence, privacy boundaries, and long-lived UX structure.

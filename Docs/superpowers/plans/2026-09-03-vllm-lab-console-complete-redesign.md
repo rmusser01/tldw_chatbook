@@ -48,7 +48,7 @@
 
 ---
 
-### Task 1: TASK-31214 — Guided environment, model, network, and command preflight
+### Task 1: TASK-31264 — Guided environment, model, network, and command preflight
 
 **Files:**
 - Create: `tldw_chatbook/UI/LLM_Management/__init__.py`
@@ -58,25 +58,25 @@
 - Modify: `tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_vllm.py`
 - Test: `Tests/LLM_Management/test_vllm_setup.py`
 - Test: `Tests/UI/test_vllm_lab_workflow.py`
-- Modify: `backlog/tasks/task-31214 - Add-guided-vLLM-environment-and-model-preflight.md`
+- Modify: `backlog/tasks/task-31264 - Add-guided-vLLM-environment-and-model-preflight.md`
 
 **Interfaces:**
 - Consumes: `server_lifecycle.reserve_server_launch()` and the existing deferred pane contract.
 - Produces: `VllmLaunchDraft`, `VllmPreflightResult`, `VllmLaunchSnapshot`, `VllmConnectionTarget`, `VllmReadinessState`, `semantic_fingerprint()`, `run_vllm_preflight()`, `build_vllm_command()`, and `VllmSetupView` events used by Tasks 2–5.
 
-- [ ] **Step 1: Put TASK-31214 in progress and attach this plan section**
+- [ ] **Step 1: Put TASK-31264 in progress and attach this plan section**
 
 Run:
 
 ```bash
-backlog task edit 31214 -a @codex -s "In Progress"
+backlog task edit 31264 -a @codex -s "In Progress"
 ```
 
-Add an Implementation Plan naming this file, ADR-115, the red/green test order below, and:
+Add an Implementation Plan naming this file, ADR-117, the red/green test order below, and:
 
 ```text
 ADR required: no
-ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This task directly implements the accepted runtime and UX boundaries.
 ```
 
@@ -241,7 +241,7 @@ git diff --check
 
 Expected: all selected nodes pass; the incumbent llama.cpp/llamafile/MLX behavior remains green.
 
-- [ ] **Step 7: Close and commit TASK-31214**
+- [ ] **Step 7: Close and commit TASK-31264**
 
 Check every AC, add exact focused-test evidence and no-ADR rationale to Implementation Notes, mark Done through Backlog CLI, then commit only Task 1 files:
 
@@ -251,7 +251,7 @@ git commit -m "feat(models): add guided vllm setup preflight"
 
 ---
 
-### Task 2: TASK-31215 — Generation-fenced API and model readiness
+### Task 2: TASK-31265 — Generation-fenced API and model readiness
 
 **Files:**
 - Create: `tldw_chatbook/UI/LLM_Management/vllm_connection.py`
@@ -261,15 +261,15 @@ git commit -m "feat(models): add guided vllm setup preflight"
 - Modify: `tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_vllm.py`
 - Test: `Tests/LLM_Management/test_vllm_connection.py`
 - Test: `Tests/UI/test_vllm_lab_workflow.py`
-- Modify: `backlog/tasks/task-31215 - Add-generation-fenced-vLLM-API-and-model-readiness.md`
+- Modify: `backlog/tasks/task-31265 - Add-generation-fenced-vLLM-API-and-model-readiness.md`
 
 **Interfaces:**
 - Consumes: Task 1 contracts and shared `server_lifecycle` claims.
 - Produces: `VllmConnectionOwner.begin()`, `.settle()`, `.invalidate()`, `.snapshot()`, `probe_vllm_target()`, and current-generation `VllmConnectionTarget` for Tasks 3–5.
 
-- [ ] **Step 1: Start TASK-31215 and copy this section plus ADR-115 rationale into its task file**
+- [ ] **Step 1: Start TASK-31265 and copy this section plus ADR-117 rationale into its task file**
 
-Use `backlog task edit 31215 -a @codex -s "In Progress"`; state that no new ADR is required because ADR-115 fixes owner, fencing, privacy, and rollback.
+Use `backlog task edit 31265 -a @codex -s "In Progress"`; state that no new ADR is required because ADR-117 fixes owner, fencing, privacy, and rollback.
 
 - [ ] **Step 2: Write red owner, probe, cancellation, and privacy tests**
 
@@ -339,7 +339,7 @@ Only explicit Check/Start/Retry moves focus. Start focuses Stop; ready focuses U
 git diff --check
 ```
 
-- [ ] **Step 6: Close and commit TASK-31215**
+- [ ] **Step 6: Close and commit TASK-31265**
 
 Check ACs, record loopback/claim/privacy evidence, mark Done, and commit:
 
@@ -349,7 +349,7 @@ git commit -m "feat(models): verify vllm API and model readiness"
 
 ---
 
-### Task 3: TASK-31217 — Verified session adoption and Settings delegation
+### Task 3: TASK-31266 — Verified session adoption and Settings delegation
 
 **Files:**
 - Create: `tldw_chatbook/UI/Navigation/vllm_handoff.py`
@@ -362,13 +362,13 @@ git commit -m "feat(models): verify vllm API and model readiness"
 - Test: `Tests/UI/test_vllm_lab_workflow.py`
 - Test: `Tests/Chat/test_console_session_settings.py`
 - Test: `Tests/UI/test_console_provider_apply_defaults_flow.py`
-- Modify: `backlog/tasks/task-31217 - Adopt-verified-vLLM-targets-into-Console.md`
+- Modify: `backlog/tasks/task-31266 - Adopt-verified-vLLM-targets-into-Console.md`
 
 **Interfaces:**
 - Consumes: current `VllmConnectionTarget` from Task 2 and existing Console/Settings mutation owners.
 - Produces: `VllmConsoleIntent`, `VllmDefaultIntent`, two typed handoff channels, Console claim settlement, and Settings prefill settlement.
 
-- [ ] **Step 1: Start TASK-31217 and record ADR-115 as the accepted cross-screen contract**
+- [ ] **Step 1: Start TASK-31266 and record ADR-117 as the accepted cross-screen contract**
 
 Use the same Backlog transition pattern. Do not mark the task done until both no-config-write and Settings-rollback tests pass.
 
@@ -443,7 +443,7 @@ Acknowledge only after UI synchronization succeeds; release the claim on failure
 git diff --check
 ```
 
-- [ ] **Step 7: Close and commit TASK-31217**
+- [ ] **Step 7: Close and commit TASK-31266**
 
 Record the config fingerprint evidence and commit:
 
@@ -453,7 +453,7 @@ git commit -m "feat(models): hand verified vllm targets to Console"
 
 ---
 
-### Task 4: TASK-31219 — Non-secret profiles and honest restart drafts
+### Task 4: TASK-31267 — Non-secret profiles and honest restart drafts
 
 **Files:**
 - Create: `tldw_chatbook/UI/LLM_Management/vllm_profiles.py`
@@ -463,13 +463,13 @@ git commit -m "feat(models): hand verified vllm targets to Console"
 - Test: `Tests/LLM_Management/test_vllm_profiles.py`
 - Test: `Tests/LLM_Management/test_vllm_connection.py`
 - Test: `Tests/UI/test_vllm_lab_workflow.py`
-- Modify: `backlog/tasks/task-31219 - Add-current-server-snapshots-and-reusable-vLLM-launch-profiles.md`
+- Modify: `backlog/tasks/task-31267 - Add-current-server-snapshots-and-reusable-vLLM-launch-profiles.md`
 
 **Interfaces:**
 - Consumes: Task 2 launch snapshots/owner and Task 1 validated structured draft.
 - Produces: `VllmLaunchProfileV1`, `VllmProfileDocumentV1`, `VllmProfileRepository`, selected-profile restoration, dirty comparison, and two-generation restart.
 
-- [ ] **Step 1: Start TASK-31219 with ADR-115 persistence rationale**
+- [ ] **Step 1: Start TASK-31267 with ADR-117 persistence rationale**
 
 Record that this is the accepted device-local JSON owner, not a database/schema migration.
 
@@ -541,7 +541,7 @@ Require a matching successful preflight. Confirmation lists allowlisted changed 
 git diff --check
 ```
 
-- [ ] **Step 7: Close and commit TASK-31219**
+- [ ] **Step 7: Close and commit TASK-31267**
 
 Record storage path isolation, future-version, atomic-failure, and two-generation evidence, then commit:
 
@@ -551,7 +551,7 @@ git commit -m "feat(models): add vllm launch profiles and safe restart"
 
 ---
 
-### Task 5: TASK-31221 — Responsive, keyboard-contained completion and live evidence
+### Task 5: TASK-31268 — Responsive, keyboard-contained completion and live evidence
 
 **Files:**
 - Modify: `tldw_chatbook/UI/LLM_Management/vllm_setup_view.py`
@@ -563,7 +563,7 @@ git commit -m "feat(models): add vllm launch profiles and safe restart"
 - Create: `Tests/UI/test_vllm_lab_geometry.py`
 - Modify: `Tests/UI/test_vllm_lab_workflow.py`
 - Modify: `Docs/superpowers/specs/2026-09-03-vllm-lab-console-complete-redesign.md`
-- Modify: `backlog/tasks/task-31221 - Make-vLLM-setup-responsive-and-keyboard-contained.md`
+- Modify: `backlog/tasks/task-31268 - Make-vLLM-setup-responsive-and-keyboard-contained.md`
 
 **Interfaces:**
 - Consumes: complete Task 1–4 state projection and Lab rail-collapse primitives.
@@ -573,9 +573,9 @@ git commit -m "feat(models): add vllm launch profiles and safe restart"
 
 Read `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.agents/skills/impeccable/references/craft-floor.md` completely. Apply it within the already-approved Operate direction and surface brief; do not revise the established product visual language.
 
-- [ ] **Step 2: Start TASK-31221 and pin the no-new-ADR rationale**
+- [ ] **Step 2: Start TASK-31268 and pin the no-new-ADR rationale**
 
-The task implements ADR-115's responsive/focus contract. Add the exact size/state matrix below to its Implementation Plan.
+The task implements ADR-117's responsive/focus contract. Add the exact size/state matrix below to its Implementation Plan.
 
 - [ ] **Step 3: Write red production-stylesheet compositor tests**
 
@@ -643,7 +643,7 @@ Create a disposable `HOME`, XDG config/data/cache directories, and `TLDW_CONFIG_
 
 If an eligible local vLLM environment and chat model exist, verify Check setup → Start → loading → `/health` → `/v1/models` → Use in Console → one response → Stop. Otherwise record the exact missing prerequisite and label loopback tests as contract verification, not real-vLLM qualification.
 
-- [ ] **Step 8: Self-review against the approved spec and close TASK-31221**
+- [ ] **Step 8: Self-review against the approved spec and close TASK-31268**
 
 For every Goals, State model, Validation, Responsive, and Testing bullet in the spec, name the implementing test node in Implementation Notes. Record the live environment result, check all ACs only when evidence exists, mark Done, and commit:
 
@@ -687,4 +687,4 @@ Use `superpowers:requesting-code-review`. Address evidence-backed findings with 
 - Spec coverage: Tasks 1–5 map every approved goal, non-goal, state, error category, profile rule, handoff scope, responsive breakpoint, and evidence requirement.
 - Placeholder scan: the plan contains no deferred implementation markers; every code owner has an exact interface and test command.
 - Type consistency: `VllmConnectionTarget` is produced by Task 2; Task 3 derives secret-free intents from it; Task 4 reuses `VllmLaunchSnapshot`; Task 5 consumes the same `VllmReadinessState` enum and stable widget IDs.
-- ADR required: no new ADR. ADR-115 is accepted and governs all implementation tasks.
+- ADR required: no new ADR. ADR-117 is accepted and governs all implementation tasks.

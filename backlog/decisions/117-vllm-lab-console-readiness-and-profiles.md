@@ -1,8 +1,8 @@
-# ADR-115: Separate vLLM launch, readiness, profiles, and Console adoption
+# ADR-117: Separate vLLM launch, readiness, profiles, and Console adoption
 
 Status: Accepted
 Date: 2026-09-03
-Related Tasks: TASK-31213, TASK-31214, TASK-31215, TASK-31217, TASK-31219, TASK-31221
+Related Tasks: TASK-31263, TASK-31264, TASK-31265, TASK-31266, TASK-31267, TASK-31268
 Extends: ADR-002, ADR-006, ADR-095
 Related: ADR-114
 
@@ -204,7 +204,7 @@ patterns. No database migration is required.
 
 Version 1 stores at most 32 profiles:
 
-The exact V1 names below incorporate the accepted TASK-31219 implementation plan.
+The exact V1 names below incorporate the accepted TASK-31267 implementation plan.
 They replace the earlier design-draft spellings in this ADR so the durable contract
 uses the same field vocabulary as `VllmLaunchDraft`. Revision belongs to the whole
 CAS document, so V1 deliberately omits a per-profile `updated_at`; this keeps the
@@ -321,12 +321,12 @@ requirements without amending ADR-114.
 
 ## Consequences
 
-- TASK-31214 adds the guided launch/connect setup and preflight boundary.
-- TASK-31215 adds the app-scoped target owner, snapshots, generation fencing, and
+- TASK-31264 adds the guided launch/connect setup and preflight boundary.
+- TASK-31265 adds the app-scoped target owner, snapshots, generation fencing, and
   API/model readiness.
-- TASK-31217 connects verified targets to Console's existing session/default owners.
-- TASK-31219 adds device-local structured profiles and current-versus-next restart.
-- TASK-31221 completes compact layout, focus containment, and production-stylesheet
+- TASK-31266 connects verified targets to Console's existing session/default owners.
+- TASK-31267 adds device-local structured profiles and current-versus-next restart.
+- TASK-31268 completes compact layout, focus containment, and production-stylesheet
   verification.
 - Existing explicit vLLM provider endpoints remain unchanged. No migration rewrites
   `api_settings.vllm`.
@@ -380,3 +380,12 @@ untouched so rollback is non-destructive; an older build ignores it.
 - [ADR-114: llama.cpp Lab-to-Console connection authority](114-llamacpp-lab-console-connection-authority.md)
 - [Official vLLM online serving documentation](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/)
 - [Official `vllm serve` CLI reference](https://docs.vllm.ai/en/latest/cli/serve/)
+
+## Numbering provenance
+
+This decision was originally added as ADR-115 by
+`ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`. During branch integration,
+current `origin/dev` already shipped the unrelated
+`115-personas-demand-mounted-center-views.md` at add commit
+`2516735cfd27df249ab45e96c96f15b8aee35d15`. The unmerged vLLM decision moved
+to collision-free ADR-117, and every live vLLM reference moved with it.

@@ -1,5 +1,5 @@
 ---
-id: TASK-31221
+id: TASK-31268
 title: Make vLLM setup responsive and keyboard-contained
 status: Done
 assignee:
@@ -11,10 +11,10 @@ labels:
   - accessibility
   - responsive
 dependencies:
-  - TASK-31214
-  - TASK-31215
-  - TASK-31217
-  - TASK-31219
+  - TASK-31264
+  - TASK-31265
+  - TASK-31266
+  - TASK-31267
 priority: high
 ---
 
@@ -58,9 +58,9 @@ Exact geometry matrix:
 
 ADR required: no
 
-ADR path: `backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md`
+ADR path: `backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md`
 
-Reason: TASK-31221 directly implements ADR-115's already accepted responsive composition, keyboard ownership, focus, and live-evidence contract; it introduces no new runtime, persistence, security, or cross-module boundary.
+Reason: TASK-31268 directly implements ADR-117's already accepted responsive composition, keyboard ownership, focus, and live-evidence contract; it introduces no new runtime, persistence, security, or cross-module boundary.
 
 ## Implementation Notes
 
@@ -89,7 +89,7 @@ Fix Round 3 makes the first terminal outcome own the deletion dialog's public
 stack pop. Later queued Confirm, Cancel, Escape, or backdrop actions cannot rewrite
 that result. The guard remains private to vLLM profile deletion.
 
-ADR required: no. ADR-115 already owns the responsive, focus, runtime, persistence,
+ADR required: no. ADR-117 already owns the responsive, focus, runtime, persistence,
 privacy, and Console-handoff boundaries; this task adds no new architectural choice.
 
 ### Approved-spec evidence map
@@ -164,7 +164,7 @@ same node name).
 8. Loopback health/models ready/missing/auth/timeout/cancel/stale contracts — `test_ready_requires_health_and_exact_models_identity`, `test_healthy_api_without_exact_model_is_not_ready`, `test_auth_required_never_echoes_response_or_credential`, `test_probe_timeout_is_bounded_and_sanitized`, `test_cancellation_prevents_any_http_probe`, `test_older_generation_cannot_replace_newer_owner_state`.
 9. Exact launch/stop/restart process ownership — `test_stop_request_settles_the_owned_server_without_opening_a_picker`, `test_restart_proves_old_process_dead_and_released_before_new_generation`, `test_restart_termination_failure_keeps_old_snapshot_and_never_reserves`.
 10. Mounted session adoption without config writes — `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
-11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31221.
+11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31268.
 12. Recomposition/profile restore/obsolete-worker invalidation — `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
 13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, and `profile_management` at 80x24, 100x30, and 120x40, with every visible enabled focusable fully inside both its direct owner and the active vLLM viewport; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` applies the same rule to the real modal.
 14. Complete Tab walk/hidden providers/lifecycle landing — `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
@@ -176,7 +176,7 @@ The final primary focused matrix passed 217 tests. The compatibility matrix pass
 271 tests and retained two unrelated baseline failures. Both exact failures
 reproduce in detached worktrees at Task 5 base `0643c2713a`, original feature base
 `127cc898ab`, and the real `origin/dev` fetched at `2026-09-04T06:46:11Z`
-(`d6eb7fe1c24188ead22359b6bc8d0713de2829fa`), proving they are not TASK-31221
+(`d6eb7fe1c24188ead22359b6bc8d0713de2829fa`), proving they are not TASK-31268
 regressions. No unrelated Console test-harness/database repair was included. Fix
 Round 1 changed no stylesheet source, so the generated bundle was intentionally not
 rebuilt. The Impeccable detector returned no findings.
@@ -201,3 +201,14 @@ No lesson entry was added: this task produced no new generalizable incident beyo
 the production-CSS/layout evidence rules already recorded in
 `backlog/docs/lessons-testing-evidence.md` and the isolated-state rules in
 `backlog/docs/lessons-live-verification.md`.
+
+## Renumbering provenance
+
+This task previously held id TASK-31221. During the branch integration sweep,
+current `origin/dev` already shipped `task-31221 -
+Media-type-chooser-options-are-invisible-zero-height-OptionList.md` at add commit
+`f9577ba8a913b09c523b643193dbbf1eb777a3af`. The unmerged vLLM task therefore
+moved to collision-free TASK-31268 as the last member of a monotonic vLLM task
+block, carrying every dependency and documentation
+reference with it. The vLLM record was originally added by
+`ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
