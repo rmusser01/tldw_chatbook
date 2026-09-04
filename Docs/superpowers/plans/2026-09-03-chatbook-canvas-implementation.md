@@ -240,13 +240,13 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
 - Create/modify: focused tests under `Tests/Agents/`
 
-- [ ] Locate every use of raw tool arguments/results in display, logging, cycle fingerprints, run records, continuations, diagnostics, and model history; encode this call-site inventory in parametrized failing tests.
-- [ ] Add `ToolProjectionAudience = Literal["display", "log", "cycle", "continuation"]` and an immutable `ToolRecordProjection`. Define an optional provider projection protocol and a registry dispatch method.
-- [ ] Keep raw values only for the immediate provider invocation and model tool-result history. Route every durable/non-model call site through its audience projection.
-- [ ] Default projection must preserve existing providers exactly. Add regression assertions across builtin, local, skill, and MCP providers.
-- [ ] Ensure a projection failure fails closed to tool name, call ID, success state, and bounded error category—never raw arguments/results.
-- [ ] Run the focused Agent runtime, tool catalog, run-store, continuation, and cycle-detection tests.
-- [ ] Commit: `refactor(agents): project sensitive tool records by audience`
+- [x] Locate every use of raw tool arguments/results in display, logging, cycle fingerprints, run records, continuations, diagnostics, and model history; encode this call-site inventory in parametrized failing tests.
+- [x] Add `ToolProjectionAudience = Literal["display", "log", "cycle", "continuation"]` and an immutable `ToolRecordProjection`. Define an optional provider projection protocol and a registry dispatch method.
+- [x] Keep raw values only for the immediate provider invocation and model tool-result history. Route every durable/non-model call site through its audience projection.
+- [x] Default projection must preserve existing providers exactly. Add regression assertions across builtin, local, skill, and MCP providers.
+- [x] Ensure a projection failure fails closed to tool name, call ID, success state, and bounded error category—never raw arguments/results.
+- [x] Run the focused Agent runtime, tool catalog, run-store, continuation, and cycle-detection tests.
+- [x] Commit: `refactor(agents): project sensitive tool records by audience`
 
 ### Task 3.2: Register scoped Canvas tools
 
@@ -257,14 +257,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: the Console tool-registration seam
 - Create: `Tests/Agents/test_canvas_tool_provider.py`
 
-- [ ] Add schema tests for `canvas_list`, `canvas_read`, `canvas_create`, and `canvas_update`; validate additional properties are rejected and all strings/counts use shared limits.
-- [ ] Inject a server-owned `CanvasScope` when resolving the provider. Do not accept session, conversation, branch, or run authority fields from model arguments.
-- [ ] Implement full-document `canvas_create(title, html)` and `canvas_update(canvas_id, expected_parent_revision_id, html)` against staging/service APIs. Return revision IDs, digests, titles, compatibility diagnostics, and conflict metadata.
-- [ ] Make Canvas mutations pre-authorized as reversible conversation-local operations through a narrowly named policy classification. Prove with tests that no other tool bypasses normal approval.
-- [ ] Return source only from explicit `canvas_read` to model history. For display/log/cycle/continuation projections, retain metadata/digests and omit all HTML.
-- [ ] Advertise tools only when Canvas is enabled and the session has a valid Canvas coordinator.
-- [ ] Run `pytest Tests/Agents/test_canvas_tool_provider.py` plus focused tool approval/catalog tests.
-- [ ] Commit: `feat(canvas): expose scoped assistant tools`
+- [x] Add schema tests for `canvas_list`, `canvas_read`, `canvas_create`, and `canvas_update`; validate additional properties are rejected and all strings/counts use shared limits.
+- [x] Inject a server-owned `CanvasScope` when resolving the provider. Do not accept session, conversation, branch, or run authority fields from model arguments.
+- [x] Implement full-document `canvas_create(title, html)` and `canvas_update(canvas_id, expected_parent_revision_id, html)` against staging/service APIs. Return revision IDs, digests, titles, compatibility diagnostics, and conflict metadata.
+- [x] Make Canvas mutations pre-authorized as reversible conversation-local operations through a narrowly named policy classification. Prove with tests that no other tool bypasses normal approval.
+- [x] Return source only from explicit `canvas_read` to model history. For display/log/cycle/continuation projections, retain metadata/digests and omit all HTML.
+- [x] Advertise tools only when Canvas is enabled and the session has a valid Canvas coordinator.
+- [x] Run `pytest Tests/Agents/test_canvas_tool_provider.py` plus focused tool approval/catalog tests.
+- [x] Commit: `feat(canvas): expose scoped assistant tools`
 
 ### Task 3.3: Commit staged mutations with the originating assistant turn
 
@@ -277,19 +277,19 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Chat/test_console_canvas_controller.py`
 - Modify: focused Agent runtime and Console tests
 
-- [ ] Add failing tests for successful finalization, Canvas-only turns, cancellation, provider failure, app shutdown, duplicate callbacks, sequential same-turn updates, parallel ambiguous updates, message-write failure, revision-write failure, and continuation resume.
-- [ ] Coordinate one stage per assistant run. Serialize same-Canvas calls in invocation order; reject parallel calls whose ancestry cannot be proven.
-- [ ] On successful turn completion, ensure an assistant message/turn anchor exists, then commit its message, Canvas card metadata, and staged revisions within the existing persistence transaction. Mark the stage committed only after transaction success.
-- [ ] On cancellation or terminal failure, discard the run stage and render a non-reopenable bounded failure/status card. Retrying a tool call with the same identity must not duplicate a revision.
-- [ ] Persist transcript cards with Canvas/revision IDs, title, sequence, digest, status, and origin only. Reopen source through the Canvas service.
-- [ ] Prove serialized AgentStep records, logs, transcript widgets, cycle keys, and continuation payloads contain no unique sentinel from source HTML.
-- [ ] Run the focused controller, Console persistence, Agent runtime, continuation, cancellation, and transcript tests.
-- [ ] Commit: `feat(canvas): commit revisions with assistant turns`
+- [x] Add failing tests for successful finalization, Canvas-only turns, cancellation, provider failure, app shutdown, duplicate callbacks, sequential same-turn updates, parallel ambiguous updates, message-write failure, revision-write failure, and continuation resume.
+- [x] Coordinate one stage per assistant run. Serialize same-Canvas calls in invocation order; reject parallel calls whose ancestry cannot be proven.
+- [x] On successful turn completion, ensure an assistant message/turn anchor exists, then commit its message, Canvas card metadata, and staged revisions within the existing persistence transaction. Mark the stage committed only after transaction success.
+- [x] On cancellation or terminal failure, discard the run stage and render a non-reopenable bounded failure/status card. Retrying a tool call with the same identity must not duplicate a revision.
+- [x] Persist transcript cards with Canvas/revision IDs, title, sequence, digest, status, and origin only. Reopen source through the Canvas service.
+- [x] Prove serialized AgentStep records, logs, transcript widgets, cycle keys, and continuation payloads contain no unique sentinel from source HTML.
+- [x] Run the focused controller, Console persistence, Agent runtime, continuation, cancellation, and transcript tests.
+- [x] Commit: `feat(canvas): commit revisions with assistant turns`
 
 ### Delivery 3 checkpoint
 
-- [ ] Update TASK-31228 with the projection inventory, transaction boundary, cancellation semantics, and sentinel-leak evidence.
-- [ ] Request a review specifically for approval bypass scope and source leakage.
+- [x] Update TASK-31228 with the projection inventory, transaction boundary, cancellation semantics, and sentinel-leak evidence.
+- [x] Request a review specifically for approval bypass scope and source leakage.
 
 ---
 
