@@ -1094,7 +1094,22 @@ def test_external_server_detail_does_not_use_local_progress_seam():
     assert queried == []
 
 
-def _escape_fake(*, region: str, more_open: bool = False):
+def _escape_fake_query_one(shell, find, *, mounted):
+    from textual.css.query import NoMatches
+
+    def query_one(selector, *_args):
+        if selector == "#library-media-reader-shell":
+            return shell
+        if selector == "#library-media-content-search-controls" and not mounted:
+            raise NoMatches(selector)
+        return find
+
+    return query_one
+
+
+def _escape_fake(
+    *, region: str, more_open: bool = False, find_mounted: bool | None = None
+):
     layout = SimpleNamespace(items_open=True, library_open=True)
     library = SimpleNamespace(role="library", ancestors=())
     items = SimpleNamespace(role="items", ancestors=())
@@ -1122,10 +1137,13 @@ def _escape_fake(*, region: str, more_open: bool = False):
         _library_media_reader_session=LibraryMediaReaderSessionState(
             more_open=more_open
         ),
-        query_one=lambda selector, *_args: (
-            shell
-            if selector == "#library-media-reader-shell"
-            else find
+        query_one=_escape_fake_query_one(
+            shell,
+            find,
+            # task-31237: the bar is collapsed by default, so the fake
+            # mounts it only when the test's region IS the find bar (or
+            # explicitly requested).
+            mounted=(region == "find") if find_mounted is None else find_mounted,
         ),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
@@ -1171,6 +1189,33 @@ def test_escape_closes_more_find_confirmation_before_leaving_reader():
     LibraryScreen.action_library_media_viewer_back(fake)
     assert fake._library_media_editing_analysis is False
     assert calls == ["sync"]
+
+
+def test_escape_closes_an_open_find_bar_from_anywhere_in_the_reader():
+    """Qodo on #2367: an open Find bar is a reader substate, focus-agnostic.
+
+    F6 to the content pane must not leave the bar stranded — Escape from
+    any reader-region focus closes it first (one press), and only the next
+    Escape graduates panes. Items/Library-pane Escapes are unaffected.
+    """
+    fake, calls, _shell, _find = _escape_fake(region="reader", find_mounted=True)
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_content_query == ""
+    assert fake._library_media_find_open is False
+    assert calls == ["sync", ("focus", "#library-media-reader-find")]
+
+    # An Items-pane Escape never consumes the reader's find bar.
+    fake, calls, shell, _find = _escape_fake(region="items", find_mounted=True)
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == [("rail", "#library-search-input")]
+
+
+def test_escape_label_names_close_find_while_the_bar_is_open():
+    """The footer label matches the widened close (Qodo #2367 finding 4)."""
+    fake, _calls, _shell, _find = _escape_fake(
+        region="reader", find_mounted=True
+    )
+    assert LibraryScreen._library_media_escape_label(fake) == "close find"
 
 
 def test_escape_moves_reader_to_items_then_library_then_screen_back():

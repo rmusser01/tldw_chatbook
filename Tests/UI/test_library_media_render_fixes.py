@@ -170,3 +170,17 @@ async def test_find_bar_collapsed_until_find_and_escape_recollapses():
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-content-search-controls")
+
+        # Qodo on #2367: the bar is a reader substate, focus-agnostic —
+        # moving focus OUT of the bar (to the content body) must not
+        # strand it; Escape still closes it first.
+        screen.query_one("#library-media-reader-find", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search-controls"
+        )
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-content-search-controls")

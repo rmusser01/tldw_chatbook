@@ -24038,6 +24038,9 @@ class LibraryScreen(BaseAppScreen):
         width. Picking the already-active sort only closes the chooser --
         no service request. Any other value re-fetches page one under the
         new order.
+
+        Args:
+            event: Selection event emitted by the bounded sort chooser.
         """
         event.stop()
         if self._library_media_bulk_delete_in_flight:
@@ -38660,6 +38663,19 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._exit_library_media_viewer()
             return
+        # Qodo on #2367: an open Find bar is a reader substate regardless
+        # of where focus sits INSIDE the reader region (F6 to the content
+        # pane must not leave the bar stranded) -- Escape closes it first,
+        # and _library_media_escape_label advertises exactly that. The
+        # items/library-pane branches above stay untouched: their Escape
+        # never consumes the reader's find state.
+        if find_controls is not None:
+            self._close_library_media_find()
+            self._sync_library_media_viewer_or_recompose()
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-reader-find"
+            )
+            return
         if layout.items_open:
             self._focus_library_media_items_pane()
         elif layout.library_open:
@@ -39686,6 +39702,11 @@ class LibraryScreen(BaseAppScreen):
             focused is shell.library or shell.library in focused.ancestors
         ):
             return "back"
+        # Qodo on #2367: with the Find bar open, a reader-region Escape
+        # closes it first (see action_library_media_viewer_back) -- the
+        # label says so even when focus has left the bar (F6 to content).
+        if find_controls is not None:
+            return "close find"
         if shell.effective_layout.items_open:
             return "focus Items"
         if shell.effective_layout.library_open:
