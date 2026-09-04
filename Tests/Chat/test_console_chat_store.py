@@ -1505,6 +1505,55 @@ def test_successful_edit_publishes_one_coherent_node_to_every_transcript_view():
     assert store.active_path_message_ids(session.id) == [message.id]
 
 
+def test_canvas_scope_inputs_map_only_the_selected_native_branch_to_persisted_ids():
+    """Durable Canvas scope assembly must follow the in-memory selected branch."""
+
+    store = ConsoleChatStore()
+    root = ConsoleChatMessage(
+        id="native-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+        persisted_message_id="persisted-root",
+    )
+    left = ConsoleChatMessage(
+        id="native-left",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+        persisted_message_id="persisted-left",
+        parent_message_id="persisted-root",
+    )
+    right = ConsoleChatMessage(
+        id="native-right",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+        persisted_message_id="persisted-right",
+        parent_message_id="persisted-root",
+    )
+    session = store.restore_persisted_session(
+        title="Canvas branches",
+        workspace_id=None,
+        persisted_conversation_id="persisted-conversation",
+        all_nodes=[root, left, right],
+        active_leaf_persisted_id="persisted-left",
+    )
+
+    def persisted_active_path() -> tuple[str | None, ...]:
+        return tuple(
+            store.persisted_message_id_for_session_node(session.id, native_id)
+            for native_id in store.active_path_message_ids(session.id)
+        )
+
+    assert store.active_path_message_ids(session.id) == [root.id, left.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-left")
+    assert "persisted-right" not in persisted_active_path()
+
+    store.set_active_leaf(session.id, right.id)
+
+    assert store.active_path_message_ids(session.id) == [root.id, right.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-right")
+    assert "persisted-left" not in persisted_active_path()
+
+
 def test_store_restores_exact_message_state_when_durable_edit_is_rejected():
     class RejectingPersistence(FakePersistence):
         def update_message_content(self, **kwargs):

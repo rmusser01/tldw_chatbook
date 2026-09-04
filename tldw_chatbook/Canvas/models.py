@@ -12,20 +12,110 @@ from .limits import (
     CanvasLimitError,
     CanvasLimits,
     JsonValue,
+    sha256_utf8,
     validate_asset_payloads,
     validate_count,
     validate_json_value,
     validate_opaque_identifier,
     validate_unique_identifiers,
-    sha256_utf8,
-    validate_utf8_text_parts,
     validate_utf8_text,
+    validate_utf8_text_parts,
     verify_sha256_utf8,
 )
 
 
 RuntimeProfile: TypeAlias = Literal["canvas-v1"]
 BridgeRequestKind: TypeAlias = Literal["submit", "download"]
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasScope:
+    """Server-owned durable Canvas authority captured for one Console run."""
+
+    session_id: str
+    conversation_id: str
+    active_message_ids: tuple[str, ...]
+    selected_canvas_id: str | None
+    selected_revision_id: str | None
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasOrigin:
+    """Compact source-free origin metadata for one reachable revision."""
+
+    message_id: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasListItem:
+    """One source-free Canvas projection resolved against an active branch."""
+
+    canvas_id: str
+    revision_id: str
+    parent_revision_id: str | None
+    title: str
+    runtime_profile: RuntimeProfile
+    content_sha256: str
+    source_bytes: int
+    sequence: int
+    origin: CanvasOrigin
+    is_selected: bool
+    is_historical_selection: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasRevisionInfo:
+    """Source-free identity and revision metadata for one exact Canvas state."""
+
+    canvas_id: str
+    revision_id: str
+    parent_revision_id: str | None
+    title: str
+    runtime_profile: RuntimeProfile
+    content_sha256: str
+    source_bytes: int
+    sequence: int
+    origin: CanvasOrigin
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasReadResult:
+    """One exact reachable revision including its complete inert source."""
+
+    revision: CanvasRevisionInfo
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasCreateResult:
+    """A created root revision with source and bounded compiler diagnostics."""
+
+    revision: CanvasRevisionInfo
+    source: str
+    compatibility_issues: tuple[CanvasCompatibilityIssue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasMutationResult:
+    """Source-free metadata for one appended update or rename revision."""
+
+    revision: CanvasRevisionInfo
+    compatibility_issues: tuple[CanvasCompatibilityIssue, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasConflictResult:
+    """The bounded selected/resolved base returned for an optimistic conflict."""
+
+    code: str
+    canvas_id: str
+    current_revision_id: str
+    content_sha256: str
+    title: str
+    sequence: int
+    origin: CanvasOrigin
 
 
 @dataclass(frozen=True, slots=True)
