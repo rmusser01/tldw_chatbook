@@ -111,6 +111,11 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
         assert str(connection.label) == MODEL_DISCOVER_BUTTON_LABEL
         assert str(save_default.label) == "Save as provider defaults"
         assert str(save.label) == "Use for this conversation"
+        painted = "\n".join(
+            strip.text for strip in app.screen._compositor.render_strips()
+        )
+        assert "Use for this conversation" in painted
+        assert "Use in this conversation" not in painted
         for action in (connection, cancel, save_default, save):
             assert action.region.width >= len(str(action.label))
 
@@ -216,6 +221,7 @@ async def test_compact_tab_traversal_reveals_every_body_focus_target(
         targets = modal._settings_focus_targets()
         assert targets
         targets[0].focus()
+        await pilot.pause(0.12)
         await pilot.pause()
 
         for index, expected in enumerate(targets):

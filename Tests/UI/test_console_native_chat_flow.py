@@ -1329,7 +1329,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         return_copy = str(
             modal.query_one("#console-settings-return-status", Static).renderable
         )
-        assert "OpenAI missing API key" in readiness_copy
+        assert "API key missing for OpenAI" in readiness_copy
         assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
 
 
@@ -1824,13 +1824,19 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
         console.apply_navigation_context(first_target.to_context())
-        for _ in range(80):
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
             if (
                 reopened_tokens
                 and not console._conversation_settings_return_restore_in_progress
             ):
                 break
             await pilot.pause(0.05)
+        else:
+            raise AssertionError(
+                "Timed out waiting for the first Conversation settings return "
+                "to finish restoring."
+            )
 
         assert reopened_tokens == [161]
         assert replacement_target is not None
@@ -1845,13 +1851,19 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
         console._consume_pending_conversation_settings_return()
-        for _ in range(80):
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
             if (
                 reopened_tokens == [161, 162]
                 and not console._conversation_settings_return_restore_in_progress
             ):
                 break
             await pilot.pause(0.05)
+        else:
+            raise AssertionError(
+                "Timed out waiting for the replacement Conversation settings "
+                "return to finish restoring."
+            )
 
         assert reopened_tokens == [161, 162]
         assert console._pending_conversation_settings_return_target is None
@@ -13059,7 +13071,7 @@ def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     )
 
     assert screen._console_provider_blocker_copy() == (
-        "Provider setup needed: OpenAI missing API key"
+        "Provider setup needed: API key missing for OpenAI"
     )
     assert screen._console_provider_recovery_action() == (
         CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,

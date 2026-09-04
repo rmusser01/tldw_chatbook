@@ -1028,7 +1028,7 @@ async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch)
         raise asyncio.CancelledError("secret-cancel-detail")
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         cancelled_probe,
     )
 
@@ -1068,7 +1068,7 @@ async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
         )
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         capture_probe,
     )
 
@@ -1109,7 +1109,7 @@ async def test_stale_probe_cancellation_does_not_clear_newer_testing_token(monke
         raise asyncio.CancelledError
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         cancelled_probe,
     )
 
@@ -1288,7 +1288,7 @@ async def test_test_provider_button_click_runs_the_check():
         assert _provider_test_result_text(screen) == "Configuration check has not run."
 
         with patch(
-            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
             _reachable_endpoint_probe,
         ):
             await _click_scrolled_settings_button(
@@ -1334,7 +1334,7 @@ async def test_test_provider_button_runs_with_provider_input_focused():
         assert screen._settings_text_entry_has_focus() is True
 
         with patch(
-            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
             _reachable_endpoint_probe,
         ):
             await _click_scrolled_settings_button(
@@ -1422,7 +1422,7 @@ async def test_model_edit_during_probe_rejects_late_old_model_result(monkeypatch
         )
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         delayed_probe,
     )
     host = StyledSettingsDestinationHarness(app, "settings")
@@ -1460,7 +1460,7 @@ async def test_probe_worker_unexpected_exception_settles_bounded_failure(monkeyp
         raise RuntimeError("secret-probe-detail")
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         failing_probe,
     )
     host = StyledSettingsDestinationHarness(app, "settings")

@@ -690,6 +690,69 @@ async def test_openai_probe_defaults_to_chat_catalog_contract() -> None:
     ]
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
+    """The lazy Console seam reaches /v1/models and preserves returned IDs."""
+    import http.server
+    import json
+    import threading
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderDraftIdentity,
+        ProviderProbeResult,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    requested_paths: list[str] = []
+    payload = json.dumps(
+        {"data": [{"id": "served-alpha"}, {"id": "served-beta"}]}
+    ).encode("utf-8")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requested_paths.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1"
+        identity = ProviderDraftIdentity(
+            provider_key="llama_cpp",
+            connection_identity=canonical_connection_identity(
+                "llama_cpp",
+                endpoint,
+            ),
+            credential_source="none",
+            credential_revision=3,
+            draft_generation=7,
+        )
+
+        result = await ChatScreen._test_console_connection(identity)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result == ProviderProbeResult(
+        "reachable",
+        ("served-alpha", "served-beta"),
+    )
+    assert requested_paths == ["/v1/models"]
+
+
 @pytest.mark.asyncio
 async def test_openai_probe_uses_tts_contract_only_when_explicit() -> None:
     requests: list[httpx.Request] = []
