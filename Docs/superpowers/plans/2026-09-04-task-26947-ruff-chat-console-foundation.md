@@ -103,7 +103,7 @@
 - [x] Add exact drift, structural, Ruff, focused-test, governance, and generated-artifact results to Implementation Notes.
 - [x] Clarify TASK-26000's directive-position definition and record the physical-line guard incident in the testing-evidence lessons so later formatter batches use the corrected metric.
 - [x] Check every acceptance criterion, set TASK-26947 to Done, and commit the task/plan closeout.
-- [x] Rebase onto final strict-latest origin/dev `1a1b5c19e0bb3243effb1ae9671158b6670ad6da`; its delta from `46b1aed544` changed zero assigned paths, then rerun paired current-base/current-HEAD focused tests plus all-73 replay/v3, Ruff, governance, and inventory gates; retain the one-file `console_agent_bridge.py` formatter follow-up that caught the earlier post-rebase blank-line omission.
+- [x] Rebase onto strict-latest origin/dev `9dc2840a2d3205765e1d4f4b58b01ef6de9d2d95`; its delta from the last paired-test base `1a1b5c19e0bb3243effb1ae9671158b6670ad6da` changed zero assigned paths. Retain the exact paired 55-module evidence from that unchanged assigned surface, rerun all-73 replay/v3, Ruff, governance, and inventory gates, and exercise the upstream-changed dependent Console surfaces against both final HEAD and exact current dev; retain the one-file `console_agent_bridge.py` formatter follow-up that caught the earlier post-rebase blank-line omission.
 - [ ] Root-owned integration after this documentation closeout: publish the PR, address Qodo and CI findings, enforce strict latest-base protection, and merge.
 
 ADR required: no
