@@ -224,14 +224,14 @@ and ``LibraryRagSearchController.__init__`` for the sibling worked
 examples):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_
-   refresh``, ``is_mounted``, ``is_running``, ``query``, ``query_one``,
-   ``refresh``, ``run_worker``) are live-read from the screen via
-   ``@property`` on every access -- never snapshotted. ``is_running``/
-   ``app``/``refresh``/``call_after_refresh``/``query``/``query_one`` exist
-   partly because 15 movers forward ``self`` verbatim into the shared,
-   multi-subsystem ``_sync_library_canvas(screen, "skills", ...)``
-   dispatcher (``canvas_sync.py``) -- the SAME real shape the RAG
-   controller's own docstring documents for its own ``search``-kind
+   refresh``, ``focused``, ``is_mounted``, ``is_running``, ``query``,
+   ``query_one``, ``refresh``, ``run_worker``) are live-read from the
+   screen via ``@property`` on every access -- never snapshotted. ``is_
+   running``/``app``/``refresh``/``call_after_refresh``/``query``/
+   ``query_one`` exist partly because 15 movers forward ``self`` verbatim
+   into the shared, multi-subsystem ``_sync_library_canvas(screen,
+   "skills", ...)`` dispatcher (``canvas_sync.py``) -- the SAME real shape
+   the RAG controller's own docstring documents for its own ``search``-kind
    forwarding. Read that dispatcher's actual ``kind == "skills"`` branch
    (not just its signature) before assuming a controller exposes
    everything it touches: it reads ``query_one``/``query`` for the two
@@ -245,6 +245,34 @@ examples):
    resync_pending`` (group (b) below, bound purely for this reason, exactly
    mirroring the RAG controller's own identical pair for the identical
    cause).
+
+   **Fix round (post-landing review): ``focused`` was missing entirely --
+   a SIXTH unbound-attribute-escape hazard, distinct in shape from
+   exclusions 3e's bare-self-identity findings.** ``_sync_library_skills_
+   browse_result`` reads ``focused = getattr(self, "focused", None)`` --
+   a literal-name ``getattr`` with a default, exactly the shape the
+   recipe's own census (a plain ``self.<attr>`` ``ast.Attribute`` walk)
+   cannot see, because the attribute name never appears as a literal
+   ``self.<name>`` expression. With no ``focused`` property bound, the
+   call silently returns ``None`` on every invocation -- not an
+   ``AttributeError``, not a wrong value, just quiet, permanent
+   degradation of the two behaviors gated on it: the live-focus override
+   (`if isinstance(focused, (Button, Input)) and ... startswith
+   ("library-skills-"): focus_identity = live_focus_id`) and the live
+   caret-position read for the filter input (a deliberate fix, commit
+   ``8027e99f0``) both silently stop firing, so a committed-mutation
+   refresh with ``focus_identity=None`` (the caller shape at this
+   controller's own line ~1160, and at ``library_screen.py``'s
+   ``restore_state``/``_select_library_rail_row_after_source_admission``
+   call sites) can no longer recover focus from what the user was
+   actually on. Fixed by adding the same live-read ``@property`` every
+   other controller in this file already carries (``library_rag_search_
+   controller.py``, ``library_conversations_controller.py``). A repeat,
+   whole-file scan for EVERY ``getattr(self, "<literal-string>",
+   default)`` call (not just ``ast.Attribute`` accesses) found exactly
+   this one instance in the final 86-mover set -- confirmed, not assumed,
+   the fix closes the whole class for this controller. See recipe §3's
+   own updated bypass-shape catalogue for the general lesson.
 2. **Everything else** the cluster depends on that is not its own state is a
    NAMED constructor dependency: (a) eight general Library-wide shell
    helpers a moved body calls with explicit arguments (``_run_library_
@@ -451,11 +479,11 @@ class LibrarySkillsController:
         follows and the full per-parameter derivation.
 
         Args:
-            screen: The Library screen. Used ONLY for the nine framework
+            screen: The Library screen. Used ONLY for the ten framework
                 services below (``app``, ``app_instance``, ``call_after_
-                refresh``, ``is_mounted``, ``is_running``, ``query``,
-                ``query_one``, ``refresh``, ``run_worker``) -- this cluster
-                owns no DOM of its own.
+                refresh``, ``focused``, ``is_mounted``, ``is_running``,
+                ``query``, ``query_one``, ``refresh``, ``run_worker``) --
+                this cluster owns no DOM of its own.
             skills_state_accessor: Returns the live ``LibrarySkillsState``
                 (``LibraryScreen._skills_state``, task 1). Backs every
                 generated ``_library_skill_<field>``/``_library_skills_
@@ -546,6 +574,10 @@ class LibrarySkillsController:
     @property
     def call_after_refresh(self) -> Any:
         return self._screen.call_after_refresh
+
+    @property
+    def focused(self) -> Any:
+        return self._screen.focused
 
     @property
     def is_mounted(self) -> bool:

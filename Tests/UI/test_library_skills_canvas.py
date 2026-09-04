@@ -1525,6 +1525,40 @@ async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
         assert screen.query_one("#library-skills-page-previous", Button).disabled
 
 
+class _DelayedSkillsScopeService(_FakeSkillsScopeService):
+    """Every `list_skills` call sleeps `delay` seconds before delegating.
+
+    A bounded delay (never an indefinite wait -- avoids any risk of
+    deadlocking the harness) that separates the SYNCHRONOUS "loading"-round
+    settlement (and its own `queue_after_recompose`-scheduled focus
+    restore) from the async "ready" round's own near-simultaneous resync.
+    Against a near-instant fake service the two rounds' own focus-restore
+    callbacks race -- confirmed directly: `_sync_library_skills_browse_
+    result` runs FOUR times for one `focus_identity=None` refresh (an
+    initial pair from earlier route-navigation settling, then a "loading"
+    round that correctly derives `focus_identity="library-skills-filter"`
+    from the live read, immediately followed -- same event-loop turn, no
+    real service latency -- by a "ready" round that observes NOTHING
+    focused yet, since the loading round's own queued restore hasn't run,
+    and so re-derives `focus_identity=None`). `_sync_library_canvas`'s
+    `queue_after_recompose` holds only one pending callback per host;
+    the ready round's own resync overwrites the loading round's
+    still-pending, CORRECT restore before it ever fires -- a genuine,
+    pre-existing race in the production code, unrelated to whether
+    `focused` is bound, that a delay-free test flakily/deterministically
+    trips on regardless of which side of this pin's own fix it runs
+    against.
+    """
+
+    def __init__(self, *, available, blocked=(), delay: float = 0.2):
+        super().__init__(available=available, blocked=blocked)
+        self._delay = delay
+
+    async def list_skills(self, **kwargs):
+        await asyncio.sleep(self._delay)
+        return await super().list_skills(**kwargs)
+
+
 class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
     """Raises on the FIRST `list_skills` call, then delegates to the real
     fake for every call after -- mirrors `_RecoveringLibraryNoteDetailService`
@@ -1671,6 +1705,109 @@ async def test_library_skills_filter_focus_survives_loading_ready_recompose():
                 break
             await pilot.pause(0.01)
         assert current_filter.has_focus
+
+
+@pytest.mark.asyncio
+async def test_committed_mutation_refresh_with_no_focus_identity_restores_live_focus():
+    """`_refresh_library_skills_after_committed_mutation` never passes an
+    explicit `focus_identity` -- unlike `test_library_skills_filter_focus_
+    survives_loading_ready_recompose` above (which exercises `handle_
+    library_skills_filter`'s EXPLICIT `focus_identity=LIBRARY_SKILLS_
+    FILTER_ID`, immune to this pin's own finding regardless of whether the
+    live read works), this path can only recover focus through `_sync_
+    library_skills_browse_result`'s own LIVE read of the currently-focused
+    widget (`focused = getattr(self, "focused", None)`). `LibrarySkills
+    Controller` had no `focused` property bound -- the `getattr` default
+    silently returned `None` on every call, so a committed-mutation
+    refresh (the delete/save/trust-reset completion path, and the
+    rail-switch/`restore_state` call sites on the screen) permanently
+    dropped whatever the user was focused on.
+
+    NOT a bare `.has_focus` check: Textual mounts the rebuilt canvas's
+    OWN first focusable descendant (this same filter Input, positionally)
+    on its own -- confirmed empirically, `.has_focus` alone stayed True
+    regardless of whether `focused` was bound, an unrelated, generic
+    Textual behaviour this pin must not accidentally ride. The
+    discriminating signal is instead a spy on `screen.query_one`: `_sync_
+    library_skills_browse_result`'s own `restore_focus()` closure only
+    ever calls `self.query_one(f"#{focus_identity}", Widget)` when
+    `focus_identity` is truthy -- i.e. only when the live read resolved a
+    focused `library-skills-*` control -- so observing that exact call is
+    a direct trace of the CODE PATH, immune to Textual's own independent
+    default-focus fallback landing on the same widget by coincidence.
+
+    Uses `_DelayedSkillsScopeService` (see its own docstring) so the
+    "loading" round's own queued restore is checked in isolation from the
+    "ready" round's own near-simultaneous, callback-clobbering resync.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _DelayedSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ],
+        delay=0.2,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        # Focus a `library-skills-*` control WITHOUT going through any
+        # handler that would set an explicit `focus_identity` (typing or
+        # submitting the filter would route through `handle_library_
+        # skills_filter`, defeating the point of this pin).
+        filter_input = None
+        for _ in range(100):
+            filter_input = screen.query_one("#library-skills-filter", Input)
+            filter_input.focus()
+            await pilot.pause(0.01)
+            if filter_input.is_mounted and filter_input.has_focus:
+                break
+        assert filter_input.has_focus
+
+        real_query_one = type(screen).query_one
+        queried_selectors: list[str] = []
+
+        def spying_query_one(self_screen, selector, *args, **kwargs):
+            if isinstance(selector, str):
+                queried_selectors.append(selector)
+            return real_query_one(self_screen, selector, *args, **kwargs)
+
+        screen.query_one = spying_query_one.__get__(screen, type(screen))
+
+        # The committed-mutation refresh path itself: no `focus_identity`
+        # anywhere in this call chain (mirrors this controller's own
+        # delete/save/trust-reset completion callers, and the screen's
+        # `restore_state`/`_select_library_rail_row_after_source_
+        # admission` call sites). The "ready" round's own `list_skills`
+        # call is held open by the delay, so only the "loading" round's
+        # own synchronous settlement + queued restore is observed here.
+        screen._refresh_library_skills_after_committed_mutation()
+
+        for _ in range(10):
+            await pilot.pause(0.01)
+            if "#library-skills-filter" in queried_selectors:
+                break
+
+        del screen.query_one
+
+        assert "#library-skills-filter" in queried_selectors, (
+            "restore_focus() never queried '#library-skills-filter' after "
+            "a focus_identity=None committed-mutation refresh -- the live "
+            "read of the currently-focused widget did not resolve it, "
+            "meaning `focused` is likely unbound on LibrarySkillsController "
+            "again"
+        )
 
 
 _TAB_BAR_CLICK_BUG_SKILL_CONTENT = (

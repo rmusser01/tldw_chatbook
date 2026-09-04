@@ -186,15 +186,21 @@ _BUDGETS: dict[str, int] = {
     # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 86 moved methods (byte-for-byte) + a
-    # ~38-parameter constructor (the largest single move of the effort;
-    # see the module's own docstring for the full derivation) pinned at
-    # its exact measured line count. 3181 -> 3113 -> 3099 (two fix
-    # rounds: 5 methods total reverted to screen-resident after the
-    # battery caught bare-self identity-comparison regressions --
-    # `_library_screen_is_current(self)` in four Import-row handlers, and
-    # `self.app.screen is self` inline in `_present_library_skills_
-    # import_snapshot`; see the module's own docstring, exclusion 5).
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3099,
+    # 40-parameter constructor (self + screen + 38 named dependencies; the
+    # largest single move of the effort; see the module's own docstring
+    # for the full derivation) pinned at its exact measured line count.
+    # 3181 -> 3113 -> 3099 (two fix rounds: 5 methods total reverted to
+    # screen-resident after the battery caught bare-self identity-
+    # comparison regressions -- `_library_screen_is_current(self)` in
+    # four Import-row handlers, and `self.app.screen is self` inline in
+    # `_present_library_skills_import_snapshot`; see the module's own
+    # docstring, exclusion 5) -> 3131 (post-landing-review fix: a SIXTH
+    # bare-self hazard, an unbound-attribute escape via `getattr(self,
+    # "focused", None)` with no corresponding property, silently degraded
+    # the committed-mutation-refresh focus-restore path; fixed by adding
+    # the `focused` framework-service property every sibling controller
+    # already carries -- see the module's own docstring, exclusion 5).
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3131,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
