@@ -861,6 +861,7 @@ class VllmSetupView(VerticalScroll):
                 )
                 if profile_select.value != self._profiles.selected_profile_id:
                     profile_select.value = self._profiles.selected_profile_id
+            profile_select.disabled = not local
             selected_profile = next(
                 profile
                 for profile in self._profiles.profiles
@@ -1255,7 +1256,11 @@ class VllmSetupView(VerticalScroll):
 
     @on(Select.Changed, "#vllm-profile-select")
     def _on_profile_selected(self, event: Select.Changed) -> None:
-        if self._rendering or not isinstance(event.value, str):
+        if (
+            self._rendering
+            or self._draft.mode is not VllmMode.LOCAL
+            or not isinstance(event.value, str)
+        ):
             return
         self.post_message(self.ProfileSelected(event.value))
 

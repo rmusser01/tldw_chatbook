@@ -101,7 +101,6 @@ _COMMON_LOCAL_TAB_IDS = _PROFILE_TAB_IDS + (
 _COMMON_EXISTING_TAB_IDS = (
     "vllm-start-local-button",
     "vllm-connect-existing-button",
-    "vllm-profile-select",
     "vllm-existing-server-url",
     "vllm-existing-model",
     "vllm-activity-toggle",
@@ -474,6 +473,11 @@ async def test_every_visible_focusable_is_inside_its_owner(size, state):
         first_action = view.query_one(f"#{_STATE_TAB_IDS[state][0]}", Button)
         assert first_action.display and not first_action.disabled
         if state.startswith("existing_"):
+            profile_select = view.query_one("#vllm-profile-select", Select)
+            assert profile_select.disabled
+            assert profile_select not in _visible_focusables(
+                view, app.screen._compositor
+            )
             model_select = view.query_one("#vllm-existing-model", Select)
             assert model_select.display and not model_select.disabled
             assert model_select.value == (

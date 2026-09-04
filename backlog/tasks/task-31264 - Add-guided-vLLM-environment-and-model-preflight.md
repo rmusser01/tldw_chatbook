@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 14:05'
+updated_date: '2026-09-04 15:25'
 labels:
   - vllm
   - lab
@@ -32,6 +32,7 @@ Prevent predictable first-run vLLM launch failures by making environment, model-
 - [x] #7 Advanced exposes editable typed dtype, tensor parallel size, maximum model length, GPU memory utilization, and trust-remote-code controls with adjacent validation/consequence copy; raw arguments remain under a separate nested Advanced arguments disclosure.
 - [x] #8 Existing-server setup shows credential-source status without values, discovers only bounded admissible model IDs after an explicit Check connection, requires explicit model selection, and does not publish readiness until the selected exact model is re-probed for the current generation.
 - [x] #9 Selecting a saved local profile immediately reports missing Python or local-model prerequisites beside the visible source-appropriate field without running version, port, launch, or network probes; existing-server mode clearly disables local-profile mutations.
+- [x] #10 Existing-server mode disables the saved-profile selector, removes it from keyboard traversal, ignores forged/programmatic selection and mutation events without repository changes, and restores profile selection after an explicit return to Local mode.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,6 +91,15 @@ UX Fix Round 2/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already requires selected missing environment/local paths to remain selected as Needs setup with repair, and defines profiles as local-launch convenience.
+
+UX Fix Round 3/5:
+19. Add a RED mounted regression proving existing-server mode removes saved-profile selection from the reachable action set and that forged selection/mutation messages preserve repository bytes and revision; prove Local mode restores the selector.
+20. Guard the view and controller at the authoritative mode boundary and project the disabled selector through the existing truthful profile-action copy.
+21. Run focused workflow and geometry GREEN checks, then the complete requested primary, compatibility, CSS, static, privacy, inventory, and diff gates before checking the AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already defines saved profiles as local-launch convenience and existing-server setup as non-persistent connection state; this round enforces that accepted boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -186,6 +196,16 @@ and focused mounted profile cases passed, and the shared final primary passed
 `325` tests under the normal descriptor threshold. ADR-117
 already owns this repair and local-profile boundary; no new ADR or lesson was
 required.
+
+UX Fix Round 3/5 makes the saved-profile selector follow the same Local-only
+ownership rule as the mutation actions: Existing server disables it and removes
+it from Tab traversal, while an explicit return to Local restores it. Both the
+view event and every screen mutation/select handler recheck the authoritative
+screen draft, so forged programmatic messages schedule no repository work or
+dialog and preserve exact document bytes and revision. The view/controller
+regressions were observed RED before the guards and GREEN afterward.
+Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
+and `329`-case five-file primary gates under the normal descriptor limit.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

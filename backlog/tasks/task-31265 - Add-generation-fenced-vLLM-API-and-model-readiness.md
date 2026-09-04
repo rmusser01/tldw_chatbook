@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 14:05'
+updated_date: '2026-09-04 15:25'
 labels:
   - vllm
   - lab
@@ -32,6 +32,7 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 - [x] #6 Existing-server discovery returns a bounded non-ready candidate set; only an explicit admissible selection followed by an exact current-generation reprobe may publish a verified target.
 - [x] #7 Presentation-only recomposition preserves valid exact-claim evidence or exposes a reachable Reverify action, while an active runtime with a dirty checked draft exposes Restart with draft without losing Stop or synchronized network-warning recovery.
 - [x] #8 Active credential values are excluded before candidate retention; Chatbook-owned probes/results/snapshots retain no candidate list, while external discovery and exact selection retain only bounded safe IDs necessary for the visible selection flow.
+- [x] #9 A newly mounted Models screen preserves an app-scoped READY target only when the restored profile, current owner token, exact claim-bound launch snapshot, and live runtime ownership still agree; profile mismatch invalidates safely and recovery remains reachable without focus theft.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -73,6 +74,15 @@ UX Fix Round 2/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This narrows retained readiness evidence under ADR-117's existing credential and bounded-discovery privacy rules without changing the service contract.
+
+UX Fix Round 3/5:
+15. Add a RED production-shaped Lab-to-verified-READY-to-Console-use-to-fresh-Models-screen regression plus a mismatched-profile regression, without relying on same-screen recomposition.
+16. Reconcile first profile hydration against the current owner fingerprint and exact live claim-bound launch snapshot, while retaining ordinary invalidation for deliberate selection and every mismatch.
+17. Run focused readiness/workflow GREEN checks and every requested full gate before checking the AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already requires app-scoped readiness evidence, exact lifecycle ownership, generation fencing, and safe invalidation; this round corrects first-screen hydration at that boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -136,6 +146,21 @@ contracts and the later forged-READY invariant were observed RED before their
 production checks and GREEN afterward. Final connection plus mounted workflow
 passed `100`; the final five-file primary passed `325`. This narrows ADR-117's
 existing evidence-retention contract and requires no new ADR.
+
+UX Fix Round 3/5 distinguishes first profile hydration on a newly mounted Models
+screen from a deliberate selection. READY survives navigation only when the
+app-scoped owner token, selected profile ID and semantic fingerprint, exact
+claim-bound launch snapshot, and still-running Chatbook-owned process agree.
+Mismatch or dead/stale ownership invalidates the generation and target, keeps
+Stop truthful for a still-running old process, and leaves Check/Retry reachable.
+The production-shaped Models -> verified READY -> Use in Console -> fresh Models
+regression uses actual navigation and the screen's own asynchronous profile load;
+it also proves passive hydration does not steal focus. The placeholder-generation
+assertion was RED before reconciliation and the exact/mismatch/navigation cases
+are GREEN after it. ADR-117 remains the governing ownership contract; no new ADR
+or generalized lesson is required.
+Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
+and `329`-case five-file primary gates under the normal descriptor limit.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

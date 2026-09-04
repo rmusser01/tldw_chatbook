@@ -2804,9 +2804,62 @@ class LLMScreen(LabScreen):
             if profile.profile_id == self._vllm_profiles.selected_profile_id
         )
 
+    def _initial_vllm_profile_matches_live_launch(
+        self,
+        profile: VllmLaunchProfileV1,
+        draft: VllmLaunchDraft,
+    ) -> bool:
+        """Return whether first hydration restores the exact live READY launch."""
+
+        launch_snapshot = self._live_vllm_ready_launch_snapshot()
+        snapshot = self._vllm_owner.snapshot()
+        token = snapshot.current_token
+        if (
+            launch_snapshot is None
+            or token is None
+            or token.fingerprint != semantic_fingerprint(draft)
+        ):
+            return False
+        return bool(
+            launch_snapshot.profile_id == profile.profile_id
+            and launch_snapshot.fingerprint == token.fingerprint
+        )
+
+    def _live_vllm_ready_launch_snapshot(self) -> VllmLaunchSnapshot | None:
+        """Return exact app-owned READY evidence only while its process is live."""
+
+        snapshot = self._vllm_owner.snapshot()
+        token = snapshot.current_token
+        target = snapshot.target
+        if (
+            token is None
+            or token.runtime_owner != "chatbook"
+            or snapshot.state is not VllmReadinessState.READY
+            or target is None
+            or target.runtime_owner != "chatbook"
+            or target.generation != token.generation
+        ):
+            return None
+        claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
+        if (
+            claim is None
+            or not process_is_running(process)
+            or not self._vllm_owner.owns_launch_claim(claim)
+        ):
+            return None
+        launch_snapshot = self._vllm_owner.bound_launch_snapshot(claim)
+        if (
+            launch_snapshot is None
+            or launch_snapshot != snapshot.launch_snapshot
+            or launch_snapshot.fingerprint != token.fingerprint
+        ):
+            return None
+        return launch_snapshot
+
     def _accept_vllm_profiles(self, document: VllmProfileDocumentV1) -> None:
         """Hydrate selected structured fields while retaining launch-only arguments."""
 
+        initial_hydration = not self._vllm_profiles_loaded
         previous_fingerprint = semantic_fingerprint(self._vllm_draft)
         self._vllm_profiles = document
         selected = self._selected_vllm_profile()
@@ -2815,17 +2868,29 @@ class LLMScreen(LabScreen):
             raw_arguments=self._vllm_draft.raw_arguments,
         )
         self._vllm_profiles_loaded = True
-        fingerprint_changed = (
-            semantic_fingerprint(self._vllm_draft) != previous_fingerprint
+        hydrated_fingerprint = semantic_fingerprint(self._vllm_draft)
+        preserves_live_launch = (
+            initial_hydration
+            and self._initial_vllm_profile_matches_live_launch(
+                selected,
+                self._vllm_draft,
+            )
         )
+        fingerprint_changed = hydrated_fingerprint != previous_fingerprint
         owner_snapshot = self._vllm_owner.snapshot()
-        if fingerprint_changed or owner_snapshot.current_token is None:
+        invalidates_owner = not preserves_live_launch and (
+            initial_hydration
+            or fingerprint_changed
+            or owner_snapshot.current_token is None
+        )
+        if invalidates_owner:
             generation = self._vllm_owner.invalidate("target_changed")
         else:
+            assert owner_snapshot.current_token is not None
             generation = owner_snapshot.current_token.generation
-        if fingerprint_changed:
+        if invalidates_owner:
             self._cancel_vllm_workers()
-        if fingerprint_changed or self._vllm_preflight is None:
+        if invalidates_owner or self._vllm_preflight is None:
             self._vllm_preflight = run_vllm_profile_repair_check(
                 self._vllm_draft,
                 generation,
@@ -2894,9 +2959,16 @@ class LLMScreen(LabScreen):
             exit_on_error=False,
         )
 
+    def _vllm_profile_mutations_allowed(self) -> bool:
+        """Return whether this screen currently owns local-profile actions."""
+
+        return self._vllm_profiles_loaded and self._vllm_draft.mode is VllmMode.LOCAL
+
     @on(VllmSetupView.ProfileSelected)
     def _on_vllm_profile_selected(self, event: VllmSetupView.ProfileSelected) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         revision = self._vllm_profiles.revision
         self._start_vllm_profile_mutation(
             partial(
@@ -2911,6 +2983,8 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.CreateProfileRequested
     ) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         try:
             profile = profile_from_draft(event.name, event.draft)
         except VllmProfileValidationError as error:
@@ -2931,6 +3005,8 @@ class LLMScreen(LabScreen):
     @on(VllmSetupView.SaveProfileRequested)
     def _on_vllm_save_profile(self, event: VllmSetupView.SaveProfileRequested) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         selected = next(
             (
                 profile
@@ -2967,6 +3043,8 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.RenameProfileRequested
     ) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         self._start_vllm_profile_mutation(
             partial(
                 self._vllm_profile_repository.rename,
@@ -2981,6 +3059,8 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.DuplicateProfileRequested
     ) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         self._start_vllm_profile_mutation(
             partial(
                 self._vllm_profile_repository.duplicate,
@@ -2994,6 +3074,8 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.DeleteProfileRequested
     ) -> None:
         event.stop()
+        if not self._vllm_profile_mutations_allowed():
+            return
         document = self._vllm_profiles
         if event.profile_id != document.selected_profile_id or not any(
             profile.profile_id == event.profile_id for profile in document.profiles
@@ -3025,6 +3107,7 @@ class LLMScreen(LabScreen):
         if (
             not confirmed
             or not self.is_attached
+            or not self._vllm_profile_mutations_allowed()
             or current.revision != revision
             or current.selected_profile_id != profile_id
             or not any(profile.profile_id == profile_id for profile in current.profiles)
@@ -3811,8 +3894,9 @@ class LLMScreen(LabScreen):
                 or store.has_pending(HandoffChannel.VLLM_DEFAULT)
             )
         )
+        preserve_live_launch = self._live_vllm_ready_launch_snapshot() is not None
         self._vllm_handoff_departure_generation = None
-        if not preserve_handoff:
+        if not preserve_handoff and not preserve_live_launch:
             self._vllm_owner.invalidate("screen_detached")
         self._cancel_vllm_workers()
 

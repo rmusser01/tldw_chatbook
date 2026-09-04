@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 14:05'
+updated_date: '2026-09-04 15:26'
 labels:
   - vllm
   - lab
@@ -35,6 +35,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #6 While vLLM is active, the outer Lab header, status, and visible Inspector project selected profile, ownership, safe verified endpoint/model, persistence scope, Current versus Next state, and the reachable next action; projection refreshes without focus theft and respects compact/medium Inspector collapse.
 - [x] #7 The production-stylesheet evidence matrix covers actual Checking, existing-server discovery and selection, Console/default presentations where applicable, mounted edit -> check -> restart, and presentation recomposition with assertion-level mappings for every claimed outcome.
 - [x] #8 The contextual Inspector describes Console use truthfully before and after handoff/return as session-only with defaults unchanged, without claiming an adoption state the Lab does not own.
+- [x] #9 The 11-state responsive/Tab matrix treats the existing-server profile selector as disabled and unreachable while keeping Local-mode selection reachable, and fresh-screen hydration preserves truthful Use/Reverify/recovery actions without stealing focus.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -95,6 +96,15 @@ UX Fix Round 2/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This is copy correction within ADR-117's existing session/default handoff boundary, not a persistence or ownership change.
+
+UX Fix Round 3/5:
+11. Extend the RED geometry/Tab matrix for existing-server selector containment and add mounted fresh-screen no-focus-theft assertions.
+12. Keep the existing adaptive composition and focus policy; change only enabled/reachable actions derived from mode and exact readiness evidence.
+13. Run the 71-case geometry gate, workflow and full primary suites, compatibility, generated CSS, statics, inventories, privacy, and diff checks before checking the AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already fixes the responsive containment, focus, and truthful readiness requirements; no new UI architecture is introduced.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -342,4 +352,28 @@ detector, and `git diff --check` pass. The host remains without an installed or
 importable vLLM, so no live-vLLM claim, download, or unrelated service start was
 made. ADR-117 remains the governing UX/evidence record; no new ADR or lesson was
 needed.
+
+UX Fix Round 3/5 removes the disabled Existing-server profile selector from the
+complete active-pane Tab sequence in every responsive state/size cell while
+retaining the Local selector. Fresh-screen navigation assertions cover exact
+READY/Use/Stop projection, mismatch recovery, and focus preservation without
+using the same-screen recomposition seam. The assertion-level owners are
+`test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff`,
+`test_fresh_screen_mismatched_profile_invalidates_ready_target_safely`,
+`test_existing_mode_forged_profile_events_preserve_repository`,
+`test_every_visible_focusable_is_inside_its_owner`, and
+`test_complete_tab_walk_stays_in_active_vllm_provider`. Workflow passed `60`; all `71`
+production-stylesheet geometry/Tab cases passed. The final complete normal-FD
+five-file primary passed `329` in `418.16s` after the last test-harness
+tightening. Compatibility remains `350/352`, with the same two untouched
+Console/Settings failures recorded in Round 2. CSS build/sync/staleness passed
+`39`; two builds reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`
+without generated drift. The documented profile/persistent-diagnostic command
+reported `79 passed, 1 skipped, 2 failed`; both failures are the already recorded
+untouched persistent-diagnostic owners, while diagnostic path privacy passed
+`98`. The prior Round 2 `134/1/7` broad-static aggregate is provenance-only: its
+exact invocation was not recorded and was not guessed or presented as replayed.
+Critical Ruff, scoped format, `compileall`, and the one valid post-edit Impeccable
+scan pass. ADR-117 remains sufficient; no new ADR or generalized lesson arose.
 <!-- SECTION:NOTES:END -->

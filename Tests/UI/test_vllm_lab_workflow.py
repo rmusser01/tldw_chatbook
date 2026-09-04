@@ -35,6 +35,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
     VllmProfileDocumentV1,
     VllmProfileRepository,
     VllmProfileValidationError,
+    default_vllm_profile,
     draft_from_profile,
     profile_from_draft,
 )
@@ -394,6 +395,8 @@ async def test_existing_server_mode_disables_local_profile_mutations_with_explan
             preflight=None,
         )
 
+        profile_select = view.query_one("#vllm-profile-select", Select)
+        assert profile_select.disabled
         assert view.query_one("#vllm-profile-name", Input).disabled
         for selector in (
             "#vllm-profile-create-button",
@@ -411,6 +414,113 @@ async def test_existing_server_mode_disables_local_profile_mutations_with_explan
         profile_help = view.query_one("#vllm-profile-help", Label)
         assert profile_help.display
         assert "Start on this computer" in str(profile_help.renderable)
+
+        view.apply_state(
+            draft=replace(view.draft, mode=VllmMode.LOCAL),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+        )
+        assert not profile_select.disabled
+
+
+async def test_existing_mode_forged_profile_events_preserve_repository(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """Disabled controls are backed by authoritative view/controller guards."""
+
+    repository = VllmProfileRepository(tmp_path / "profiles.json")
+    first = repository.save(
+        profile_from_draft(
+            "First",
+            VllmLaunchDraft(
+                mode=VllmMode.LOCAL,
+                python_environment="python",
+                model_source=VllmModelSource.HUGGING_FACE,
+                model_value="org/first",
+            ),
+        ),
+        expected_revision=0,
+    )
+    second = repository.save(
+        profile_from_draft(
+            "Second",
+            replace(draft_from_profile(first.profile), model_value="org/second"),
+        ),
+        expected_revision=first.document.revision,
+    )
+    selected = repository.select(
+        first.profile.profile_id,
+        expected_revision=second.document.revision,
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(selected.document)
+        local_draft = screen._vllm_draft
+        screen._vllm_draft = replace(
+            local_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+        )
+        screen._apply_vllm_view_state(focus=False)
+        await pilot.pause()
+        profile_select = view.query_one("#vllm-profile-select", Select)
+        assert profile_select.disabled
+
+        posted = []
+        original_post_message = view.post_message
+        monkeypatch.setattr(view, "post_message", posted.append)
+        view._on_profile_selected(
+            Select.Changed(profile_select, second.profile.profile_id)
+        )
+        monkeypatch.setattr(view, "post_message", original_post_message)
+        assert posted == []
+
+        scheduled = []
+        pushed = []
+        original_start_mutation = screen._start_vllm_profile_mutation
+        monkeypatch.setattr(screen, "_start_vllm_profile_mutation", scheduled.append)
+        original_push_screen = app.push_screen
+        monkeypatch.setattr(
+            app, "push_screen", lambda *args, **kwargs: pushed.append(args)
+        )
+        before_bytes = repository.path.read_bytes()
+        before_document = repository.load()
+        profile_id = first.profile.profile_id
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(second.profile.profile_id)
+        )
+        screen._on_vllm_create_profile(
+            VllmSetupView.CreateProfileRequested("Forged", local_draft)
+        )
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(profile_id, local_draft)
+        )
+        screen._on_vllm_rename_profile(
+            VllmSetupView.RenameProfileRequested(profile_id, "Forged rename")
+        )
+        screen._on_vllm_duplicate_profile(
+            VllmSetupView.DuplicateProfileRequested(profile_id)
+        )
+        screen._on_vllm_delete_profile(VllmSetupView.DeleteProfileRequested(profile_id))
+        monkeypatch.setattr(app, "push_screen", original_push_screen)
+        screen._confirm_vllm_profile_delete(
+            True,
+            profile_id,
+            selected.document.revision,
+        )
+        monkeypatch.setattr(
+            screen,
+            "_start_vllm_profile_mutation",
+            original_start_mutation,
+        )
+
+        assert scheduled == []
+        assert pushed == []
+        assert repository.path.read_bytes() == before_bytes
+        assert repository.load() == before_document
 
 
 @pytest.mark.parametrize(
@@ -1407,6 +1517,209 @@ async def _mount_vllm_screen(
         if views:
             return screen, window, views[0]
     raise AssertionError("vLLM setup view did not mount")
+
+
+async def test_fresh_screen_initial_hydration_preserves_exact_live_ready_target():
+    """Loading the bound saved profile must not treat its placeholder as an edit."""
+
+    app = _build_test_app()
+    owner = VllmConnectionOwner()
+    app._vllm_connection_owner = owner
+    profile = default_vllm_profile()
+    draft = draft_from_profile(profile)
+    token = owner.begin(
+        draft,
+        runtime_owner="chatbook",
+        profile_id=profile.profile_id,
+        profile_name=profile.name,
+    )
+    claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+    assert claim is not None
+    assert owner.bind_launch_claim(token, claim)
+    assert publish_server_process(app, "vllm", claim, _RunningProcess())
+    assert owner.settle(token, _ready_result(token))
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+
+        assert screen._vllm_profiles_loaded
+        snapshot = owner.snapshot()
+        assert snapshot.current_token == token
+        assert snapshot.state is VllmReadinessState.READY
+        assert snapshot.target == _ready_result(token).target
+        assert not view.query_one("#vllm-use-console", Button).disabled
+
+
+async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """A real Console handoff and fresh Models instance retain exact evidence."""
+
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_LLM
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    repository = VllmProfileRepository(tmp_path / "profiles.json")
+    block_next_load = threading.Event()
+    second_load_entered = threading.Event()
+    release_second_load = threading.Event()
+
+    class _NavigationRepository:
+        def load(self):
+            if block_next_load.is_set():
+                block_next_load.clear()
+                second_load_entered.set()
+                release_second_load.wait(5)
+            return repository.load()
+
+        def __getattr__(self, name):
+            return getattr(repository, name)
+
+    shared_repository = _NavigationRepository()
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.VllmProfileRepository",
+        lambda: shared_repository,
+    )
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if getattr(app, "_initial_screen_pushed", False):
+                break
+        assert app._initial_screen_pushed
+        await app.handle_screen_navigation(NavigateToScreen(TAB_LLM))
+        first_screen = app.screen
+        assert isinstance(first_screen, LLMScreen)
+        first_window = first_screen.query_one(LLMManagementWindow)
+        first_window.active_view = "vllm"
+        for _ in range(30):
+            await pilot.pause()
+            if first_screen._vllm_profiles_loaded and first_screen.query(VllmSetupView):
+                break
+        assert first_screen._vllm_profiles_loaded
+        profile = first_screen._selected_vllm_profile()
+        draft = draft_from_profile(profile)
+        token = first_screen._vllm_owner.begin(
+            draft,
+            runtime_owner="chatbook",
+            profile_id=profile.profile_id,
+            profile_name=profile.name,
+        )
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert first_screen._vllm_owner.bind_launch_claim(token, claim)
+        assert publish_server_process(app, "vllm", claim, process)
+        assert first_screen._vllm_owner.settle(token, _ready_result(token))
+        first_screen._vllm_draft = draft
+        first_screen._apply_vllm_view_state(focus=False)
+        await pilot.pause()
+        assert not first_screen.query_one("#vllm-use-console", Button).disabled
+
+        await pilot.click("#vllm-use-console")
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if (
+                app.current_tab == TAB_CHAT
+                and type(app.screen).__name__ == "ChatScreen"
+            ):
+                if not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE):
+                    break
+        assert app.current_tab == TAB_CHAT
+        assert type(app.screen).__name__ == "ChatScreen"
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        assert app.screen.current_console_provider_for_command() == "vllm"
+
+        block_next_load.set()
+        await app.handle_screen_navigation(NavigateToScreen(TAB_LLM))
+        fresh_screen = app.screen
+        assert isinstance(fresh_screen, LLMScreen)
+        assert fresh_screen is not first_screen
+        assert second_load_entered.wait(1)
+        assert not fresh_screen._vllm_profiles_loaded
+        focus_target = app.focused
+        assert focus_target is not None
+
+        release_second_load.set()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if fresh_screen._vllm_profiles_loaded:
+                break
+        assert fresh_screen._vllm_profiles_loaded
+        assert app.focused is focus_target
+
+        fresh_window = fresh_screen.query_one(LLMManagementWindow)
+        fresh_window.active_view = "vllm"
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if fresh_screen.query(VllmSetupView):
+                break
+        fresh_view = fresh_screen.query_one(VllmSetupView)
+        for _ in range(5):
+            await pilot.pause()
+        snapshot = fresh_screen._vllm_owner.snapshot()
+        assert snapshot.current_token == token
+        assert snapshot.state is VllmReadinessState.READY
+        assert snapshot.target == _ready_result(token).target
+        assert not fresh_view.query_one("#vllm-use-console", Button).disabled
+        assert not fresh_view.query_one("#vllm-stop", Button).disabled
+        assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+
+
+async def test_fresh_screen_mismatched_profile_invalidates_ready_target_safely(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """A different restored profile never inherits another launch's READY proof."""
+
+    repository = VllmProfileRepository(tmp_path / "profiles.json")
+    launched_profile = default_vllm_profile()
+    launched_draft = draft_from_profile(launched_profile)
+    mismatched = repository.save(
+        profile_from_draft(
+            "Different launch",
+            replace(launched_draft, model_value="org/different-model"),
+        ),
+        expected_revision=0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.VllmProfileRepository",
+        lambda: repository,
+    )
+    app = _build_test_app()
+    owner = VllmConnectionOwner()
+    app._vllm_connection_owner = owner
+    token = owner.begin(
+        launched_draft,
+        runtime_owner="chatbook",
+        profile_id=launched_profile.profile_id,
+        profile_name=launched_profile.name,
+    )
+    claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+    assert claim is not None
+    assert owner.bind_launch_claim(token, claim)
+    assert publish_server_process(app, "vllm", claim, _RunningProcess())
+    assert owner.settle(token, _ready_result(token))
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+
+        assert screen._vllm_profiles == mismatched.document
+        snapshot = owner.snapshot()
+        assert snapshot.current_token is not None
+        assert snapshot.current_token.generation > token.generation
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.target is None
+        assert view.query_one("#vllm-use-console", Button).disabled
+        assert not view.query_one("#vllm-use-console", Button).display
+        assert not view.query_one("#vllm-stop", Button).disabled
+        recovery_actions = (
+            view.query_one("#vllm-check-setup", Button),
+            view.query_one("#vllm-recovery-primary", Button),
+        )
+        assert any(
+            action.display and not action.disabled for action in recovery_actions
+        )
 
 
 async def test_mounted_draft_edit_fences_old_readiness_generation():

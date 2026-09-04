@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 14:05'
+updated_date: '2026-09-04 15:25'
 labels:
   - vllm
   - lab
@@ -30,6 +30,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #5 Storage, migration if required, privacy, and profile lifecycle tests cover invalid, stale, and recovery states.
 - [x] #6 Profile-loaded structured expert values are always visible and editable under Advanced, invalid/repairable profile fields receive adjacent recovery, and active-runtime Current versus Next restart context stays accurate through selection, lifecycle, and draft changes.
 - [x] #7 Create/save/rename/duplicate validation failures map to the correct visible adjacent profile, source, model, environment, network, or Advanced control with bounded actionable copy; duplicate-name and invalid-rename outcomes do not fall back to generic reload messaging.
+- [x] #8 Initial saved-profile hydration is distinguished from deliberate profile selection: exact current launch evidence survives only for the bound profile/runtime fingerprint, and all profile mutation/select handlers are inert in existing-server mode even when invoked programmatically.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,6 +87,15 @@ UX Fix Round 2/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already fixes the exact profile schema, local-only ownership, corrupt-store recovery, and adjacent repair outcome; this round corrects presentation routing only.
+
+UX Fix Round 3/5:
+26. Add RED profile-hydration and forged-event regressions covering exact bound-profile preservation, mismatch invalidation, and byte/revision stability in existing-server mode.
+27. Reuse the app-scoped connection owner and repository revision as the authoritative reconciliation seams; do not introduce persistence or handoff changes.
+28. Run focused repository/workflow GREEN checks and the requested complete gates before checking the AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is a narrow correction within ADR-117's existing profile, ownership, and readiness contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -146,6 +156,18 @@ mutation tests cover the action matrix. The source/mode slice moved from six
 RED cases to seven GREEN cases; the later real mounted action regression also
 passes. No profile schema, storage, raw-argument, or persistence boundary
 changed, so ADR-117 remains sufficient.
+
+UX Fix Round 3/5 reconciles an initial selected-profile load against the exact
+bound launch snapshot instead of comparing it only with the new screen's
+placeholder draft. Exact live evidence is retained only for the launch-bound
+profile/fingerprint; a different restored profile invalidates safely. In
+Existing server mode, view and controller guards make selection, create, save,
+rename, duplicate, delete, and delayed delete confirmation inert. A mounted
+repository regression proves exact profile bytes and revision remain unchanged.
+The V1 schema, CAS/atomic storage, and launch-only argument policy are untouched,
+so ADR-117 remains sufficient and no storage migration is introduced.
+Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
+and `329`-case five-file primary gates under the normal descriptor limit.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
