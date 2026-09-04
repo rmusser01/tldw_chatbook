@@ -1,18 +1,25 @@
 ---
 id: TASK-31230
 title: Add same-origin served Canvas and remote web authentication
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, web-server, authentication, security]
-dependencies: [TASK-31229]
+updated_date: '2026-09-04 21:46'
+labels:
+  - canvas
+  - web-server
+  - authentication
+  - security
+dependencies:
+  - TASK-31229
 priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Extend `--serve` with a Chatbook-owned split-pane Canvas shell on the existing origin, connecting textual-serve's parent process to the authoritative Chatbook child while protecting every remote authority-bearing route.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -27,8 +34,15 @@ Extend `--serve` with a Chatbook-owned split-pane Canvas shell on the existing o
 - [ ] #9 Focused protocol, authentication, dependency-compatibility, responsive-browser, isolation, and authenticated live-flow tests pass
 <!-- AC:END -->
 
-## Related Design
+## Implementation Plan
 
-- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: yes
+ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this task implements ADR-115's accepted same-origin served topology, authenticated child-control boundary, origin-wide web authentication, and browser-session isolation; the ADR will be amended with the concrete textual-serve extension seam and protocol version rather than duplicated.
+
+1. Inspect the pinned textual-serve parent/AppService spawn and routing APIs and lock the supported extension seam with compatibility tests.
+2. Implement a versioned, bounded, authenticated loopback parent/child Canvas control protocol with exact request ownership, deadlines, backpressure, cancellation, rotation, shutdown, and two-child isolation tests.
+3. Add dedicated Chatbook web authentication and remote-bind policy across the entire served origin, including login bootstrap, secure sessions, CSRF/origin/websocket validation, proxy trust, expiry, revocation, and bounded rate limits.
+4. Mount a Chatbook-owned responsive sibling terminal/Canvas shell on the existing origin, reuse the trusted Canvas renderer/handlers, and fail Canvas closed without terminating the terminal when the child channel is unavailable.
+5. Run targeted protocol, web-auth, textual-serve compatibility, responsive browser, and two-profile isolation tests, then perform real authenticated proxy and cross-browser outer-path verification.
+6. Request independent security and UX review, update ADR-115 and this task with the concrete contracts and evidence, and mark the task Done only after every acceptance criterion is verified.
