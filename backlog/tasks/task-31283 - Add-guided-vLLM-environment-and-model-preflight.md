@@ -206,6 +206,13 @@ dialog and preserve exact document bytes and revision. The view/controller
 regressions were observed RED before the guards and GREEN afterward.
 Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
 and `329`-case five-file primary gates under the normal descriptor limit.
+Final combined-review hardening reuses ADR-117 and adds one shared host-only bind
+rule (IP literals, including IPv6, or case-insensitive localhost) across draft
+preflight and profile validation. Existing-server URLs are bounded at 2,048
+code points and malformed URL/parser inputs settle as field-local issues before
+any resolver, socket, or HTTP work. Focused bind/URL and mounted settlement
+regressions pass; no new ADR is required because this directly enforces the
+accepted preflight boundary.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

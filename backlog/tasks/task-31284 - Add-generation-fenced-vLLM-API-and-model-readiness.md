@@ -279,6 +279,13 @@ inventories, forbidden-scope review, and `git diff --check` passed. No CSS,
 Chat, Console, Settings, persistence, or handoff-consumer file changed. The host
 still has no vLLM executable or importable module, so no live-vLLM claim was
 made. ADR-117 remains sufficient; no new ADR or generalized lesson arose.
+Final combined-review hardening makes preflight execution, probe-request
+construction, and probe dispatch exception-total at the LLMScreen generation
+boundary. A current failed operation now always settles from Checking to a
+bounded Needs attention issue with Retry/Edit recovery, hides the no-longer-
+truthful Cancel action, retains no raw exception/input, and cannot dispatch a
+probe for an invalid endpoint. ADR-117 remains the governing lifecycle/privacy
+contract; no new ADR is required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

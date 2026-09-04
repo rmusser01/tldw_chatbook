@@ -51,6 +51,8 @@ _PROBE_TIMEOUT_SECONDS = 5.0
 _PROBE_REAP_TIMEOUT_SECONDS = 0.25
 _VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
 _DTYPE_VALUES = frozenset({"", "auto", "half", "float16", "bfloat16", "float32"})
+_MAX_BIND_ADDRESS_CODEPOINTS = 255
+_MAX_EXISTING_SERVER_URL_CODEPOINTS = 2048
 
 
 class VllmMode(StrEnum):
@@ -273,11 +275,13 @@ def _validate_draft_structure(draft: VllmLaunchDraft) -> tuple[VllmIssue, ...]:
         issues.append(VllmIssue("invalid_model_source", "model_source"))
     if type(draft.model_value) is not str:
         issues.append(VllmIssue("invalid_model_value", "model_value"))
-    if type(draft.bind_address) is not str:
+    if not is_valid_bind_address(draft.bind_address):
         issues.append(VllmIssue("invalid_bind_address", "bind_address"))
     if type(draft.port) is not int or not 1 <= draft.port <= 65535:
         issues.append(VllmIssue("invalid_port", "port"))
-    if type(draft.existing_server_url) is not str:
+    if type(draft.existing_server_url) is not str or (
+        len(draft.existing_server_url) > _MAX_EXISTING_SERVER_URL_CODEPOINTS
+    ):
         issues.append(VllmIssue("invalid_existing_server_url", "existing_server_url"))
     if type(draft.existing_model_id) is not str or len(draft.existing_model_id) > 120:
         issues.append(VllmIssue("invalid_model_value", "model"))
@@ -342,12 +346,27 @@ def _is_network_exposed(bind_address: str) -> bool:
         return bind_address.lower() != "localhost"
 
 
-def _validate_bind_address(bind_address: str) -> VllmIssue | None:
+def is_valid_bind_address(value: object) -> bool:
+    """Return whether a value is one supported host-only vLLM bind address."""
+
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _MAX_BIND_ADDRESS_CODEPOINTS
+        or value != value.strip()
+        or any(character.isspace() for character in value)
+    ):
+        return False
     try:
-        ipaddress.ip_address(bind_address)
+        ipaddress.ip_address(value)
     except ValueError:
-        if bind_address.lower() != "localhost":
-            return VllmIssue("invalid_bind_address", "bind_address")
+        return value.casefold() == "localhost"
+    return True
+
+
+def _validate_bind_address(bind_address: object) -> VllmIssue | None:
+    if not is_valid_bind_address(bind_address):
+        return VllmIssue("invalid_bind_address", "bind_address")
     return None
 
 
@@ -391,10 +410,30 @@ def _validate_local_model_directory(value: str) -> VllmIssue | None:
 
 
 def _validate_existing_url(value: str) -> VllmIssue | None:
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= _MAX_EXISTING_SERVER_URL_CODEPOINTS
+        or value != value.strip()
+        or any(character.isspace() for character in value)
+    ):
         return VllmIssue("invalid_existing_server_url", "existing_server_url")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        return VllmIssue("invalid_existing_server_url", "existing_server_url")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or port == 0
+    ):
         return VllmIssue("invalid_existing_server_url", "existing_server_url")
     return None
 

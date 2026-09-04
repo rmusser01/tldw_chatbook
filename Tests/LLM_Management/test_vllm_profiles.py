@@ -355,6 +355,82 @@ def test_profile_accepts_nonexistent_safe_local_directory_for_repair(tmp_path: P
     assert not selected.exists()
 
 
+@pytest.mark.parametrize(
+    "bind_address",
+    [
+        "",
+        "not a host",
+        "http://127.0.0.1",
+        "example.test:8000",
+        "example.test/v1",
+        "x" * 256,
+    ],
+)
+def test_profile_persistence_rejects_invalid_bind_without_writing(
+    tmp_path: Path,
+    bind_address: str,
+) -> None:
+    path = tmp_path / "profiles.json"
+
+    with pytest.raises(VllmProfileValidationError, match="bind_address"):
+        VllmProfileRepository(path).save(
+            profile_named("Invalid bind", bind_address=bind_address),
+            expected_revision=0,
+        )
+
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("bind_address", ["127.0.0.1", "2001:db8::1", "LOCALHOST"])
+def test_profile_persistence_accepts_supported_bind_forms(
+    tmp_path: Path,
+    bind_address: str,
+) -> None:
+    path = tmp_path / f"profiles-{bind_address.replace(':', '-')}.json"
+
+    saved = VllmProfileRepository(path).save(
+        profile_named("Supported bind", bind_address=bind_address),
+        expected_revision=0,
+    )
+
+    assert saved.profile.bind_address == bind_address
+    assert VllmProfileRepository(path).load().profiles[0].bind_address == bind_address
+
+
+def test_legacy_invalid_bind_loads_for_source_aware_repair(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.json"
+    profile_id = str(uuid4())
+    payload = {
+        "version": 1,
+        "revision": 3,
+        "selected_profile_id": profile_id,
+        "profiles": [
+            {
+                "profile_id": profile_id,
+                "name": "Repair bind",
+                "python_environment": "python",
+                "model_source": "hugging_face",
+                "model_value": "org/model",
+                "bind_address": "not a host",
+                "port": 8000,
+                "dtype": "auto",
+                "tensor_parallel_size": None,
+                "maximum_model_length": None,
+                "gpu_memory_utilization": None,
+                "trust_remote_code": False,
+            }
+        ],
+    }
+    serialized = json.dumps(payload)
+    path.write_text(serialized, encoding="utf-8")
+    path.chmod(0o600)
+
+    document = VllmProfileRepository(path).load()
+
+    assert document.profiles[0].bind_address == "not a host"
+    assert path.read_text(encoding="utf-8") == serialized
+
+
 def test_decode_revalidates_model_source_without_disclosing_rejected_value(
     tmp_path: Path,
 ):

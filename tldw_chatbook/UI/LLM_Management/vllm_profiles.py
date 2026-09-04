@@ -25,6 +25,7 @@ from .vllm_setup import (
     VllmMode,
     VllmModelSource,
     is_safe_local_model_path_shape,
+    is_valid_bind_address,
     is_valid_hugging_face_repository_id,
 )
 
@@ -445,6 +446,8 @@ def _decode_document(value: object) -> VllmProfileDocumentV1:
 def _revalidate_profile(profile: VllmLaunchProfileV1) -> VllmLaunchProfileV1:
     if type(profile) is not VllmLaunchProfileV1:
         raise VllmProfileValidationError("profile must be an exact V1 profile")
+    if not is_valid_bind_address(profile.bind_address):
+        raise VllmProfileValidationError("bind_address must be an IP or localhost")
     return VllmLaunchProfileV1(
         profile_id=profile.profile_id,
         name=profile.name,

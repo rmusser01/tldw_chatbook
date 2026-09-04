@@ -254,6 +254,14 @@ scope review, and `git diff --check` passed. No profile schema, repository,
 persistence, CSS, Chat, Console, Settings, or handoff-consumer file changed.
 ADR-117 remains the governing profile/readiness boundary; no new ADR or lesson
 was required.
+Final combined-review hardening validates the shared bind-address rule at every
+profile mutation while deliberately allowing bounded legacy V1 documents to
+load into the existing source-aware repair projection. Invalid saved binds
+cannot launch or trigger runtime/network probes, and the next attempted write
+revalidates every profile fail-closed. Persistence tests cover empty, URL,
+host:port, path, whitespace/invalid host, oversized values, plus IPv4, IPv6,
+and localhost success. This is direct ADR-117 enforcement; no new ADR or schema
+change is required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -20,6 +20,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmReadinessState,
     build_vllm_command,
     client_api_url,
+    is_valid_bind_address,
     run_vllm_preflight,
     run_vllm_profile_repair_check,
     semantic_fingerprint,
@@ -541,6 +542,81 @@ def test_existing_server_mode_still_validates_every_structured_field() -> None:
     result = run_vllm_preflight(draft, 4)
 
     assert VllmIssue("invalid_trust_remote_code", "trust_remote_code") in result.issues
+
+
+@pytest.mark.parametrize(
+    "bind_address",
+    [
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "2001:db8::1",
+        "localhost",
+        "LOCALHOST",
+    ],
+)
+def test_bind_address_accepts_only_supported_host_forms(bind_address: str) -> None:
+    assert is_valid_bind_address(bind_address)
+
+
+@pytest.mark.parametrize(
+    "bind_address",
+    [
+        "",
+        "not a host",
+        "example.test",
+        "http://127.0.0.1",
+        "example.test:8000",
+        "example.test/v1",
+        " example.test",
+        "example.test ",
+        "bad_label.example",
+        "-bad.example",
+        "bad-.example",
+        "x" * 254,
+        "x" * 256,
+    ],
+)
+def test_preflight_rejects_invalid_bind_without_runtime_or_network_probe(
+    bind_address: str,
+) -> None:
+    draft = local_draft(bind_address=bind_address)
+
+    result = run_vllm_preflight(
+        draft,
+        4,
+        run=lambda *_args, **_kwargs: pytest.fail("runtime probe used invalid bind"),
+        which=lambda _name: pytest.fail("resolver used invalid bind"),
+        port_available=lambda _host, _port: pytest.fail("socket used invalid bind"),
+    )
+
+    assert result.issues == (VllmIssue("invalid_bind_address", "bind_address"),)
+
+
+@pytest.mark.parametrize(
+    "existing_server_url",
+    ["http://[", "https://example.test/" + "x" * 2049],
+    ids=("malformed-ipv6", "oversized"),
+)
+def test_existing_url_validation_is_bounded_and_exception_total(
+    existing_server_url: str,
+) -> None:
+    draft = local_draft(
+        mode=VllmMode.EXISTING,
+        existing_server_url=existing_server_url,
+    )
+
+    result = run_vllm_preflight(
+        draft,
+        4,
+        run=lambda *_args, **_kwargs: pytest.fail("runtime probe used invalid URL"),
+        which=lambda _name: pytest.fail("resolver used invalid URL"),
+        port_available=lambda _host, _port: pytest.fail("socket used invalid URL"),
+    )
+
+    assert result.issues == (
+        VllmIssue("invalid_existing_server_url", "existing_server_url"),
+    )
 
 
 @pytest.mark.parametrize(

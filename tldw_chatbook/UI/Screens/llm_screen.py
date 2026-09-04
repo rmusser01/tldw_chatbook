@@ -3392,7 +3392,31 @@ class LLMScreen(LabScreen):
     async def _run_vllm_preflight_generation(
         self, token: VllmOperationToken, draft: VllmLaunchDraft
     ) -> None:
-        result = await asyncio.to_thread(run_vllm_preflight, draft, token.generation)
+        try:
+            result = await asyncio.to_thread(
+                run_vllm_preflight, draft, token.generation
+            )
+            if not isinstance(result, VllmPreflightResult):
+                raise TypeError("preflight returned an invalid result")
+        except asyncio.CancelledError:
+            return
+        except Exception:  # noqa: BLE001 - normalize untrusted preflight boundaries
+            snapshot = self._vllm_owner.snapshot()
+            if snapshot.current_token == token and self.is_attached:
+                issue = VllmIssue("launch_failed", "preflight")
+                self._vllm_preflight = VllmPreflightResult(
+                    token.generation,
+                    token.fingerprint,
+                    (issue,),
+                )
+                self._settle_vllm_state(
+                    token,
+                    VllmReadinessState.NEEDS_ATTENTION,
+                    activity_code="preflight_failed",
+                    issue=issue,
+                )
+                self._apply_vllm_view_state(focus=True)
+            return
         snapshot = self._vllm_owner.snapshot()
         if snapshot.current_token != token or not self.is_attached:
             return
@@ -3813,8 +3837,8 @@ class LLMScreen(LabScreen):
                 if launch_snapshot is not None
                 else draft.existing_server_url
             )
-            result = await probe_vllm_target(
-                VllmProbeRequest(
+            try:
+                request = VllmProbeRequest(
                     token=token,
                     api_url=api_url,
                     expected_model_id=(
@@ -3834,7 +3858,19 @@ class LLMScreen(LabScreen):
                     read_timeout_seconds=2.0,
                     total_timeout_seconds=3.0,
                 )
-            )
+                result = await probe_vllm_target(request)
+            except asyncio.CancelledError:
+                return
+            except Exception:  # noqa: BLE001 - settle malformed request/probe safely
+                if self._vllm_owner.snapshot().current_token == token:
+                    self._settle_vllm_state(
+                        token,
+                        VllmReadinessState.NEEDS_ATTENTION,
+                        activity_code="invalid_endpoint",
+                        issue=VllmIssue("invalid_endpoint", "connection"),
+                    )
+                    self._apply_vllm_view_state(focus=True)
+                return
             if self._vllm_owner.snapshot().current_token != token:
                 return
             last_result = result

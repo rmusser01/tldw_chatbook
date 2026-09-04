@@ -469,6 +469,13 @@ baseline failures (`350/352`). Privacy `7`, CSS `39`, deterministic double build
 and sync, critical Ruff, scoped format, `compileall`, both inventories, scope
 review, and `git diff --check` passed. The CSS source and generated bundles are
 unchanged. ADR-117 remains sufficient; no new ADR or lesson arose.
+Final combined-review hardening updates the production Models action contract
+to exact-match all 20 controls composed by VllmSetupView, including Console and
+default handoff actions, and to assert LLMScreen lifecycle plus
+LLMManagementWindow picker ownership. The removed legacy vLLM IDs remain absent;
+all non-vLLM legacy mappings remain exhaustively guarded. The production action
+file passes 17 tests. This is test/contract maintenance under ADR-117; no new ADR
+is required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

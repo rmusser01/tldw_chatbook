@@ -773,6 +773,151 @@ async def test_selected_profile_immediately_projects_local_repair_without_probin
         assert control.display and control.can_focus
 
 
+async def test_selected_profile_projects_invalid_bind_repair_without_any_probe(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    profile = replace(default_vllm_profile(), bind_address="not a host")
+    document = VllmProfileDocumentV1(1, 7, profile.profile_id, (profile,))
+    runtime_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+        lambda *_args, **_kwargs: runtime_calls.append("preflight"),
+    )
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._accept_vllm_profiles(document)
+        await pilot.pause()
+
+        assert runtime_calls == []
+        assert screen._vllm_preflight is not None
+        assert screen._vllm_preflight.repair_only is True
+        assert screen._vllm_preflight.issues == (
+            VllmIssue("invalid_bind_address", "bind_address"),
+        )
+        help_copy = view.query_one("#vllm-bind-address-help", Label)
+        assert help_copy.display
+        assert "IP address" in str(help_copy.renderable)
+        assert view.query_one("#vllm-check-setup", Button).display
+        assert view.query_one("#vllm-start", Button).disabled
+
+
+async def test_preflight_exception_settles_current_generation_for_retry(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    private_canary = "PRIVATE_PREFLIGHT_EXCEPTION_CANARY"
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
+        draft = replace(screen._vllm_draft, model_value="org/model")
+        screen._vllm_draft = draft
+
+        def fail_preflight(*_args, **_kwargs):
+            raise RuntimeError(private_canary)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+            fail_preflight,
+        )
+        screen._on_vllm_check_requested(VllmSetupView.CheckRequested(draft))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._vllm_owner.snapshot().state is not VllmReadinessState.CHECKING:
+                break
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
+        assert snapshot.issue == VllmIssue("launch_failed", "preflight")
+        assert not view.query_one("#vllm-recovery-primary", Button).disabled
+        assert not view.query_one("#vllm-cancel-check", Button).display
+        assert private_canary not in " ".join(
+            str(label.renderable) for label in view.query(Label)
+        )
+
+
+@pytest.mark.parametrize(
+    "existing_server_url",
+    ["http://[", "https://example.test/" + "x" * 2049],
+    ids=("malformed-ipv6", "oversized"),
+)
+async def test_invalid_existing_url_settles_without_probe_dispatch(
+    monkeypatch,
+    existing_server_url: str,
+) -> None:
+    app = _build_test_app()
+    probe_calls: list[object] = []
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url=existing_server_url,
+        )
+        screen._vllm_draft = draft
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.probe_vllm_target",
+            lambda request: probe_calls.append(request),
+        )
+
+        screen._on_vllm_check_requested(VllmSetupView.CheckRequested(draft))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._vllm_owner.snapshot().state is not VllmReadinessState.CHECKING:
+                break
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert probe_calls == []
+        assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
+        assert snapshot.issue == VllmIssue(
+            "invalid_existing_server_url", "existing_server_url"
+        )
+        assert not view.query_one("#vllm-recovery-primary", Button).disabled
+        assert not view.query_one("#vllm-cancel-check", Button).display
+        rendered = " ".join(str(label.renderable) for label in view.query(Label))
+        assert existing_server_url not in rendered
+        assert len(rendered) < 20_000
+
+
+async def test_probe_request_construction_exception_settles_without_dispatch(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    probe_calls: list[object] = []
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profiles_loaded = True
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.VllmProbeRequest",
+            lambda **_kwargs: (_ for _ in ()).throw(ValueError("PRIVATE_URL_CANARY")),
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.probe_vllm_target",
+            lambda request: probe_calls.append(request),
+        )
+        await screen._probe_vllm_generation(token, draft, claim=None)
+        await pilot.pause()
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert probe_calls == []
+        assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
+        assert snapshot.issue == VllmIssue("invalid_endpoint", "connection")
+        assert not view.query_one("#vllm-recovery-primary", Button).disabled
+        assert not view.query_one("#vllm-cancel-check", Button).display
+        assert "PRIVATE_URL_CANARY" not in " ".join(
+            str(label.renderable) for label in view.query(Label)
+        )
+
+
 async def test_name_only_profile_refresh_preserves_stronger_full_preflight():
     draft = VllmLaunchDraft(
         mode=VllmMode.LOCAL,
