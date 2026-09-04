@@ -301,3 +301,83 @@ Temporary history remains incarnation-owned and branch-authorized. Promotion pre
 
 - Repository policy forbids an unrequested full-suite sweep; verification stayed on the focused 766-test gate, exact new regressions, generation persistence, production composition, and static mutation inventory.
 - The unrelated sparse-context-policy atomic-promotion baseline failure remains unchanged and out of scope, as documented above.
+
+## Round 3/5 independent-review fix (2026-09-04)
+
+### Implementation
+
+- Existing-assistant generation settlement now carries an explicit `update_metadata` decision independently of the serialized metadata value. A typed empty `MessageMetadata` is serialized and atomically replaces a stale Canvas card; omitted metadata remains `None` with `update_metadata=False`, preserving compatibility for callers that do not intend a metadata write.
+- The Console store merges Canvas settlement into the assistant's typed metadata before the transaction, so replacing Canvas cards with an empty tuple preserves unrelated fields such as `engine`. When that metadata participates in the generation/contribution transaction, the store records that fact and skips the redundant postcommit metadata sidecar.
+- The real retry integration proof now covers six cases: neither attempt uses Canvas, only the successful retry uses Canvas, only the failed attempt uses Canvas, the same stale-card clearing while preserving unrelated metadata, both attempts use Canvas, and an injected true generation-transaction failure.
+
+### Exact RED/GREEN evidence
+
+The initial expanded retry cross-product appeared green because `_persist_metadata_only` accidentally repaired the stale durable card after the generation transaction. The regression was therefore strengthened to make that postcommit sidecar raise. Before the production fix, the exact test produced:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry
+2 failed, 3 passed, 1 warning
+RuntimeError: postcommit metadata sidecar unavailable
+```
+
+After introducing the explicit metadata-write contract and atomic empty replacement, then adding the true-DB-failure variant:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry
+6 passed, 1 warning in 2.37s
+```
+
+The direct persistence contract proves that omitted metadata preserves an existing unrelated field while an explicit typed empty value clears it:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_chat_persistence_service.py::TestChatPersistenceService::test_generation_contribution_metadata_distinguishes_omitted_from_empty
+1 passed, 1 warning in 0.47s
+```
+
+Fresh affected aggregate, including retry, transaction-failure retention, promotion-origin, and provider coverage:
+
+```text
+../../.venv/bin/pytest -q Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_console_canvas_controller.py Tests/Agents/test_canvas_tool_provider.py -k 'generation_contribution_metadata_distinguishes_omitted_from_empty or real_canvas_controller_allows_exact_failed_assistant_retry or store_retains_canvas_stage_when_terminal_transaction_fails or promotion_remaps_card_and_revision_origins_together or ambiguous_ancestry_conflict_survives_every_bounded_projection'
+111 passed, 76 deselected, 1 warning in 5.06s
+```
+
+Fresh prior broad Task-3.3 gate after the correction:
+
+```text
+../../.venv/bin/python -m pytest Tests/Chat/test_console_canvas_controller.py Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_message_metadata.py Tests/Agents/test_canvas_tool_provider.py Tests/Chat/test_console_agent_bridge.py Tests/Agents/test_agent_runtime.py Tests/Agents/test_provider_continuation_runtime.py Tests/Chat/test_provider_continuation_privacy.py Tests/Chat/test_console_agent_bridge_cancel_all.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_generation_card.py Tests/Canvas/test_repository.py -q --tb=short --show-capture=no
+767 passed, 1 warning in 76.20s
+```
+
+Final post-report verification reran the six-case real retry matrix plus the direct omitted/empty persistence contract: `7 passed, 1 warning in 2.73s`. Fatal Ruff (`E9,F63,F7,F82`), `py_compile` for all four changed Python files, and `git diff --check` all returned zero errors.
+
+### Transaction and settlement model
+
+On a successful retry, the existing assistant row, its complete generation projection, the full typed metadata replacement, and any canonical Canvas contribution are one caller-owned SQLite transaction. The explicit empty replacement is therefore durable before the exact Canvas run confirms COMMITTED, and no mutable postcommit metadata publication is needed to clear the previous discarded card. A true database failure rolls back the message and contributions together, does not confirm the stage, and leaves the exact run READY; the test then retries persistence successfully. The failed attempt's opaque callback remains inert after the new run owns the assistant.
+
+The change does not globally erase metadata. `_persist_terminal_generation` first merges the Canvas settlement field into the existing typed object, retaining unrelated fields; only the Canvas card tuple becomes empty. Callers that omit metadata still request no metadata update.
+
+### Source-leak sentinel evidence
+
+- The six-case real retry test asserts that source from the failed attempt never enters `canvas_revisions`, the successful attempt is the only possible durable source, and neither source appears in message metadata.
+- Failed-Canvas followed by zero-Canvas success has no Canvas card in either the live assistant or a freshly hydrated store, and has zero durable revisions.
+- The injected database failure retains only the bounded discarded card from the already-persisted failed attempt, zero revisions, and a READY retry settlement; the later successful persistence clears it atomically.
+
+### Files changed in this correction
+
+- `tldw_chatbook/Chat/chat_persistence_service.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `Tests/Chat/test_chat_persistence_service.py`
+- `Tests/Chat/test_console_chat_controller.py`
+
+### Self-review
+
+- Verified `update_metadata=True` is chosen from presence of typed metadata, not JSON truthiness, so an intentional empty replacement is representable.
+- Verified the no-metadata path remains `metadata_json=None` and `update_metadata=False`.
+- Verified unrelated typed metadata survives the stale-card clearing transaction and restart hydration.
+- Verified postcommit Canvas confirmation ordering is unchanged and a precommit DB exception retains READY semantics.
+- Verified stale callbacks use their original opaque run binding and cannot affect the replacement run.
+
+### Concerns
+
+- Repository policy forbids an unrequested full-suite sweep; verification remains limited to the focused Task-3.3 gate and exact retry/persistence regressions.
+- The existing unrelated sparse-context-policy promotion baseline failure remains unchanged and out of scope, as documented in Round 1.

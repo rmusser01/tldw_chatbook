@@ -2304,6 +2304,7 @@ class ChatPersistenceService:
         assistant_generation_state: str | None,
         usage_json: str | None,
         metadata_json: str | None,
+        update_metadata: bool,
         contributions: Sequence[ConsolePromotionTransactionContribution],
         on_durable_commit: Callable[[], object] | None = None,
         expected_version: int | None = None,
@@ -2351,7 +2352,7 @@ class ChatPersistenceService:
             usage_json=usage_json,
             expected_version=expected_version,
             metadata_json=metadata_json,
-            update_metadata=metadata_json is not None,
+            update_metadata=update_metadata,
             transaction_callback=write_contributions,
         )
         if on_durable_commit is not None:

@@ -15753,6 +15753,7 @@ class ConsoleChatStore:
             ),
             "expected_version": message.provider_continuation_message_version,
         }
+        metadata_committed_in_transaction = False
         if transaction_contributions or on_durable_commit is not None:
             transaction_writer = getattr(
                 self.persistence,
@@ -15768,13 +15769,14 @@ class ConsoleChatStore:
                 metadata_json=(
                     candidate.metadata.to_json()
                     if candidate.metadata is not None
-                    and not candidate.metadata.is_empty
                     else None
                 ),
+                update_metadata=candidate.metadata is not None,
                 contributions=tuple(transaction_contributions),
                 on_durable_commit=on_durable_commit,
                 **generation_kwargs,
             )
+            metadata_committed_in_transaction = candidate.metadata is not None
         else:
             committed_version = writer(**generation_kwargs)
         if type(committed_version) is not int or committed_version <= 0:
@@ -15783,7 +15785,7 @@ class ConsoleChatStore:
         candidate.provider_continuation_remote = False
         boundary = self._record_generation_commit(message.id, candidate)
         try:
-            if candidate.metadata is not None:
+            if candidate.metadata is not None and not metadata_committed_in_transaction:
                 self._persist_metadata_only(candidate)
             if sync_configured and committed_source_available:
                 self._refresh_and_project_provider_continuation(candidate)

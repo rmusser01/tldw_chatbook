@@ -69,6 +69,55 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_generation_contribution_metadata_distinguishes_omitted_from_empty(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="failed",
+            metadata_json=MessageMetadata(engine="pipeline").to_json(),
+        )
+        initial = db_instance.get_message_by_id(message_id)
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="ordinary replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=None,
+            update_metadata=False,
+            contributions=(),
+            expected_version=initial["version"],
+        )
+        preserved = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(preserved["metadata_json"]) == (
+            MessageMetadata(engine="pipeline")
+        )
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="explicit empty replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=MessageMetadata().to_json(),
+            update_metadata=True,
+            contributions=(),
+            expected_version=preserved["version"],
+        )
+        cleared = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(cleared["metadata_json"]).is_empty is True
+
     def test_canvas_origin_uses_exact_native_id_when_id_matches_legacy_role_alias(
         self, db_instance: CharactersRAGDB
     ) -> None:

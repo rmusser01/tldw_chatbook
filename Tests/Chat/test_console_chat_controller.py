@@ -5478,17 +5478,37 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_run_uses_canvas", [False, True])
+@pytest.mark.parametrize(
+    (
+        "failed_run_uses_canvas",
+        "successful_retry_uses_canvas",
+        "preserve_unrelated_metadata",
+        "inject_generation_db_failure",
+    ),
+    [
+        (False, False, False, False),
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, False, True, False),
+        (True, True, False, False),
+        (True, False, False, True),
+    ],
+)
 async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
     tmp_path,
+    monkeypatch,
     failed_run_uses_canvas,
+    successful_retry_uses_canvas,
+    preserve_unrelated_metadata,
+    inject_generation_db_failure,
 ):
     from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     db = CharactersRAGDB(
-        tmp_path / f"canvas-retry-{failed_run_uses_canvas}.sqlite",
+        tmp_path
+        / f"canvas-retry-{failed_run_uses_canvas}-{successful_retry_uses_canvas}.sqlite",
         "canvas-retry",
     )
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
@@ -5507,7 +5527,10 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
         bound_runs.append((coordinator, run_id))
         attempt = len(bound_runs)
-        if failed_run_uses_canvas:
+        uses_canvas = (
+            failed_run_uses_canvas if attempt == 1 else successful_retry_uses_canvas
+        )
+        if uses_canvas:
             with use_run_id(run_id), use_tool_call_id("retry-canvas-call"):
                 invoked = provider.invoke(
                     "canvas:canvas_create",
@@ -5523,7 +5546,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         return run_id, RunOutcome(
             status=status,
             steps=[],
-            final_text="" if failed_run_uses_canvas else "retry recovered",
+            final_text="retry recovered",
         )
 
     try:
@@ -5538,9 +5561,68 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
 
         assert first.accepted is True
         assert assistant.status == "failed"
-        retried = await controller.retry_message(assistant.id)
+        first_metadata_json = db.get_message_by_id(assistant.persisted_message_id)[
+            "metadata_json"
+        ]
+        first_cards = (
+            json.loads(first_metadata_json).get("canvas_cards", [])
+            if first_metadata_json is not None
+            else []
+        )
+        assert [card["status"] for card in first_cards] == (
+            ["discarded"] if failed_run_uses_canvas else []
+        )
+        if preserve_unrelated_metadata:
+            assert assistant.metadata is not None
+            assistant = store.set_message_metadata(
+                assistant.id, replace(assistant.metadata, engine="pipeline")
+            )
+        if (
+            failed_run_uses_canvas
+            and not successful_retry_uses_canvas
+            and not inject_generation_db_failure
+        ):
+            monkeypatch.setattr(
+                store.persistence,
+                "update_message_metadata",
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("postcommit metadata sidecar unavailable")
+                ),
+            )
+        if inject_generation_db_failure:
+            generation_writer = db.replace_assistant_generation_projection
+            monkeypatch.setattr(
+                db,
+                "replace_assistant_generation_projection",
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("injected generation transaction failure")
+                ),
+            )
+            with pytest.raises(
+                RuntimeError, match="injected generation transaction failure"
+            ):
+                await controller.retry_message(assistant.id)
+            assert canvas.settlement_for_assistant(assistant.id).state.value == "ready"
+            uncommitted_row = db.get_message_by_id(assistant.persisted_message_id)
+            assert [
+                card["status"]
+                for card in json.loads(uncommitted_row["metadata_json"])["canvas_cards"]
+            ] == ["discarded"]
+            assert (
+                db.execute_query(
+                    "SELECT COUNT(*) AS count FROM canvas_revisions"
+                ).fetchone()["count"]
+                == 0
+            )
+            monkeypatch.setattr(
+                db, "replace_assistant_generation_projection", generation_writer
+            )
+            completed_after_retry = store.mark_message_complete(assistant.id)
+            assert completed_after_retry.status == "complete"
+        else:
+            retried = await controller.retry_message(assistant.id)
+            assert retried.accepted is True
 
-        assert retried.accepted is True
         assert len(bound_runs) == 2
         assert bound_runs[0][1] != bound_runs[1][1]
         assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
@@ -5548,7 +5630,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         rows = db.execute_query(
             "SELECT html, origin_message_id FROM canvas_revisions ORDER BY sequence"
         ).fetchall()
-        if failed_run_uses_canvas:
+        if successful_retry_uses_canvas:
             assert [row["html"] for row in rows] == ["<p>2</p>"]
             assert rows[0]["origin_message_id"] == (
                 durable_assistant.persisted_message_id
@@ -5560,11 +5642,55 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
             assert "<p>2</p>" not in metadata_json
         else:
             assert rows == []
-        assert bound_runs[0][0].finish_assistant_run(
-            assistant.id,
-            actual_run_id=bound_runs[0][1],
-            terminal_status=RUN_ERROR,
-        ) is None
+            assert not durable_assistant.metadata or not (
+                durable_assistant.metadata.canvas_cards
+            )
+        if preserve_unrelated_metadata:
+            assert durable_assistant.metadata.engine == "pipeline"
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            console_messages_from_conversation_tree,
+        )
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+        tree = ChatConversationService(db).get_conversation_tree(
+            conversation_id, root_limit=100, depth_cap=100
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restarted_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restarted = restarted_store.restore_persisted_session(
+            title="Restarted retry",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=durable_assistant.persisted_message_id,
+        )
+        restarted_assistant = next(
+            message
+            for message in restarted_store.messages_for_session(restarted.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        restarted_cards = (
+            restarted_assistant.metadata.canvas_cards
+            if restarted_assistant.metadata is not None
+            else ()
+        )
+        assert bool(restarted_cards) is successful_retry_uses_canvas
+        if preserve_unrelated_metadata:
+            assert restarted_assistant.metadata.engine == "pipeline"
+        assert (
+            bound_runs[0][0].finish_assistant_run(
+                assistant.id,
+                actual_run_id=bound_runs[0][1],
+                terminal_status=RUN_ERROR,
+            )
+            is None
+        )
     finally:
         await runtime.dispose()
         db.close_connection()
