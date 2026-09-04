@@ -61,7 +61,9 @@ def load_user_themes(themes_dir) -> list[Theme]:
             colors["dark"] = bool(meta.get("dark", True))
             themes.append(create_theme_from_dict(name, colors))
         except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
-            logger.warning(f"Skipping unreadable user theme {path}: {exc}")
+            # Only the file name: the themes directory is a user path and this
+            # warning reaches the persistent log (path-privacy policy).
+            logger.warning(f"Skipping unreadable user theme {path.name}: {exc}")
     return themes
 
 
