@@ -397,7 +397,12 @@
     }
     if (request.kind === "submit") {
       const completeText = value.complete_text;
-      const completeBytes = typeof completeText === "string" ? bridgeEncoder.encode(completeText).length : -1;
+      const completeBytes = typeof completeText === "string" && completeText.length <= bridgeLimits.submitBytes
+        ? bridgeEncoder.encode(completeText).length
+        : -1;
+      if (completeBytes < 0 || completeBytes > bridgeLimits.submitBytes) {
+        throw new Error("Canvas confirmation content did not match its request.");
+      }
       let contentMatches = typeof request.value === "string" && completeText === request.value;
       if (typeof request.value !== "string" && typeof completeText === "string") {
         try {
@@ -405,7 +410,7 @@
         } catch (_) { contentMatches = false; }
       }
       if (!contentMatches || value.filename !== null || value.mime_type !== null ||
-          completeBytes > bridgeLimits.submitBytes || value.byte_size !== completeBytes) {
+          value.byte_size !== completeBytes) {
         throw new Error("Canvas confirmation content did not match its request.");
       }
     } else {

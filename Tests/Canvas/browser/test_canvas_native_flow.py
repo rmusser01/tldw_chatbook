@@ -781,24 +781,41 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("javascript_value", "process_text", "tampered_text"),
     (
-        (
+        "javascript_value",
+        "process_text",
+        "tampered_text",
+        "expected_parser_entries",
+    ),
+    (
+        pytest.param(
             "{large: 9007199254740992}",
             '{"large":9007199254740992}',
             '{"large":9007199254740993}',
+            None,
+            id="large-integer-collision",
         ),
-        (
+        pytest.param(
             "{decimal: 0.1}",
             '{"decimal":0.1}',
             '{"decimal":0.10000000000000001}',
+            None,
+            id="rounded-decimal-collision",
+        ),
+        pytest.param(
+            "{safe: true}",
+            '{"safe":true}',
+            '{"oversized":"' + ("x" * (16 * 1024)) + '"}',
+            0,
+            id="oversized-presentation-skips-parser",
         ),
     ),
 )
-async def test_trusted_shell_rejects_lossy_numeric_presentation_collision(
+async def test_trusted_shell_bounds_and_compares_structured_presentation_losslessly(
     javascript_value: str,
     process_text: str,
     tampered_text: str,
+    expected_parser_entries: int | None,
 ) -> None:
     session_id = "temporary-numeric-collision-session"
     controller = ConsoleCanvasController()
@@ -847,6 +864,19 @@ async def test_trusted_shell_rejects_lossy_numeric_presentation_collision(
         page = await browser.new_page(viewport={"width": 900, "height": 700})
         page.set_default_timeout(7_000)
 
+        async def instrument_lossless_parser(route) -> None:
+            response = await route.fetch()
+            source = await response.text()
+            entry = "  function parseLosslessBridgeJson(source) {\n"
+            assert source.count(entry) == 1
+            instrumented = source.replace(
+                entry,
+                entry
+                + "    window.__canvasLosslessParseEntries = "
+                + "(window.__canvasLosslessParseEntries || 0) + 1;\n",
+            )
+            await route.fulfill(response=response, body=instrumented)
+
         async def tamper_preparation(route) -> None:
             request = route.request.post_data_json["request"]
             assert request["value"] == json.loads(process_text)
@@ -867,6 +897,8 @@ async def test_trusted_shell_rejects_lossy_numeric_presentation_collision(
                 }
             )
 
+        if expected_parser_entries is not None:
+            await page.route("**/static/canvas_shell.js", instrument_lossless_parser)
         await page.route("**/api/bridge/prepare", tamper_preparation)
         await page.goto(launch.browser_url)
         await page.get_by_text("Connected", exact=True).wait_for()
@@ -878,6 +910,10 @@ async def test_trusted_shell_rejects_lossy_numeric_presentation_collision(
             exact=True,
         ).wait_for()
         assert await page.get_by_role("dialog").count() == 0
+        if expected_parser_entries is not None:
+            assert await page.evaluate(
+                "window.__canvasLosslessParseEntries || 0"
+            ) == expected_parser_entries
         await browser.close()
     await gateway.aclose()
 
