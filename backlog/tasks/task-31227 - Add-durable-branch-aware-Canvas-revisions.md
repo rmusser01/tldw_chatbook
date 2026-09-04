@@ -1,18 +1,24 @@
 ---
 id: TASK-31227
 title: Add durable branch-aware Canvas revisions
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, database, conversations]
-dependencies: [TASK-31226]
+updated_date: '2026-09-04 05:04'
+labels:
+  - canvas
+  - database
+  - conversations
+dependencies:
+  - TASK-31226
 priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Add the local Canvas domain, immutable revision graph, and persistence boundaries so conversations can own multiple named artifacts whose visible head follows the active message branch while temporary sessions remain genuinely temporary.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -26,6 +32,20 @@ Add the local Canvas domain, immutable revision graph, and persistence boundarie
 - [ ] #8 Conversation soft delete, restore, and hard purge apply the existing lifecycle to owned Canvases without adding Canvas data to sync logs
 - [ ] #9 Focused migration, repository, property-based branch, race, promotion-rollback, and lifecycle tests pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this task implements ADR-115’s durable ownership, immutable revision graph, active-branch resolution, and atomic temporary-promotion contract; no new ADR is needed unless implementation changes those accepted boundaries.
+
+1. Allocate migration 66 from verified schema head 65 and implement the immutable Canvas repository with migration, concurrency, rollback, lifecycle, and query-plan tests.
+2. Add the scoped Canvas service with active-message-path resolution, historical branching, deterministic conflicts, and centralized durable quotas.
+3. Add in-memory temporary Canvas staging and join the existing conversation/message promotion transaction with complete rollback and shutdown destruction.
+4. Run only the focused migration, Canvas repository/service/staging, and affected chat persistence suites plus static checks.
+5. Update TASK-31227 and ADR-115 with the actual schema, constraints, quotas, query plans, rollback evidence, review outcome, and remaining limitations.
+<!-- SECTION:PLAN:END -->
 
 ## Related Design
 
