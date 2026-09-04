@@ -53,8 +53,13 @@ def gather_git_env(root: Path, *, previous: GitEnvState | None = None) -> GitEnv
         return GitEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
     try:
         status = working_tree_status(root, info)
-    except GitWorkspaceError as exc:
-        logger.debug("environment_status: working_tree_status failed: {}", exc)
+    except (GitWorkspaceError, ValueError, IndexError) as exc:
+        # Never interpolate exc's message or any raw git stderr here -- it can
+        # embed absolute paths (spec: log exception TYPE only, never content).
+        logger.debug(
+            "environment_status: working_tree_status failed exception_type={}",
+            type(exc).__name__,
+        )
         if previous is not None and previous.availability is EnvSourceAvailability.OK:
             return replace(previous, stale=True)
         return GitEnvState(availability=EnvSourceAvailability.ERROR)
@@ -152,19 +157,31 @@ def gather_pr_env(
     """Fetch PR + checks for ``branch`` via gh. Never raises."""
     if not branch:
         return PrEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
-    result = runner(root, ["pr", "view", branch, "--json", _PR_JSON_FIELDS])
+    try:
+        result = runner(root, ["pr", "view", branch, "--json", _PR_JSON_FIELDS])
+    except Exception as exc:  # noqa: BLE001 -- an injected/misbehaving runner must not crash the panel
+        logger.debug(
+            "environment_status: gh runner raised exception_type={}",
+            type(exc).__name__,
+        )
+        if previous is not None and previous.availability is EnvSourceAvailability.OK:
+            return replace(previous, stale=True)
+        return PrEnvState(availability=EnvSourceAvailability.ERROR)
     if result is None:
         return PrEnvState(availability=EnvSourceAvailability.MISSING_TOOL)
     if result.returncode != 0:
         if "no pull requests found" in result.stderr.lower():
             return PrEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
-        logger.debug("environment_status: gh failed rc={} err={}",
-                     result.returncode, result.stderr[:200])
+        # Never interpolate result.stderr here -- gh's stderr can embed
+        # absolute paths (spec: log the return code only, never raw stderr).
+        logger.debug("environment_status: gh failed rc={}", result.returncode)
         if previous is not None and previous.availability is EnvSourceAvailability.OK:
             return replace(previous, stale=True)
         return PrEnvState(availability=EnvSourceAvailability.ERROR)
     try:
         payload = json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            return PrEnvState(availability=EnvSourceAvailability.ERROR)
         checks = tuple(
             check for entry in (payload.get("statusCheckRollup") or [])
             if isinstance(entry, dict) and (check := _parse_check(entry)) is not None
@@ -182,14 +199,21 @@ def gather_pr_env(
             checks=checks,
         )
     except (ValueError, TypeError) as exc:
-        logger.debug("environment_status: gh JSON parse failed: {}", exc)
+        # Never interpolate exc's message here -- never raise this to a raw
+        # error-message log (spec: exception TYPE only).
+        logger.debug(
+            "environment_status: gh JSON parse failed exception_type={}",
+            type(exc).__name__,
+        )
         return PrEnvState(availability=EnvSourceAvailability.ERROR)
 
 
 _TASK_FILENAME_RE = _re.compile(r"^task-(\d+(?:\.\d+)*) - (.+)\.md$")
 _FRONT_MATTER_RE = _re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", _re.DOTALL)
+_STATUS_LINE_RE = _re.compile(r"^status:\s*(.+)$", _re.MULTILINE)
 _AC_DONE_RE = _re.compile(r"^- \[x\]", _re.MULTILINE | _re.IGNORECASE)
 _AC_OPEN_RE = _re.compile(r"^- \[ \]", _re.MULTILINE)
+_HEAD_READ_BYTES = 4096
 
 
 class BacklogTaskScanner:
@@ -200,14 +224,39 @@ class BacklogTaskScanner:
 
     def _parse_status(self, path: Path) -> str:
         try:
-            head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+            # Bounded read: only the first 4096 chars ever need decoding for
+            # a frontmatter block, and never the full file -- read_text()
+            # decodes the WHOLE file before the [:4096] slice ever applies
+            # (851ms->159ms over a real 3,212-file backlog/tasks/ dir).
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                head = fh.read(_HEAD_READ_BYTES)
         except OSError:
             return ""
         match = _FRONT_MATTER_RE.match(head)
         if not match:
             return ""
+        frontmatter = match.group(1)
+        # Fast path: a plain `status:` line covers the overwhelming majority
+        # of task files and never needs a full-block YAML parse. This also
+        # sidesteps backlog.md's own `assignee:\n  - @name` idiom, which is
+        # invalid top-level YAML (a bare `@` cannot start a flow scalar) and
+        # previously made yaml.safe_load raise over the WHOLE block --
+        # silently dropping the status of every file using that idiom.
+        status_match = _STATUS_LINE_RE.search(frontmatter)
+        if status_match is not None:
+            candidate = status_match.group(1).strip().strip("'\"")
+            try:
+                # Validate the single extracted line only (cheap) -- guards
+                # against a regex match landing on a genuinely malformed
+                # value (e.g. an unclosed YAML flow collection) rather than
+                # trusting it blindly.
+                yaml.safe_load(candidate)
+            except yaml.YAMLError:
+                pass
+            else:
+                return candidate
         try:
-            meta = yaml.safe_load(match.group(1))
+            meta = yaml.safe_load(frontmatter)
         except yaml.YAMLError:
             return ""
         if not isinstance(meta, dict):

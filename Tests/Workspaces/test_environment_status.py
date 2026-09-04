@@ -1,4 +1,5 @@
 """Gatherer tests: real temp git repos, no git mocks (gh is mocked at its seam later)."""
+import os
 import subprocess
 from pathlib import Path
 
@@ -103,6 +104,23 @@ def test_gather_git_env_error_keeps_previous_as_stale(main_repo: Path, monkeypat
     assert state.branch == good.branch
 
 
+def test_gather_git_env_value_error_from_status_keeps_previous_as_stale(main_repo: Path, monkeypatch):
+    # working_tree_status's numstat parser can raise ValueError/IndexError on
+    # malformed `git diff --numstat` output -- the except clause must catch
+    # those alongside GitWorkspaceError, not just the latter.
+    import tldw_chatbook.Workspaces.environment_status as mod
+    good = gather_git_env(main_repo)
+
+    def boom(root, info):
+        raise ValueError("malformed numstat output")
+
+    monkeypatch.setattr(mod, "working_tree_status", boom)
+    state = gather_git_env(main_repo, previous=good)
+    assert state.stale is True
+    assert state.availability is EnvSourceAvailability.OK
+    assert state.branch == good.branch
+
+
 import json
 
 from tldw_chatbook.Chat.console_environment_state import PrEnvState
@@ -166,6 +184,34 @@ def test_gather_pr_env_error_keeps_previous_as_stale(tmp_path: Path):
 def test_gather_pr_env_garbage_json_is_error_not_crash(tmp_path: Path):
     state = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: GhResult(0, "{not json", ""))
     assert state.availability is EnvSourceAvailability.ERROR
+
+
+@pytest.mark.parametrize("valid_but_non_dict_json", ["null", "[]", '"str"'])
+def test_gather_pr_env_valid_non_dict_json_is_error_not_crash(tmp_path: Path, valid_but_non_dict_json: str):
+    # json.loads("null"/"[]"/'"str"') succeeds -- payload.get(...) on the
+    # result (None/list/str) must not raise AttributeError uncaught.
+    state = gather_pr_env(
+        tmp_path, "feat/x",
+        runner=lambda root, args: GhResult(0, valid_but_non_dict_json, ""),
+    )
+    assert state.availability is EnvSourceAvailability.ERROR
+
+
+def test_gather_pr_env_runner_exception_is_error_not_crash(tmp_path: Path):
+    def exploding_runner(root, args):
+        raise RuntimeError("boom")
+    state = gather_pr_env(tmp_path, "feat/x", runner=exploding_runner)
+    assert state.availability is EnvSourceAvailability.ERROR
+
+
+def test_gather_pr_env_runner_exception_keeps_previous_as_stale(tmp_path: Path):
+    good = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: GhResult(0, _GH_JSON, ""))
+
+    def exploding_runner(root, args):
+        raise RuntimeError("boom")
+
+    state = gather_pr_env(tmp_path, "feat/x", runner=exploding_runner, previous=good)
+    assert state.stale is True and state.number == 2281
 
 
 def test_run_gh_missing_binary_returns_none(tmp_path: Path):
@@ -244,3 +290,53 @@ def test_mtime_cache_avoids_reparsing_unchanged_files(backlog_ws: Path, monkeypa
     monkeypatch.setattr(BacklogTaskScanner, "_parse_status", counting)
     scanner.scan(backlog_ws, branch=None)
     assert calls["n"] == 0  # nothing changed on disk -> zero re-parses
+
+
+def test_scan_survives_backlog_md_assignee_idiom_and_can_be_the_branch_task(backlog_ws: Path):
+    # backlog.md itself writes `assignee:\n  - @name` in frontmatter, which is
+    # invalid top-level YAML (a bare `@` cannot start a flow scalar) --
+    # yaml.safe_load raises over the whole block, and a naive implementation
+    # silently drops the file's status entirely. Three real files in this
+    # repo's own backlog/tasks/ use exactly this idiom.
+    path = backlog_ws / "backlog" / "tasks" / "task-777 - Assigned feature.md"
+    path.write_text(
+        "---\n"
+        "id: task-777\n"
+        "title: Assigned feature\n"
+        "status: In Progress\n"
+        "assignee:\n"
+        "  - @someone\n"
+        "---\n\n"
+        "## Acceptance Criteria\n\n- [x] done\n- [ ] pending\n"
+    )
+    state = BacklogTaskScanner().scan(backlog_ws, branch="feat/task-777-assigned")
+    assert "777" in {e.task_id for e in state.entries}
+    assert state.branch_task is not None
+    assert state.branch_task.task_id == "777"
+    assert state.branch_task.status == "In Progress"
+    assert state.branch_task.ac_done == 1 and state.branch_task.ac_total == 2
+
+
+def test_cache_reparses_only_the_file_whose_content_and_mtime_changed(backlog_ws: Path, monkeypatch):
+    # The existing zero-reparse test only proves a cache that NEVER
+    # invalidates would also pass it. This is the positive control: change
+    # exactly one file and confirm exactly that file is re-parsed.
+    scanner = BacklogTaskScanner()
+    scanner.scan(backlog_ws, branch=None)
+    seen: list[Path] = []
+    original = BacklogTaskScanner._parse_status
+
+    def counting(self, path):
+        seen.append(path)
+        return original(self, path)
+
+    monkeypatch.setattr(BacklogTaskScanner, "_parse_status", counting)
+
+    target = backlog_ws / "backlog" / "tasks" / "task-102 - Polish widget.md"
+    target.write_text(target.read_text().replace("To Do", "In Progress"))
+    bumped_mtime = target.stat().st_mtime + 5
+    os.utime(target, (bumped_mtime, bumped_mtime))
+
+    state = scanner.scan(backlog_ws, branch=None)
+    assert seen == [target]
+    assert state.in_progress == 3 and state.todo == 0

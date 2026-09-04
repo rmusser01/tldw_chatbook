@@ -3939,6 +3939,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 4,
+      "diagnostic_digest": "df6c2507681cfd55070e",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Workspaces/environment_status.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "92bf7b7193a507209f6d",
       "owner": "TASK-494",
@@ -10508,6 +10515,20 @@
     {
       "candidates": [
         {
+          "call_digest": "2ce003b2e1270079",
+          "method": "debug",
+          "path_expressions": [
+            "result.returncode"
+          ],
+          "scope": "gather_pr_env",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Workspaces/environment_status.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "e02cc5afcde7adfd",
           "method": "error",
           "path_expressions": [
@@ -11342,10 +11363,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 572,
-    "path_privacy_candidate_calls": 715,
+    "owner_files": 573,
+    "path_privacy_candidate_calls": 716,
     "persistent_sink_files": 10,
     "task_492_calls": 1337,
-    "task_494_calls": 7599
+    "task_494_calls": 7603
   }
 }
