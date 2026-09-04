@@ -179,6 +179,23 @@ recipe (leave the method real, retarget the fixture to match, or route the
 dynamic lookup through `operator.attrgetter`) is the accommodation for
 each.**
 
+**One more shape, and its exception to "defer to cleanup": a hardcoded-
+file-path census, not a monkeypatch bypass, ships red.** A test that
+AST-walks a specific source file by path (e.g. `library_screen.py`) for a
+call/name it expects to still live there is not a monkeypatch-routing
+hazard in the sense above — it does not silently pass while checking
+nothing, it goes loudly RED the moment the move lands, because the census
+over the old file now finds zero matches. That distinction matters for
+timing: every other bypass shape in this section is deliberately left for
+the subsystem's cleanup PR to retarget, because until then the test still
+*passes* (just without exercising what it thinks it does). A path-census
+guard has no such grace period — it is red at the very commit boundary
+that moves the code, so the no-red-ships precedence wins: retarget the
+census in the SAME PR-stage that moved the code (to the new file, or to
+whichever set of files best expresses the invariant), not deferred to
+cleanup. Cleanup still handles the rest of that subsystem's routing work
+as usual.
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:

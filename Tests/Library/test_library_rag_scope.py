@@ -592,21 +592,40 @@ async def test_unscoped_call_without_scope_kwarg_is_byte_identical_to_explicit_n
 
 
 def test_library_screen_call_sites_never_pass_scope_kwarg():
-    """D2 guard: grep-assert (AST-based) that the Library screen's own
-    Search canvas never passes `scope=` when building a
-    `LibraryRagSearchRequest` -- it must stay unscoped by omission, the
-    dataclass default doing all the work."""
-    source_path = (
-        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py"
-    )
-    tree = ast.parse(source_path.read_text())
-    request_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "LibraryRagSearchRequest"
+    """D2 guard: grep-assert (AST-based) that the Library Search canvas's
+    `LibraryRagSearchRequest(...)` construction never passes `scope=` -- it
+    must stay unscoped by omission, the dataclass default doing all the
+    work.
+
+    Censused over BOTH `library_screen.py` and
+    `library_rag_search_controller.py`, not `library_screen.py` alone: the
+    invariant this guards ("no call site anywhere passes scope=") is about
+    the construction site, not about which file currently holds it. Wave-3
+    task 3 (search+RAG controller PR) moved the sole call site from
+    `library_screen.py` to `library_rag_search_controller.py`
+    (`_start_library_rag_query`); a single-file census would have gone
+    silently green with zero call sites checked the moment the last one
+    moved, rather than failing loudly as it did here. Censusing both files
+    means a future move back onto the screen, or a second call site added
+    on either file, stays covered without another retarget.
+    """
+    source_paths = [
+        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py",
+        Path(tldw_chatbook.__file__).parent
+        / "UI"
+        / "Library_Modules"
+        / "library_rag_search_controller.py",
     ]
+    request_calls = []
+    for source_path in source_paths:
+        tree = ast.parse(source_path.read_text())
+        request_calls.extend(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "LibraryRagSearchRequest"
+        )
     assert request_calls, "expected at least one LibraryRagSearchRequest(...) call site"
     for call in request_calls:
         keyword_names = {kw.arg for kw in call.keywords}
