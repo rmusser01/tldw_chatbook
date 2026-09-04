@@ -435,6 +435,10 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Optional owner-authenticated exception to the review batch. A True
+    # result omits only that exact call from review and approval Trace rows;
+    # exceptions fail closed by keeping the call on the ordinary review path.
+    is_tool_call_preauthorized: Callable[[ToolCall], bool] | None = None
     # Optional post-review/pre-dispatch observation seam. The runtime calls
     # it once with only calls whose effective review verdict is `proceed`.
     # It runs after project-instruction preparation and review, but before
@@ -2161,10 +2165,28 @@ def run_agent_loop(
                 else call
             )
 
+        preauthorized_call_ids: set[int] = set()
+        if deps.is_tool_call_preauthorized is not None:
+            for call in calls:
+                try:
+                    if deps.is_tool_call_preauthorized(call):
+                        preauthorized_call_ids.add(id(call))
+                except Exception:  # noqa: BLE001 - classification fails closed
+                    logger.warning(
+                        f"tool preauthorization classification failed: {call.name}"
+                    )
+        review_required_calls = [
+            review_call
+            for call, review_call in zip(calls, review_calls)
+            if id(call) not in preauthorized_call_ids
+        ]
+
         verdicts: dict[str, str] = {}
         review_hook_failed = False
-        if deps.review_tool_calls is not None and calls:
+        if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
+                if id(call) in preauthorized_call_ids:
+                    continue
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
                 assert isinstance(proposal_step, AgentStep)
@@ -2180,7 +2202,7 @@ def run_agent_loop(
                 )
                 trace_state["request"] = request_step
             try:
-                verdicts = deps.review_tool_calls(review_calls) or {}
+                verdicts = deps.review_tool_calls(review_required_calls) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
                 review_hook_failed = True
                 # MCP-specific fail-closed policy lives in the Task 6
@@ -2189,13 +2211,16 @@ def run_agent_loop(
                 if continuation_checkpoint is None:
                     logger.opt(exception=True).warning(
                         f"review_tool_calls hook raised for batch "
-                        f"{[c.name for c in calls]}; treating all {len(calls)} "
+                        f"{[c.name for c in review_required_calls]}; treating all "
+                        f"{len(review_required_calls)} "
                         f"calls as proceed"
                     )
                 verdicts = {}
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
+                    if id(call) in preauthorized_call_ids:
+                        continue
                     trace_state = call_trace[id(call)]
                     proposal_step = trace_state["proposal"]
                     request_step = trace_state["request"]

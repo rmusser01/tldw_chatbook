@@ -5,19 +5,19 @@ from __future__ import annotations
 import json
 import re
 import weakref
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Canvas.limits import (
+    MAX_CANVAS_ORIGIN_TURN_ID_BYTES,
     MAX_CANVAS_TITLE_BYTES,
     MAX_CANVASES_PER_CONVERSATION,
     MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
     MAX_REVISIONS_PER_CANVAS,
     CanvasLimitError,
     sha256_utf8,
-    validate_opaque_identifier,
     validate_utf8_text,
 )
 from tldw_chatbook.Canvas.models import (
@@ -26,7 +26,9 @@ from tldw_chatbook.Canvas.models import (
     CanvasCreateResult,
     CanvasListItem,
     CanvasMutationResult,
+    CanvasOrigin,
     CanvasReadResult,
+    CanvasRevisionInfo,
     CanvasScope,
 )
 
@@ -46,6 +48,15 @@ CANVAS_TOOL_NAMES = frozenset(
 )
 CANVAS_MUTATION_TOOL_NAMES = frozenset({"canvas_create", "canvas_update"})
 _SAFE_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_SAFE_ORIGIN_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
+_SAFE_LOCATION = re.compile(
+    r"^(?:document|line [1-9][0-9]{0,6}, column [1-9][0-9]{0,6})$"
+)
+_COMPATIBILITY_MESSAGE = "Canvas compatibility issue."
+MAX_CANVAS_TOOL_PROJECTION_BYTES = 64 * 1024
+MAX_CANVAS_TOOL_RESULT_BYTES = (
+    MAX_DURABLE_SOURCE_BYTES_PER_REVISION + MAX_CANVAS_TOOL_PROJECTION_BYTES
+)
 
 
 class CanvasApprovalClassification(StrEnum):
@@ -434,7 +445,7 @@ def _serialize_result(name: str, result: object) -> ToolResult:
     if name == "canvas_list":
         if type(result) is not tuple or len(result) > MAX_CANVASES_PER_CONVERSATION:
             return _error("operation_failed")
-        if not all(isinstance(item, CanvasListItem) for item in result):
+        if not all(type(item) is CanvasListItem for item in result):
             return _error("operation_failed")
         payload = {
             "status": "ok",
@@ -442,7 +453,7 @@ def _serialize_result(name: str, result: object) -> ToolResult:
             "canvases": [_list_item_payload(item) for item in result],
         }
     elif name == "canvas_read":
-        if not isinstance(result, CanvasReadResult):
+        if type(result) is not CanvasReadResult:
             return _error("operation_failed")
         source_bytes = validate_utf8_text(
             result.source,
@@ -459,9 +470,23 @@ def _serialize_result(name: str, result: object) -> ToolResult:
             "canvas": _validated_revision_payload(result.revision),
             "html": result.source,
         }
-    elif isinstance(result, CanvasConflictResult):
+    elif name == "canvas_update" and type(result) is CanvasConflictResult:
         payload = {"status": "conflict", "conflict": _conflict_payload(result)}
-    elif isinstance(result, (CanvasMutationResult, CanvasCreateResult)):
+    elif (
+        name == "canvas_create"
+        and type(result) in {CanvasMutationResult, CanvasCreateResult}
+    ) or (name == "canvas_update" and type(result) is CanvasMutationResult):
+        if type(result) is CanvasCreateResult:
+            source_bytes = validate_utf8_text(
+                result.source,
+                limit=MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
+                field_name="Canvas HTML",
+            )
+            if (
+                source_bytes != result.revision.source_bytes
+                or sha256_utf8(result.source) != result.revision.content_sha256
+            ):
+                return _error("operation_failed")
         payload = {
             "status": "staged",
             "canvas": _validated_revision_payload(result.revision),
@@ -469,29 +494,27 @@ def _serialize_result(name: str, result: object) -> ToolResult:
         }
     else:
         return _error("operation_failed")
-    return ToolResult(ok=True, content=_json(payload))
-
-
-def _revision_payload(revision: Any) -> dict[str, object]:
-    return {
-        "canvas_id": revision.canvas_id,
-        "revision_id": revision.revision_id,
-        "parent_revision_id": revision.parent_revision_id,
-        "title": revision.title,
-        "runtime_profile": revision.runtime_profile,
-        "content_sha256": revision.content_sha256,
-        "source_bytes": revision.source_bytes,
-        "sequence": revision.sequence,
-        "origin": asdict(revision.origin),
-    }
+    encoded = _json(payload)
+    limit = (
+        MAX_CANVAS_TOOL_RESULT_BYTES
+        if name == "canvas_read"
+        else MAX_CANVAS_TOOL_PROJECTION_BYTES
+    )
+    try:
+        validate_utf8_text(encoded, limit=limit, field_name="Canvas tool result")
+    except CanvasLimitError:
+        return _error("operation_failed")
+    return ToolResult(ok=True, content=encoded)
 
 
 def _validated_revision_payload(revision: Any) -> dict[str, object]:
+    if type(revision) not in {CanvasRevisionInfo, CanvasListItem}:
+        raise _ArgumentError("operation_failed")
     _uuid(revision.canvas_id, "operation_failed")
     _uuid(revision.revision_id, "operation_failed")
     if revision.parent_revision_id is not None:
         _uuid(revision.parent_revision_id, "operation_failed")
-    _validated_title(revision.title)
+    title = _validated_title(revision.title)
     if revision.runtime_profile != "canvas-v1":
         raise _ArgumentError("operation_failed")
     _validated_digest(revision.content_sha256)
@@ -501,12 +524,26 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
     ):
         raise _ArgumentError("operation_failed")
     _validated_sequence(revision.sequence)
-    _validated_origin(revision.origin)
-    return _revision_payload(revision)
+    origin = _validated_origin(revision.origin)
+    return {
+        "canvas_id": revision.canvas_id,
+        "revision_id": revision.revision_id,
+        "parent_revision_id": revision.parent_revision_id,
+        "title": title,
+        "runtime_profile": "canvas-v1",
+        "content_sha256": revision.content_sha256,
+        "source_bytes": revision.source_bytes,
+        "sequence": revision.sequence,
+        "origin": origin,
+    }
 
 
-def _validated_title(title: object) -> None:
-    if not isinstance(title, str) or not title.strip():
+def _validated_title(title: object) -> str:
+    if type(title) is not str or not title.strip():
+        raise _ArgumentError("operation_failed")
+    if any(character in title for character in ("<", ">")) or any(
+        ord(character) < 32 and character not in "\t\n\r" for character in title
+    ):
         raise _ArgumentError("operation_failed")
     try:
         validate_utf8_text(
@@ -514,11 +551,12 @@ def _validated_title(title: object) -> None:
         )
     except CanvasLimitError:
         raise _ArgumentError("operation_failed") from None
+    return title
 
 
 def _validated_digest(digest: object) -> None:
     if (
-        not isinstance(digest, str)
+        type(digest) is not str
         or len(digest) != 64
         or any(character not in "0123456789abcdef" for character in digest)
     ):
@@ -530,20 +568,68 @@ def _validated_sequence(sequence: object) -> None:
         raise _ArgumentError("operation_failed")
 
 
-def _validated_origin(origin: object) -> None:
+def _validated_origin(origin: object) -> dict[str, str]:
+    if type(origin) is not CanvasOrigin:
+        raise _ArgumentError("operation_failed")
+    return {
+        "message_id": _validated_origin_id(origin.message_id),
+        "run_id": _validated_origin_id(origin.run_id),
+    }
+
+
+def _validated_origin_id(value: object) -> str:
+    if type(value) is not str or not _SAFE_ORIGIN_ID.fullmatch(value):
+        raise _ArgumentError("operation_failed")
     try:
-        validate_opaque_identifier(origin.message_id, field_name="origin message ID")  # type: ignore[attr-defined]
-        validate_opaque_identifier(origin.run_id, field_name="origin run ID")  # type: ignore[attr-defined]
-    except (AttributeError, CanvasLimitError, TypeError):
+        validate_utf8_text(
+            value,
+            limit=MAX_CANVAS_ORIGIN_TURN_ID_BYTES,
+            field_name="Canvas origin ID",
+        )
+    except CanvasLimitError:
         raise _ArgumentError("operation_failed") from None
+    return value
 
 
 def _validated_issues(issues: object) -> list[dict[str, object]]:
     if type(issues) is not tuple or len(issues) > 16:
         raise _ArgumentError("operation_failed")
-    if not all(isinstance(issue, CanvasCompatibilityIssue) for issue in issues):
+    if not all(type(issue) is CanvasCompatibilityIssue for issue in issues):
         raise _ArgumentError("operation_failed")
-    return [asdict(issue) for issue in issues]
+    return [_validated_issue(issue) for issue in issues]
+
+
+def _validated_issue(issue: CanvasCompatibilityIssue) -> dict[str, object]:
+    code = _validated_code(issue.code)
+    if type(issue.message) is not str:
+        raise _ArgumentError("operation_failed")
+    try:
+        validate_utf8_text(
+            issue.message,
+            limit=4 * 1024,
+            field_name="compatibility issue message",
+        )
+    except CanvasLimitError:
+        raise _ArgumentError("operation_failed") from None
+    return {
+        "code": code,
+        "message": _COMPATIBILITY_MESSAGE,
+        "location": _validated_location(issue.location),
+    }
+
+
+def _validated_code(value: object) -> str:
+    if type(value) is not str or not _SAFE_CODE.fullmatch(value):
+        raise _ArgumentError("operation_failed")
+    return value
+
+
+def _validated_location(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or not _SAFE_LOCATION.fullmatch(value):
+        raise _ArgumentError("operation_failed")
+    return value
 
 
 def _list_item_payload(item: CanvasListItem) -> dict[str, object]:
@@ -562,10 +648,10 @@ def _list_item_payload(item: CanvasListItem) -> dict[str, object]:
 def _conflict_payload(conflict: CanvasConflictResult) -> dict[str, object]:
     _uuid(conflict.canvas_id, "operation_failed")
     _uuid(conflict.current_revision_id, "operation_failed")
-    _validated_title(conflict.title)
+    title = _validated_title(conflict.title)
     _validated_digest(conflict.content_sha256)
     _validated_sequence(conflict.sequence)
-    _validated_origin(conflict.origin)
+    origin = _validated_origin(conflict.origin)
     if conflict.code != "stale_parent":
         raise _ArgumentError("operation_failed")
     return {
@@ -573,26 +659,28 @@ def _conflict_payload(conflict: CanvasConflictResult) -> dict[str, object]:
         "canvas_id": conflict.canvas_id,
         "current_revision_id": conflict.current_revision_id,
         "content_sha256": conflict.content_sha256,
-        "title": conflict.title,
+        "title": title,
         "sequence": conflict.sequence,
-        "origin": asdict(conflict.origin),
+        "origin": origin,
     }
 
 
 def _project_arguments(call: ToolCall) -> dict[str, object]:
     args = call.args if type(call.args) is dict else {}
     projected: dict[str, object] = {}
-    for key in ("canvas_id", "expected_parent_revision_id", "title"):
-        value = args.get(key)
-        if isinstance(value, str):
-            projected[key] = value[: MAX_CANVAS_TITLE_BYTES if key == "title" else 256]
+    for key in ("canvas_id", "expected_parent_revision_id"):
+        if key in args:
+            projected[key] = _uuid(args[key], "operation_failed")
+    if "title" in args:
+        projected["title"] = _validated_title(args["title"])
     html = args.get("html")
-    if isinstance(html, str):
-        try:
-            projected["content_sha256"] = sha256_utf8(html)
-            projected["source_bytes"] = len(html.encode("utf-8", errors="strict"))
-        except (CanvasLimitError, UnicodeEncodeError):
-            projected["content_sha256"] = "invalid-source"
+    if type(html) is str:
+        projected["source_bytes"] = validate_utf8_text(
+            html,
+            limit=MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
+            field_name="Canvas HTML",
+        )
+        projected["content_sha256"] = sha256_utf8(html)
     return projected
 
 
@@ -606,47 +694,101 @@ def _project_result(result: ToolResult | None) -> tuple[str, str]:
             raise TypeError("result is not an object")
         safe = _source_free_payload(payload)
         encoded = _json(safe)
+        validate_utf8_text(
+            encoded,
+            limit=MAX_CANVAS_TOOL_PROJECTION_BYTES,
+            field_name="Canvas tool projection",
+        )
     except Exception:  # noqa: BLE001 - malformed source-bearing values fail closed
         encoded = _json({"code": "canvas_projection_unavailable"})
     return (encoded, "") if result.ok else ("", encoded)
 
 
 def _source_free_payload(payload: dict[str, object]) -> dict[str, object]:
-    safe: dict[str, object] = {}
     status = payload.get("status")
-    if isinstance(status, str) and status in {"ok", "staged", "conflict"}:
-        safe["status"] = status
-    count = payload.get("count")
-    if type(count) is int and 0 <= count <= MAX_CANVASES_PER_CONVERSATION:
-        safe["count"] = count
-    canvas = payload.get("canvas")
-    if isinstance(canvas, dict):
-        safe["canvas"] = _safe_canvas_metadata(canvas)
-    canvases = payload.get("canvases")
-    if isinstance(canvases, list):
-        safe["canvases"] = [
-            _safe_canvas_metadata(item)
-            for item in canvases[:MAX_CANVASES_PER_CONVERSATION]
-            if isinstance(item, dict)
-        ]
-    conflict = payload.get("conflict")
-    if isinstance(conflict, dict):
-        safe["conflict"] = _safe_conflict_metadata(conflict)
-    issues = payload.get("compatibility_issues")
-    if isinstance(issues, list):
-        safe["compatibility_issues"] = [
-            _safe_issue(item) for item in issues[:16] if isinstance(item, dict)
-        ]
-    code = payload.get("code")
-    if isinstance(code, str) and _SAFE_CODE.fullmatch(code):
-        safe["code"] = code
-    if not safe:
-        safe["code"] = "canvas_projection_unavailable"
+    if status == "ok" and "canvases" in payload:
+        if set(payload) != {"status", "count", "canvases"}:
+            raise _ArgumentError("operation_failed")
+        count = payload["count"]
+        canvases = payload["canvases"]
+        if (
+            type(count) is not int
+            or not 0 <= count <= MAX_CANVASES_PER_CONVERSATION
+            or type(canvases) is not list
+            or len(canvases) != count
+        ):
+            raise _ArgumentError("operation_failed")
+        return {
+            "status": "ok",
+            "count": count,
+            "canvases": [
+                _project_revision_metadata(item, selection=True) for item in canvases
+            ],
+        }
+    if status == "ok" and "canvas" in payload:
+        if set(payload) != {"status", "canvas", "html"}:
+            raise _ArgumentError("operation_failed")
+        metadata = _project_revision_metadata(payload["canvas"])
+        html = payload["html"]
+        try:
+            source_bytes = validate_utf8_text(
+                html,
+                limit=MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
+                field_name="Canvas HTML",
+            )
+        except (CanvasLimitError, TypeError):
+            raise _ArgumentError("operation_failed") from None
+        if (
+            source_bytes != metadata["source_bytes"]
+            or sha256_utf8(html) != metadata["content_sha256"]
+        ):
+            raise _ArgumentError("operation_failed")
+        return {"status": "ok", "canvas": metadata}
+    if status == "staged":
+        if set(payload) != {"status", "canvas", "compatibility_issues"}:
+            raise _ArgumentError("operation_failed")
+        return {
+            "status": "staged",
+            "canvas": _project_revision_metadata(payload["canvas"]),
+            "compatibility_issues": _project_issues(payload["compatibility_issues"]),
+        }
+    if status == "conflict":
+        if set(payload) != {"status", "conflict"}:
+            raise _ArgumentError("operation_failed")
+        return {
+            "status": "conflict",
+            "conflict": _project_conflict(payload["conflict"]),
+        }
+    if status is not None or not {"code", "message"}.issubset(payload):
+        raise _ArgumentError("operation_failed")
+    if not set(payload).issubset({"code", "message", "compatibility_issues"}):
+        raise _ArgumentError("operation_failed")
+    code = _validated_code(payload["code"])
+    if type(payload["message"]) is not str:
+        raise _ArgumentError("operation_failed")
+    try:
+        validate_utf8_text(
+            payload["message"], limit=4 * 1024, field_name="Canvas error message"
+        )
+    except CanvasLimitError:
+        raise _ArgumentError("operation_failed") from None
+    safe: dict[str, object] = {
+        "code": code,
+        "message": _ERROR_MESSAGES.get(
+            code, "Canvas operation could not be completed."
+        ),
+    }
+    if "compatibility_issues" in payload:
+        safe["compatibility_issues"] = _project_issues(payload["compatibility_issues"])
     return safe
 
 
-def _safe_canvas_metadata(value: dict[str, object]) -> dict[str, object]:
-    keys = (
+def _project_revision_metadata(
+    value: object, *, selection: bool = False
+) -> dict[str, object]:
+    if type(value) is not dict:
+        raise _ArgumentError("operation_failed")
+    expected = {
         "canvas_id",
         "revision_id",
         "parent_revision_id",
@@ -656,14 +798,81 @@ def _safe_canvas_metadata(value: dict[str, object]) -> dict[str, object]:
         "source_bytes",
         "sequence",
         "origin",
-        "is_selected",
-        "is_historical_selection",
-    )
-    return {key: value[key] for key in keys if key in value}
+    }
+    if selection:
+        expected |= {"is_selected", "is_historical_selection"}
+    if set(value) != expected:
+        raise _ArgumentError("operation_failed")
+    parent = value["parent_revision_id"]
+    if parent is not None:
+        parent = _uuid(parent, "operation_failed")
+    if value["runtime_profile"] != "canvas-v1":
+        raise _ArgumentError("operation_failed")
+    _validated_digest(value["content_sha256"])
+    if (
+        type(value["source_bytes"]) is not int
+        or not 0 <= value["source_bytes"] <= MAX_DURABLE_SOURCE_BYTES_PER_REVISION
+    ):
+        raise _ArgumentError("operation_failed")
+    _validated_sequence(value["sequence"])
+    projected = {
+        "canvas_id": _uuid(value["canvas_id"], "operation_failed"),
+        "revision_id": _uuid(value["revision_id"], "operation_failed"),
+        "parent_revision_id": parent,
+        "title": _validated_title(value["title"]),
+        "runtime_profile": "canvas-v1",
+        "content_sha256": value["content_sha256"],
+        "source_bytes": value["source_bytes"],
+        "sequence": value["sequence"],
+        "origin": _project_origin(value["origin"]),
+    }
+    if selection:
+        for key in ("is_selected", "is_historical_selection"):
+            if type(value[key]) is not bool:
+                raise _ArgumentError("operation_failed")
+            projected[key] = value[key]
+    return projected
 
 
-def _safe_conflict_metadata(value: dict[str, object]) -> dict[str, object]:
-    keys = (
+def _project_origin(value: object) -> dict[str, str]:
+    if type(value) is not dict or set(value) != {"message_id", "run_id"}:
+        raise _ArgumentError("operation_failed")
+    return {
+        "message_id": _validated_origin_id(value["message_id"]),
+        "run_id": _validated_origin_id(value["run_id"]),
+    }
+
+
+def _project_issues(value: object) -> list[dict[str, object]]:
+    if type(value) is not list or len(value) > 16:
+        raise _ArgumentError("operation_failed")
+    projected: list[dict[str, object]] = []
+    for item in value:
+        if type(item) is not dict or set(item) != {"code", "message", "location"}:
+            raise _ArgumentError("operation_failed")
+        code = _validated_code(item["code"])
+        if type(item["message"]) is not str:
+            raise _ArgumentError("operation_failed")
+        try:
+            validate_utf8_text(
+                item["message"],
+                limit=4 * 1024,
+                field_name="compatibility issue message",
+            )
+        except CanvasLimitError:
+            raise _ArgumentError("operation_failed") from None
+        projected.append(
+            {
+                "code": code,
+                "message": _COMPATIBILITY_MESSAGE,
+                "location": _validated_location(item["location"]),
+            }
+        )
+    return projected
+
+
+def _project_conflict(value: object) -> dict[str, object]:
+    if type(value) is not dict or set(value) != {
         "code",
         "canvas_id",
         "current_revision_id",
@@ -671,13 +880,20 @@ def _safe_conflict_metadata(value: dict[str, object]) -> dict[str, object]:
         "title",
         "sequence",
         "origin",
-    )
-    return {key: value[key] for key in keys if key in value}
-
-
-def _safe_issue(value: dict[str, object]) -> dict[str, object]:
+    }:
+        raise _ArgumentError("operation_failed")
+    if value["code"] != "stale_parent":
+        raise _ArgumentError("operation_failed")
+    _validated_digest(value["content_sha256"])
+    _validated_sequence(value["sequence"])
     return {
-        key: value.get(key) for key in ("code", "message", "location") if key in value
+        "code": "stale_parent",
+        "canvas_id": _uuid(value["canvas_id"], "operation_failed"),
+        "current_revision_id": _uuid(value["current_revision_id"], "operation_failed"),
+        "content_sha256": value["content_sha256"],
+        "title": _validated_title(value["title"]),
+        "sequence": value["sequence"],
+        "origin": _project_origin(value["origin"]),
     }
 
 

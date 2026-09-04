@@ -7147,6 +7147,11 @@ class AgentService:
                 else None,
                 run_id,
             ),
+            is_tool_call_preauthorized=(
+                lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(
+                    call.name
+                )
+            ),
             before_tool_dispatch=self.before_tool_dispatch,
             prepare_tool_calls=(
                 prepare_project_instructions if project_context is not None else None

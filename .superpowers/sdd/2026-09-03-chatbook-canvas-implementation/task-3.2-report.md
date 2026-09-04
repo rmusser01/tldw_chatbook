@@ -48,6 +48,11 @@ architectural decision.
   only for authenticated `canvas_create` and `canvas_update`. `canvas_list`,
   `canvas_read`, lookalikes, copied capabilities, and every non-Canvas tool do
   not receive that classification and therefore retain their ordinary policy.
+- `AgentService` now asks the registry for that nominal classification before
+  the runtime approval batch. Only exact live Canvas mutations are omitted from
+  the batch and approval trace; all remaining calls in a mixed batch continue
+  through the existing review hook. Classification exceptions fail closed to
+  that ordinary review path.
 - The provider is a coordinator adapter, not an authority owner. Delivery 3.3
   will supply the Console lifecycle coordinator that selects durable
   `CanvasService` versus temporary `CanvasStagingStore` handling and performs
@@ -62,9 +67,15 @@ architectural decision.
   and result field. Mutation arguments retain only IDs/title plus SHA-256 and
   UTF-8 byte count; results retain bounded identity, revision, digest, status,
   compatibility, and conflict metadata.
-- Malformed results project to source-free bounded metadata. The registry's
-  generic opt-in projection failure fallback is also source-free and is covered
-  by the focused Task 3.1 projection regression tests.
+- Every projected result is rebuilt through exact-shape, UUID, digest, integer,
+  origin, title, compatibility-code, and aggregate byte bounds. A malformed
+  nested field fails the whole projection closed to the fixed
+  `canvas_projection_unavailable` result; no partially validated metadata is
+  retained. Dependency-authored compatibility prose is replaced with fixed
+  source-free copy, and locations accept only `document` or a bounded structural
+  `line N, column N` form.
+- The registry's generic opt-in projection failure fallback is also source-free
+  and is covered by the focused Task 3.1 projection regression tests.
 
 ## TDD evidence
 
@@ -133,12 +144,118 @@ $ python -m py_compile tldw_chatbook/Agents/canvas_tool_provider.py tldw_chatboo
 $ git diff --check
 ```
 
+## Review fix round 1
+
+The first review found two valid gaps: nested result fields were shallow-copied
+into retention projections, and the nominal mutation classification was not
+consumed by the runtime's real approval batch.
+
+The result boundary now reconstructs immediate coordinator results and every
+display/log/cycle/continuation projection from exact nominal types and closed
+JSON shapes. UUIDs, lower-case SHA-256 digests, revision sequences, counts,
+titles, origin identifiers, compatibility codes, structural locations, source
+byte counts, issue counts, and aggregate serialized sizes are validated before
+output. Source-bearing `canvas_read` metadata must match the exact HTML byte
+count and digest. Create/update HTML is never emitted. Dependency-authored issue
+messages are validated only as input and replaced by the fixed message
+`Canvas compatibility issue.`. Any malformed nested field rejects the entire
+projection to bounded fixed metadata.
+
+The runtime now supports a narrow owner-authenticated preauthorization callback.
+`AgentService` wires it exclusively to
+`ToolCatalogRegistry.is_canvas_reversible_conversation_local_mutation()`. The
+review callback receives only non-preauthorized calls, while dispatch still
+receives approved ordinary calls and the exact preauthorized mutations. The
+provider owner and live registration capability therefore decide the exception;
+model arguments, tool source strings, returned markers, and structural
+lookalikes are never consulted.
+
+Review RED for nested leakage/bounds:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py -k 'malformed_nested_projection or replaces_dependency_issue or immediate_mutation or real_review_batch'
+17 failed, 2 passed, 32 deselected
+
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py -k 'oversized_canvas_source_fails_projection_closed'
+4 failed, 69 deselected
+```
+
+The failures included the unique HTML sentinel surviving under nested
+`canvas.canvas_id` and compatibility issue messages, and oversized source being
+digested before the projection failed closed.
+
+Review RED for the real approval batch:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py::test_real_review_batch_bypasses_only_exact_live_canvas_mutations Tests/Agents/test_canvas_tool_provider.py::test_real_review_batch_does_not_trust_invalid_canvas_owners
+1 failed, 4 passed
+E assert ('canvas_create', 'canvas_read', 'ordinary_tool') == ('canvas_read', 'ordinary_tool')
+```
+
+Final focused GREEN:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py Tests/Agents/test_tool_record_projection.py Tests/Agents/test_tool_catalog.py Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test_tool_catalog_concurrency.py Tests/Agents/test_builtin_tool_gate.py Tests/Agents/test_agent_runtime_review_hook.py Tests/Agents/test_agent_service_review_state_scope.py
+283 passed, 1 warning in 2.47s
+
+$ pytest -q Tests/Agents/test_agent_service.py
+117 passed, 1 warning in 8.32s
+
+$ pytest -q Tests/Chat/test_console_chat_controller.py -k review_hook
+11 passed, 247 deselected, 1 warning in 0.82s
+
+$ pytest -q Tests/Chat/test_console_agent_bridge.py -k 'compose_run_registry or temporary_run or invoke_by_name_refuses'
+28 passed, 246 deselected, 1 warning in 1.61s
+
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py
+83 passed, 1 warning in 1.03s
+```
+
+Review-fix static verification:
+
+```text
+$ ruff check tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+All checks passed!
+$ ruff format --check tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+2 files already formatted
+$ ruff check --select E9,F63,F7 tldw_chatbook/Agents/agent_runtime.py tldw_chatbook/Agents/agent_service.py tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+All checks passed!
+$ python -m py_compile tldw_chatbook/Agents/agent_runtime.py tldw_chatbook/Agents/agent_service.py tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+$ git diff --check
+```
+
+Review-fix files changed:
+
+- `tldw_chatbook/Agents/canvas_tool_provider.py`
+- `tldw_chatbook/Agents/agent_runtime.py`
+- `tldw_chatbook/Agents/agent_service.py`
+- `Tests/Agents/test_canvas_tool_provider.py`
+- `.superpowers/sdd/2026-09-03-chatbook-canvas-implementation/task-3.2-report.md`
+
+Review-fix self-review:
+
+- Rechecked every immediate and projected allowlisted field for nested sentinel,
+  wrong-type, overlong, over-count, and forged compatibility values across all
+  four non-model audiences.
+- Rechecked that a single malformed nested field rejects the whole projection,
+  aggregate output has an explicit byte cap, and no dependency-authored issue
+  prose is echoed.
+- Exercised the actual `AgentService`/runtime review batch with create, update,
+  read, list, and non-Canvas calls together; only exact live mutations omitted
+  approval request/decision steps.
+- Exercised copied authority, reserved-name/source lookalikes, classifier errors,
+  disabled providers, and stale coordinators; all retained ordinary review.
+- Confirmed the change defines only the Task 3.2 coordinator/provider and review
+  boundary and does not implement Task 3.3 finalization or transcript cards.
+
 The warning in pytest output is the environment's existing
 `RequestsDependencyWarning` for its urllib3/chardet/charset-normalizer versions.
 
 ## Files changed
 
 - `tldw_chatbook/Agents/canvas_tool_provider.py`
+- `tldw_chatbook/Agents/agent_runtime.py`
+- `tldw_chatbook/Agents/agent_service.py`
 - `tldw_chatbook/Agents/tool_catalog.py`
 - `tldw_chatbook/Chat/console_agent_bridge.py`
 - `Tests/Agents/test_canvas_tool_provider.py`
