@@ -12392,6 +12392,8 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
         assert screen._character_tts_snapshot is not None
         assert screen._character_tts_snapshot.repository_generation == 7
         card_control = screen.query_one("#personas-character-card-tts")
+        assert not list(screen.query("#personas-character-editor-tts"))
+        await screen._ensure_center_view("character-editor")
         editor_control = screen.query_one("#personas-character-editor-tts")
         assert card_control.presentation_state.selected_profile_id == (
             assigned_profile.profile_id

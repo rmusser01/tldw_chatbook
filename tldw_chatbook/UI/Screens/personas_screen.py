@@ -1760,6 +1760,11 @@ class PersonasScreen(BaseAppScreen):
 
     def _hydrate_center_view(self, view_key: str, view: Widget) -> None:
         """Apply screen-owned retained state before a new body is used."""
+        if view_key == "character-editor" and isinstance(
+            view, PersonasCharacterEditorWidget
+        ):
+            for control in view.query(PersonasCharacterTTSWidget):
+                control.apply_state(self._character_tts_presentation)
         if view_key == "persona-editor" and isinstance(
             view, PersonaProfileEditorWidget
         ):
