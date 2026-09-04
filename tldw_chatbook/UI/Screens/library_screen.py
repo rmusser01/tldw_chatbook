@@ -2581,6 +2581,14 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        # task-31236: (set_id, name, was_active) of the most recently
+        # dismissed review set -- rendered as an in-list undo receipt.
+        self._library_media_review_dismiss_receipt: (
+            tuple[str, str, bool] | None
+        ) = None
+        # Qodo on #2366: one in-flight undo owns the receipt until it
+        # settles (blocks a second Undo and a racing receipt-close).
+        self._review_dismiss_undo_in_flight: bool = False
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
@@ -2648,6 +2656,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_generating_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # task-31237: the content Find bar is collapsed until the Find
+        # action opens it -- a permanently open "Search content…" input
+        # duplicated the Find button and spent 3 rows on every fresh item.
+        self._library_media_find_open: bool = False
         # task-22209: in-content match list for the open item, memoized on
         # (detail object identity, query). Both the query submit and every
         # Prev/Next click need it, and deriving it costs a full content
@@ -3587,11 +3599,7 @@ class LibraryScreen(BaseAppScreen):
                         # task-28241: in a review set, ] / [ walk the pinned set
                         # (whole thing, not the page), and the footer carries
                         # the progress plus an exit-review key.
-                        shortcuts.append(("]", "next in set"))
-                        shortcuts.append(("[", "prev in set"))
-                        shortcuts.append(("m", "toggle reviewed"))
-                        shortcuts.append(("R", "exit review"))
-                        shortcuts.append(("", progress))
+                        shortcuts.extend(self._review_footer_entries(progress))
                     else:
                         if self._library_media_adjacent_row(1) is not None:
                             shortcuts.append(("]", "next item"))
@@ -3634,11 +3642,72 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
 
+    def _refresh_footer_typing_context(self, focused) -> None:
+        """Re-apply the footer when the typing context flips (task-31223).
+
+        Routes through ``_apply_library_notes_footer_context`` -- the
+        context dispatcher that applies the Notes region tiers when that
+        workflow is active and falls back to the generic (typing-filtered)
+        set otherwise (Qodo #2359: calling the generic registration
+        directly overwrote the Notes editor footer). Flip-gated so
+        ordinary focus moves cause zero footer churn.
+
+        Args:
+            focused: The newly focused widget.
+        """
+        typing = isinstance(focused, (Input, TextArea))
+        if typing != getattr(self, "_library_footer_typing_context", False):
+            self._library_footer_typing_context = typing
+            self._apply_library_notes_footer_context()
+
+    @staticmethod
+    def _review_footer_entries(progress: str) -> tuple[tuple[str, str], ...]:
+        """The Reader footer's review-set segment for one progress line.
+
+        task-31225 (re-critique P2): on a COMPLETE set the final ``]`` is an
+        idempotent no-op, so advertising it violates the honest-footer rule
+        (task-28005). Completion keeps ``m`` (un-marking resumes the walk)
+        and names ``R`` as the next step. The completion check reads the
+        canonical ``format_review_progress`` "All N reviewed" form.
+
+        Args:
+            progress: The formatted live progress line.
+
+        Returns:
+            ``(key, label)`` entries for the footer.
+        """
+        if progress.startswith("All "):
+            return (
+                ("m", "toggle reviewed"),
+                ("R", "finish review"),
+                ("", progress),
+            )
+        return (
+            ("]", "next in set"),
+            ("[", "prev in set"),
+            ("m", "toggle reviewed"),
+            ("R", "exit review"),
+            ("", progress),
+        )
+
     def _library_footer_shortcuts_for_current_state(
         self,
     ) -> tuple[tuple[str, str], ...]:
         """Hide rail-search hints while the compact rail has no search box."""
         shortcuts = self._library_route_shortcuts_for_current_state()
+        # task-31223 (re-critique P1): while a text field holds focus, every
+        # single printable key is INSERTED AS TEXT, so advertising "] next
+        # in set" or "s select" is the footer lying -- live, a stray "]"
+        # went into the filter and produced a zero-match list. Drop the
+        # swallowed keys, keep the ones that still work (esc / enter /
+        # F-keys) and the informational chips, and announce the swap.
+        focused = self.focused
+        if isinstance(focused, (Input, TextArea)):
+            shortcuts = (("", "typing in field"),) + tuple(
+                pair
+                for pair in shortcuts
+                if not (len(pair[0]) == 1 and pair[0].isprintable())
+            )
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
@@ -10492,6 +10561,9 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_programmatic_focus_target is focused:
                 self._library_notes_programmatic_focus_target = None
             return
+        # task-31223: the footer's typing-context swap (drop keys a text
+        # field will swallow) must follow focus, not just route changes.
+        self._refresh_footer_typing_context(focused)
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
         pending_receipt = self._library_pending_list_entry_media_return
@@ -15301,6 +15373,7 @@ class LibraryScreen(BaseAppScreen):
                 confirming_bulk_delete=self._library_media_confirming_bulk_delete,
                 delete_receipt_count=len(self._library_media_delete_receipt_ids),
                 type_choices_visible=self._library_media_type_choices_visible,
+                review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
             )
         state = build_library_media_browse_state(
             controller.applied_result,
@@ -15313,6 +15386,7 @@ class LibraryScreen(BaseAppScreen):
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
+            review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15325,6 +15399,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _review_dismiss_receipt_name(self) -> str:
+        """Display name for the pending dismiss-undo receipt, "" when none."""
+        receipt = self._library_media_review_dismiss_receipt
+        return receipt[1] if receipt is not None else ""
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
@@ -23368,8 +23447,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
@@ -23877,30 +23955,46 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_sort_choices_visible = (
             not self._library_media_sort_choices_visible
         )
-        _sync_library_canvas(self, "media")
-        if self._library_media_sort_choices_visible:
-            current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-media-sort-choice",
-                current,
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-sort"
-            )
+        # task-31235: the chooser is a vertical OptionList (like the type
+        # chooser) with the active value pre-highlighted at compose time,
+        # so focusing the list is enough. The focus rides the sync's
+        # ``then`` hook -- ``call_after_refresh`` has no ordering against
+        # a canvas-scoped recompose (see ``_sync_library_canvas``).
+        def focus_open_chooser() -> None:
+            self._focus_library_control("#library-media-sort-choices")
 
-    @on(Button.Pressed, ".library-media-sort-choice")
-    def handle_library_media_sort_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact sort value carried by one strip choice (task-28013).
+        def focus_sort_opener() -> None:
+            self._focus_library_control("#library-media-sort")
 
-        Picking the already-active sort only closes the strip -- no service
-        request. Any other value re-fetches page one under the new order.
+        _sync_library_canvas(
+            self,
+            "media",
+            then=(
+                focus_open_chooser
+                if self._library_media_sort_choices_visible
+                else focus_sort_opener
+            ),
+        )
+
+    @on(OptionList.OptionSelected, "#library-media-sort-choices")
+    def handle_library_media_sort_choice(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Apply the exact sort value carried by one chooser option.
+
+        task-31235: the horizontal strip (task-28013) became a vertical
+        OptionList -- it clipped options off-pane at the items pane's real
+        width. Picking the already-active sort only closes the chooser --
+        no service request. Any other value re-fetches page one under the
+        new order.
+
+        Args:
+            event: Selection event emitted by the bounded sort chooser.
         """
         event.stop()
         if self._library_media_bulk_delete_in_flight:
             return
-        requested = str(getattr(event.button, "choice_value", "") or "")
+        requested = str(getattr(event.option, "choice_value", "") or "")
         self._library_media_sort_choices_visible = False
         current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
         valid = {value for value, _ in MEDIA_SORT_CHOICES}
@@ -25228,8 +25322,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._sync_library_media_viewer_or_recompose()
 
@@ -25244,8 +25337,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_highlights = []
         self._library_media_editing = False
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_media_view = "viewer"
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -38417,8 +38509,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._load_library_media_list_if_needed()
         # task-21116: the exit is a canvas-child swap (viewer -> list), not
@@ -38485,8 +38576,7 @@ class LibraryScreen(BaseAppScreen):
             and focused is not None
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._sync_library_media_viewer_or_recompose()
             self.call_after_refresh(
                 self._focus_library_control, "#library-media-reader-find"
@@ -38521,6 +38611,19 @@ class LibraryScreen(BaseAppScreen):
             focused is shell.library or shell.library in focused.ancestors
         ):
             self._exit_library_media_viewer()
+            return
+        # Qodo on #2367: an open Find bar is a reader substate regardless
+        # of where focus sits INSIDE the reader region (F6 to the content
+        # pane must not leave the bar stranded) -- Escape closes it first,
+        # and _library_media_escape_label advertises exactly that. The
+        # items/library-pane branches above stay untouched: their Escape
+        # never consumes the reader's find state.
+        if find_controls is not None:
+            self._close_library_media_find()
+            self._sync_library_media_viewer_or_recompose()
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-reader-find"
+            )
             return
         if layout.items_open:
             self._focus_library_media_items_pane()
@@ -39168,6 +39271,10 @@ class LibraryScreen(BaseAppScreen):
                 self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
             )
             return
+        # task-31238: creating a set displaces the active one (one-active
+        # invariant) -- capture it BEFORE the create so an in-progress walk
+        # never just stops being resumable-by-] without a word.
+        displaced = service.get_active_review_set()
         service.create_review_set(name, origin, items)
         if truncated:
             self._notify_review_set(
@@ -39176,6 +39283,36 @@ class LibraryScreen(BaseAppScreen):
             )
         else:
             self._notify_review_set(f"Reviewing {len(items)} items.")
+        if displaced is not None and displaced.completed_at is None:
+            from rich.markup import escape
+
+            from tldw_chatbook.Library.review_set_state import (
+                format_review_progress,
+                review_progress,
+            )
+
+            live = self._review_set_live_ids(
+                item.backing_media_id for item in displaced.items
+            )
+            progress = format_review_progress(
+                review_progress(
+                    displaced.items, displaced.cursor, live.__contains__
+                )
+            )
+            self._notify_review_set(
+                f"Paused '{escape(displaced.name)}' at {progress}. "
+                "Resume from Sets."
+            )
+        # task-31233: a create invoked from Select mode must leave it before
+        # landing -- select mode is otherwise cleared only by Done/bulk-delete,
+        # so the viewer open below never surfaced (blank reader, boxes reset).
+        # The selection was consumed, not discarded: no notice. The canvas
+        # sync mirrors the Done toggle's -- the viewer open below syncs only
+        # the VIEWER in place, leaving the select toolbar stale without it
+        # (live-verified 2026-09-04).
+        if getattr(self, "_library_media_select_mode", False):
+            self._exit_library_media_select_mode(announce_discard=False)
+            _sync_library_canvas(self, "media")
         self._open_library_media_viewer(f"local:media:{items[0][0]}")
 
     _REVIEW_SET_STORAGE_UNAVAILABLE = "Review-set storage is unavailable."
@@ -39241,13 +39378,27 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return
             if action == PICKER_DISMISS:
+                dismissed_row = next(
+                    (row for row in rows if row[0] == set_id), None
+                )
                 await self._run_library_service_call(
                     service.dismiss, set_id, isolate_in_worker=True
                 )
-                self._notify_review_set("Review set dismissed.")
+                # task-31236: the confirmation is an in-list undo receipt,
+                # not a toast -- a one-click dismissal of a mid-walk set
+                # must be recoverable in place (user ruling, critique #3).
+                self._library_media_review_dismiss_receipt = (
+                    set_id,
+                    dismissed_row[1] if dismissed_row else "review set",
+                    bool(dismissed_row[3]) if dismissed_row else False,
+                )
                 # Dismissing the ACTIVE set must drop the Reader's set chrome
                 # -- without this the footer kept advertising "] next in set"
-                # after the set was gone (live-verified 2026-09-02).
+                # after the set was gone (live-verified 2026-09-02). The
+                # canvas sync is separate: the viewer seam updates only the
+                # VIEWER in place, so the receipt row never mounted without
+                # it (live-verified 2026-09-04).
+                _sync_library_canvas(self, "media")
                 self._sync_library_media_viewer_or_recompose()
                 return
             if action != PICKER_OPEN:
@@ -39262,9 +39413,99 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._open_library_media_viewer(f"local:media:{landing}")
         except Exception:
+            # task-31220: the one review-set wrapper task-30042 missed -- a
+            # live wedge left NO trace in the log because this swallowed the
+            # traceback.
+            logger.opt(exception=True).warning("review-set picker failed")
             self._notify_review_set(
                 "Couldn't open review sets.", severity="error"
             )
+
+    @on(Button.Pressed, "#library-media-review-dismiss-undo")
+    def handle_library_media_review_dismiss_undo(
+        self, event: Button.Pressed
+    ) -> None:
+        """Restore the set named by the dismiss receipt (task-31236).
+
+        Args:
+            event: The receipt row's "Undo" press.
+        """
+        event.stop()
+        receipt = self._library_media_review_dismiss_receipt
+        # Qodo on #2366: one in-flight undo owns the receipt until it
+        # settles -- a second press would CANCEL the first through the
+        # exclusive worker group, and a racing receipt-close would strand
+        # the restore without its receipt.
+        if receipt is None or getattr(
+            self, "_review_dismiss_undo_in_flight", False
+        ):
+            return
+        self._review_dismiss_undo_in_flight = True
+        self.run_worker(
+            self._review_dismiss_undo_worker(receipt),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#library-media-review-dismiss-receipt-close")
+    def handle_library_media_review_dismiss_receipt_close(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the dismiss receipt without restoring anything.
+
+        Args:
+            event: The receipt row's "Dismiss" press.
+        """
+        event.stop()
+        # Qodo on #2366: the receipt belongs to a pending undo until that
+        # settles -- clearing it mid-restore left the restored set with no
+        # visible acknowledgment.
+        if getattr(self, "_review_dismiss_undo_in_flight", False):
+            return
+        self._library_media_review_dismiss_receipt = None
+        _sync_library_canvas(self, "media")
+
+    async def _review_dismiss_undo_worker(
+        self, receipt: tuple[str, str, bool]
+    ) -> None:
+        """Un-tombstone the receipt's set, restoring activation if it had it.
+
+        task-31236 AC#2: cursor and done marks were never touched by the
+        dismiss, so the service-side ``undismiss`` brings the set back
+        exactly as it was; re-activation yields to any set that became
+        active since (the one-active invariant outranks the undo).
+
+        Args:
+            receipt: ``(set_id, name, was_active)`` captured at dismissal.
+        """
+        try:
+            service = self._review_set_service()
+            if service is None:
+                self._notify_review_set(
+                    self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+                )
+                return
+            set_id, _name, was_active = receipt
+            await self._run_library_service_call(
+                partial(service.undismiss, set_id, reactivate=was_active),
+                isolate_in_worker=True,
+            )
+            self._library_media_review_dismiss_receipt = None
+            # Canvas sync clears the receipt row; the viewer seam re-arms
+            # the set chrome when the restored set is active again.
+            _sync_library_canvas(self, "media")
+            self._sync_library_media_viewer_or_recompose()
+        except Exception:
+            # task-30042 (user ruling): failures are never silent.
+            logger.opt(exception=True).warning(
+                "review-set dismiss undo failed"
+            )
+            self._notify_review_set(
+                "Couldn't restore the review set.", severity="error"
+            )
+        finally:
+            self._review_dismiss_undo_in_flight = False
 
     async def _review_read_later_pairs(self) -> list[tuple[int, str]]:
         """Build ordered (backing_id, title) pairs from the read-later queue.
@@ -39406,21 +39647,26 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _auto_resume_review_set_worker(self) -> None:
-        """Open the active set's cursor item in the Reader, once per set.
+        """Open the active set's cursor item in the Reader, on every entry.
 
-        AC#1: entering the media area with an active set loads its cursor
-        item without a keypress. Once per set per screen session -- Escape
-        back to the list plus re-entry shows the list, never a yank loop.
-        AC#3: the final still-on-the-media-list + current-screen gates make
-        a cold-start yank abort without opening (and without burning the
-        once-per-set chance). task-30042 (user ruling): failures are NEVER
-        silent -- missing storage warns once per session, and any storage
-        error surfaces; only the ordinary no-active-set case stays quiet.
+        task-31234 (supersedes task-28245's once-per-set gate, user ruling
+        at the critique #3 close): the banner and the visible document must
+        always agree, so every entry with an active set lands at the saved
+        place -- Escape shows the list until the next entry gesture.
+        task-28245 AC#3 still holds: the final still-on-the-media-list +
+        current-screen gates make a cold-start yank abort without opening.
+        task-30042 (user ruling): failures are NEVER silent -- missing
+        storage warns once per session, and any storage error surfaces;
+        only the ordinary no-active-set case stays quiet.
         """
         try:
             if self._review_set_service() is None:
                 if not getattr(self, "_review_set_storage_warned", False):
                     self._review_set_storage_warned = True
+                    # Deliberately WARNING where the explicit gestures use
+                    # ERROR (task-31225 rider): this fires ambiently on
+                    # media entry, not in answer to a press -- ambient
+                    # severity stays a notch below gesture severity.
                     self._notify_review_set(
                         self._REVIEW_SET_STORAGE_UNAVAILABLE,
                         severity="warning",
@@ -39431,18 +39677,17 @@ class LibraryScreen(BaseAppScreen):
             )
             if landing is None:
                 return
-            set_id, backing_id = landing
+            _set_id, backing_id = landing
             if (
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
                 or self._library_media_view != "list"
                 or not getattr(self, "is_current", False)
             ):
                 return
-            resumed: set[str] = getattr(self, "_review_set_auto_resumed", set())
-            if set_id in resumed:
-                return
-            resumed.add(set_id)
-            self._review_set_auto_resumed = resumed
+            # task-31234 (supersedes task-28245's once-per-set gate, user
+            # ruling at the critique #3 close): open the cursor item on
+            # EVERY entry. The gate restored the banner but not the item on
+            # re-entry -- the status line pointed at an off-set document.
             self._open_library_media_viewer(f"local:media:{backing_id}")
         except Exception:
             # task-30042: resuming failed on a real error -- surface it; the
@@ -39480,6 +39725,11 @@ class LibraryScreen(BaseAppScreen):
         landing = {item.position: item for item in review_set.items}.get(resolved)
         if landing is None or landing.backing_media_id not in live_ids:
             return None
+        # Qodo on #2366 (the Qodo #2337 pattern, third path): persist a
+        # tombstone-resolved cursor so a later restore of the deleted item
+        # cannot yank a subsequent entry back to the stale position.
+        if resolved != review_set.cursor:
+            service.set_cursor(review_set.set_id, resolved)
         return review_set.set_id, landing.backing_media_id
 
     def _focus_library_media_items_pane(self) -> None:
@@ -39540,6 +39790,11 @@ class LibraryScreen(BaseAppScreen):
             focused is shell.library or shell.library in focused.ancestors
         ):
             return "back"
+        # Qodo on #2367: with the Find bar open, a reader-region Escape
+        # closes it first (see action_library_media_viewer_back) -- the
+        # label says so even when focus has left the bar (F6 to content).
+        if find_controls is not None:
+            return "close find"
         if shell.effective_layout.items_open:
             return "focus Items"
         if shell.effective_layout.library_open:
@@ -39918,8 +40173,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_composed_detail = None
                 self._library_media_highlights = []
                 self._library_media_editing_analysis = False
-                self._library_media_content_query = ""
-                self._library_media_content_match_index = 0
+                self._close_library_media_find()
                 self._library_media_content_mode = "raw"
                 if adjacent is None:
                     self._selected_media_id = ""
@@ -40224,6 +40478,7 @@ class LibraryScreen(BaseAppScreen):
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
+            find_open=self._library_media_find_open,
             loading=(
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
@@ -40467,6 +40722,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
+            and viewer.find_open == self._library_media_find_open
             and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
@@ -40511,6 +40767,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
+            viewer.find_open = self._library_media_find_open
             viewer.loading = loading
             viewer.loading_message = loading_message
             viewer.error_message = self._library_media_reader_session.error or ""
@@ -40640,8 +40897,7 @@ class LibraryScreen(BaseAppScreen):
             new_mode: The Reader mode being switched to.
         """
         if new_mode != self._library_media_reader_session.mode:
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._library_media_content_match_memo = None
 
     def _capture_library_media_loaded_progress(self) -> None:
@@ -40792,6 +41048,18 @@ class LibraryScreen(BaseAppScreen):
             return
         body.scroller.scroll_to(x=offset[0], y=offset[1], animate=False, force=True)
 
+    def _close_library_media_find(self) -> None:
+        """Reset the content Find bar: collapsed, no query, first match.
+
+        task-31237: one seam for every reset path (item open, viewer exit,
+        rail switch, delete, mode change, Escape) so a stale ``find_open``
+        can never hold the bar open across a context the query reset
+        already abandoned.
+        """
+        self._library_media_find_open = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
+
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
         """Take Find to the loaded item's content body.
@@ -40804,6 +41072,9 @@ class LibraryScreen(BaseAppScreen):
         # clears any active analysis search before focusing the transcript
         # find bar -- the same reset the Reader mode buttons apply.
         self._reset_library_media_search_on_mode_change("read")
+        # task-31237: the bar is collapsed until this gesture opens it
+        # (AFTER the reset above, which closes it as part of the mode seam).
+        self._library_media_find_open = True
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, "read"
         )
@@ -40880,12 +41151,27 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return None
 
-    def _focus_library_media_content_search_input(self) -> None:
-        """Focus the mounted content search box after controls synchronize."""
+    def _focus_library_media_content_search_input(
+        self, *, _retries: int = 4
+    ) -> None:
+        """Focus the mounted content search box after controls synchronize.
+
+        task-31237: the input now MOUNTS during the viewer's recompose
+        (the bar is collapsed until Find opens it), and screen-level
+        ``call_after_refresh`` callbacks can flush before the widget-level
+        recompose lands its children -- a short bounded re-defer chain
+        covers the mount latency instead of silently losing the focus.
+        """
         try:
             self.query_one("#library-media-content-search", Input).focus()
         except (NoMatches, QueryError):
-            pass
+            if _retries > 0:
+                self.call_after_refresh(
+                    partial(
+                        self._focus_library_media_content_search_input,
+                        _retries=_retries - 1,
+                    )
+                )
 
     @on(Button.Pressed, "#library-media-content-mode-rendered")
     async def handle_library_media_content_mode_rendered(
@@ -42029,8 +42315,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_delete = False
             self._library_media_highlights = []
             self._library_media_editing_analysis = False
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._library_media_content_mode = "raw"
             self.run_worker(
                 self._refresh_library_media_detail(

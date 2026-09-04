@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import DataTable, TabbedContent
+from textual.widgets import Button, DataTable, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import rendered_row_cells
@@ -667,6 +667,114 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         assert db.get_automation_result(r3)["review_state"] == "read"
         notifications = list(pilot.app._notifications)
         assert any("Marked 2 result" in n.message for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
+    results_db,
+):
+    """HIGH (Qodo): `_unread_result_ids` used to read the Results tab's
+    own CAPPED listing (`RESULTS_INBOX_LIMIT`, 200 newest rows) instead
+    of querying the DB directly, so an older unread result outside that
+    window survived a mark-all-read -- while the rail button's
+    visibility is gated on the FULL-table `count_unread_results` (final
+    review F2), so it could hide with unread work still sitting there.
+    Seeds one old server-mirrored unread result first (oldest, so it
+    falls outside the newest-`RESULTS_INBOX_LIMIT` window once
+    `RESULTS_INBOX_LIMIT` more local ones are seeded after it), then
+    proves mark-all-read reaches it anyway AND still queues its server
+    pushback mutation.
+    """
+    db = results_db
+    server_definition_id = _seed_definition(
+        db, owner_id="server:1", server_id="srv-def-1"
+    )
+    old_result_id = _seed_result(
+        db,
+        definition_id=server_definition_id,
+        owner_id="server:1",
+        server_id="srv-res-old",
+        dedupe_key="old",
+    )
+    local_definition_id = _seed_definition(db)
+    for index in range(RESULTS_INBOX_LIMIT):
+        _seed_result(db, definition_id=local_definition_id, dedupe_key=f"d{index}")
+    total_unread = RESULTS_INBOX_LIMIT + 1
+    assert db.count_unread_results(owner_id=None) == total_unread
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = await _open_results_tab(pilot)
+
+        # Sanity: the loaded table window is capped, so the old result is
+        # not among the currently-rendered rows -- this is the exact
+        # shape that used to leave it unreached.
+        table = workbench.query_one("#scheduling-results-table", DataTable)
+        assert table.row_count == RESULTS_INBOX_LIMIT
+
+        workbench.action_mark_all_results_read()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.count_unread_results(owner_id=None) == 0
+        assert db.get_automation_result(old_result_id)["review_state"] == "read"
+        notifications = list(pilot.app._notifications)
+        assert any(
+            f"Marked {total_unread} result" in n.message for n in notifications
+        )
+
+        mutations = db.get_pending_mutations(
+            owner_id="server:1", primitive="automation_result_review"
+        )
+        assert any(
+            mutation["payload"].get("server_result_id") == "srv-res-old"
+            and mutation["payload"].get("review_state") == "read"
+            for mutation in mutations
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_mark_all_read_button_fans_out_without_switching_tabs(results_db):
+    """redesign PR-2, Task 3: unlike the `a` keybinding (Results-tab-only,
+    see `test_results_actions_refuse_off_the_results_tab`), the rail's
+    `Mark all read` button on the Queue tab reuses the SAME per-row
+    fan-out (`_dispatch_mark_all_results_read`) without a tab switch
+    first, then refreshes the Queue's own unread dots so the button hides
+    itself again once nothing is unread."""
+    db = results_db
+    definition_id = _seed_definition(db)
+    r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+    r2 = _seed_result(db, definition_id=definition_id, dedupe_key="d2")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        # Still on the Queue tab -- the `a` keybinding would refuse here.
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        assert tabs.active == "scheduling-queue-tab"
+
+        button = workbench.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is True
+
+        button.press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(r1)["review_state"] == "read"
+        assert db.get_automation_result(r2)["review_state"] == "read"
+        notifications = list(pilot.app._notifications)
+        assert any("Marked 2 result" in n.message for n in notifications)
+
+        assert button.display is False
 
 
 @pytest.mark.asyncio

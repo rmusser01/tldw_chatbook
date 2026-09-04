@@ -2427,6 +2427,30 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(query, params).fetchone()
         return int(row["n"])
 
+    def list_running_run_ids(self) -> set[str]:
+        """Every run id NOT in a terminal status, across ALL conversations.
+
+        TASK-28238 phase 2 T7 final fix wave, I3 round 2. Process-wide,
+        crash-safe liveness truth for callers (e.g.
+        `AgentService._sweep_stale_agent_worktrees`) that must never treat
+        a genuinely still-running run as safe to garbage-collect around --
+        unlike any in-memory, coordinator-scoped source (a `FleetCoordinator`
+        snapshot, or a single `AgentService` instance's own bookkeeping),
+        this also protects a DIFFERENT conversation's live children sharing
+        the same workspace root, which those sources cannot see at all.
+        Mirrors `reconcile_orphaned_runs`'s own
+        ``SELECT id FROM agent_runs WHERE status = ...`` shape, generalized
+        to the full terminal set instead of hardcoding ``'running'``.
+
+        Returns:
+            The set of non-terminal run ids (empty when none are running).
+        """
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        query = f"SELECT id FROM agent_runs WHERE status NOT IN ({placeholders})"
+        with self.connection() as conn:
+            rows = conn.execute(query, tuple(TERMINAL_RUN_STATUSES)).fetchall()
+        return {row["id"] for row in rows}
+
     def local_command_resume_records(self, conversation_id: str) -> list[dict]:
         """Return bounded structural projections for local-command markers.
 

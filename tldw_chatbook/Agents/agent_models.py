@@ -156,6 +156,15 @@ CHECK_AGENTS_TOOL_NAME = "check_agents"
 # mailbox is instant, but the id-resolution copy lives in the service
 # closure, not behind invoke_tool's daemon-thread timeout wrapper).
 SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
+# TASK-28238 phase 2 Task 5: the headless merge/discard tools for a worktree-
+# isolated child (Task 4's `isolation="worktree"` spawn). Primary-only and
+# fleet-gated exactly like wait_agents/check_agents above (a worktree only
+# ever exists for a fleet-launched child), and dispatched IN-LOOP beside
+# them for the same reason -- both mutate the shared tree and gate on a
+# user confirm callable, which does not belong behind invoke_tool's
+# per-call daemon-thread timeout wrapper.
+MERGE_AGENT_WORKTREE_TOOL_NAME = "merge_agent_worktree"
+DISCARD_AGENT_WORKTREE_TOOL_NAME = "discard_agent_worktree"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -171,6 +180,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
         SEND_TO_AGENT_TOOL_NAME,
+        MERGE_AGENT_WORKTREE_TOOL_NAME,
+        DISCARD_AGENT_WORKTREE_TOOL_NAME,
     }
 )
 

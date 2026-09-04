@@ -144,7 +144,7 @@ def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
             conversation_id="conv-1",
             messages=[{"role": "user", "content": "read it"}],
             config=AgentConfig(
-                model="model",
+                model="gpt-4o",
                 system_prompt="system",
                 allowed_tools=("read_file",),
                 native_tools=True,

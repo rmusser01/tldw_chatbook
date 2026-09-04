@@ -35,9 +35,11 @@ from tldw_chatbook.model_capabilities import (
 # a string annotation on `LoopDeps.fallback`.
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
@@ -512,6 +514,18 @@ class LoopDeps:
     # child of this run"; `check_agents` takes nothing.
     wait_agents: Callable[[list[str] | None], ToolResult] | None = None
     check_agents: Callable[[], ToolResult] | None = None
+    # merge_agent_worktree / discard_agent_worktree: TASK-28238 phase 2
+    # Task 5, the headless half of landing/discarding a worktree-isolated
+    # child's work (Task 4's `isolation="worktree"` spawn). Wired under
+    # the SAME `fleet_active` predicate as wait_agents/check_agents above
+    # (a worktree only ever exists for a fleet-launched child) and
+    # dispatched IN-LOOP beside them for the identical reason: both
+    # closures gate on a user confirm callable and (for merge) run git,
+    # neither of which belongs behind invoke_tool's per-call daemon-thread
+    # timeout wrapper. `None` (the default) means the run is not wired for
+    # them and a call by either name falls through to deps.invoke_tool.
+    merge_agent_worktree: Callable[[str, str], ToolResult] | None = None
+    discard_agent_worktree: Callable[[str], ToolResult] | None = None
     # send_to_agent: fleet steering, the SUPERVISOR producer (PR3b Task 2,
     # spec SS6) for the per-child mailbox drain_mailbox below consumes.
     # Wired under the exact `fleet_active` predicate as the two fields
@@ -566,7 +580,9 @@ class LoopDeps:
     # Optional production-only causal dispatch seams. Appended after every
     # legacy field so positional LoopDeps callers retain their exact slots.
     invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
-    spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
+    spawn_at_step: (
+        Callable[[str, int, str | None, str | None], ToolResult] | None
+    ) = None
     send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
     drain_mailbox_with_causes: (
         Callable[[], list[tuple[str, str, str | None]]] | None
@@ -2280,6 +2296,11 @@ def run_agent_loop(
                         # 'None'" refusal instead of taking the no-agent
                         # path.
                         agent_name = str(call.args.get("agent") or "").strip()
+                        # Same `or ""` guard as `agent_name`: schema-valid
+                        # values are only "worktree" or absent, but a
+                        # stray JSON `null` must not become the truthy
+                        # string "None".
+                        isolation = str(call.args.get("isolation") or "").strip() or None
                         if not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
@@ -2303,12 +2324,32 @@ def run_agent_loop(
                             )
                             if deps.spawn_at_step is not None:
                                 result = deps.spawn_at_step(
-                                    task, spawn_step.index, agent_name or None
+                                    task,
+                                    spawn_step.index,
+                                    agent_name or None,
+                                    isolation,
                                 )
                             elif agent_name:
-                                result = deps.spawn(task, agent=agent_name)
+                                # `isolation=` is passed only when set: many
+                                # unit tests build a bare `LoopDeps` with a
+                                # narrow single/double-arg `spawn` double
+                                # (no `spawn_at_step`, no `**kwargs`) that
+                                # never exercises isolation -- an
+                                # unconditional kwarg would break every one
+                                # of them for a feature they never opt into.
+                                result = (
+                                    deps.spawn(
+                                        task, agent=agent_name, isolation=isolation
+                                    )
+                                    if isolation
+                                    else deps.spawn(task, agent=agent_name)
+                                )
                             else:
-                                result = deps.spawn(task)
+                                result = (
+                                    deps.spawn(task, isolation=isolation)
+                                    if isolation
+                                    else deps.spawn(task)
+                                )
                             # Named-agent resolution (fleet spec §4) gave
                             # deps.spawn a NEW failure mode this loop-level
                             # check does not pre-screen: deps.spawn can now
@@ -2382,6 +2423,24 @@ def run_agent_loop(
                         )
                     else:
                         result = deps.send_to_agent(target, message)
+                elif (
+                    call.name == MERGE_AGENT_WORKTREE_TOOL_NAME
+                    and deps.merge_agent_worktree is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    raw_mode = call.args.get("mode")
+                    mode = str(raw_mode) if raw_mode else "apply"
+                    result = deps.merge_agent_worktree(
+                        str(call.args.get("handle_id", "")), mode
+                    )
+                elif (
+                    call.name == DISCARD_AGENT_WORKTREE_TOOL_NAME
+                    and deps.discard_agent_worktree is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.discard_agent_worktree(
+                        str(call.args.get("handle_id", ""))
+                    )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))

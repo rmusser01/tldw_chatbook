@@ -54,7 +54,6 @@ same reason.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from textual.app import ComposeResult
@@ -70,10 +69,13 @@ from .forms.automation_definition_form import (
 from .task_detail import (
     _TRANSFER_STATE_ROW_LABELS,
     _format_timezone,
-    _humanize_cron,
-    definition_cron_expression,
     owner_display_label,
 )
+# `_definition_at_label`/`_definition_question_text`/`_parse_iso` moved to
+# `unified_rows.py` (redesign PR-2 Task 1 -- that pure module needs them
+# too and cannot import a Textual-heavy module without dragging Textual in
+# as a side effect); imported back here unchanged.
+from .unified_rows import _definition_at_label, _definition_question_text, _parse_iso
 
 #: Absent key -> honest placeholder (final review F2). A definition this
 #: client did not author carries none of the create-form's config keys,
@@ -206,22 +208,6 @@ def _definition_transfer_suffix(definition: dict[str, Any]) -> str:
     return f" ({label})" if label else ""
 
 
-def _definition_question_text(definition: dict[str, Any]) -> str:
-    """Question-card text: the recurring question, or a fallback for a
-    definition that has none (a non-`recurring_question` family, or a
-    row from an older/foreign server payload shape)."""
-    input_fields = (
-        definition.get("input") if isinstance(definition.get("input"), dict) else {}
-    )
-    question = str(input_fields.get("question") or "").strip()
-    if question:
-        return question
-    description = str(definition.get("description") or "").strip()
-    if description:
-        return description
-    return str(definition.get("name") or "Untitled automation")
-
-
 def _definition_generation_label(config: dict[str, Any]) -> str:
     """'Generation' row value (Details group): `config.generation_mode`,
     labeled with the same wording the create/edit form's Select uses;
@@ -289,16 +275,6 @@ def _definition_notifications_label(definition: dict[str, Any]) -> str:
     return " · ".join(parts) if parts else _NOT_SET
 
 
-def _parse_iso(value: Any) -> datetime | None:
-    """Best-effort ISO-8601 parse; ``None`` for anything else, never raises."""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
-
-
 def _definition_repeat_label(schedule: dict[str, Any]) -> str:
     """'Repeat' row value (Frequency group): "Recurring" or "One-time" --
     the definition-schedule counterpart of `task_detail._humanize_schedule_
@@ -309,27 +285,6 @@ def _definition_repeat_label(schedule: dict[str, Any]) -> str:
         return "Recurring"
     if kind == "one_time":
         return "One-time"
-    return "-"
-
-
-def _definition_at_label(schedule: dict[str, Any]) -> str:
-    """'At' row value (Frequency group): the full schedule summary, reusing
-    `_humanize_cron` for a cron-kind schedule -- the same formatter
-    `task_detail._humanize_schedule`/`reminder_form.py`'s live cron preview
-    already reuse -- rather than re-deriving cron-cadence prose."""
-    if not isinstance(schedule, dict):
-        return "-"
-    kind = schedule.get("kind")
-    if kind == "cron":
-        return _humanize_cron(
-            definition_cron_expression(schedule), schedule.get("timezone")
-        )
-    if kind == "one_time":
-        run_at = schedule.get("run_at")
-        dt = _parse_iso(run_at) if run_at else None
-        if dt is None:
-            return f"One-time at {run_at}" if run_at else "One-time"
-        return f"One-time at {dt.strftime('%Y-%m-%d %H:%M')} {_format_timezone(dt)}"
     return "-"
 
 

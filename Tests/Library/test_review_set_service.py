@@ -177,6 +177,64 @@ def test_dismiss_soft_deletes_and_deactivates():
     assert svc.get_review_set(set_id) is None  # dismissed sets are hidden
 
 
+def test_undismiss_restores_the_set_with_marks_and_activation():
+    """task-31236: Undo on the dismiss receipt is an un-tombstone.
+
+    Dismiss only flips deleted_at/active — cursor and done marks were never
+    touched — so undismiss must bring the set back exactly as it was,
+    including re-activating a set that was active when dismissed.
+    """
+    svc = _service()
+    set_id = svc.create_review_set(
+        "X", origin="browse", items=[(1, "a"), (2, "b")]
+    )
+    svc.mark_item_done(set_id, 1, True)
+    svc.set_cursor(set_id, 1)
+    svc.dismiss(set_id)
+    assert svc.list_review_sets() == ()
+
+    svc.undismiss(set_id, reactivate=True)
+
+    restored = svc.get_active_review_set()
+    assert restored is not None and restored.set_id == set_id
+    assert restored.cursor == 1
+    assert [item.done for item in restored.items] == [True, False]
+
+
+def test_undismiss_never_steals_activation_from_a_newer_set():
+    """The one-active invariant outranks the undo (task-31236 AC#2).
+
+    If another set became active after the dismissal, the restored set
+    comes back resumable but INACTIVE — undo must not silently deactivate
+    the set the user is now walking.
+    """
+    svc = _service()
+    first = svc.create_review_set("First", origin="browse", items=[(1, "a")])
+    svc.dismiss(first)
+    second = svc.create_review_set("Second", origin="browse", items=[(2, "b")])
+
+    svc.undismiss(first, reactivate=True)
+
+    active = svc.get_active_review_set()
+    assert active is not None and active.set_id == second  # untouched
+    listed = {review_set.set_id for review_set in svc.list_review_sets()}
+    assert first in listed  # back and resumable via the picker
+
+
+def test_undismiss_without_reactivate_restores_inactive():
+    svc = _service()
+    set_id = svc.create_review_set("X", origin="browse", items=[(1, "a")])
+    svc.deactivate_active()
+    svc.dismiss(set_id)
+
+    svc.undismiss(set_id, reactivate=False)
+
+    assert svc.get_active_review_set() is None
+    assert {review_set.set_id for review_set in svc.list_review_sets()} == {
+        set_id
+    }
+
+
 def test_deactivate_active_keeps_the_set_resumable():
     svc = _service()
     set_id = svc.create_review_set("X", origin="browse", items=[(1, "a")])

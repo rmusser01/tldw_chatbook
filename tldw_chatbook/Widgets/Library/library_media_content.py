@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.containers import (
     Container,
     Horizontal,
@@ -346,6 +347,25 @@ class LibraryMediaContentSearchControls(Vertical):
         self.matches = matches
         self.match_index = match_index
         self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
+
+    def on_mount(self) -> None:
+        """Take focus into the input on the Find-gesture mount (task-31237).
+
+        The bar now mounts only when the Find action opens it (or a query
+        is already applied). On the gesture mount -- empty query -- the
+        input takes focus from THIS widget's own post-refresh hook (its
+        children exist by then), because no screen-level defer can order
+        itself after a nested recompose-mount; an active-query remount
+        (match navigation, mode flips) never steals focus.
+        """
+        if not self.query:
+            self.call_after_refresh(self._focus_search_input)
+
+    def _focus_search_input(self) -> None:
+        try:
+            self.query_one("#library-media-content-search", Input).focus()
+        except NoMatches:
+            pass
 
     def compose(self) -> ComposeResult:
         """Compose the persistent, display-gated content-search controls.

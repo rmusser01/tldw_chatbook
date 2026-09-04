@@ -414,13 +414,22 @@ async def test_cancel_on_dormant_copy_uses_the_copys_own_id(transfer_db):
         assert copy_id is not None
         assert copy_id != mirror_id
 
-        # The device view (owner_id="local", the service's default) is
-        # what the copy lives under -- reload the queue and select it.
+        # redesign PR-2, Task 2: the Queue list is now spans-owners, so
+        # BOTH the local dormant copy AND the server-owned mirror show up
+        # (was 1 -- only the current-owner-scoped reminder listing --
+        # before the unified list). Select the copy row explicitly by id
+        # rather than assuming it lands at index 0.
         await pilot.app.screen.load_tasks()
         await pilot.pause()
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert table.row_count == 1  # only the dormant copy is local-owned
-        await _select_row(pilot)
+        assert table.row_count == 2
+        workbench = pilot.app.screen
+        copy_index = next(
+            index
+            for index, row in enumerate(workbench._visible_rows)
+            if row.kind == "reminder" and row.source_row.id == copy_id
+        )
+        await _select_row(pilot, copy_index)
 
         cancel_button = pilot.app.screen.query_one(
             "#scheduling-cancel-transfer", Button
@@ -547,7 +556,9 @@ async def test_queue_row_shows_transfer_badge_suffix(transfer_db):
 
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         row = table.get_row_at(0)
-        assert "Moving to server" in str(row[0])
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        assert "Moving to server" in str(row[1])
 
 
 # ---------------------------------------------------------------------------

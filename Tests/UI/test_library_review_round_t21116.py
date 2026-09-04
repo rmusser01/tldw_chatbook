@@ -78,7 +78,7 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
         # leave it -- the worker whose continuation we fire below is the
         # one this open started.
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
 
@@ -216,7 +216,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
         fired: list[str] = []
 
@@ -254,7 +254,7 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
         armed: list[object] = []
         original_arm = screen._arm_library_list_entry_focus

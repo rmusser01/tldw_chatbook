@@ -2338,6 +2338,12 @@
      * is what keeps task-28025's fit contract true. Baseline geometry lives
      * here so harnesses without the app bundle lay out like the app. */
 
+    /* task-31224: Textual Input defaults to width 100%, which consumed the
+     * whole filter row and pushed "Clear filter" off-screen -- the one
+     * honest recovery for a filter miss was invisible (live: it never
+     * rendered at any width). Share the row instead. */
+
+
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */

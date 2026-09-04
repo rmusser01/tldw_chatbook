@@ -30,7 +30,8 @@ Normal publishing is done by `.github/workflows/publish-pypi.yml`:
 
 - Manual workflow dispatch from protected `dev` publishes to TestPyPI through
   the `testpypi` environment.
-- Protected `v*` tags publish to PyPI through the `pypi` environment after the
-  tag version matches `pyproject.toml`.
+- Protected `main` pushes publish to PyPI through the `pypi` environment only
+  when the built version is absent and newer than the latest PyPI release. Tag
+  pushes do not publish.
 
 Do not use `.pypirc` or long-lived API tokens for routine releases.

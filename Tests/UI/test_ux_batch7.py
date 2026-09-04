@@ -154,7 +154,9 @@ async def test_bulk_mark_and_toggle() -> None:
         from textual.widgets import DataTable
 
         table = screen.query_one("#scheduling-task-table", DataTable)
-        first_title = str(table.get_row_at(0)[0])
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        first_title = str(table.get_row_at(0)[1])
         assert first_title.startswith("● ")
 
         screen.action_toggle_enabled()

@@ -381,6 +381,106 @@ async def test_delete_reminder_server_falls_back_to_tombstone_on_generic_error(d
     assert tombstone is not None
 
 
+# ---------------------------------------------------------------------------
+# Cross-owner writes (final review F4): redesign PR-2's Queue lists
+# reminders across owners, so "the row under the cursor" is no longer
+# guaranteed to be the service's ACTIVE owner. Every reminder write now
+# takes the ROW's owner, the same `owner_id=` thread `create_reminder`
+# established -- without it a `server:` row's toggle/delete took the
+# local-only branch: no server call, no pending mutation, no tombstone,
+# and the next pull silently undid the user's action.
+# ---------------------------------------------------------------------------
+
+
+async def _server_owned_row(db, server_client):
+    """A local row owned by `server:1`, created while `local` is active."""
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    task = await svc.create_reminder(
+        _reminder_payload("Server row"), owner_id="server:1"
+    )
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.delete_pending_mutation_for_record(task.id, "reminder_task", "server:1")
+    server_client.create_reminder.side_effect = None
+    assert svc.owner_id == "local"
+    return svc, task
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.return_value = {
+        "id": "srv-1",
+        "title": "Server row",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+        "enabled": False,
+    }
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    server_client.update_reminder.assert_awaited_once()
+    assert server_client.update_reminder.await_args.args[0] == "srv-1"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_records_mutation_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert [row["payload"]["action"] for row in pending] == ["update"]
+    assert db.get_reminder_task(task.id)["enabled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.return_value = {"deleted": True}
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+    assert await svc.get_reminder(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_records_tombstone_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    assert await svc.get_reminder(task.id) is None
+    assert db.get_tombstone(task.id, "reminder_task", "server:1") is not None
+
+
+@pytest.mark.asyncio
+async def test_local_row_writes_record_nothing_while_a_server_owner_is_active(db):
+    """The inverse guard: threading the ROW's owner must not start
+    recording server mutations for LOCAL rows just because the active
+    owner happens to be a server."""
+    server_client = AsyncMock()
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Local row"))
+    svc.set_owner("server:1")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    server_client.update_reminder.assert_not_awaited()
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+    server_client.delete_reminder.assert_not_awaited()
+    assert db.get_tombstone(task.id, "reminder_task", "local") is None
+
+
 @pytest.mark.asyncio
 async def test_delete_reminder_returns_false_for_missing_id(db):
     svc = SchedulingService(db=db, runtime_source="local")
@@ -459,6 +559,102 @@ async def test_list_tasks_filters_watchlist_by_owner(db):
 
     assert tasks == []
     projection.list_jobs.assert_called_once_with(owner_id="server:1")
+
+
+# --- spans-owners `owner_id` parameter (schedules-redesign PR-2, Task 1) ---
+#
+# `list_tasks()` (zero args, the default `...` sentinel) must keep behaving
+# EXACTLY as every test above pins it -- these add the new opt-in shape
+# without touching that default path.
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_default_still_scopes_to_current_owner(db):
+    """Byte-for-byte preservation: calling with no argument at all must
+    still scope reminders to `self.owner_id`, same as before this
+    parameter existed."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks()
+
+    assert [t.title for t in tasks] == ["Local reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_none_spans_every_owner(db):
+    """The new spans-owners seam: `owner_id=None` returns reminders from
+    EVERY owner, not just `self.owner_id` -- the redesign's unified Queue
+    list (plan ruling, survey SS2's cross-owner listing gap)."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert {t.title for t in tasks} == {"Local reminder", "Server reminder"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_explicit_string_scopes_to_that_owner(db):
+    """A specific owner id (not the service's current one) scopes
+    reminders to just that owner."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id="server:9")
+
+    assert [t.title for t in tasks] == ["Server reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_spans_owners_keeps_projections_scoped_to_current_owner(db):
+    """Watchlist/briefing `list_jobs` only STAMP the owner id onto every
+    row (their underlying read has no per-owner filter) -- passing them
+    `owner_id=None` would fail their `ScheduledTask.owner_id: str` field.
+    A spans-owners reminder listing must not do that: projections stay
+    scoped to `self.owner_id` regardless of the reminder-side argument."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    projection = MagicMock(spec=WatchlistProjection)
+    projection.list_jobs.return_value = []
+    svc.watchlist_projection = projection
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert tasks == []
+    projection.list_jobs.assert_called_once_with(owner_id="local")
 
 
 # --- briefing projection (task-1810): scheduled briefings on the unified list ---
@@ -564,6 +760,33 @@ async def test_list_tasks_includes_both_watchlist_and_briefing_projections(db):
 
     types = {task.type for task in tasks if isinstance(task, ScheduledTask)}
     assert types == {"watchlist_job", "briefing_job"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_include_projections_false_skips_the_projection_reads(db):
+    """redesign PR-2 Task 2 review, finding 2: the unified Queue's
+    `load_tasks` immediately discards every `ScheduledTask` row, so
+    `include_projections=False` must stop `list_tasks` from calling
+    `list_jobs` on either projection at all -- not just from returning
+    their rows. `list_jobs.assert_not_called()` is the counting-fake pin
+    the review asked for; the DEFAULT (`include_projections=True`, the
+    existing tests above) must keep calling both.
+    """
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    watchlist_projection = MagicMock(spec=WatchlistProjection)
+    briefing_projection = MagicMock(spec=BriefingProjection)
+    svc.watchlist_projection = watchlist_projection
+    svc.briefing_projection = briefing_projection
+
+    tasks = await svc.list_tasks(include_projections=False)
+
+    watchlist_projection.list_jobs.assert_not_called()
+    briefing_projection.list_jobs.assert_not_called()
+    assert len(tasks) == 1
+    assert isinstance(tasks[0], ReminderTask)
+    assert tasks[0].title == "Reminder"
 
 
 @pytest.mark.asyncio

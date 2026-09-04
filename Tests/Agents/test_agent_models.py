@@ -10,7 +10,9 @@ import tldw_chatbook.Agents.agent_models as agent_models
 from tldw_chatbook.Agents.agent_models import (
     MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
@@ -92,6 +94,11 @@ def test_runtime_tool_names():
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
         SEND_TO_AGENT_TOOL_NAME,
+        # TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated
+        # child, pinned under the same fleet predicate as the three names
+        # directly above.
+        MERGE_AGENT_WORKTREE_TOOL_NAME,
+        DISCARD_AGENT_WORKTREE_TOOL_NAME,
     }
     assert LOOP_DETECTION_N == 3
 

@@ -3829,6 +3829,7 @@ def build_console_first_request_plan(
     turn_bundle_block: str,
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
+    worktree_merge_enabled: bool = False,
     agent_messages: list[dict],
     agent_definitions: tuple[AgentDefinition, ...] = (),
     fleet_max_live: int = 1,
@@ -3864,6 +3865,14 @@ def build_console_first_request_plan(
         turn_bundle_block: Exact automatic context rider for the next request.
         install_skill_enabled: Whether the skill installer is available.
         run_skill_script_enabled: Whether skill scripts are available.
+        worktree_merge_enabled: Whether a run-entry confirm surface exists to
+            approve merge_agent_worktree/discard_agent_worktree (TASK-28238
+            phase 2 Task 7 ruling) -- the two preview call sites,
+            `build_project_instruction_preview_request` and
+            `build_personal_context_preview_snapshot`, intentionally omit
+            this today since no production confirm surface exists yet; the
+            future UI-card task must thread it there too for preview/live
+            parity.
         agent_messages: Exact conversation messages before optional riders.
         agent_definitions: Named sub-agent definitions available this turn.
         fleet_max_live: Maximum simultaneously live agents for this run.
@@ -3997,6 +4006,7 @@ def build_console_first_request_plan(
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
+        worktree_merge_enabled=worktree_merge_enabled,
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
@@ -4689,6 +4699,13 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        # TASK-28238 phase 2 Task 6: forwarded straight to
+        # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
+        # unlike `request_skill_script_confirm` above, this is never
+        # consumed inside a bridge-built closure; `merge_agent_worktree`/
+        # `discard_agent_worktree` are the service's OWN closures (Task 5),
+        # so there is nothing for `run_reply` to do with it but pass it on.
+        request_worktree_merge_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         virtual_cli_provider: Any | None = None,
         raw_shell_provider: Any | None = None,
@@ -4921,6 +4938,7 @@ class ConsoleAgentBridge:
                 and request_skill_install_confirm is not None
             ),
             run_skill_script_enabled=script_tool_enabled,
+            worktree_merge_enabled=request_worktree_merge_confirm is not None,
             agent_messages=planning_messages,
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
@@ -6010,6 +6028,7 @@ class ConsoleAgentBridge:
                 continuation_target=continuation_target,
                 continuation_owner_key=continuation_owner_key,
                 first_request_schema_plan=first_request_plan.schemas,
+                request_worktree_merge_confirm=request_worktree_merge_confirm,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling

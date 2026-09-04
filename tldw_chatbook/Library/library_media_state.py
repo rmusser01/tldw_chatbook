@@ -775,6 +775,10 @@ class LibraryMediaCanvasState:
     # as the type chooser and the Prompts/Notes sort choosers).
     sort_by: str = "last_modified_desc"
     sort_choices_visible: bool = False
+    # task-31236: name of the most recently dismissed review set, rendered
+    # as a "✓ dismissed · <name>" receipt with Undo/Dismiss until acted on
+    # or replaced. "" means no receipt (the normal state).
+    review_dismiss_receipt_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -943,8 +947,16 @@ def build_library_media_browse_state(
     sort_choices_visible: bool = False,
     loading_id: str = "",
     loaded_id: str = "",
+    review_dismiss_receipt_name: str = "",
 ) -> LibraryMediaCanvasState:
-    """Project one exact Media page without filtering, sorting, or slicing it."""
+    """Project one exact Media page without filtering, sorting, or slicing it.
+
+    Args:
+        review_dismiss_receipt_name: Name of the most recently dismissed
+            review set, rendered as a "✓ dismissed · <name>" undo receipt
+            until acted on or replaced (task-31236). "" (the default)
+            means no receipt to show.
+    """
     if not isinstance(result, MediaBrowseResult):
         raise TypeError("result must be a MediaBrowseResult.")
     if type(type_options) is not tuple or any(
@@ -1021,6 +1033,7 @@ def build_library_media_browse_state(
         query=result.scope.query,
         sort_by=result.scope.sort_by,
         sort_choices_visible=sort_choices_visible,
+        review_dismiss_receipt_name=review_dismiss_receipt_name,
     )
 
 
@@ -1094,6 +1107,7 @@ def build_library_media_state(
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
     type_choices_visible: bool = False,
+    review_dismiss_receipt_name: str = "",
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -1110,6 +1124,10 @@ def build_library_media_state(
             receipt with Undo/Dismiss until acted on or replaced by a
             newer bulk-delete action. 0 (the default) means no receipt to
             show.
+        review_dismiss_receipt_name: Name of the most recently dismissed
+            review set, rendered as a "✓ dismissed · <name>" undo receipt
+            until acted on or replaced (task-31236). "" (the default)
+            means no receipt to show.
 
     Returns:
         Immutable canvas state: rows, type options, active type, status/empty copy,
@@ -1227,4 +1245,5 @@ def build_library_media_state(
         confirming_bulk_delete=confirming_bulk_delete,
         delete_receipt_count=max(0, delete_receipt_count),
         type_choices_visible=type_choices_visible,
+        review_dismiss_receipt_name=review_dismiss_receipt_name,
     )

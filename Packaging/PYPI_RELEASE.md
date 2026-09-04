@@ -35,11 +35,12 @@ For PyPI:
 If the project does not exist yet, create a pending trusted publisher for the
 same owner, repository, workflow, and environment.
 
-Protect the `dev` branch, the `testpypi` and `pypi` GitHub environments, and
-the production `v*` tag pattern before allowing publishing. The TestPyPI job
-only runs for manual dispatch from protected `dev`; the PyPI job only runs for
-protected matching version tags. Publish jobs only download built artifacts and
-request the PyPI OIDC token.
+Protect the `dev` and `main` branches and the `testpypi` and `pypi` GitHub
+environments before allowing publishing. The TestPyPI job only runs for manual
+dispatch from protected `dev`; the PyPI job only runs for protected `main`
+branch pushes, and it skips the upload when the built version already exists on
+PyPI or is older than the latest published version. Publish jobs only download
+built artifacts and request the PyPI OIDC token.
 
 ## Local Release Gates
 
@@ -96,17 +97,22 @@ Run the full suite only when the release manager explicitly wants a full sweep.
 ## Publish to PyPI
 
 1. Confirm the same commit passed the local gates and TestPyPI smoke test.
-2. Create and push a protected production tag:
+2. Merge the approved release commit to the protected `main` branch. Do not
+   publish by pushing a tag; tag pushes are intentionally ignored by the PyPI
+   workflow.
+3. The `Publish Python package` workflow builds and checks the artifacts from
+   `main`, verifies whether the version is publishable on PyPI, and publishes
+   through the protected `pypi` environment only when the version is absent and
+   newer than the latest published version.
+4. After PyPI is verified, create and push the annotated source tag at the
+   `main` release commit for provenance:
 
    ```bash
    git tag -a v<version> -m "Release v<version>"
    git push origin v<version>
    ```
 
-3. The `Publish Python package` workflow publishes the checked artifacts to PyPI
-   only when the `v<version>` tag is protected and matches the package version.
-   Publishing still goes through the protected `pypi` environment.
-4. Verify:
+5. Verify:
 
    ```bash
    python -m venv pypi_env

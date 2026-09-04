@@ -137,7 +137,8 @@ restoring it.
 |---|---|
 | "Filter media" / "Clear filter" | Searches the complete local Media source before paging; it is separate from Find in item. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
-| "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. |
+| "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
+| "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
 | "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
@@ -203,7 +204,7 @@ item-specific empty state; it does not silently switch modes.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens Find in item for the loaded representation; this never filters Items. |
+| "Find" | Opens the in-item search bar (collapsed until then) focused and ready to type; this never filters Items. Escape closes the bar again. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
@@ -217,11 +218,14 @@ them one by one, with your place and progress saved between visits.
 - **Create** — **Review these** on the media list pins the whole filtered
   result (in the current sort order, capped at 500 items with a notice when
   trimmed); in Select mode, **Review selected** pins just the checked items in
-  list order. Creating a set activates it and opens its first item in the
-  Reader.
+  list order and leaves Select mode. Creating a set activates it and opens its
+  first item in the Reader. If another set was mid-walk, a notice names it and
+  its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
+  Sets.") — creating never silently strands a walk.
 - **Resume on entry** — opening the media area with a set active loads its
-  current item into the Reader automatically (once per set per session;
-  Escape back to the list and re-entering shows the list).
+  current item into the Reader automatically, on every entry, so the banner
+  and the open document always agree (Escape shows the list until the next
+  entry).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
@@ -230,17 +234,21 @@ them one by one, with your place and progress saved between visits.
   Reader but keeps the set active — re-entering resumes at your cursor.
   **R** (Exit review) deactivates the set without deleting it.
 - **Resume / switch / dismiss** — **Sets** on the media list title row opens
-  the saved-set picker: each row shows the set's name and live progress, with
+  the saved-set picker: each row shows the set's name, live progress, and
+  created date (so two "2 selected items" sets stay distinguishable), with
   the active set marked `✓`. Picking a set activates it (deactivating any
   other) and lands at its saved cursor; picking a completed set reopens it.
-  **Dismiss** soft-deletes a set. **Review read-later** in the same picker
-  builds a new set from your read-later queue, newest saves first.
+  **Dismiss** soft-deletes a set and leaves a "✓ dismissed · name" receipt on
+  the media list with **Undo** (restores the set — cursor, reviewed marks,
+  and active state intact) and **Dismiss** to clear the receipt. **Review
+  read-later** in the same picker builds a new set from your read-later
+  queue, newest saves first.
 - Deleted media items become skipped tombstones: progress counts only items
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
-*Verified against feat/review-sets-p4 — 2026-09-02 (task-28240..28243: live
-end-to-end create → walk → exit → resume → dismiss pass in tmux).*
+*Verified against fix/media-review-continuity — 2026-09-04 (task-31233/34/36/38:
+live create-from-selection → every-entry resume → dismiss-undo pass in tmux).*
 
 ### Conversations
 

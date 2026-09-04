@@ -76,12 +76,15 @@ def _select_state(
 
 
 class _CanvasApp(ConsolidatedCSSApp):
-    def __init__(self, state: LibraryMediaCanvasState) -> None:
+    def __init__(self, state: LibraryMediaCanvasState, pager=None) -> None:
         super().__init__()
         self._state = state
+        self._pager = pager
 
     def compose(self):
-        yield LibraryMediaCanvas(canvas=self._state, id="library-media-canvas")
+        yield LibraryMediaCanvas(
+            canvas=self._state, pager=self._pager, id="library-media-canvas"
+        )
 
 
 @pytest.mark.asyncio
@@ -242,3 +245,48 @@ def test_wide_row_prefixes_are_short_so_titles_survive():
         "Quarterly metrics narrative", "document · 3m", compact=False
     )
     assert plain.startswith(" Quarterly")
+
+
+@pytest.mark.asyncio
+async def test_filter_miss_offers_clear_filter_not_import():
+    """A zero-match ACTIVE-query page must not pin Import media (task-31224).
+
+    The honest recovery is clearing the filter; the query-echoing status
+    copy is already right, and the Clear control must actually render.
+    """
+    import dataclasses
+
+    state = dataclasses.replace(
+        _browse_state(),
+        rows=(),
+        count=0,
+        query="]",
+        empty_copy="No media matched ']'.",
+    )
+    from tldw_chatbook.Library.library_pager_state import (
+        build_library_pager_display,
+    )
+
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=20,
+        row_count=0,
+        total=0,
+        freshness="fresh",
+        loading=False,
+    )
+    app = _CanvasApp(state, pager=pager)
+    async with app.run_test(size=(50, 34)) as pilot:
+        await pilot.pause()
+        # No import suggestion for a filter miss...
+        assert not app.query("#library-media-empty-import")
+        # ...and the Clear control is genuinely on screen and enabled.
+        clear = app.query_one("#library-media-filter-clear", Button)
+        assert clear.disabled is False
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+        assert clear.region.width > 0
+        assert (
+            clear.region.x + clear.region.width
+            <= canvas.region.x + canvas.region.width
+        )

@@ -335,7 +335,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `library_rag_scope_shows_recovery` stayed (still live, ~line 42446).
     # Comment-only otherwise; no method body touched. 42949/1304 ->
     # 42940/1304.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42940, 1304),
+    #: Re-measured 2026-09-03 at the wave-3 dev catch-up merge (42 dev commits
+    #: incl. Console-interaction PRD work landed inside the budgeted file):
+    #: 42940/1304 -> 43225/1311. Post-merge re-measure per the standing
+    #: dev-race protocol; the decomposition's own trajectory remains down.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43225, 1311),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

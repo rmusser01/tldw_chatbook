@@ -7,6 +7,7 @@ and the queue a shorter "2026-08-28 09:00 (in 14h)". All tests inject
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 from textual.widgets import DataTable, Static
@@ -86,7 +87,7 @@ from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 
 
 class _Service(MockSchedulingServiceMixin):
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",
@@ -115,7 +116,10 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         await pilot.pause()
 
         table = workbench.query_one("#scheduling-task-table", DataTable)
-        cell = str(table.get_row_at(0)[3])
+        # redesign PR-2, Task 2: column 2 is now the subtitle (schedule
+        # summary + relative next-run), replacing the old standalone
+        # Next-Run column at index 3.
+        cell = str(table.get_row_at(0)[2])
         detail = str(
             workbench.query_one(
                 "#scheduling-task-detail-next-run", Static
@@ -135,7 +139,7 @@ class _FixedTaskService(_Service):
 
     RUN_AT = datetime(2026, 8, 28, 9, 0, tzinfo=timezone.utc)
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",
@@ -169,10 +173,10 @@ async def test_render_table_uses_one_injectable_now():
         run_at = _FixedTaskService.RUN_AT
 
         workbench._render_table(now=run_at - timedelta(hours=14))
-        assert "(in 14h)" in str(table.get_row_at(0)[3])
+        assert "(in 14h)" in str(table.get_row_at(0)[2])
 
         workbench._render_table(now=run_at - timedelta(minutes=25))
-        assert "(in 25m)" in str(table.get_row_at(0)[3])
+        assert "(in 25m)" in str(table.get_row_at(0)[2])
 
 
 @pytest.mark.asyncio
@@ -212,3 +216,77 @@ async def test_refresh_timer_exists_and_skips_when_not_current():
         # And the suspend handler paused the cadence timer outright.
         assert workbench._next_run_refresh_timer is not None
         workbench._render_table = real_render  # type: ignore[assignment]
+
+
+# --- redesign PR-2, Task 4: ticker pinned against the unified rows --------
+#
+# The ticker itself is unchanged from dev (survey: the ONLY set_interval
+# under UI/Screens/**, adapted to `_visible_rows` in Task 2 -- see the
+# guard comment on `_refresh_next_run_rendering`). These three tests pin
+# the exact contract the task-4 brief calls out: a tick never reloads data,
+# suspend pauses the cadence, and resume both resumes it and repaints
+# immediately so nothing sits stale.
+
+
+@pytest.mark.asyncio
+async def test_tick_rerenders_without_reloading_data():
+    """A tick must repaint the cached rows' relative text, never re-fetch
+    from the service (brief: 'no reload, no DB')."""
+    app = _FixedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        reload_calls: list[bool] = []
+        workbench._request_tasks_refresh = (  # type: ignore[assignment]
+            lambda **kw: reload_calls.append(True)
+        )
+        render_calls: list[bool] = []
+        workbench._render_table = lambda **kw: render_calls.append(True)  # type: ignore[assignment]
+
+        workbench._refresh_next_run_rendering()
+
+        assert render_calls, "a tick must re-render the relative-time text"
+        assert not reload_calls, "a tick must never re-fetch data (no reload, no DB)"
+
+
+@pytest.mark.asyncio
+async def test_on_screen_suspend_pauses_the_ticker():
+    app = _FixedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        mock_timer = Mock()
+        workbench._next_run_refresh_timer = mock_timer
+
+        workbench.on_screen_suspend()
+
+        mock_timer.pause.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_on_screen_resume_resumes_and_ticks_immediately():
+    app = _FixedApp()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        mock_timer = Mock()
+        workbench._next_run_refresh_timer = mock_timer
+        render_calls: list[bool] = []
+        workbench._render_table = lambda **kw: render_calls.append(True)  # type: ignore[assignment]
+
+        workbench.on_screen_resume()
+
+        mock_timer.resume.assert_called_once()
+        assert render_calls, "resume must repaint immediately -- nothing stays stale"
