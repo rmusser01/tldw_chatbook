@@ -55,6 +55,12 @@ EXPECTED_BUILD_TOOL = {
     "integrity": "sha512-Jpv5tCSwQg18aCqCRD3oHIX/prBhXMDapIoG//A+6+dV0e7KQMGFg85ihJ5T1EeMjbZjON3TqFy0VrGAnIHLDA==",
     "license": "MIT",
 }
+EXPECTED_RUNTIME_OUTPUTS = {
+    "quickjs-runtime.js",
+    "canvas_runtime_worker.js",
+    "canvas_renderer.js",
+    "THIRD_PARTY_LICENSES.txt",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -149,13 +155,12 @@ def test_manifest_proves_a_single_file_embedded_wasm_bundle() -> None:
     }
     assert manifest["runtime_layout"] == {
         "javascript": "quickjs-runtime.js",
+        "renderer": "canvas_renderer.js",
+        "worker": "canvas_runtime_worker.js",
         "wasm": "embedded",
         "wasm_fetch_required": False,
     }
-    assert set(manifest["outputs"]) == {
-        "quickjs-runtime.js",
-        "THIRD_PARTY_LICENSES.txt",
-    }
+    assert set(manifest["outputs"]) == EXPECTED_RUNTIME_OUTPUTS
 
     for filename, metadata in manifest["outputs"].items():
         path = STATIC / filename
@@ -196,10 +201,16 @@ def test_runtime_loader_returns_only_verified_packaged_bytes() -> None:
     assert result.enabled is True
     assert result.diagnostic is None
     assert result.javascript == (STATIC / "quickjs-runtime.js").read_bytes()
+    assert (
+        result.worker_javascript == (STATIC / "canvas_runtime_worker.js").read_bytes()
+    )
+    assert result.renderer_javascript == (STATIC / "canvas_renderer.js").read_bytes()
     assert result.manifest["runtime_profile"] == "canvas-v1"
 
 
-@pytest.mark.parametrize("damage", ["asset", "manifest", "missing"])
+@pytest.mark.parametrize(
+    "damage", ["quickjs", "worker", "renderer", "manifest", "missing"]
+)
 def test_runtime_loader_fails_closed_with_a_bounded_content_free_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
 ) -> None:
@@ -208,10 +219,13 @@ def test_runtime_loader_fails_closed_with_a_bounded_content_free_diagnostic(
     package_root = tmp_path / "Canvas"
     shutil.copytree(STATIC, package_root / "static")
     marker = "DO-NOT-LEAK-UNTRUSTED-RUNTIME-CONTENT"
-    if damage == "asset":
-        (package_root / "static" / "quickjs-runtime.js").write_text(
-            marker, encoding="utf-8"
-        )
+    if damage in {"quickjs", "worker", "renderer"}:
+        damaged_name = {
+            "quickjs": "quickjs-runtime.js",
+            "worker": "canvas_runtime_worker.js",
+            "renderer": "canvas_renderer.js",
+        }[damage]
+        (package_root / "static" / damaged_name).write_text(marker, encoding="utf-8")
     elif damage == "manifest":
         (package_root / "static" / "runtime-manifest.json").write_text(
             marker, encoding="utf-8"
@@ -224,6 +238,8 @@ def test_runtime_loader_fails_closed_with_a_bounded_content_free_diagnostic(
 
     assert result.enabled is False
     assert result.javascript is None
+    assert result.worker_javascript is None
+    assert result.renderer_javascript is None
     assert result.manifest is None
     assert result.diagnostic == runtime_assets.RUNTIME_DISABLED_DIAGNOSTIC
     assert len(result.diagnostic.encode("utf-8")) <= 160
@@ -482,6 +498,8 @@ def test_pinned_archive_regeneration_is_reproducible_and_instantiable(
 
     generated_names = {
         "quickjs-runtime.js",
+        "canvas_runtime_worker.js",
+        "canvas_renderer.js",
         "THIRD_PARTY_LICENSES.txt",
         "runtime-manifest.json",
     }

@@ -25,9 +25,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT / "tldw_chatbook" / "Canvas" / "static"
 GENERATED_ASSETS = (
     "quickjs-runtime.js",
+    "canvas_runtime_worker.js",
+    "canvas_renderer.js",
     "THIRD_PARTY_LICENSES.txt",
     "runtime-manifest.json",
 )
+AUTHORED_RUNTIME_ASSETS = ("canvas_runtime_worker.js", "canvas_renderer.js")
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 32 * 1024 * 1024
 
@@ -505,15 +508,27 @@ def vendor(
         notices = staged / "THIRD_PARTY_LICENSES.txt"
         _run_esbuild(workspace, bundle, node_path)
         _write_notices(workspace, notices)
+        for name in AUTHORED_RUNTIME_ASSETS:
+            source = DEFAULT_OUTPUT_DIR / name
+            if not source.is_file():
+                raise VendorError("a required authored Canvas runtime asset is missing")
+            shutil.copyfile(source, staged / name)
         outputs = {
             path.name: {"bytes": path.stat().st_size, "sha256": _sha256_file(path)}
-            for path in (bundle, notices)
+            for path in (
+                bundle,
+                staged / "canvas_runtime_worker.js",
+                staged / "canvas_renderer.js",
+                notices,
+            )
         }
         manifest = {
             "schema_version": 1,
             "runtime_profile": "canvas-v1",
             "runtime_layout": {
                 "javascript": "quickjs-runtime.js",
+                "renderer": "canvas_renderer.js",
+                "worker": "canvas_runtime_worker.js",
                 "wasm": "embedded",
                 "wasm_fetch_required": False,
             },
@@ -552,7 +567,12 @@ def verify(output_dir: Path) -> None:
             (output_dir / "runtime-manifest.json").read_text(encoding="utf-8")
         )
         outputs = manifest["outputs"]
-        if set(outputs) != {"quickjs-runtime.js", "THIRD_PARTY_LICENSES.txt"}:
+        if set(outputs) != {
+            "quickjs-runtime.js",
+            "canvas_runtime_worker.js",
+            "canvas_renderer.js",
+            "THIRD_PARTY_LICENSES.txt",
+        }:
             raise VendorError("Canvas runtime output inventory mismatch")
         for name, expected in outputs.items():
             path = output_dir / name

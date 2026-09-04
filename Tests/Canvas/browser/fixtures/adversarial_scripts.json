@@ -1,0 +1,184 @@
+[
+  {
+    "name": "literal_and_computed_network_urls",
+    "expected": "ready",
+    "expected_text": "network APIs unavailable",
+    "script": "const literal = '__EGRESS__/literal'; const computed = ['__EGRESS__', 'computed'].join('/'); for (const attempt of [() => fetch(literal), () => new XMLHttpRequest(), () => new WebSocket(computed), () => new EventSource(literal), () => navigator.sendBeacon(literal, 'x')]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'network APIs unavailable';"
+  },
+  {
+    "name": "redirect_and_dynamic_resource_attributes",
+    "expected": "ready",
+    "expected_text": "resource attributes refused",
+    "script": "for (const [tag, name, value] of [['img', 'src', '__EGRESS__/redirect'], ['a', 'href', '__EGRESS__/nav'], ['form', 'action', '__EGRESS__/form']]) { try { const node = document.createElement(tag); node.setAttribute(name, value); document.body.appendChild(node); } catch (_) {} } document.getElementById('status').textContent = 'resource attributes refused';"
+  },
+  {
+    "name": "beacon_media_font_css_popup_and_worker_attempts",
+    "expected": "ready",
+    "expected_text": "active resources unavailable",
+    "script": "for (const attempt of [() => navigator.sendBeacon('__EGRESS__/beacon', 'x'), () => document.createElement('video'), () => document.createElement('audio'), () => document.createElement('link'), () => document.createElement('style'), () => open('__EGRESS__/popup'), () => new Worker('__EGRESS__/worker.js')]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'active resources unavailable';"
+  },
+  {
+    "name": "dom_clobbering",
+    "expected": "ready",
+    "expected_text": "clobbering contained",
+    "script": "const names = ['fetch', 'location', 'parent', 'postMessage', 'Worker']; const unavailable = names.every((name) => typeof globalThis[name] === 'undefined'); document.getElementById('status').textContent = unavailable ? 'clobbering contained' : 'leak';"
+  },
+  {
+    "name": "prototype_pollution_and_native_realm_sentinel",
+    "expected": "ready",
+    "expected_text": "quickjs-owned",
+    "script": "Object.prototype.__canvasNativePrototypeSentinel = 'quickjs-polluted'; Array.prototype.__canvasArrayPollution = '__EGRESS__/prototype'; globalThis.__canvasNativeWindowSentinel = 'quickjs-owned'; globalThis.__canvasGeneratedFunction = () => 'quickjs-only'; document.getElementById('status').textContent = globalThis.__canvasNativeWindowSentinel;"
+  },
+  {
+    "name": "encoded_css_url",
+    "expected": "failed",
+    "expected_code": "invalid-patch",
+    "script": "document.getElementById('status').style.backgroundImage = 'u\\\\72l(\"__EGRESS__/css\")';"
+  },
+  {
+    "name": "svg_animation_and_links",
+    "expected": "ready",
+    "expected_text": "active SVG refused",
+    "script": "for (const attempt of [() => document.createElementNS('http://www.w3.org/2000/svg', 'animate'), () => { const node = document.createElementNS('http://www.w3.org/2000/svg', 'a'); node.setAttribute('href', '__EGRESS__/svg'); }]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'active SVG refused';"
+  },
+  {
+    "name": "encoded_svg_paint_url",
+    "expected": "ready",
+    "expected_text": "SVG paint URL refused",
+    "script": "try { const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); node.setAttribute('fill', 'u\\\\72l(\"__EGRESS__/svg-paint\")'); document.getElementById('status').appendChild(node); } catch (_) {} document.getElementById('status').textContent = 'SVG paint URL refused';"
+  },
+  {
+    "name": "forbidden_host_capabilities",
+    "expected": "ready",
+    "expected_text": "capabilities absent",
+    "script": "const names = ['window', 'parent', 'top', 'self', 'location', 'navigator', 'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'Worker', 'SharedWorker', 'importScripts', 'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'cookieStore', 'FileSystemHandle', 'showOpenFilePicker', 'WebAssembly', 'open', 'postMessage']; document.getElementById('status').textContent = names.every((name) => typeof globalThis[name] === 'undefined') ? 'capabilities absent' : 'capability leak';"
+  },
+  {
+    "name": "blob_and_data_navigation",
+    "expected": "ready",
+    "expected_text": "navigation absent",
+    "script": "for (const attempt of [() => URL.createObjectURL(new Blob(['x'])), () => { location.href = 'data:text/html,escape'; }, () => { const a = document.createElement('a'); a.setAttribute('href', 'blob:escape'); }]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'navigation absent';"
+  },
+  {
+    "name": "dynamic_import_has_no_module_loader",
+    "expected": "ready",
+    "expected_text": "module loader absent",
+    "script": "try { eval(\"import('__EGRESS__/module.js')\").catch(() => {}); } catch (_) {} document.getElementById('status').textContent = 'module loader absent';"
+  },
+  {
+    "name": "native_download_and_typed_download_bridge",
+    "expected": "ready",
+    "expected_text": "download requested",
+    "bridge_kind": "download",
+    "script": "try { const a = document.createElement('a'); a.setAttribute('download', 'escape.html'); a.setAttribute('href', 'data:text/html,escape'); a.click(); } catch (_) {} canvas.download({filename: 'report.txt', mime_type: 'text/plain', data: 'safe'}); document.getElementById('status').textContent = 'download requested';"
+  },
+  {
+    "name": "bridge_spoofing_and_typed_submit",
+    "expected": "ready",
+    "expected_text": "typed submit requested",
+    "bridge_kind": "submit",
+    "script": "try { postMessage({type: 'canvas:bridge', kind: 'submit', value: '__EGRESS__/spoof'}); } catch (_) {} canvas.submit({answer: 42}); document.getElementById('status').textContent = 'typed submit requested';"
+  },
+  {
+    "name": "bridge_count_limit",
+    "expected": "failed",
+    "expected_code": "bridge-limit",
+    "script": "for (let index = 0; index < 17; index += 1) canvas.submit(index);"
+  },
+  {
+    "name": "bridge_rate_limit",
+    "expected": "failed-after-three-clicks",
+    "expected_code": "bridge-rate-limit",
+    "script": "document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 16; index += 1) canvas.submit(index); });"
+  },
+  {
+    "name": "timer_limit",
+    "expected": "failed",
+    "expected_code": "timer-limit",
+    "script": "for (let index = 0; index < 65; index += 1) setTimeout(() => {}, 60000);"
+  },
+  {
+    "name": "timer_fire_rate_limit",
+    "expected": "failed-after-ready",
+    "expected_code": "timer-rate-limit",
+    "script": "for (let index = 0; index < 64; index += 1) setInterval(() => {}, 0);"
+  },
+  {
+    "name": "listener_limit",
+    "expected": "failed",
+    "expected_code": "listener-limit",
+    "script": "const node = document.getElementById('status'); for (let index = 0; index < 501; index += 1) node.addEventListener('click', () => index);"
+  },
+  {
+    "name": "patch_limit",
+    "expected": "failed",
+    "expected_code": "patch-limit",
+    "script": "const node = document.getElementById('status'); for (let index = 0; index < 1001; index += 1) node.textContent = String(index);"
+  },
+  {
+    "name": "mutation_rate_limit",
+    "expected": "failed-after-three-clicks",
+    "expected_code": "mutation-rate-limit",
+    "script": "const node = document.getElementById('status'); document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 1000; index += 1) node.textContent = String(index); });"
+  },
+  {
+    "name": "dom_growth_hits_stricter_patch_limit",
+    "expected": "failed",
+    "expected_code": "patch-limit",
+    "script": "for (let index = 0; index < 5001; index += 1) document.createElement('span');"
+  },
+  {
+    "name": "submit_json_depth_limit",
+    "expected": "failed",
+    "expected_code": "runtime-error",
+    "script": "let value = 0; for (let index = 0; index < 17; index += 1) value = {value}; canvas.submit(value);"
+  },
+  {
+    "name": "submit_byte_limit",
+    "expected": "failed",
+    "expected_code": "runtime-error",
+    "script": "canvas.submit('x'.repeat(16385));"
+  },
+  {
+    "name": "infinite_loop",
+    "expected": "failed",
+    "expected_code": "runtime-timeout",
+    "script": "while (true) {}"
+  },
+  {
+    "name": "promise_job_loop",
+    "expected": "failed",
+    "expected_code": "job-limit",
+    "script": "Promise.resolve().then(function again() { return Promise.resolve().then(again); });"
+  },
+  {
+    "name": "deep_recursion",
+    "expected": "failed",
+    "expected_code": "runtime-error",
+    "script": "(function recurse() { recurse(); })();"
+  },
+  {
+    "name": "memory_ceiling",
+    "expected": "failed",
+    "expected_code": "runtime-error",
+    "script": "const oversized = new ArrayBuffer(33 * 1024 * 1024); document.getElementById('status').textContent = String(oversized.byteLength);"
+  },
+  {
+    "name": "quickjs_authoritative_syntax_error",
+    "expected": "failed",
+    "expected_code": "runtime-error",
+    "script": "const broken = ;"
+  },
+  {
+    "name": "event_infinite_loop",
+    "expected": "failed-after-click",
+    "expected_code": "runtime-timeout",
+    "script": "document.getElementById('attack').addEventListener('click', () => { while (true) {} }); document.getElementById('status').textContent = 'armed';"
+  },
+  {
+    "name": "event_queue_storm",
+    "expected": "failed-after-event-storm",
+    "expected_code": "event-queue-limit",
+    "script": "document.getElementById('attack').addEventListener('click', () => {}); document.getElementById('status').textContent = 'armed';"
+  }
+]

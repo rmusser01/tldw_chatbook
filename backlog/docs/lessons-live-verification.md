@@ -61,6 +61,28 @@ do not infer that a server request exists just because the harness sent a key.
 
 ---
 
+## Opaque-origin module-worker policy must be proven in the target browser
+
+**TASK-31226, 2026-09-03.** The Canvas renderer's first implementation used the
+obvious `new Worker(new URL("worker.js", import.meta.url), {type: "module"})`
+inside an iframe sandboxed without `allow-same-origin`. Unit reasoning said the
+worker was a packaged same-site asset, but real Chromium rejected the constructor
+because the iframe's effective origin was opaque. Wrapping that URL in a blob
+module failed for the same reason. A fixed `data:` module bootstrap could import
+the packaged CORS-enabled worker, but the next real run showed that QuickJS's
+embedded WASM also required the narrower CSP token `wasm-unsafe-eval`. Neither
+failure was visible to source checks or Python unit tests.
+
+**What to do.** Qualify worker construction and WASM compilation from the exact
+production iframe sandbox and response CSP in every mandatory browser. Record
+all startup requests before acknowledging generated execution. When a trusted
+bootstrap is unavoidable, keep its bytes and imported URL entirely renderer-owned,
+scope CSP to the minimum scheme, and prove generated input cannot influence it.
+Do not infer opaque-origin behavior from same-origin pages or substitute
+`unsafe-eval` for `wasm-unsafe-eval`.
+
+---
+
 ## Shell width equality does not prove pane containment
 
 **TASK-18919, 2026-09-01.** The Collections reader's production-shaped 120×35 and

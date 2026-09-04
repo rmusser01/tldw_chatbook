@@ -14,8 +14,16 @@ RUNTIME_DISABLED_DIAGNOSTIC = (
 )
 _MANIFEST_BYTES = 256 * 1024
 _JAVASCRIPT_BYTES = 8 * 1024 * 1024
+_TRUSTED_JAVASCRIPT_BYTES = 512 * 1024
 _NOTICE_BYTES = 256 * 1024
-_OUTPUT_NAMES = frozenset({"quickjs-runtime.js", "THIRD_PARTY_LICENSES.txt"})
+_OUTPUT_NAMES = frozenset(
+    {
+        "quickjs-runtime.js",
+        "canvas_runtime_worker.js",
+        "canvas_renderer.js",
+        "THIRD_PARTY_LICENSES.txt",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +32,8 @@ class CanvasRuntimeAssets:
 
     enabled: bool
     javascript: bytes | None
+    worker_javascript: bytes | None
+    renderer_javascript: bytes | None
     manifest: Mapping[str, Any] | None
     diagnostic: str | None
 
@@ -67,6 +77,8 @@ def _load_verified() -> CanvasRuntimeAssets:
         raise ValueError("unsupported Canvas runtime manifest")
     if manifest.get("runtime_layout") != {
         "javascript": "quickjs-runtime.js",
+        "renderer": "canvas_renderer.js",
+        "worker": "canvas_runtime_worker.js",
         "wasm": "embedded",
         "wasm_fetch_required": False,
     }:
@@ -78,6 +90,8 @@ def _load_verified() -> CanvasRuntimeAssets:
     loaded: dict[str, bytes] = {}
     for name, limit in (
         ("quickjs-runtime.js", _JAVASCRIPT_BYTES),
+        ("canvas_runtime_worker.js", _TRUSTED_JAVASCRIPT_BYTES),
+        ("canvas_renderer.js", _TRUSTED_JAVASCRIPT_BYTES),
         ("THIRD_PARTY_LICENSES.txt", _NOTICE_BYTES),
     ):
         metadata = outputs.get(name)
@@ -94,6 +108,8 @@ def _load_verified() -> CanvasRuntimeAssets:
     return CanvasRuntimeAssets(
         enabled=True,
         javascript=loaded["quickjs-runtime.js"],
+        worker_javascript=loaded["canvas_runtime_worker.js"],
+        renderer_javascript=loaded["canvas_renderer.js"],
         manifest=manifest,
         diagnostic=None,
     )
@@ -108,6 +124,8 @@ def load_canvas_runtime_assets() -> CanvasRuntimeAssets:
         return CanvasRuntimeAssets(
             enabled=False,
             javascript=None,
+            worker_javascript=None,
+            renderer_javascript=None,
             manifest=None,
             diagnostic=RUNTIME_DISABLED_DIAGNOSTIC,
         )

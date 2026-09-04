@@ -28,6 +28,14 @@
       "bytes": 6275,
       "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
     },
+    "canvas_renderer.js": {
+      "bytes": 46849,
+      "sha256": "ee3fbb30c3e821adc32781e56b76bf796ba85c7e893f1dddb4a7092d53b4a967"
+    },
+    "canvas_runtime_worker.js": {
+      "bytes": 39245,
+      "sha256": "001461a59380236b7a8ade541a166d06c6d74f48f668be59024c465a042aadb0"
+    },
     "quickjs-runtime.js": {
       "bytes": 737944,
       "sha256": "59db482b382f4da0c5d5f616954757a538a09e45bd1fce590e875abc6594b386"
@@ -114,8 +122,10 @@
   "reproducible_command": "python scripts/vendor_canvas_runtime.py",
   "runtime_layout": {
     "javascript": "quickjs-runtime.js",
+    "renderer": "canvas_renderer.js",
     "wasm": "embedded",
-    "wasm_fetch_required": false
+    "wasm_fetch_required": false,
+    "worker": "canvas_runtime_worker.js"
   },
   "runtime_profile": "canvas-v1",
   "schema_version": 1
