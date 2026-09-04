@@ -204,24 +204,39 @@ patterns. No database migration is required.
 
 Version 1 stores at most 32 profiles:
 
+The exact V1 names below incorporate the accepted TASK-31219 implementation plan.
+They replace the earlier design-draft spellings in this ADR so the durable contract
+uses the same field vocabulary as `VllmLaunchDraft`. Revision belongs to the whole
+CAS document, so V1 deliberately omits a per-profile `updated_at`; this keeps the
+schema minimal and avoids timestamp-only write conflicts.
+
 ```text
 VllmLaunchProfileV1
   profile_id: stable UUID
-  name: canonical printable 1..48 code points
-  python_executable: local absolute path or approved bare name
-  model_source_kind: huggingface_repo | local_directory
-  model_source_value: Lab-local repository ID or local directory
+  name: canonical printable 1..120 Unicode code points
+  python_environment: local absolute path or safe bare executable name
+  model_source: hugging_face | local_directory
+  model_value: valid namespaced Hugging Face repository ID or safe absolute local path
   bind_address
   port
   dtype: auto | half | float16 | bfloat16 | float32
   tensor_parallel_size: positive integer | none
-  max_model_len: positive integer | none
-  gpu_memory_utilization: decimal in (0, 1] | none
-  trust_remote_code: boolean, default false
-  updated_at
+  maximum_model_length: positive integer | none
+  gpu_memory_utilization: finite float in (0, 1] | none
+  trust_remote_code: boolean
+
+VllmProfileDocumentV1
+  version: exactly 1
+  revision: non-negative integer
+  selected_profile_id: UUID of one contained profile
+  profiles: array of 1..32 exact V1 profile objects
 ```
 
-The document also stores `last_selected_profile_id`. It does not store credentials,
+These are exact key sets: unknown or missing keys are corruption, not extension
+points. A Hugging Face value must pass repository-ID validation. A local-directory
+value may name a nonexistent directory so the user can repair it later, but it must
+be an absolute local path shape without option, URL/userinfo, control, or traversal
+syntax. The document does not store credentials,
 environment-variable values, API keys, Hugging Face tokens, unrestricted raw
 arguments, command strings, probe responses, process IDs, readiness evidence, or
 Console adoption state. Local paths are permitted only in this device-local Lab

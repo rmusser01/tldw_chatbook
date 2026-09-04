@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -141,6 +143,7 @@ def test_load_rejects_invalid_profile_field_types_and_values(
         ),
         encoding="utf-8",
     )
+    path.chmod(0o600)
 
     with pytest.raises(VllmProfileCorrupt):
         VllmProfileRepository(path).load()
@@ -160,6 +163,7 @@ def test_load_rejects_unknown_document_or_profile_keys(tmp_path: Path):
             mutated["profiles"][0]["raw_arguments"] = "--api-key secret"
         path = tmp_path / f"{where}.json"
         path.write_text(json.dumps(mutated), encoding="utf-8")
+        path.chmod(0o600)
         with pytest.raises(VllmProfileCorrupt):
             VllmProfileRepository(path).load()
 
@@ -189,6 +193,121 @@ def test_profile_rejects_command_like_python_environment(
             profile_named("Unsafe", python_environment=python_environment),
             expected_revision=0,
         )
+
+
+@pytest.mark.parametrize(
+    ("model_source", "model_value"),
+    [
+        (VllmModelSource.HUGGING_FACE, "not-a-repository"),
+        (VllmModelSource.HUGGING_FACE, "--api-key PROFILE_SECRET_CANARY"),
+        (
+            VllmModelSource.HUGGING_FACE,
+            "https://user:PROFILE_SECRET_CANARY@example.invalid/model",
+        ),
+        (VllmModelSource.LOCAL_DIRECTORY, "relative/model"),
+        (VllmModelSource.LOCAL_DIRECTORY, "--api-key PROFILE_SECRET_CANARY"),
+        (
+            VllmModelSource.LOCAL_DIRECTORY,
+            "https://user:PROFILE_SECRET_CANARY@example.invalid/model",
+        ),
+        (
+            VllmModelSource.LOCAL_DIRECTORY,
+            "/tmp/--api-key PROFILE_SECRET_CANARY",
+        ),
+        (
+            VllmModelSource.LOCAL_DIRECTORY,
+            "/https://user:PROFILE_SECRET_CANARY@example.invalid/model",
+        ),
+        (VllmModelSource.LOCAL_DIRECTORY, "/safe/../unsafe/model"),
+    ],
+)
+def test_profile_rejects_invalid_source_values_before_any_write(
+    tmp_path: Path,
+    model_source: VllmModelSource,
+    model_value: str,
+):
+    path = tmp_path / "profiles.json"
+
+    with pytest.raises(VllmProfileValidationError) as caught:
+        VllmProfileRepository(path).save(
+            profile_named(
+                "Invalid source",
+                model_source=model_source,
+                model_value=model_value,
+            ),
+            expected_revision=0,
+        )
+
+    assert not path.exists()
+    assert "PROFILE_SECRET_CANARY" not in str(caught.value)
+
+
+def test_profile_accepts_nonexistent_safe_local_directory_for_repair(tmp_path: Path):
+    selected = tmp_path / "models" / "not-downloaded-yet"
+
+    saved = VllmProfileRepository(tmp_path / "profiles.json").save(
+        profile_named(
+            "Repairable local",
+            model_source=VllmModelSource.LOCAL_DIRECTORY,
+            model_value=str(selected),
+        ),
+        expected_revision=0,
+    )
+
+    assert saved.profile.model_value == str(selected)
+    assert not selected.exists()
+
+
+def test_decode_revalidates_model_source_without_disclosing_rejected_value(
+    tmp_path: Path,
+):
+    path = tmp_path / "profiles.json"
+    profile_id = str(uuid4())
+    original = json.dumps(
+        {
+            "version": 1,
+            "revision": 1,
+            "selected_profile_id": profile_id,
+            "profiles": [
+                {
+                    "profile_id": profile_id,
+                    "name": "Unsafe",
+                    "python_environment": "python",
+                    "model_source": "hugging_face",
+                    "model_value": "--api-key PROFILE_SECRET_CANARY",
+                    "bind_address": "127.0.0.1",
+                    "port": 8000,
+                    "dtype": "auto",
+                    "tensor_parallel_size": None,
+                    "maximum_model_length": None,
+                    "gpu_memory_utilization": None,
+                    "trust_remote_code": False,
+                }
+            ],
+        }
+    ).encode()
+    path.write_bytes(original)
+    path.chmod(0o600)
+
+    with pytest.raises(VllmProfileCorrupt) as caught:
+        VllmProfileRepository(path).load()
+
+    assert path.read_bytes() == original
+    assert "PROFILE_SECRET_CANARY" not in str(caught.value)
+
+
+def test_commit_revalidates_tampered_profile_before_atomic_writer(tmp_path: Path):
+    path = tmp_path / "profiles.json"
+    repo = VllmProfileRepository(path)
+    saved = repo.save(profile_named("Existing"), expected_revision=0)
+    original = path.read_bytes()
+    object.__setattr__(saved.profile, "model_value", "--api-key PROFILE_SECRET_CANARY")
+
+    with pytest.raises(VllmProfileValidationError) as caught:
+        repo.save(saved.profile, expected_revision=saved.document.revision)
+
+    assert path.read_bytes() == original
+    assert "PROFILE_SECRET_CANARY" not in str(caught.value)
 
 
 def test_names_collide_under_unicode_casefold_normalization_and_canonical_whitespace(
@@ -290,10 +409,163 @@ print('saved', flush=True)
     assert VllmProfileRepository(path).load().revision == 1
 
 
+def test_same_revision_two_process_race_has_one_winner_and_one_conflict(
+    tmp_path: Path,
+):
+    path = tmp_path / "profiles.json"
+    start = tmp_path / "start"
+    script = """
+import json
+import sys
+import time
+from pathlib import Path
+from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
+    VllmProfileConflict, VllmProfileRepository, profile_from_draft
+)
+from tldw_chatbook.UI.LLM_Management.vllm_setup import (
+    VllmLaunchDraft, VllmMode, VllmModelSource
+)
+path, start, ready, name = map(Path, sys.argv[1:])
+draft = VllmLaunchDraft(
+    mode=VllmMode.LOCAL,
+    python_environment='python',
+    model_source=VllmModelSource.HUGGING_FACE,
+    model_value='org/model',
+)
+ready.touch()
+while not start.exists():
+    time.sleep(0.005)
+try:
+    VllmProfileRepository(path).save(
+        profile_from_draft(name.name, draft), expected_revision=0
+    )
+except VllmProfileConflict:
+    print(json.dumps({'result': 'conflict'}), flush=True)
+else:
+    print(json.dumps({'result': 'success'}), flush=True)
+"""
+    processes: list[subprocess.Popen[str]] = []
+    for index in range(2):
+        ready = tmp_path / f"ready-{index}"
+        name = tmp_path / f"Writer {index}"
+        processes.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    str(path),
+                    str(start),
+                    str(ready),
+                    str(name),
+                ],
+                cwd=Path(__file__).parents[2],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+    deadline = time.monotonic() + 10
+    while not all((tmp_path / f"ready-{index}").exists() for index in range(2)):
+        if time.monotonic() >= deadline:
+            pytest.fail("profile race workers did not reach the barrier")
+        time.sleep(0.01)
+    start.touch()
+
+    results: list[str] = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr
+        results.append(json.loads(stdout)["result"])
+
+    assert sorted(results) == ["conflict", "success"]
+    document = VllmProfileRepository(path).load()
+    assert document.revision == 1
+    assert len(document.profiles) == 1
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="requires no-follow opens")
+def test_document_symlink_fails_closed_without_reading_or_mutating_target(
+    tmp_path: Path,
+):
+    target = tmp_path / "document-target"
+    profile_id = str(uuid4())
+    original = json.dumps(
+        {
+            "version": 1,
+            "revision": 7,
+            "selected_profile_id": profile_id,
+            "profiles": [
+                {
+                    "profile_id": profile_id,
+                    "name": "Symlink target",
+                    "python_environment": "python",
+                    "model_source": "hugging_face",
+                    "model_value": "org/model",
+                    "bind_address": "127.0.0.1",
+                    "port": 8000,
+                    "dtype": "auto",
+                    "tensor_parallel_size": None,
+                    "maximum_model_length": None,
+                    "gpu_memory_utilization": None,
+                    "trust_remote_code": False,
+                }
+            ],
+        }
+    ).encode()
+    target.write_bytes(original)
+    target.chmod(0o640)
+    original_mode = target.stat().st_mode & 0o777
+    path = tmp_path / "profiles.json"
+    path.symlink_to(target)
+
+    with pytest.raises(VllmProfileCorrupt):
+        VllmProfileRepository(path).load()
+
+    assert target.read_bytes() == original
+    assert target.stat().st_mode & 0o777 == original_mode
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="requires no-follow opens")
+def test_lock_symlink_fails_closed_without_mutating_target(tmp_path: Path):
+    path = tmp_path / "profiles.json"
+    lock_target = tmp_path / "lock-target"
+    original = b"LOCK_TARGET_SECRET"
+    lock_target.write_bytes(original)
+    lock_target.chmod(0o640)
+    original_mode = lock_target.stat().st_mode & 0o777
+    path.with_name(f"{path.name}.lock").symlink_to(lock_target)
+
+    with pytest.raises(VllmProfileCorrupt):
+        VllmProfileRepository(path).save(
+            profile_named("No lock follow"), expected_revision=0
+        )
+
+    assert not path.exists()
+    assert lock_target.read_bytes() == original
+    assert lock_target.stat().st_mode & 0o777 == original_mode
+
+
+def test_document_with_broad_permissions_fails_closed_without_chmod(tmp_path: Path):
+    source = tmp_path / "source.json"
+    VllmProfileRepository(source).save(profile_named("Source"), expected_revision=0)
+    original = source.read_bytes()
+    path = tmp_path / "profiles.json"
+    path.write_bytes(original)
+    path.chmod(0o640)
+
+    with pytest.raises(VllmProfileCorrupt):
+        VllmProfileRepository(path).load()
+
+    assert path.read_bytes() == original
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
 def test_future_version_is_preserved_byte_for_byte(tmp_path: Path):
     path = tmp_path / "profiles.json"
     original = b'{"version":2,"opaque":"keep"}\n'
     path.write_bytes(original)
+    path.chmod(0o600)
 
     with pytest.raises(VllmProfileFutureVersion):
         VllmProfileRepository(path).save(
@@ -307,6 +579,7 @@ def test_corrupt_document_fails_closed_without_overwrite(tmp_path: Path):
     path = tmp_path / "profiles.json"
     original = b'{"version":1,"profiles":'
     path.write_bytes(original)
+    path.chmod(0o600)
 
     with pytest.raises(VllmProfileCorrupt):
         VllmProfileRepository(path).save(

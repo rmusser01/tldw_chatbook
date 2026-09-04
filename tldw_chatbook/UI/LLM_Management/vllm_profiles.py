@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import stat
 import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,7 +20,13 @@ import portalocker
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
-from .vllm_setup import VllmLaunchDraft, VllmMode, VllmModelSource
+from .vllm_setup import (
+    VllmLaunchDraft,
+    VllmMode,
+    VllmModelSource,
+    is_safe_local_model_path_shape,
+    is_valid_hugging_face_repository_id,
+)
 
 PROFILE_DOCUMENT_VERSION = 1
 MAX_VLLM_PROFILES = 32
@@ -149,6 +156,23 @@ def _python_environment(value: object) -> str:
     )
 
 
+def _model_value(source: VllmModelSource, value: object) -> str:
+    normalized = _safe_text(
+        value,
+        "model_value",
+        maximum=4096,
+        allow_empty=False,
+    )
+    valid = (
+        is_valid_hugging_face_repository_id(normalized)
+        if source is VllmModelSource.HUGGING_FACE
+        else is_safe_local_model_path_shape(normalized)
+    )
+    if not valid:
+        raise VllmProfileValidationError("model_value is invalid for model_source")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class VllmLaunchProfileV1:
     """The exact non-secret field set persisted for one vLLM launch profile."""
@@ -179,7 +203,7 @@ class VllmLaunchProfileV1:
         object.__setattr__(
             self,
             "model_value",
-            _safe_text(self.model_value, "model_value", maximum=4096, allow_empty=True),
+            _model_value(self.model_source, self.model_value),
         )
         object.__setattr__(
             self,
@@ -267,7 +291,7 @@ def default_vllm_profile() -> VllmLaunchProfileV1:
         name=DEFAULT_PROFILE_NAME,
         python_environment="python",
         model_source=VllmModelSource.HUGGING_FACE,
-        model_value="",
+        model_value="Qwen/Qwen2.5-0.5B-Instruct",
         bind_address="127.0.0.1",
         port=8000,
         dtype="auto",
@@ -402,6 +426,83 @@ def _decode_document(value: object) -> VllmProfileDocumentV1:
     )
 
 
+def _revalidate_profile(profile: VllmLaunchProfileV1) -> VllmLaunchProfileV1:
+    if type(profile) is not VllmLaunchProfileV1:
+        raise VllmProfileValidationError("profile must be an exact V1 profile")
+    return VllmLaunchProfileV1(
+        profile_id=profile.profile_id,
+        name=profile.name,
+        python_environment=profile.python_environment,
+        model_source=profile.model_source,
+        model_value=profile.model_value,
+        bind_address=profile.bind_address,
+        port=profile.port,
+        dtype=profile.dtype,
+        tensor_parallel_size=profile.tensor_parallel_size,
+        maximum_model_length=profile.maximum_model_length,
+        gpu_memory_utilization=profile.gpu_memory_utilization,
+        trust_remote_code=profile.trust_remote_code,
+    )
+
+
+def _verify_open_regular_file(path: Path, descriptor: int) -> None:
+    opened = os.fstat(descriptor)
+    if not stat.S_ISREG(opened.st_mode):
+        raise OSError("profile storage leaf is not a regular file")
+    if stat.S_IMODE(opened.st_mode) & 0o077:
+        raise OSError("profile storage leaf permissions are not private")
+    get_effective_uid = getattr(os, "geteuid", None)
+    if get_effective_uid is not None and opened.st_uid != get_effective_uid():
+        raise OSError("profile storage leaf has a different owner")
+    named = path.lstat()
+    if stat.S_ISLNK(named.st_mode) or (
+        opened.st_dev,
+        opened.st_ino,
+    ) != (named.st_dev, named.st_ino):
+        raise OSError("profile storage leaf changed during open")
+
+
+def _open_existing_regular_file(path: Path, flags: int) -> int:
+    descriptor = os.open(
+        path,
+        flags | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        _verify_open_regular_file(path, descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _create_regular_file(path: Path) -> int:
+    descriptor = os.open(
+        path,
+        os.O_CREAT
+        | os.O_EXCL
+        | os.O_RDWR
+        | os.O_NONBLOCK
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        _verify_open_regular_file(path, descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _reject_symlink_leaf(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(metadata.st_mode):
+        raise VllmProfileCorrupt("vLLM profile storage is unavailable")
+
+
 class VllmProfileRepository:
     """CAS repository for one device-local vLLM launch-profile document."""
 
@@ -415,12 +516,22 @@ class VllmProfileRepository:
             return self._load_locked()
 
     def _load_locked(self) -> VllmProfileDocumentV1:
-        if not self.path.exists():
-            profile = default_vllm_profile()
-            return VllmProfileDocumentV1(1, 0, profile.profile_id, (profile,))
+        return self._load_locked_with_presence()[0]
+
+    def _load_locked_with_presence(
+        self,
+    ) -> tuple[VllmProfileDocumentV1, bool]:
         try:
-            value = json.loads(self.path.read_text(encoding="utf-8"))
-            return _decode_document(value)
+            descriptor = _open_existing_regular_file(self.path, os.O_RDONLY)
+        except FileNotFoundError:
+            profile = default_vllm_profile()
+            return VllmProfileDocumentV1(1, 0, profile.profile_id, (profile,)), False
+        except OSError as error:
+            raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
+        try:
+            with os.fdopen(descriptor, "rb") as stream:
+                value = json.loads(stream.read().decode("utf-8"))
+            return _decode_document(value), True
         except VllmProfileFutureVersion:
             raise
         except (
@@ -435,13 +546,23 @@ class VllmProfileRepository:
     def _exclusive_transaction(self) -> Iterator[None]:
         """Serialize read/CAS/replace across threads and separate app processes."""
 
+        _reject_symlink_leaf(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self.path.with_name(f"{self.path.name}.lock")
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            descriptor = _create_regular_file(lock_path)
+        except FileExistsError:
+            try:
+                descriptor = _open_existing_regular_file(lock_path, os.O_RDWR)
+            except OSError as error:
+                raise VllmProfileCorrupt(
+                    "vLLM profile storage is unavailable"
+                ) from error
+        except OSError as error:
+            raise VllmProfileCorrupt("vLLM profile storage is unavailable") from error
         stream: BinaryIO = os.fdopen(descriptor, "a+b")
         locked = False
         try:
-            os.chmod(lock_path, 0o600)
             portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
             locked = True
             yield
@@ -465,17 +586,26 @@ class VllmProfileRepository:
         selected_profile_id: str,
         profile: VllmLaunchProfileV1,
     ) -> VllmProfileMutation:
+        validated_profiles = tuple(
+            _revalidate_profile(candidate) for candidate in profiles
+        )
+        validated_profile = next(
+            candidate
+            for candidate in validated_profiles
+            if candidate.profile_id == profile.profile_id
+        )
         document = VllmProfileDocumentV1(
             version=1,
             revision=current.revision + 1,
             selected_profile_id=selected_profile_id,
-            profiles=profiles,
+            profiles=validated_profiles,
         )
         payload = _document_payload(document)
         # Round-trip through the strict decoder before the shared writer is called.
         _decode_document(payload)
+        _reject_symlink_leaf(self.path)
         atomic_write_json(self.path, payload, mode=0o600, indent=2)
-        return VllmProfileMutation(profile, document)
+        return VllmProfileMutation(validated_profile, document)
 
     def save(
         self, profile: VllmLaunchProfileV1, *, expected_revision: int
@@ -486,8 +616,7 @@ class VllmProfileRepository:
             raise VllmProfileValidationError("profile must be an exact V1 profile")
         expected = self._expected_revision(expected_revision)
         with _REPOSITORY_LOCK, self._exclusive_transaction():
-            existed = self.path.exists()
-            current = self._load_locked()
+            current, existed = self._load_locked_with_presence()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             positions = {

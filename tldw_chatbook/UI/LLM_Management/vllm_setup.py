@@ -22,7 +22,11 @@ from urllib.parse import urlparse
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 SERVED_MODEL_NAME = "chatbook-vllm"
-_HF_REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_HF_REPOSITORY = re.compile(
+    r"^(?=.{3,96}$)[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/"
+    r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
+)
+_WINDOWS_DRIVE_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _MANAGED_OR_SECRET_FLAGS = frozenset(
     {"--host", "--port", "--model", "--served-model-name", "--api-key", "--hf-token"}
 )
@@ -270,7 +274,36 @@ def _validate_bind_address(bind_address: str) -> VllmIssue | None:
     return None
 
 
+def is_valid_hugging_face_repository_id(value: object) -> bool:
+    """Return whether a value is a namespaced Hugging Face repository ID."""
+
+    return (
+        type(value) is str
+        and _HF_REPOSITORY.fullmatch(value) is not None
+        and ".." not in value
+        and "--" not in value
+    )
+
+
+def is_safe_local_model_path_shape(value: object) -> bool:
+    """Accept an absolute local path shape without requiring it to exist."""
+
+    if type(value) is not str or not value or value != value.strip():
+        return False
+    if "\x00" in value or value.startswith("//") or "://" in value:
+        return False
+    if not (Path(value).is_absolute() or _WINDOWS_DRIVE_ABSOLUTE_PATH.match(value)):
+        return False
+    components = value.replace("\\", "/").split("/")
+    return any(components[1:]) and not any(
+        component in {".", ".."} or component.startswith("-")
+        for component in components
+    )
+
+
 def _validate_local_model_directory(value: str) -> VllmIssue | None:
+    if not is_safe_local_model_path_shape(value):
+        return VllmIssue("invalid_model_directory", "model_value")
     try:
         selected = validate_path_simple(value, require_exists=True)
     except ValueError:
@@ -434,7 +467,7 @@ def run_vllm_preflight(
     elif bind_issue is None and not port_available(draft.bind_address, draft.port):
         issues.append(VllmIssue("port_unavailable", "port"))
     if draft.model_source is VllmModelSource.HUGGING_FACE:
-        if not _HF_REPOSITORY.fullmatch(draft.model_value):
+        if not is_valid_hugging_face_repository_id(draft.model_value):
             issues.append(VllmIssue("invalid_hugging_face_model", "model_value"))
     else:
         issue = _validate_local_model_directory(draft.model_value)

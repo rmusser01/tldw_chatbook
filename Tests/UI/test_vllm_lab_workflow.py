@@ -183,7 +183,9 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
-        profile = profile_from_draft("GPU 0", view.draft)
+        profile = profile_from_draft(
+            "GPU 0", replace(view.draft, model_value="org/model")
+        )
         document = VllmProfileDocumentV1(1, 1, profile.profile_id, (profile,))
         view.apply_state(
             draft=draft_from_profile(profile, raw_arguments="--launch-only"),
