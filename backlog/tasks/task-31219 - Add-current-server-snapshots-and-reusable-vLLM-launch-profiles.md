@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 05:09'
+updated_date: '2026-09-04 05:23'
 labels:
   - vllm
   - lab
@@ -52,9 +52,14 @@ Fix Round 3:
 11. Add fresh-repository regressions for missing, non-callable, raising, and invalid-result effective-UID capabilities, asserting generic repository errors and zero filesystem mutation.
 12. Preflight and normalize ownership capability before directory/lock creation, reuse the validated effective UID for descriptor checks, then rerun all scoped gates.
 
+Fix Round 4:
+13. Add RED assertions for a raising ownership probe that require both `__cause__` and `__context__` to be `None`, no canary anywhere in the reachable exception graph, a generic safe message, and zero filesystem mutation for absent and existing parents.
+14. Normalize ownership-probe failures outside the active exception handler without changing UID validation, descriptor checks, symlink defenses, locking, or CAS behavior.
+15. Run isolated GREEN, the focused Task 4 suites, whole vLLM workflow, and exact static gates; append evidence, restore Done, and commit the narrow fix.
+
 ADR required: no new ADR
 ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md
-Reason: ADR-115 remains the accepted device-local profile/CAS boundary; this round closes implementation-level fail-open and error-taxonomy gaps without changing the architecture.
+Reason: ADR-115 remains the accepted device-local profile/CAS boundary; this round fixes exception normalization without changing the architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -67,4 +72,6 @@ Fix Round 1 tightened the same ADR-115 boundary: model values now receive source
 Fix Round 2 makes file ownership validation mandatory: platforms without a valid effective-UID API now fail closed before profile bytes are read or written. Each mutation revalidates the exact held lock descriptor against the named private regular lock immediately before document load/revision validation and again immediately before the shared atomic writer. Deterministic inode-swap tests cover both boundaries, preserve the document and both lock targets, and prove the moved held inode is unlocked/closed after failure. This relies on ADR-115’s existing private, user-owned data-directory boundary; if an untrusted principal can rename within that parent, userspace leaf checks cannot eliminate the last instruction-level rename window, while atomic replace still does not follow a destination symlink. No ADR, schema, database, UI, or process-lifecycle change. Exact RED/GREEN and static evidence is appended to .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
 
 Fix Round 3 moves ownership capability validation ahead of every filesystem access or mutation. Missing, non-callable, raising, and invalid-result effective-UID hooks now become cause-free generic VllmProfileCorrupt errors; no raw exception or sensitive payload reaches callers. One validated UID is reused transaction-locally for document/lock descriptor ownership and both held-lock identity guards. The 8-case absent/existing-directory matrix proves no document, lock, or data directory is created on failure and a pre-existing directory/sentinel remains unchanged. No ADR/schema/database/UI/lifecycle change. Exact evidence: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
+
+Fix Round 4 corrects the exception-object contract within ADR-115’s fail-closed storage boundary. Ownership-probe exceptions are converted to an invalid sentinel inside the handler, then the generic VllmProfileCorrupt is raised after the handler exits, so callers receive neither `__cause__` nor `__context__` and no sensitive probe payload is reachable. The absent/existing-parent matrix now walks the complete exception graph while retaining its zero-filesystem-mutation assertions. Ownership validation, descriptor checks, symlink and lock-swap protections, CAS, schema, UI, and process lifecycle are unchanged. Exact RED/GREEN and static evidence: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
 <!-- SECTION:NOTES:END -->

@@ -449,14 +449,14 @@ def _effective_user_id() -> int:
     """Resolve an owner identity before I/O, or raise a cause-free safe error."""
 
     get_effective_uid = getattr(os, "geteuid", None)
-    if not callable(get_effective_uid):
-        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
-    try:
-        effective_uid = get_effective_uid()
-    except Exception:  # noqa: BLE001 - normalize an untrusted OS capability hook
-        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
+    effective_uid: object = None
+    if callable(get_effective_uid):
+        try:
+            effective_uid = get_effective_uid()
+        except Exception:  # noqa: BLE001 - normalize an untrusted OS capability hook
+            effective_uid = None
     if type(effective_uid) is not int or effective_uid < 0:
-        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
+        raise VllmProfileCorrupt("vLLM profile storage is unavailable")
     return effective_uid
 
 

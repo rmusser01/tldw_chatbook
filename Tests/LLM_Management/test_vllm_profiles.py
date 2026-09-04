@@ -631,7 +631,22 @@ def test_fresh_save_ownership_failure_precedes_all_filesystem_mutation(
         )
 
     assert type(caught.value) is VllmProfileCorrupt
+    assert str(caught.value) == "vLLM profile storage is unavailable"
     assert "SECRET_CANARY" not in str(caught.value)
+    pending: list[BaseException] = [caught.value]
+    visited: set[int] = set()
+    while pending:
+        error = pending.pop()
+        if id(error) in visited:
+            continue
+        visited.add(id(error))
+        assert "SECRET_CANARY" not in str(error)
+        assert "SECRET_CANARY" not in repr(error)
+        pending.extend(
+            related
+            for related in (error.__cause__, error.__context__)
+            if related is not None
+        )
     assert not path.exists()
     assert not lock_path.exists()
     if data_directory_exists:
@@ -647,6 +662,7 @@ def test_fresh_save_ownership_failure_precedes_all_filesystem_mutation(
     else:
         assert not data_dir.exists()
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_lock_path_replacement_after_acquisition_fails_before_cas_write(
