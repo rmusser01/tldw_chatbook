@@ -2779,6 +2779,19 @@ class ScheduledTasksDB(BaseDB):
                     insert_fields.setdefault("lifecycle", "configured")
                     insert_fields.setdefault("health", "execution_unavailable")
                     insert_fields.setdefault("version", 1)
+                    # task-4 review Finding 1: a server item that omits
+                    # these keys entirely used to leave the column SQL
+                    # NULL (no schema-level DEFAULT for any of the three,
+                    # unlike finding_policy/retention_policy) -- distinct
+                    # from `{}`, which every local-authoring write path
+                    # already normalizes to. `_merge_definition_payload`'s
+                    # `isinstance(stored, dict)` check treated NULL as
+                    # "nothing to merge", not "empty", so a later row edit
+                    # dropped the untouched group entirely (e.g. `input`
+                    # losing `question`) instead of preserving it.
+                    insert_fields.setdefault("input", {})
+                    insert_fields.setdefault("config", {})
+                    insert_fields.setdefault("notification_policy", {})
                     insert_fields.setdefault("created_at", now_iso)
                     insert_fields.setdefault("updated_at", now_iso)
                     serialized = self._serialize_definition_fields(insert_fields)

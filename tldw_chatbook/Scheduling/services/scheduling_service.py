@@ -2485,6 +2485,14 @@ class SchedulingService:
         `notification_policy` merge one level deep for the same reason,
         which is why the form emits `provider`/`model` explicitly as
         `None` when blank rather than omitting them.
+
+        `stored` may be SQL NULL (Python `None`) rather than `{}` -- a
+        server-mirrored row whose server item omitted the key entirely
+        (`upsert_automation_definitions_from_server`'s INSERT path,
+        task-4 review Finding 1) leaves the column NULL. Treated as `{}`
+        here so the merge still runs instead of silently skipping (which
+        used to drop the whole group -- e.g. `input.question` -- on any
+        edit that didn't itself touch that group).
         """
         merged: dict[str, Any] = {}
         for key in ("description", "visibility_policy", "approval_policy"):
@@ -2494,8 +2502,11 @@ class SchedulingService:
         for key in ("config", "input", "notification_policy"):
             stored = local_row.get(key)
             incoming = payload.get(key)
-            if isinstance(stored, dict) and isinstance(incoming, dict):
-                merged[key] = {**stored, **incoming}
+            if isinstance(incoming, dict):
+                merged[key] = {
+                    **(stored if isinstance(stored, dict) else {}),
+                    **incoming,
+                }
         return merged
 
     @staticmethod

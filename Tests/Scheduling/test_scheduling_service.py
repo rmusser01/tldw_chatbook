@@ -1751,6 +1751,53 @@ async def test_save_definition_edit_still_clears_a_field_the_payload_carries(db)
 
 
 @pytest.mark.asyncio
+async def test_save_definition_edit_merges_over_a_sql_null_json_column(db):
+    """task-4 review Finding 1: `config`/`input`/`notification_policy`
+    may be SQL NULL (Python `None`) rather than `{}` -- reachable via
+    `create_automation_definition`'s own `None -> NULL` pass-through (the
+    same shape `upsert_automation_definitions_from_server`'s INSERT path
+    used to leave before its own fix) for a definition a caller never
+    populated one of these groups on. `_merge_definition_payload`'s old
+    `isinstance(stored, dict)` gate treated NULL as "nothing to merge"
+    and skipped the branch entirely -- dropping the payload's OWN
+    incoming value for that group too, not just the (nonexistent) stored
+    one. Edits the SAME group that is NULL (`config`, via the Generation
+    row's real edit shape) to pin the exact failure mode the review
+    reproduced."""
+    def_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Nully digest",
+        input={"question": "What shipped?"},
+        config=None,
+        notification_policy=None,
+        schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+    )
+    row = db.get_automation_definition(def_id)
+    assert row["config"] is None
+    assert row["notification_policy"] is None
+
+    svc = SchedulingService(db=db, runtime_source="local")
+    outcome = await svc.save_definition(
+        {
+            "family": "recurring_question",
+            "name": "Nully digest",
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "config": {"generation_mode": "required"},
+            "input": {},
+            "notification_policy": {},
+        },
+        "local",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved", outcome.errors
+    row = db.get_automation_definition(def_id)
+    assert row["config"]["generation_mode"] == "required"
+    assert row["input"]["question"] == "What shipped?"  # untouched group preserved
+
+
+@pytest.mark.asyncio
 async def test_save_definition_server_owner_offline_invalid_writes_nothing(db):
     server_client = AsyncMock()
     server_client.preview_automation_definition.side_effect = ServerUnavailableError(

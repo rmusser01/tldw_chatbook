@@ -1677,6 +1677,26 @@ def test_upsert_definitions_inserts_new_row(tmp_path):
     assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
 
 
+def test_upsert_definitions_insert_defaults_json_columns_to_empty_dict_not_null(
+    tmp_path,
+):
+    """task-4 review Finding 1: a server item that omits `input`/`config`/
+    `notification_policy` entirely (the exact `_definition_item()` default
+    shape every other test in this section already uses) used to leave
+    those THREE columns SQL NULL on insert -- unlike `family`/`name`/
+    `lifecycle`/`health`/`version`, which all get an explicit
+    `setdefault`. `SchedulingService._merge_definition_payload`'s
+    `isinstance(stored, dict)` check then skipped the merge entirely for
+    a NULL column, silently dropping whatever the untouched group held on
+    the next edit (e.g. `input.question`)."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    row = db.get_automation_definition_by_server_id("server:42", "srv-def-1")
+    assert row["input"] == {}
+    assert row["config"] == {}
+    assert row["notification_policy"] == {}
+
+
 def test_upsert_definitions_strips_resolved_sources_from_scope(tmp_path):
     """Task 6 fix-round finding: a server item's `config.scope` may echo
     back `resolved_sources` (the client's own local preview does, for the
