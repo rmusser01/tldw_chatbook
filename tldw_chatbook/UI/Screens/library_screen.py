@@ -2139,8 +2139,8 @@ class LibraryScreen(BaseAppScreen):
         # constructor argument here rather than folded into the
         # dataclass's own default, preserving the original __init__
         # evaluation order. `_load_library_search_history` stays a REAL,
-        # full-bodied screen method (wave-3 task 3 test-bypass exclusion --
-        # see `library_rag_search_controller.py`'s module docstring), so
+        # full-bodied screen method (wave-3 task 3 module-globals-coupling
+        # exclusion -- see `library_rag_search_controller.py`'s module docstring), so
         # this eager call is safe at this early `__init__` position exactly
         # as it always was -- unlike a delegator, it needs no controller to
         # already exist.

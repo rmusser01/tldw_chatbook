@@ -172,7 +172,15 @@ _BUDGETS: dict[str, int] = {
     # at cleanup, task 4"), matching `library_export_controller.py`'s own
     # correct precedent. Comment-only growth (+2 lines); no method body
     # touched. 1895 -> 1897.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1897,
+    # 2026-09-03, wave-3 final review fix wave: the generated shim block's
+    # OWN footer comment (near the bottom of the file, not the module
+    # docstring task 5 already fixed above) still said "the shim block
+    # `LibraryScreen` carries (task 2)" in present tense -- the same task-4
+    # deletion task 5 accounted for at the top of the file, missed at the
+    # bottom. Reworded to match the module docstring's corrected past-tense
+    # phrasing. Comment-only growth (+1 line); no method body touched.
+    # 1897 -> 1898.
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1898,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
 }

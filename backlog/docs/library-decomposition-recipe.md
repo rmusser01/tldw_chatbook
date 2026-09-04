@@ -2338,8 +2338,10 @@ task-4-report.md`).
    edit -- re-measure fresh after every edit, not just after the first
    one in a session.** Task 5 (wave close) ran the full ratchet battery
    green, THEN fixed a stale docstring claim in `library_rag_search_
-   controller.py` (lesson 5's mechanism, applied to a wave-1 file this
-   time) as a separate, later step -- the rewrite needed 2 more lines to
+   controller.py` (this wave-3 file's OWN module docstring, not a moved
+   body -- unlike lesson 5's deferred-to-cleanup-PR mechanism, no
+   byte-for-byte canon deferral applied here) as a separate, later step
+   -- the rewrite needed 2 more lines to
    read naturally, growing the file from 1895 to 1897 without re-running
    the ratchet afterward. The drift sat unnoticed until a later,
    unrelated fresh-measurement pass (`_measure()` called directly, not

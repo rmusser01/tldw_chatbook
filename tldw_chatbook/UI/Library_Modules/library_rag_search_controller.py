@@ -1867,8 +1867,9 @@ class LibraryRagSearchController:
 # `_library_rag_<field>`/`_library_search_<field>` name on THIS controller
 # too, reading/writing through the injected `rag_search_state_accessor`
 # instead of a direct `self._rag_search_state` attribute (this class has
-# none) -- same generator shape the shim block `LibraryScreen` carries
-# (task 2) and `LibraryConversationsController`/`LibraryCollectionsController`
+# none) -- same generator shape task 2 installed on `LibraryScreen`
+# (deleted at cleanup, task 4, once this copy below made the screen's
+# copy dead) and `LibraryConversationsController`/`LibraryCollectionsController`
 # carry, attached programmatically so the class body gains no `FunctionDef`s
 # (the size ratchet counts those). `SEARCH_PREFIXED_STATE_FIELDS` is
 # imported from `library_rag_search_state` -- the dataclass's own module --
