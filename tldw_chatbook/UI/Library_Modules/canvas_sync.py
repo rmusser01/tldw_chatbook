@@ -24,6 +24,8 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_TOOLTIP,
     build_library_shell_state,
@@ -280,6 +282,21 @@ def _apply_library_row_toggle(
                 else LIBRARY_REVIEW_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(review_button)
+            # task-28007 AC#4: same in-place flip for "Analyze", with the
+            # provider gate still outranking the count -- an unready
+            # provider keeps the action off wearing its own reason, however
+            # many rows are checked.
+            analyze_button = screen.query_one(
+                "#library-media-analyze-selected", Button
+            )
+            analysis_reason = screen._library_media_analyze_reason()
+            analyze_button.disabled = bool(analysis_reason) or selection.count == 0
+            analyze_button.tooltip = analysis_reason or (
+                LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP
+                if analyze_button.disabled
+                else LIBRARY_ANALYZE_SELECTED_TOOLTIP
+            )
+            _patch_library_disabled_marker_label(analyze_button)
         elif kind == "notes":
             work_panes = screen.query("#library-note-work-pane")
             if work_panes and screen._library_note_session.snapshot is not None:

@@ -779,6 +779,17 @@ class LibraryMediaCanvasState:
     # as a "✓ dismissed · <name>" receipt with Undo/Dismiss until acted on
     # or replaced. "" means no receipt (the normal state).
     review_dismiss_receipt_name: str = ""
+    # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run's in-list
+    # receipt. While ``analyze_receipt_running`` the copy is "Analyzing 3
+    # of 40 · 2 failed"; once it settles, "✓ analyzed · 38 of 40 · 2
+    # failed" with Retry failed/Dismiss. ``analyze_choice_count`` is the
+    # AC#3 arming instead: "N already analysed — Skip them | Overwrite",
+    # which runs nothing until the user picks. All-zero means no receipt.
+    analyze_receipt_total: int = 0
+    analyze_receipt_done: int = 0
+    analyze_receipt_failed: int = 0
+    analyze_receipt_running: bool = False
+    analyze_choice_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -948,6 +959,11 @@ def build_library_media_browse_state(
     loading_id: str = "",
     loaded_id: str = "",
     review_dismiss_receipt_name: str = "",
+    analyze_receipt_total: int = 0,
+    analyze_receipt_done: int = 0,
+    analyze_receipt_failed: int = 0,
+    analyze_receipt_running: bool = False,
+    analyze_choice_count: int = 0,
 ) -> LibraryMediaCanvasState:
     """Project one exact Media page without filtering, sorting, or slicing it.
 
@@ -956,6 +972,13 @@ def build_library_media_browse_state(
             review set, rendered as a "✓ dismissed · <name>" undo receipt
             until acted on or replaced (task-31236). "" (the default)
             means no receipt to show.
+        analyze_receipt_total: Items in the current bulk-Analyze run.
+        analyze_receipt_done: Items of that run whose analysis persisted.
+        analyze_receipt_failed: Items of that run that failed.
+        analyze_receipt_running: Whether that run is still in flight.
+        analyze_choice_count: Items in the pressed selection that already
+            carry an analysis, arming the AC#3 Skip/Overwrite choice
+            instead of running. 0 (the default) means no choice to make.
     """
     if not isinstance(result, MediaBrowseResult):
         raise TypeError("result must be a MediaBrowseResult.")
@@ -1039,6 +1062,11 @@ def build_library_media_browse_state(
         sort_by=result.scope.sort_by,
         sort_choices_visible=sort_choices_visible,
         review_dismiss_receipt_name=review_dismiss_receipt_name,
+        analyze_receipt_total=max(0, analyze_receipt_total),
+        analyze_receipt_done=max(0, analyze_receipt_done),
+        analyze_receipt_failed=max(0, analyze_receipt_failed),
+        analyze_receipt_running=bool(analyze_receipt_running),
+        analyze_choice_count=max(0, analyze_choice_count),
     )
 
 
@@ -1113,6 +1141,11 @@ def build_library_media_state(
     delete_receipt_count: int = 0,
     type_choices_visible: bool = False,
     review_dismiss_receipt_name: str = "",
+    analyze_receipt_total: int = 0,
+    analyze_receipt_done: int = 0,
+    analyze_receipt_failed: int = 0,
+    analyze_receipt_running: bool = False,
+    analyze_choice_count: int = 0,
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -1133,6 +1166,13 @@ def build_library_media_state(
             review set, rendered as a "✓ dismissed · <name>" undo receipt
             until acted on or replaced (task-31236). "" (the default)
             means no receipt to show.
+        analyze_receipt_total: Items in the current bulk-Analyze run.
+        analyze_receipt_done: Items of that run whose analysis persisted.
+        analyze_receipt_failed: Items of that run that failed.
+        analyze_receipt_running: Whether that run is still in flight.
+        analyze_choice_count: Items in the pressed selection that already
+            carry an analysis, arming the AC#3 Skip/Overwrite choice
+            instead of running. 0 (the default) means no choice to make.
 
     Returns:
         Immutable canvas state: rows, type options, active type, status/empty copy,
@@ -1251,4 +1291,9 @@ def build_library_media_state(
         delete_receipt_count=max(0, delete_receipt_count),
         type_choices_visible=type_choices_visible,
         review_dismiss_receipt_name=review_dismiss_receipt_name,
+        analyze_receipt_total=max(0, analyze_receipt_total),
+        analyze_receipt_done=max(0, analyze_receipt_done),
+        analyze_receipt_failed=max(0, analyze_receipt_failed),
+        analyze_receipt_running=bool(analyze_receipt_running),
+        analyze_choice_count=max(0, analyze_choice_count),
     )

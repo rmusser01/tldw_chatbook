@@ -737,6 +737,10 @@ _MEDIA_VIEW_VIEWER = "viewer"
 #: Qodo on #2378: one name for the review-set auto-resume worker group, shared
 #: by registration (_maybe_auto_resume_review_set) and cancellation.
 _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
+# task-28007 AC#4: ONE exclusive worker group for the Select-mode bulk
+# Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
+# can never interleave two runs over the same ids.
+_ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -2613,6 +2617,24 @@ class LibraryScreen(BaseAppScreen):
         # Qodo on #2366: one in-flight undo owns the receipt until it
         # settles (blocks a second Undo and a racing receipt-close).
         self._review_dismiss_undo_in_flight: bool = False
+        # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run. One
+        # in-flight flag (a second press is refused with a notice), the
+        # receipt's own counts, the failed ids Retry re-runs, and the
+        # armed "N already analysed — Skip them | Overwrite" choice
+        # (all_ids, unanalysed_ids) that AC#3 requires before anything is
+        # overwritten. ``_library_media_analyze_reason_cache`` memoises
+        # the provider reason for the whole select-mode session: resolving
+        # it is not free (Anthropic claude_subscription readiness shells
+        # out to the keychain), so it is resolved once per entry, never
+        # per sync or per row.
+        self._library_media_analyze_running: bool = False
+        self._library_media_analyze_total: int = 0
+        self._library_media_analyze_done: int = 0
+        self._library_media_analyze_failed_ids: tuple[str, ...] = ()
+        self._library_media_analyze_choice: (
+            tuple[tuple[str, ...], tuple[str, ...]] | None
+        ) = None
+        self._library_media_analyze_reason_cache: str | None = None
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
@@ -15480,6 +15502,7 @@ class LibraryScreen(BaseAppScreen):
                 delete_receipt_count=len(self._library_media_delete_receipt_ids),
                 type_choices_visible=self._library_media_type_choices_visible,
                 review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
+                **self._library_media_analyze_receipt_fields(),
             )
         state = build_library_media_browse_state(
             controller.applied_result,
@@ -15493,6 +15516,7 @@ class LibraryScreen(BaseAppScreen):
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
             review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
+            **self._library_media_analyze_receipt_fields(),
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15510,6 +15534,44 @@ class LibraryScreen(BaseAppScreen):
         """Display name for the pending dismiss-undo receipt, "" when none."""
         receipt = self._library_media_review_dismiss_receipt
         return receipt[1] if receipt is not None else ""
+
+    def _library_media_analyze_receipt_fields(self) -> dict[str, Any]:
+        """Canvas inputs for the bulk-Analyze receipt (task-28007 AC#3/AC#4)."""
+        choice = self._library_media_analyze_choice
+        return {
+            "analyze_receipt_total": self._library_media_analyze_total,
+            "analyze_receipt_done": self._library_media_analyze_done,
+            "analyze_receipt_failed": len(self._library_media_analyze_failed_ids),
+            "analyze_receipt_running": self._library_media_analyze_running,
+            "analyze_choice_count": (
+                0 if choice is None else len(choice[0]) - len(choice[1])
+            ),
+        }
+
+    def _library_media_analyze_reason(self) -> str:
+        """Why bulk Analyze is off, memoised for one select-mode session.
+
+        task-28007 AC#4: the bulk action wears the same sentence the
+        Reader's Generate does (AC#5), but this one is read on EVERY media
+        canvas sync, and ``resolve_ingest_analysis_provider`` is not free
+        (Anthropic ``claude_subscription`` readiness shells out to the
+        macOS keychain behind a 5s TTL). So it is resolved once per
+        select-mode entry and dropped on exit -- the gesture itself
+        re-resolves, so a provider configured mid-session is never refused
+        on a stale memo.
+
+        Returns:
+            The resolver's reason while select mode is on and no provider
+            is ready; "" otherwise.
+        """
+        if not self._library_media_select_mode:
+            self._library_media_analyze_reason_cache = None
+            return ""
+        if self._library_media_analyze_reason_cache is None:
+            self._library_media_analyze_reason_cache = (
+                self._library_media_analysis_provider_reason()
+            )
+        return self._library_media_analyze_reason_cache
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
@@ -15548,6 +15610,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
+            "analysis_action_reason": self._library_media_analyze_reason(),
             "compact": False,
             "show_preview": False,
         }
@@ -42045,6 +42108,11 @@ class LibraryScreen(BaseAppScreen):
         Args:
             message: Human-readable warning text to notify with.
         """
+        if getattr(self, "_library_media_analyze_running", False):
+            # task-28007 AC#4: a bulk run over N items would raise up to N
+            # of these for ONE gesture. Its receipt carries the failure
+            # count instead, which is the honest per-set report.
+            return
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
@@ -42100,7 +42168,7 @@ class LibraryScreen(BaseAppScreen):
 
     async def _generate_library_media_analysis(
         self, media_id: str, *, content: str, resolution: Any
-    ) -> None:
+    ) -> bool:
         """Dispatch the analysis LLM call off-thread, then persist the result.
 
         Always clears the generating flag and re-fetches detail so the
@@ -42112,6 +42180,11 @@ class LibraryScreen(BaseAppScreen):
             content: The document content to analyze.
             resolution: The ready ``IngestAnalysisResolution`` describing the
                 provider, credential, and sampling parameters.
+
+        Returns:
+            True when an analysis was produced and handed to the save seam.
+            task-28007 AC#4: the bulk run counts failures from this, since
+            a provider that returns nothing raises nothing.
         """
         try:
             analysis_text = await asyncio.to_thread(
@@ -42129,10 +42202,11 @@ class LibraryScreen(BaseAppScreen):
                 "Analysis generation returned nothing; the item is unchanged."
             )
             self._sync_library_media_viewer_or_recompose()
-            return
+            return False
         await self._save_library_media_analysis(
             media_id, content=content, analysis_content=analysis_text
         )
+        return True
 
     def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
         """Call the resolved provider once and return the analysis text.
@@ -42167,6 +42241,269 @@ class LibraryScreen(BaseAppScreen):
             api_key_resolved=True,
         )
         return extract_response_content(response)
+
+    @on(Button.Pressed, "#library-media-analyze-selected")
+    def handle_library_media_analyze_selected(self, event: Button.Pressed) -> None:
+        """Analyze every selected media item in one run (task-28007 AC#4).
+
+        The selection is snapshotted from the RENDERED rows, not from
+        ``RowSelection.ids``: that is a frozenset and carries no order,
+        while the run has to follow the browse order the user is looking
+        at (task-31233's "Review selected" made the same call).
+
+        Args:
+            event: The Select-mode "Analyze" bulk-action button press.
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        rows = self._build_library_media_state().rows
+        self._start_library_media_analyze(
+            tuple(row.media_id for row in rows if row.checked), overwrite=False
+        )
+
+    @on(Button.Pressed, "#library-media-analyze-skip")
+    def handle_library_media_analyze_skip(self, event: Button.Pressed) -> None:
+        """Run the armed choice over the un-analysed items only (AC#3).
+
+        Args:
+            event: The receipt row's "Skip them" press.
+        """
+        event.stop()
+        choice = self._library_media_analyze_choice
+        if choice is None:
+            return
+        if not choice[1]:
+            # Every selected item already had one: skipping them all
+            # leaves nothing to run, so retire the choice rather than
+            # leaving a dead row armed.
+            self._clear_library_media_analyze_receipt()
+            _sync_library_canvas(self, "media")
+            return
+        # Already partitioned, and these ids have no analysis by
+        # construction -- ``overwrite=True`` skips a second read pass, it
+        # does not overwrite anything.
+        self._start_library_media_analyze(choice[1], overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-overwrite")
+    def handle_library_media_analyze_overwrite(self, event: Button.Pressed) -> None:
+        """Run the armed choice over every selected item (AC#3's explicit yes).
+
+        Args:
+            event: The receipt row's "Overwrite" press.
+        """
+        event.stop()
+        choice = self._library_media_analyze_choice
+        if choice is None:
+            return
+        self._start_library_media_analyze(choice[0], overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-retry")
+    def handle_library_media_analyze_retry(self, event: Button.Pressed) -> None:
+        """Re-run only the items the last run failed on (AC#4).
+
+        Args:
+            event: The receipt row's "Retry failed" press.
+        """
+        event.stop()
+        failed = self._library_media_analyze_failed_ids
+        if not failed:
+            return
+        self._start_library_media_analyze(failed, overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-receipt-dismiss")
+    def handle_library_media_analyze_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the bulk-Analyze receipt (or its armed choice).
+
+        Args:
+            event: The receipt row's "Dismiss" press.
+        """
+        event.stop()
+        self._clear_library_media_analyze_receipt()
+        _sync_library_canvas(self, "media")
+
+    def _clear_library_media_analyze_receipt(self) -> None:
+        """Return every bulk-Analyze receipt field to its default."""
+        self._library_media_analyze_total = 0
+        self._library_media_analyze_done = 0
+        self._library_media_analyze_failed_ids = ()
+        self._library_media_analyze_choice = None
+
+    def _start_library_media_analyze(
+        self, media_ids: tuple[str, ...], *, overwrite: bool
+    ) -> None:
+        """Refuse, or claim the run and hand it to the one worker group.
+
+        Shared by the bulk gesture and the receipt's own Skip/Overwrite/
+        Retry actions, so all four obey the same one-run-at-a-time rule and
+        the same provider gate.
+
+        Args:
+            media_ids: Ids to analyze, already in browse order.
+            overwrite: Whether items that already carry an analysis are
+                included (AC#3: only ever True by an explicit choice).
+        """
+        if self._library_media_analyze_running:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Analysis already running", severity="warning")
+            return
+        if not media_ids:
+            return
+        # Belt and braces behind the disabled bulk action, and a fresh read
+        # rather than the select-mode memo: a provider configured since
+        # entry must not be refused (mirrors the Reader's Generate guard).
+        resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
+        reason = analysis_unavailable_reason(resolution)
+        if reason:
+            self._notify_library_media_analysis_warning(reason)
+            return
+        self._library_media_analyze_reason_cache = None
+        if self._library_media_select_mode:
+            # task-31233's precedent: a bulk action that runs leaves select
+            # mode, so the receipt lands on the list the user returns to.
+            self._exit_library_media_select_mode(announce_discard=False)
+        self._clear_library_media_analyze_receipt()
+        self._library_media_analyze_running = True
+        self.run_worker(
+            self._analyze_library_media_selection(
+                media_ids, resolution=resolution, overwrite=overwrite
+            ),
+            group=_ANALYZE_SELECTED_WORKER_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _analyze_library_media_selection(
+        self, media_ids: tuple[str, ...], *, resolution: Any, overwrite: bool
+    ) -> None:
+        """Analyze each id in turn, updating the receipt after every item.
+
+        One worker for the whole run (AC#4). A per-item failure -- a raise
+        OR a provider that returned nothing -- is counted and the run
+        continues; nothing aborts it. When ``overwrite`` is False and any
+        selected item already carries an analysis, NOTHING runs: the
+        Skip/Overwrite choice is armed in the receipt instead (AC#3).
+
+        Args:
+            media_ids: Ids to analyze, in browse order.
+            resolution: The ready resolution the gesture already checked.
+            overwrite: Whether analysed items are included.
+        """
+        try:
+            if not overwrite:
+                unanalyzed = await self._library_media_unanalyzed_ids(media_ids)
+                if len(unanalyzed) != len(media_ids):
+                    self._library_media_analyze_choice = (media_ids, unanalyzed)
+                    return
+                media_ids = unanalyzed
+            self._library_media_analyze_total = len(media_ids)
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+            for media_id in media_ids:
+                try:
+                    persisted = await self._analyze_one_library_media_item(
+                        media_id, resolution=resolution
+                    )
+                except Exception:
+                    persisted = False
+                if persisted:
+                    self._library_media_analyze_done += 1
+                else:
+                    self._library_media_analyze_failed_ids += (media_id,)
+                # Progress only: if the user has left the media canvas
+                # mid-run, a missing canvas must NOT escalate to a
+                # whole-screen recompose once per item on whatever screen
+                # they moved to. The settling sync below keeps the default.
+                _sync_library_canvas(self, "media", allow_screen_fallback=False)
+        finally:
+            self._library_media_analyze_running = False
+            _sync_library_canvas(self, "media")
+
+    async def _analyze_one_library_media_item(
+        self, media_id: str, *, resolution: Any
+    ) -> bool:
+        """Load one item's content off the loop, then generate its analysis.
+
+        Args:
+            media_id: The canonical media id to analyze.
+            resolution: The ready resolution shared by the whole run.
+
+        Returns:
+            True when an analysis was produced and persisted.
+        """
+        detail = await self._fetch_library_media_analysis_detail(
+            media_id, include_content=True
+        )
+        content = str(detail.get("content") or "") if detail is not None else ""
+        if not content.strip():
+            return False
+        return await self._generate_library_media_analysis(
+            media_id, content=content, resolution=resolution
+        )
+
+    async def _library_media_unanalyzed_ids(
+        self, media_ids: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The subset with no analysis on their newest version (AC#3).
+
+        Read WITHOUT content: only the newest ``DocumentVersions`` row's
+        analysis text decides this (``detail_analysis_text``, the same rule
+        the Reader's Analysis tab uses), and pulling every document's body
+        just to answer it would be the expensive way to ask. An unreadable
+        item counts as un-analysed: the run attempts it and reports its
+        own failure rather than silently skipping it.
+
+        Args:
+            media_ids: The ids the gesture snapshotted.
+
+        Returns:
+            Those ids, in the same order, minus the already-analysed ones.
+        """
+        unanalyzed: list[str] = []
+        for media_id in media_ids:
+            try:
+                detail = await self._fetch_library_media_analysis_detail(
+                    media_id, include_content=False
+                )
+            except Exception:
+                detail = None
+            if detail is None or not detail_analysis_text(detail):
+                unanalyzed.append(media_id)
+        return tuple(unanalyzed)
+
+    async def _fetch_library_media_analysis_detail(
+        self, media_id: str, *, include_content: bool
+    ) -> Mapping[str, Any] | None:
+        """Fetch one item's detail off the event loop for the bulk run.
+
+        Deliberately NOT ``_refresh_library_media_detail``: that one owns
+        the Reader's session state, and a bulk run must not move the
+        Reader's selection forty times.
+
+        Args:
+            media_id: The canonical media id.
+            include_content: Whether the document body is needed (the
+                analysed/not-analysed pass does not need it).
+
+        Returns:
+            The detail mapping, or None when the service is unavailable or
+            returned something else.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_media_item = getattr(service, "get_media_item", None)
+        if not callable(get_media_item):
+            return None
+        detail = await self._run_library_service_call(
+            get_media_item,
+            mode="local",
+            media_id=self._library_media_backing_id(media_id),
+            include_content=include_content,
+            include_versions=True,
+            isolate_in_worker=True,
+        )
+        return detail if isinstance(detail, Mapping) else None
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:

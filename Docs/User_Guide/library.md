@@ -603,3 +603,15 @@ re-walk the Library DOM on every frame, and the model-install progress line
 is now built on first use instead of on every visit. The compact/emergency
 width crossings, the Details disclosure, and install progress all look and
 behave exactly as before.)*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4:
+Media ▸ Select mode gained an **Analyze** bulk action on its own row under
+Clear/Export/Review. It generates an analysis for every checked item in
+one run, in list order, and reports progress in place ("Analyzing 3 of 40 ·
+2 failed", then "✓ analyzed · 38 of 40 · 2 failed") with **Retry failed**
+and **Dismiss**. Items that already have an analysis are never overwritten
+silently: the first press offers "N already analysed — **Skip them** |
+**Overwrite**" in that same row. With no analysis provider configured the
+action renders disabled as "○ Analyze" carrying the resolver's own reason
+as its tooltip, and a second press while a run is in flight says "Analysis
+already running" instead of starting a second one.)*

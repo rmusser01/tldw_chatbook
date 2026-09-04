@@ -25,6 +25,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
@@ -190,6 +192,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        analysis_action_reason: str = "",
         compact: bool = False,
         show_preview: bool = True,
         **kwargs: Any,
@@ -202,6 +205,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.analysis_action_reason = analysis_action_reason
         self.compact = compact
         self.show_preview = show_preview
         # Fill the (already 13fr) canvas host, not an independent 13fr --
@@ -229,6 +233,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        analysis_action_reason: str = "",
         compact: bool = False,
         show_preview: bool = True,
     ) -> None:
@@ -247,6 +252,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.analysis_action_reason = analysis_action_reason
         self.compact = compact
         self.show_preview = show_preview
         self.refresh(recompose=True)
@@ -412,6 +418,29 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
             LIBRARY_REVIEW_SELECTED_TOOLTIP,
         )
+
+    def _analyze_selected_button(self) -> Button:
+        """Build the "Analyze" bulk action (task-28007 AC#4).
+
+        Rides its OWN row rather than joining Clear/Export/Review: those
+        three already measure 33 of the pane's 36 cells (`min_width` above),
+        so a fourth 13-cell action clipped every label on that row. Same
+        multi-row grammar the danger row uses. When no analysis provider is
+        configured the resolver's own sentence replaces the F-018 tooltip,
+        so the disabled control says WHY, not just that it is off (AC#5's
+        rule, applied to the bulk gesture).
+        """
+        button = self._bulk_action_button(
+            "Analyze",
+            "library-media-analyze-selected",
+            LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
+            LIBRARY_ANALYZE_SELECTED_TOOLTIP,
+        )
+        if self.analysis_action_reason:
+            button.label = library_disabled_action_label("Analyze", True)
+            button.disabled = True
+            button.tooltip = self.analysis_action_reason
+        return button
 
     def _delete_selected_button(self) -> Button:
         """Build the isolated danger action (task-2853's far-end rule, upgraded)."""
@@ -813,6 +842,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 with actions_row:
                     yield self._clear_selection_button()
                     yield from self._select_mode_bulk_buttons()
+                # task-28007 AC#4: Analyze gets its own row -- see
+                # ``_analyze_selected_button`` for the measurement that put
+                # it here rather than beside Export/Review.
+                analyze_row = Horizontal(
+                    id="library-media-select-analyze", classes="ds-toolbar"
+                )
+                analyze_row.styles.height = "auto"
+                with analyze_row:
+                    yield self._analyze_selected_button()
                 # task-2853's danger-isolation rule, upgraded: Delete gets a
                 # whole row, so it is never adjacent to any other action.
                 danger_row = Horizontal(
@@ -915,6 +953,82 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                     )
                     yield self._gate_mutation_action(close_receipt, "Dismiss")
+
+        # task-28007 AC#3/AC#4: the bulk-Analyze receipt -- PR A's two-row
+        # grammar (copy, then actions) again, because a set-level run must
+        # report per-item outcomes where the gesture happened rather than
+        # in a toast that outlives nothing. Three states, one block: the
+        # AC#3 Skip/Overwrite choice (nothing has run yet), the live run,
+        # and the settled run with Retry failed/Dismiss.
+        analyze_choice = getattr(self.canvas, "analyze_choice_count", 0)
+        analyze_total = getattr(self.canvas, "analyze_receipt_total", 0)
+        if analyze_choice or analyze_total:
+            analyze_done = getattr(self.canvas, "analyze_receipt_done", 0)
+            analyze_failed = getattr(self.canvas, "analyze_receipt_failed", 0)
+            analyze_running = getattr(self.canvas, "analyze_receipt_running", False)
+            failed_copy = f" · {analyze_failed} failed" if analyze_failed else ""
+            if analyze_choice:
+                analyze_copy = f"{analyze_choice} already analysed — "
+            elif analyze_running:
+                # 1-based position of the item being analyzed right now.
+                position = min(analyze_done + analyze_failed + 1, analyze_total)
+                analyze_copy = f"Analyzing {position} of {analyze_total}{failed_copy}"
+            else:
+                analyze_copy = (
+                    f"✓ analyzed · {analyze_done} of {analyze_total}{failed_copy}"
+                )
+            analyze_receipt = Vertical(
+                id="library-media-analyze-receipt",
+                classes="library-media-receipt",
+            )
+            analyze_receipt.styles.height = "auto"
+            with analyze_receipt:
+                yield Static(
+                    analyze_copy,
+                    id="library-media-analyze-receipt-copy",
+                    classes="library-toolbar-count library-media-receipt-copy",
+                    markup=False,
+                )
+                analyze_actions = Horizontal(
+                    classes="ds-toolbar library-media-receipt-actions"
+                )
+                analyze_actions.styles.height = "auto"
+                with analyze_actions:
+                    if analyze_choice:
+                        skip = Button(
+                            "Skip them",
+                            id="library-media-analyze-skip",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(skip, "Skip them")
+                        overwrite = Button(
+                            "Overwrite",
+                            id="library-media-analyze-overwrite",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(overwrite, "Overwrite")
+                    elif not analyze_running and analyze_failed:
+                        retry = Button(
+                            "Retry failed",
+                            id="library-media-analyze-retry",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(retry, "Retry failed")
+                    if not analyze_running:
+                        # A run in flight has nothing to dismiss yet: the
+                        # counts are still moving and Dismiss would either
+                        # lie (the run continues) or imply a cancel this
+                        # gesture does not offer.
+                        analyze_dismiss = Button(
+                            "Dismiss",
+                            id="library-media-analyze-receipt-dismiss",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_mutation_action(analyze_dismiss, "Dismiss")
 
         status_text = (
             self.pager.status_copy

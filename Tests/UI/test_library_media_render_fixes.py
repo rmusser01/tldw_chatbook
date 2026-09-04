@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
@@ -409,6 +410,124 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "✓ dismissed · 2 selected items" in painted, painted
         assert "Undo" in painted, painted
         assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
+    """task-28007 AC#4: the bulk-Analyze receipt is PR A's two-row grammar --
+    honest counts plus the two actions, readable in the ~38-col Items pane."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 38
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "\u2713 analyzed \u00b7 38 of 40 \u00b7 2 failed" in painted, painted
+        assert "Retry failed" in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_overwrite_choice_paints_both_options():
+    """task-28007 AC#3: the already-analysed choice is armed IN the receipt row."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_choice = (
+            ("local:media:1", "local:media:2"),
+            ("local:media:2",),
+        )
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "1 already analysed" in painted, painted
+        assert "Skip them" in painted, painted
+        assert "Overwrite" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
+    """task-28007 AC#4: Analyze is readable beside (below) Export and Review.
+
+    Measured: the Items pane is 36 cells and Clear/Export/Review already
+    take 33 of them, so a fourth 13-cell action on that row clipped every
+    label. Analyze therefore rides its own row -- the same multi-row
+    grammar Delete already uses -- and this pins BOTH rows readable."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        row = await _wait_for_selector(
+            screen, pilot, "#library-media-select-actions"
+        )
+        analyze_row = screen.query_one("#library-media-select-analyze")
+        await pilot.pause()
+        await pilot.pause()
+        pane = _items_pane_width(screen)
+        assert row.region.width <= pane
+        assert analyze_row.region.width <= pane
+        painted = _painted(host, row.region)
+        assert "Export" in painted, painted
+        assert "Review" in painted, painted
+        analyze_painted = _painted(host, analyze_row.region)
+        assert "Analyze" in analyze_painted, analyze_painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_bulk_action_follows_the_selection_in_place():
+    """task-28007 AC#4, learning task-28242's Qodo #2335 lesson: the
+    in-place row-toggle patcher must flip Analyze alongside Export/Review
+    /Delete, or the first checked row leaves it disabled until some
+    unrelated recompose. The provider gate still outranks the count."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._toggle_library_media_select_mode()
+            await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-selected"
+            )
+            assert (
+                screen.query_one("#library-media-analyze-selected", Button).disabled
+                is True
+            )
+            screen.query_one("#library-media-row-1").press()
+            await pilot.pause()
+            analyze = screen.query_one("#library-media-analyze-selected", Button)
+            assert analyze.disabled is False, "checked rows must arm Analyze"
+            assert "Analyze" in str(analyze.label)
+
+            # And the provider gate wins over the count: an unready
+            # provider keeps it off with its own reason.
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "No analysis provider is configured.",
+            )
+            screen._library_media_analyze_reason_cache = None
+            screen.query_one("#library-media-row-0").press()
+            await pilot.pause()
+            gated = screen.query_one("#library-media-analyze-selected", Button)
+            assert gated.disabled is True
+            assert gated.tooltip == "No analysis provider is configured."
 
 
 # ---------------------------------------------------------------------------
