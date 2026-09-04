@@ -2544,8 +2544,8 @@ triple export's prior 9-of-51 record), and a large fraction of those are
 tested via `SimpleNamespace(...)` fakes carrying FLAT skills kwargs
 directly (`_library_skills_sort="name"`, `_selected_skill_name=""`, etc.)
 that a body now reading `self._skills_state.<field>` can no longer satisfy.
-18 separate `SimpleNamespace(...)` call sites across
-`Tests/UI/test_library_skills_canvas.py` (18),
+28 separate `SimpleNamespace(...)` call sites across
+`Tests/UI/test_library_skills_canvas.py` (25),
 `Tests/UI/test_library_canvas_scoped_sync.py` (1), and
 `Tests/Skills/test_skills_import.py` (2) needed the SAME "flat kwargs →
 nested `_skills_state=SimpleNamespace(...)`" restructuring the
@@ -2656,8 +2656,8 @@ place:
   imported and used by `LibrarySkillsController`'s own permanent shim loop
   and by the wiring test, just no longer by the screen).
 - 27 left dead by task 2's own controller move (each name's only
-  screen-side usage lived inside one of the 86 moved method bodies), each
-  independently confirmed already re-imported and live inside
+  screen-side usage lived inside one of the 86 moved method bodies), 26 of
+  which were independently confirmed already re-imported and live inside
   `library_skills_controller.py` before removal from the screen: 15 from
   `Widgets.Library` (`SKILL_DISCARD_TOOLTIP_CLEAN`, `SKILL_DISCARD_
   TOOLTIP_DIRTY`, `next_skill_context`, `skill_context_toggle_label`,
@@ -2665,13 +2665,23 @@ place:
   approve_tooltip`, `skill_trust_panel_remediation_copy`, `skill_trust_
   review_enabled`, `skill_trust_review_preview`, `skill_trust_review_
   tooltip`, `skill_trust_state_line`, `skill_trust_unlock_enabled`,
-  `skill_trust_unlock_tooltip`, `skill_user_invocable_label`), 10 from
-  `Library.library_skills_state` (`DEFAULT_SKILL_BROWSE_PAGE_SIZE`, `MAX_
-  SKILL_BROWSE_PAGE`, `SkillEditorState`, `build_skill_editor_state`,
-  `classify_skill_save_error`, `compose_skill_markdown`, `reconcile_
-  skill_allowed_tools`, `skill_allowed_tools_sequence`, `skill_invocation_
-  copy`, `skill_review_identity_line`), 2 from `.skills_screen`
-  (`SkillTrustBootstrapModal`, `SkillTrustPassphraseModal`).
+  `skill_trust_unlock_tooltip`, `skill_user_invocable_label`), 9 of the 10
+  from `Library.library_skills_state` (`DEFAULT_SKILL_BROWSE_PAGE_SIZE`,
+  `MAX_SKILL_BROWSE_PAGE`, `build_skill_editor_state`, `classify_skill_
+  save_error`, `compose_skill_markdown`, `reconcile_skill_allowed_tools`,
+  `skill_allowed_tools_sequence`, `skill_invocation_copy`, `skill_review_
+  identity_line`), 2 from `.skills_screen` (`SkillTrustBootstrapModal`,
+  `SkillTrustPassphraseModal`). **The 1 exception**: `SkillEditorState`
+  (the 10th `Library.library_skills_state` name) is NOT used in the
+  controller at all (`grep -c` returns 0) -- it is live in
+  `library_skills_state.py` (the `UI/Library_Modules` state object, via
+  the `editor_state: SkillEditorState | None` field annotation) and in
+  `Widgets/Library/library_skills_canvas.py` (three signatures), both
+  already-independent imports unrelated to the controller's own move.
+  Removal from `library_screen.py` was still correct either way (0
+  occurrences there beyond the import line); only the blanket "all 27 are
+  live in the controller" claim needed correcting to name the one
+  exception and its real, different, home.
 
 One name deliberately left alone despite a zero-`_SURFACE` check: `skill_
 editor_warning_lines` (`Widgets.Library`) -- confirmed still live via a
@@ -2835,19 +2845,19 @@ All commands run from `.worktrees/library-decomp-foundation`,
    fixture restructuring scales cleanly to script-driven automation once a
    cluster's unbound-fake-self exclusion count crosses roughly two dozen.**
    Skills' 27 unbound-fake-self exclusions (task 2's own census) produced
-   18 separate `SimpleNamespace(...)` call sites needing this exact
+   28 separate `SimpleNamespace(...)` call sites needing this exact
    restructuring in this cleanup task -- large enough that doing it by
    hand, one call site at a time, would have been both slow and
    error-prone (kwargs are not always contiguous within a call). A small,
    generically-written line-oriented script (collect matching kwarg lines
    anywhere inside a `SimpleNamespace(` block regardless of contiguity,
-   re-emit them as one nested kwarg) handled all 18 correctly on the first
+   re-emit them as one nested kwarg) handled all 28 correctly on the first
    pass, verified by `ast.parse` before and a full pytest run after --
    generalizes the collections series' own "write the extraction and
    verification as scripts" lesson (§15) from body-extraction to
    fixture-restructuring, and gives a rough scale threshold (a cluster
    with fewer than ~10 such fixtures is probably still faster by hand; one
-   with ~18, as here, clearly was not).
+   with ~28, as here, clearly was not).
 4. **A stale architecture claim found in one subsystem's controller
    docstring is worth checking for in EVERY prior subsystem's own
    controller, not just fixing locally and moving on.** The search+RAG
