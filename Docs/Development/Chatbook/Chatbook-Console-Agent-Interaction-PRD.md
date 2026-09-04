@@ -20,7 +20,7 @@ Both build on machinery that already ships. The task-list backend is complete; o
 **Already built — do not rebuild.**
 
 - `Agents/session_todo_store.py` (`SessionTodoStore`) and the four agent tools `todo_create` / `todo_update` / `todo_get` / `todo_list` in `Agents/local_tool_provider.py`. Stable IDs, compare-and-swap versioning, a 50-item cap, one-`in_progress` invariant, snapshot persistence across in-app navigation. Governed by ADR-032; hardened in TASK-13216. The only UI is `format_todo_marker` (`Chat/console_agent_bridge.py`), a display-only `☰ Tasks (n in progress):` block appended to the transcript on every mutation.
-- The approval round trip: `ConsoleChatController.request_mcp_approvals` blocks an agent worker thread, marshals a card to the UI, polls at 1s until the user decides or a deadline passes, parks the card with a badge and toast when its session is not the one being viewed, mounts it on visit, and fails it closed on run cancel. Owner-agnostic despite the name. PR #1836 (task-15661) made this machinery safe for a second concurrent round in the same session — queued rounds now wait FIFO instead of overwriting each other — which is the exact case a question raised during a pending approval would hit.
+- The approval round trip: `ConsoleChatController.request_mcp_approvals` blocks an agent worker thread, marshals a card to the UI, polls at 1s until the user decides or a deadline passes, parks the card with a badge and toast when its session is not the one being viewed, mounts it on visit, and fails it closed on run cancel. Owner-agnostic despite the name. PR #1836 (task-15661) made this machinery safe for a second concurrent round *of the same kind* in the same session — queued rounds now wait FIFO instead of overwriting each other. Questions become a fourth kind with the same guarantee among themselves; they do not share a queue with approvals.
 
 **Reference implementations.**
 
@@ -53,14 +53,14 @@ Neither queues questions deep; both handle depth by batching several questions i
 - **U1 — the fork.** The agent must choose between three plausible interpretations of "clean up the imports." It asks; the user picks in two keystrokes; the run continues. Today it guesses, and is wrong a third of the time.
 - **U2 — the glance.** Twenty minutes into a long run, the user looks at the Console to see where things stand. The panel shows four done, one in progress ("Writing the migration"), two pending. Today they scroll back looking for the last `☰` block.
 - **U3 — the other tab.** The user is in the Library when a background session's agent asks. The rail badge lights, a toast fires, and when they return to that session the question is waiting. Existing park semantics; nothing new to learn.
-- **U4 — the walk-away.** The user goes to lunch mid-question. After the timeout the run continues without the answer, tells the model so, and finishes what it can. Nothing hangs.
+- **U4 — the walk-away.** The user goes to lunch mid-question. By default the question simply waits — the run is paused, not hung, and its tool-call clock pauses with it (ADR-067) — and they answer when they are back. A user who would rather the run press on sets a timeout; after it the run continues without the answer and tells the model so.
 - **U5 — the cancel.** The user stops the run while a question is up. The question fails closed; the card clears.
 - **U6 — the fleet.** A sub-agent asks. The card says which one.
 
 ## Assumptions & Dependencies
 
-- Tool calls are bounded by `RunBudget.max_tool_call_seconds = 300`; a question's timeout must stay below it or the wrapper reports a timeout for a card still on screen.
-- Approval, skill-install, and skill-script rounds in the same session share the round-keyed FIFO from PR #1836. A question round joins that queue.
+- ADR-067 (accepted 2026-08-15): blocking human prompts wait **indefinitely by default** (`0` = no deadline), and the per-tool-call clock (`RunBudget.max_tool_call_seconds`, 300s at defaults) **pauses while a human decision is pending** via `use_human_input_wait`. A question is a human prompt and inherits both.
+- PR #1836's round-keyed FIFO is **per kind**: approvals, skill-install, and skill-script each have their own registry, payload map, and card, so two different kinds can already be mounted side by side. Questions get their own kind with the same semantics. Ordering *across* kinds is not provided today and is not claimed here (A10).
 - The Console composer stays live during approvals today (`_console_send_blocked_reason` gates only on readiness, attachments, and empty RAG launches). A8 preserves that.
 
 ## Feature A — `ask_user`
@@ -73,7 +73,7 @@ Neither queues questions deep; both handle depth by batching several questions i
 - **A4 — Keyboard.** `1`–`4` selects within the focused question, `Tab` moves between questions, `Enter` submits, `Esc` returns focus to the composer without dismissing (existing binding). The card never steals focus from someone mid-sentence; the approvals chip's existing focus action covers it.
 - **A5 — Partial submission.** Submit is allowed with unanswered questions; they return `unanswered: true`. Codex allows this; Claude Code's "Other" makes it moot. Forcing every answer is stricter than both.
 - **A6 — Result.** `{"answered": true, "answers": [{"question", "selected": [labels], "other_text", "unanswered"}]}` or `{"answered": false, "reason": "timeout" | "cancelled" | "busy"}`.
-- **A7 — Timeout is auto-continue.** `[console] ask_user_timeout_seconds`, default 240 (safely under the 300s ceiling). On expiry the run proceeds with `answered: false` — the model decides what to do without the answer; the round never fails the run. The card shows the remaining time, using the approval card's existing deadline copy ("Auto-continues in m:ss"). Claude Code offers `never`; the 300s ceiling makes that impossible here, and this PRD says so rather than hiding it.
+- **A7 — Timeout is a user setting; off by default.** `[console] ask_user_timeout_seconds`. **`0` — the default — disables the timeout:** the question waits until it is answered, or the run is stopped or cancelled. This follows ADR-067, which made every other blocking human prompt wait indefinitely by default, and it is safe because the per-call tool clock pauses for the whole wait. A positive value opts into **auto-continue**: on expiry the run proceeds with `answered: false` — the model decides what to do without the answer; the round never fails the run — and the card shows the remaining time using the approval card's existing deadline copy ("Auto-continues in m:ss"). The same key is also the user's off switch for anyone who set a timeout and regrets it. Claude Code's `never` is therefore the default here, not an aspiration.
 - **A8 — Composer stays usable; typing answers.** Matching approvals, the composer is never locked. A message sent while a question is mounted answers it: the text becomes `other_text` for every unanswered question, the round resolves, and the message is not also sent as a turn. Two exceptions: slash commands dispatch normally and leave the question pending; a send with staged attachments or RAG evidence goes out as a normal turn and leaves the question pending — carrying staged context into a tool result is meaningless, and discarding it silently destroys work.
 - **A9 — One question at a time.** One live question round per session. A second `ask_user` — from a sibling sub-agent, or a second call in the same turn — returns `busy` immediately with instruction not to retry; two consecutive `busy` results in one run become a hard refusal so a retry loop cannot drain the turn budget. Depth is expressed by batching up to four questions per call, which is how both references do it.
 - **A10 — Background, cancel, headless.** A question for a session not being viewed parks with the badge and toast and mounts on visit. Run cancel or revocation resolves it `cancelled`. In a run with no UI, the tool is not registered at all — the same posture as the `todo_*` tools and Codex's refusal in exec mode.
@@ -85,7 +85,7 @@ Neither queues questions deep; both handle depth by batching several questions i
 ### Non-Functional Requirements
 
 - No new locks, no new blocking on the UI thread; the round rides the existing machinery.
-- A question and an approval in the same session are both decidable, in FIFO order.
+- A question and an approval in the same session are both decidable, each in its own card. Neither evicts, blocks, or reorders the other; cross-kind ordering is a follow-on, not a requirement here.
 - Every bound in A1 is enforced before anything reaches a widget.
 
 ## Feature B — Persistent task list
@@ -119,12 +119,13 @@ Neither queues questions deep; both handle depth by batching several questions i
 - [ ] AC-A2 A call with 5 questions, or an option list of 1, or a 13-char header, is rejected with an actionable tool error and renders nothing.
 - [ ] AC-A3 Every question shows an "Other" input regardless of the call's options; text entered there returns as `other_text`.
 - [ ] AC-A4 Submitting with one question unanswered returns that question with `unanswered: true` and the others answered.
-- [ ] AC-A5 With `ask_user_timeout_seconds = 2`, an unanswered question resolves `{"answered": false, "reason": "timeout"}` within 3s and the run continues; the card showed a countdown before expiring.
+- [ ] AC-A5 With the default `ask_user_timeout_seconds = 0` and `max_tool_call_seconds` lowered to 2, an unanswered question is still mounted and the run still alive after 5s; the card shows no countdown.
+- [ ] AC-A5b With `ask_user_timeout_seconds = 2`, an unanswered question resolves `{"answered": false, "reason": "timeout"}` within 3s and the run continues; the card showed a countdown before expiring.
 - [ ] AC-A6 Typing a message and sending while a question is mounted resolves it with the text as `other_text` and does not dispatch a user turn; a `/` command sent in the same state dispatches normally and leaves the question mounted; a send with a staged attachment dispatches normally and leaves the question mounted.
 - [ ] AC-A7 A second `ask_user` while one is live returns `busy` in under 100ms; a third consecutive one in the same run is refused.
 - [ ] AC-A8 A question raised for a background session lights the rail badge, fires one toast, and mounts when that session is visited; answering it there resolves the waiting run.
 - [ ] AC-A9 Stopping the run with a question mounted clears the card and the tool returns `cancelled`.
-- [ ] AC-A10 A question and an approval raised for the same session are both decidable; the second waits until the first resolves.
+- [ ] AC-A10 A question and an approval raised for the same session are both decidable, each in its own card; resolving either leaves the other mounted and answerable.
 - [ ] AC-A11 With `[tools] ask_user_enabled = false` the tool is absent from the catalog; in a headless run it is absent regardless of the gate.
 - [ ] AC-A12 After resolve, the transcript carries one marker line per question with its outcome.
 - [ ] AC-A13 A 4-question × 4-option card leaves at least half the transcript's previous height visible.
@@ -164,9 +165,8 @@ Smallest-first. Each milestone is one PR and ships value on its own.
 
 ## Open Questions
 
-1. **`never` timeout.** Claude Code supports it; the 300s tool-call ceiling forbids it here. Is raising the ceiling for asking runs worth it, or is 240s-and-continue acceptable? (This PRD assumes the latter.)
-2. **Sub-agent tasks in the panel.** The store is shared across the fleet by design, so a child's tasks appear alongside the primary agent's. Is per-agent attribution in the panel wanted, or is one merged list right?
-3. **Keep the transcript task marker** once the panel exists (B3 says yes). Is the scrollback record worth the transcript noise?
+1. **Sub-agent tasks in the panel.** The store is shared across the fleet by design, so a child's tasks appear alongside the primary agent's. Is per-agent attribution in the panel wanted, or is one merged list right?
+2. **Keep the transcript task marker** once the panel exists (B3 says yes). Is the scrollback record worth the transcript noise?
 
 ## Risks & Mitigations
 
@@ -185,14 +185,17 @@ Smallest-first. Each milestone is one PR and ships value on its own.
 - `Agents/builtin_tool_gate.py` — the `ask_user` gate entry (hand-listed, like `web_deep_search`).
 - `Docs/User_Guide/console/agent-runs-and-tools.md`.
 
-## Success Metrics
+## Success Signals
 
-- **A:** share of asks answered before timeout (target ≥ 80%); median time-to-answer; asks per run (watch for inflation); `busy` rate near zero.
-- **B:** share of sessions with tasks in which the panel was expanded at least once; collapse rate (high collapse = wrong default height).
+This app has no telemetry pipeline, and this PRD does not add one. The signals below are limited to what existing stores already record; anything else is stated as unmeasured rather than promised.
+
+- **A — derivable from `AgentRuns_DB` today**, because every `ask_user` call and its result is persisted as a tool step: asks per run (watch for inflation), share of asks that resolved `answered: true` versus `timeout`/`cancelled`, and `busy` rate (target: near zero). Time-to-answer is the gap between the tool-call and tool-result step timestamps. One read-only query, no new instrumentation.
+- **B — not measurable without new instrumentation.** Panel expand/collapse has no sink and none is added. If a "did the panel help" signal is wanted, that is a separate, explicitly scoped follow-on.
 
 ## References
 
 - Claude Code `AskUserQuestion` tool contract; `TodoWrite` semantics.
 - Codex `tui/src/bottom_pane/request_user_input/`, `experimental_request_user_input`.
-- ADR-032 (local agent tool permission boundary); TASK-13216 (`SessionTodoStore`); task-15661 / PR #1836 (round-keyed FIFO payloads).
+- ADR-067 (indefinite human approval waits with a pausable per-call clock) — the basis of A7.
+- ADR-032 (local agent tool permission boundary); TASK-13216 (`SessionTodoStore`); task-15661 / PR #1836 (round-keyed FIFO payloads, per kind).
 - `Docs/superpowers/specs/2026-08-19-console-user-interaction-design.md` — the broader program design this PRD is carved from; its follow-on sub-projects are out of scope here.
