@@ -12,6 +12,28 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[web_server]
+# Browser-served Chatbook defaults to loopback and needs no token ceremony there.
+enabled = true
+host = "localhost"
+port = 8000
+title = "tldw chatbook"
+font_size = 12
+debug = false
+# Remote access uses only this dedicated credential, resolved as
+# TLDW_CHATBOOK_WEB_ACCESS_TOKEN -> this field -> OS keyring service
+# "tldw_chatbook_web", account "access_token". Never reuse provider/MCP/API keys.
+access_token = ""
+# For remote use, set the exact HTTPS browser origin and either set both direct
+# TLS files below or put Chatbook behind a TLS reverse proxy whose literal peer
+# address is allowlisted. Forwarded headers from all other peers are ignored.
+public_url = ""
+tls_certificate = ""
+tls_private_key = ""
+trusted_proxy_addresses = []
+# Development only: remote plaintext exposes credentials and conversation data.
+allow_insecure_remote_http = false
+
 [splash_screen]
 # Splash screen configuration for startup animations
 enabled = true  # Enable/disable splash screen

@@ -5201,6 +5201,24 @@ port = 8000  # Port to bind to
 title = "tldw chatbook"  # Title for the web page
 font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
 debug = false  # Enable debug mode for development
+# Remote access is denied unless a dedicated credential resolves in this order:
+# TLDW_CHATBOOK_WEB_ACCESS_TOKEN, this access_token field, then the OS keyring
+# service "tldw_chatbook_web" / account "access_token". Do not reuse an LLM,
+# MCP, or tldw_api credential. Prefer environment or keyring over plaintext TOML.
+access_token = ""
+# Wildcard binds require the exact browser-facing origin. Use https:// here for
+# either direct TLS or an explicitly trusted TLS-terminating reverse proxy.
+public_url = ""
+# Direct TLS: set both files or neither. The private key remains host-local.
+tls_certificate = ""
+tls_private_key = ""
+# Reverse-proxy headers are ignored unless the immediate peer is one of these
+# literal IP addresses. The proxy must terminate HTTPS and overwrite forwarded
+# host, scheme, and client headers rather than appending untrusted values.
+trusted_proxy_addresses = []
+# Emergency development escape hatch only. This exposes terminal/chat/Canvas
+# content and credentials to network observers and emits a prominent warning.
+allow_insecure_remote_http = false
 """
 
 # Resolve the `[transcription] default_provider` placeholder to this platform's
