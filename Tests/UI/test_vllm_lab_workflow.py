@@ -21,6 +21,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmReadinessState,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
@@ -443,3 +444,172 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
         assert "Ready to start" in str(
             view.query_one("#vllm-readiness-state", Label).renderable
         )
+
+
+async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():
+    """A looser value type or copied extras would cross the screen boundary."""
+
+    from tldw_chatbook.UI.Navigation.vllm_handoff import (
+        VllmConsoleIntent,
+        VllmDefaultIntent,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        HandoffValueError,
+        PendingHandoffStore,
+    )
+
+    target = VllmConnectionTarget(
+        provider_key="vllm",
+        api_url="http://127.0.0.1:8000/v1/chat/completions",
+        model_id="chatbook-vllm",
+        runtime_owner="chatbook",
+        generation=7,
+        credential_source="environment",
+    )
+
+    assert VllmConsoleIntent.from_target(target) == VllmConsoleIntent(
+        api_url="http://127.0.0.1:8000/v1/chat/completions",
+        model_id="chatbook-vllm",
+        generation=7,
+    )
+    assert VllmDefaultIntent.from_target(target) == VllmDefaultIntent(
+        api_url="http://127.0.0.1:8000/v1/chat/completions",
+        model_id="chatbook-vllm",
+        generation=7,
+    )
+    assert set(VllmConsoleIntent.__slots__) == {"api_url", "model_id", "generation"}
+    assert set(VllmDefaultIntent.__slots__) == {"api_url", "model_id", "generation"}
+
+    for intent_type in (VllmConsoleIntent, VllmDefaultIntent):
+        for invalid in (
+            {"api_url": "http://user:secret@127.0.0.1:8000/v1", "generation": 7},
+            {"api_url": "http://127.0.0.1:8000/v1?secret=yes", "generation": 7},
+            {"api_url": "http://127.0.0.1:8000/v1#secret", "generation": 7},
+            {"model_id": "/private/model", "generation": 7},
+            {"generation": True},
+        ):
+            values = {
+                "api_url": "http://127.0.0.1:8000/v1/chat/completions",
+                "model_id": "chatbook-vllm",
+                "generation": 7,
+            }
+            values.update(invalid)
+            with pytest.raises((TypeError, ValueError)):
+                intent_type(**values)
+
+    mutable_extra = type(
+        "MutableVllmIntent",
+        (),
+        {
+            "api_url": target.api_url,
+            "model_id": target.model_id,
+            "generation": target.generation,
+            "extras": [],
+        },
+    )()
+    with pytest.raises(HandoffValueError):
+        PendingHandoffStore().stage(
+            HandoffChannel.VLLM_CONSOLE,
+            mutable_extra,
+        )
+
+
+async def test_handoff_buttons_enable_only_for_current_verified_target():
+    """Stale readiness must never leave either cross-screen action enabled."""
+
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        use = app.query_one("#vllm-use-in-console-button", Button)
+        default = app.query_one("#vllm-make-default-button", Button)
+        assert use.disabled and default.disabled
+
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        owner = VllmConnectionOwner()
+        token = owner.begin(draft, runtime_owner="chatbook")
+        _bind_local_claim(owner, token)
+        assert owner.settle(token, _ready_result(token))
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.READY,
+            preflight=None,
+            connection=owner.snapshot(),
+        )
+        assert not use.disabled and not default.disabled
+
+        owner.invalidate("target_changed")
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            connection=owner.snapshot(),
+        )
+        assert use.disabled and default.disabled
+
+
+async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation(
+    monkeypatch,
+):
+    """A stale target or failed dispatch must not survive as a pending handoff."""
+
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        _bind_local_claim(screen._vllm_owner, token)
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        seen: list[NavigateToScreen] = []
+        original_post_message = screen.post_message
+        monkeypatch.setattr(
+            screen,
+            "post_message",
+            lambda message: seen.append(message) or True,
+        )
+
+        screen._on_vllm_use_in_console_requested(
+            VllmSetupView.UseInConsoleRequested()
+        )
+        screen._on_vllm_make_default_requested(VllmSetupView.MakeDefaultRequested())
+
+        assert [(message.screen_name, message.screen_context) for message in seen] == [
+            (TAB_CHAT, {}),
+            (
+                TAB_SETTINGS,
+                {"category": "providers-models"},
+            ),
+        ]
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+
+        screen._vllm_owner.invalidate("target_changed")
+        app.pending_handoffs.clear_pending(HandoffChannel.VLLM_CONSOLE)
+        screen._on_vllm_use_in_console_requested(
+            VllmSetupView.UseInConsoleRequested()
+        )
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        _bind_local_claim(screen._vllm_owner, token)
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        monkeypatch.setattr(screen, "post_message", lambda _message: False)
+        screen._on_vllm_use_in_console_requested(
+            VllmSetupView.UseInConsoleRequested()
+        )
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        monkeypatch.setattr(screen, "post_message", original_post_message)

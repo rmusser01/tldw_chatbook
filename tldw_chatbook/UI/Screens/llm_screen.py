@@ -20,6 +20,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 from textual.worker import Worker, get_current_worker
 
+from ...Constants import TAB_CHAT, TAB_SETTINGS
 from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from ...Model_Artifacts.remote_huggingface import (
     RemoteGGUFCandidate,
@@ -62,6 +63,12 @@ from ..Navigation.pending_handoff_store import (
     HandoffClaim,
     HandoffValueError,
     PendingHandoffStore,
+)
+from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    VllmDefaultIntent,
+    owner_has_current_intent,
 )
 from ..Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
@@ -284,6 +291,7 @@ class LLMScreen(LabScreen):
             else None
         )
         self._vllm_body_mounts = 0
+        self._vllm_handoff_departure_generation: int | None = None
         self._vllm_probe_window_seconds = 30.0
         self._model_install_active = False
         self._model_install_phase: str | None = None
@@ -2530,6 +2538,7 @@ class LLMScreen(LabScreen):
             VllmReadinessState.LAUNCHING: "#vllm-stop-button",
             VllmReadinessState.LOADING_MODEL: "#vllm-stop-button",
             VllmReadinessState.NEEDS_ATTENTION: "#vllm-retry-button",
+            VllmReadinessState.READY: "#vllm-use-in-console-button",
         }.get(state)
         if focus_id is not None:
             try:
@@ -2542,11 +2551,83 @@ class LLMScreen(LabScreen):
         """Invalidate every semantic target edit without stealing focus."""
 
         event.stop()
+        self._vllm_handoff_departure_generation = None
         self._vllm_draft = event.draft
         self._vllm_preflight = None
         self._vllm_owner.invalidate("target_changed")
         self._cancel_vllm_workers()
         self._apply_vllm_view_state(focus=False)
+
+    def _stage_vllm_handoff(
+        self,
+        *,
+        channel: HandoffChannel,
+        intent_type: type[VllmConsoleIntent] | type[VllmDefaultIntent],
+        route: str,
+        context: dict[str, object] | None = None,
+    ) -> bool:
+        """Stage the exact current target and dispatch one normal navigation."""
+
+        if not self.is_attached:
+            return False
+        snapshot = self._vllm_owner.snapshot()
+        target = snapshot.target
+        if target is None:
+            return False
+        try:
+            intent = intent_type.from_target(target)
+        except (TypeError, ValueError):
+            return False
+        if not owner_has_current_intent(self._vllm_owner, intent):
+            return False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        try:
+            revision = store.stage(channel, intent)
+        except (HandoffValueError, RuntimeError, TypeError, ValueError):
+            return False
+        if not owner_has_current_intent(self._vllm_owner, intent):
+            store.discard_pending_exact(channel, revision, intent)
+            return False
+        self._vllm_handoff_departure_generation = intent.generation
+        try:
+            posted = self.post_message(NavigateToScreen(route, context))
+        except BaseException:
+            posted = False
+        if posted:
+            return True
+        self._vllm_handoff_departure_generation = None
+        store.discard_pending_exact(channel, revision, intent)
+        return False
+
+    @on(VllmSetupView.UseInConsoleRequested)
+    def _on_vllm_use_in_console_requested(
+        self, event: VllmSetupView.UseInConsoleRequested
+    ) -> None:
+        """Offer the current verified target to Console for session adoption."""
+
+        event.stop()
+        self._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+
+    @on(VllmSetupView.MakeDefaultRequested)
+    def _on_vllm_make_default_requested(
+        self, event: VllmSetupView.MakeDefaultRequested
+    ) -> None:
+        """Offer the current verified target to Settings as an unsaved draft."""
+
+        event.stop()
+        self._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_DEFAULT,
+            intent_type=VllmDefaultIntent,
+            route=TAB_SETTINGS,
+            context={"category": "providers-models"},
+        )
 
     @on(VllmSetupView.CheckRequested)
     def _on_vllm_check_requested(self, event: VllmSetupView.CheckRequested) -> None:
@@ -2969,7 +3050,20 @@ class LLMScreen(LabScreen):
     def on_unmount(self) -> None:
         """Cancel screen-owned work and release live verifier ownership."""
 
-        self._vllm_owner.invalidate("screen_detached")
+        preserve_generation = self._vllm_handoff_departure_generation
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        preserve_handoff = bool(
+            preserve_generation is not None
+            and type(store) is PendingHandoffStore
+            and self._vllm_owner.snapshot().generation == preserve_generation
+            and (
+                store.has_pending(HandoffChannel.VLLM_CONSOLE)
+                or store.has_pending(HandoffChannel.VLLM_DEFAULT)
+            )
+        )
+        self._vllm_handoff_departure_generation = None
+        if not preserve_handoff:
+            self._vllm_owner.invalidate("screen_detached")
         self._cancel_vllm_workers()
 
         operation = self._audio_cpp_model_install_operation

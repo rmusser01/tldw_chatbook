@@ -57,6 +57,10 @@ from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
+from ..Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    owner_has_current_intent,
+)
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 
@@ -7429,6 +7433,92 @@ class ChatScreen(BaseAppScreen):
         self.app_instance.pending_handoffs.acknowledge(claim)
         return True
 
+    def consume_pending_vllm_console_intent(self) -> bool:
+        """Apply one current verified vLLM target to the active session only."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        claim = store.claim(HandoffChannel.VLLM_CONSOLE)
+        if claim is None:
+            return False
+        session_store = None
+        session_id = None
+        current = None
+        replaced = False
+        try:
+            intent = claim.value
+            if type(intent) is not VllmConsoleIntent:
+                raise TypeError("vLLM Console handoff was not exact")
+            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            if not owner_has_current_intent(owner, intent):
+                raise ValueError("vLLM Console handoff is stale")
+            if not self.is_attached:
+                raise RuntimeError("Console is detached")
+            session_store = self._ensure_console_chat_store()
+            current = self._session._ensure_active_console_session_settings()
+            session_id = session_store.active_session_id
+            if session_id is None:
+                raise RuntimeError("Console active session is unavailable")
+            next_settings = replace(
+                current,
+                provider="vllm",
+                model=intent.model_id,
+                base_url=intent.api_url,
+                source="user",
+            )
+            errors = validate_console_session_settings(
+                next_settings,
+                app_config=self._provider_readiness_app_config(),
+            )
+            if errors:
+                raise ValueError("vLLM Console session settings are invalid")
+            self._session._replace_active_console_session_settings(next_settings)
+            replaced = True
+            if (
+                not self.is_attached
+                or session_store.active_session_id != session_id
+                or not owner_has_current_intent(owner, intent)
+                or not store.acknowledge_current(claim)
+            ):
+                raise RuntimeError("vLLM Console handoff changed during adoption")
+        except BaseException as error:
+            if replaced and session_store is not None and session_id is not None:
+                try:
+                    session_store.replace_session_settings(session_id, current)
+                    if session_store.active_session_id == session_id:
+                        self._sync_console_chat_core_state()
+                        self._sync_console_settings_summary()
+                except BaseException:
+                    logger.warning(
+                        "vLLM Console handoff rollback failed "
+                        "(revision={}, exception_category={})",
+                        claim.revision,
+                        type(error).__name__,
+                    )
+            try:
+                store.release(claim)
+            except BaseException:
+                pass
+            if isinstance(
+                error,
+                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
+            ):
+                raise
+            logger.warning(
+                "vLLM Console handoff will retry "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(error).__name__,
+            )
+            return False
+        self.app_instance.notify(
+            "Using the verified vLLM target for this Console session only.",
+            severity="information",
+        )
+        return True
+
     def current_console_provider_for_command(self) -> str | None:
         """Return the active session provider without creating a session."""
         settings = self._session._active_console_session_settings()
@@ -14467,6 +14557,7 @@ class ChatScreen(BaseAppScreen):
             self.set_timer(0.15, self._consume_pending_console_prompt_insert)
             self.set_timer(0.15, self.consume_pending_console_provider_intent)
             self.set_timer(0.15, self._consume_pending_conversation_settings_return)
+            self.set_timer(0.15, self.consume_pending_vllm_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the

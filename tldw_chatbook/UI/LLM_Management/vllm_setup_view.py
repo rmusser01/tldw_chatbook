@@ -41,6 +41,12 @@ class VllmSetupView(VerticalScroll):
     class RetryRequested(Message):
         """Request a new generation of readiness evidence."""
 
+    class UseInConsoleRequested(Message):
+        """Request session-only adoption of the current verified target."""
+
+    class MakeDefaultRequested(Message):
+        """Request Settings prefill for the current verified target."""
+
     class LocalDirectoryBrowseRequested(Message):
         """Request a local model-directory picker without exposing a path globally."""
 
@@ -131,6 +137,21 @@ class VllmSetupView(VerticalScroll):
             title="Activity details", id="vllm-activity-details", collapsed=True
         ):
             yield Label("No activity yet.", id="vllm-activity-events")
+        with Horizontal(classes="vllm-action-bar"):
+            yield Button(
+                "Use in Console",
+                id="vllm-use-in-console-button",
+                disabled=True,
+            )
+            yield Button(
+                "Make default for new chats",
+                id="vllm-make-default-button",
+                disabled=True,
+            )
+        yield Label(
+            "Session only · restart uses your saved provider endpoint.",
+            id="vllm-console-scope-copy",
+        )
         yield Label("Advanced options", classes="section_label")
         yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
 
@@ -261,9 +282,27 @@ class VllmSetupView(VerticalScroll):
             start = self.query_one("#vllm-start-button", Button)
             stop = self.query_one("#vllm-stop-button", Button)
             retry = self.query_one("#vllm-retry-button", Button)
+            use_in_console = self.query_one("#vllm-use-in-console-button", Button)
+            make_default = self.query_one("#vllm-make-default-button", Button)
             start.disabled = not (local and is_current_success)
             stop.disabled = not self._runtime_active
             retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
+            target = self._connection.target if self._connection is not None else None
+            token = (
+                self._connection.current_token
+                if self._connection is not None
+                else None
+            )
+            current_target = bool(
+                self._state is VllmReadinessState.READY
+                and self._connection is not None
+                and self._connection.state is VllmReadinessState.READY
+                and target is not None
+                and token is not None
+                and target.generation == token.generation
+            )
+            use_in_console.disabled = not current_target
+            make_default.disabled = not current_target
             self._render_readiness()
             blocker = self.query_one("#vllm-start-blocker", Label)
             if self._preflight and self._preflight.issues:
@@ -402,3 +441,7 @@ class VllmSetupView(VerticalScroll):
                 self.post_message(self.StopRequested())
             case "vllm-retry-button":
                 self.post_message(self.RetryRequested())
+            case "vllm-use-in-console-button":
+                self.post_message(self.UseInConsoleRequested())
+            case "vllm-make-default-button":
+                self.post_message(self.MakeDefaultRequested())

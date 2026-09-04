@@ -1,5 +1,6 @@
 import asyncio
 import builtins
+import copy
 from dataclasses import FrozenInstanceError
 import inspect
 from types import SimpleNamespace
@@ -1751,6 +1752,30 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
     assert readiness.label == "Unknown"
     assert readiness.blocker == "provider_unsupported"
     assert "Base URL must be a valid http(s) URL." in errors
+
+
+def test_vllm_session_validation_preserves_a_verified_different_endpoint() -> None:
+    """Session adoption must not rebase its explicit target from saved config."""
+
+    app_config = {
+        "api_settings": {
+            "vllm": {
+                "api_url": "http://127.0.0.1:9098/v1/chat/completions",
+                "model": "saved-model",
+            }
+        }
+    }
+    before = copy.deepcopy(app_config)
+    settings = ConsoleSessionSettings(
+        provider="vllm",
+        model="verified-model",
+        base_url="http://127.0.0.1:8000/v1/chat/completions",
+        source="user",
+    )
+
+    assert validate_console_session_settings(settings, app_config=app_config) == []
+    assert settings.base_url == "http://127.0.0.1:8000/v1/chat/completions"
+    assert app_config == before
 
 
 def test_readiness_labels_cover_missing_key_ready_and_unknown() -> None:

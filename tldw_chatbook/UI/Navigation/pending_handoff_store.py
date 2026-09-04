@@ -23,6 +23,7 @@ from .audio_cpp_model_handoff import (
     AudioCppModelLibraryResult,
 )
 from .conversation_settings_navigation import ConversationSettingsReturnIntent
+from .vllm_handoff import VllmConsoleIntent, VllmDefaultIntent
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -102,6 +103,8 @@ class HandoffChannel(StrEnum):
     #: same channel for wake delivery).
     CONSOLE_FLEET_COMPLETION = "console_fleet_completion"
     CONSOLE_FIRST_CHAT = "console_first_chat"
+    VLLM_CONSOLE = "vllm_console"
+    VLLM_DEFAULT = "vllm_default"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
@@ -552,6 +555,22 @@ class PendingHandoffStore:
                 settings_revision=value.settings_revision,
                 active_view=value.active_view,
                 focus_control_id=value.focus_control_id,
+            )
+        if channel is HandoffChannel.VLLM_CONSOLE:
+            if type(value) is not VllmConsoleIntent:
+                raise TypeError("vLLM Console handoff must be exact")
+            return VllmConsoleIntent(
+                api_url=value.api_url,
+                model_id=value.model_id,
+                generation=value.generation,
+            )
+        if channel is HandoffChannel.VLLM_DEFAULT:
+            if type(value) is not VllmDefaultIntent:
+                raise TypeError("vLLM Settings handoff must be exact")
+            return VllmDefaultIntent(
+                api_url=value.api_url,
+                model_id=value.model_id,
+                generation=value.generation,
             )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):

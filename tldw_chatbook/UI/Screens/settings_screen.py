@@ -76,7 +76,11 @@ from ...Chat.console_roleplay_identity import (
 )
 from ...Chat.console_rail_state import normalize_console_rail_layout_scope
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
-from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
+from ...Chat.console_provider_endpoints import (
+    URL_BASED_PROVIDER_KEYS,
+    generic_endpoint_differs,
+    unsaved_endpoint_copy,
+)
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -420,6 +424,10 @@ from ..Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from ...Constants import TAB_CHAT
+from ..Navigation.vllm_handoff import (
+    VllmDefaultIntent,
+    owner_has_current_intent,
+)
 
 if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
@@ -2619,6 +2627,8 @@ class SettingsScreen(BaseAppScreen):
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
+        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
+        self._vllm_default_before_draft: SettingsDraft | None = None
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
@@ -3569,6 +3579,7 @@ class SettingsScreen(BaseAppScreen):
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
+        self.call_after_refresh(self._consume_pending_vllm_default_intent)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
@@ -3578,6 +3589,7 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence any late Model Library review before this screen is replaced."""
 
+        self._rollback_vllm_default_intent()
         self._audio_cpp_result_cancellation.set()
         try:
             self._retry_audio_cpp_staged_request_cleanup()
@@ -11324,6 +11336,147 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
         self._update_provider_evidence_for_edit(key, value)
+
+    def _consume_pending_vllm_default_intent(self) -> bool:
+        """Stage one current verified target in Providers without saving it."""
+
+        if self._vllm_default_claim is not None:
+            return False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+        if claim is None:
+            return False
+        try:
+            intent = claim.value
+            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            if type(intent) is not VllmDefaultIntent:
+                raise TypeError("vLLM Settings handoff was not exact")
+            if not owner_has_current_intent(owner, intent):
+                raise ValueError("vLLM Settings handoff is stale")
+            if (
+                not self.is_mounted
+                or self._active_category_id()
+                is not SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                raise RuntimeError("Providers Settings is not mounted")
+            before = self._provider_draft()
+            self._vllm_default_before_draft = copy.deepcopy(before)
+            self._vllm_default_claim = cast(
+                HandoffClaim[VllmDefaultIntent], claim
+            )
+            self._stage_provider_value("provider", "vllm")
+            self._stage_provider_value("model", intent.model_id)
+            self._stage_provider_value("endpoint", intent.api_url)
+            self._sync_provider_manual_widget("vllm")
+            model_input = self.query_one("#settings-model-value", Input)
+            endpoint_input = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            )
+            with model_input.prevent(Input.Changed):
+                model_input.value = intent.model_id
+            with endpoint_input.prevent(Input.Changed):
+                endpoint_input.value = intent.api_url
+            endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
+            self._sync_provider_credential_widget("vllm")
+            self._sync_provider_model_profile_widgets("vllm", intent.model_id)
+            provider_settings = self._provider_config("vllm")
+            if generic_endpoint_differs(intent.api_url, provider_settings):
+                self._provider_save_result = unsaved_endpoint_copy(
+                    intent.api_url, provider_settings
+                )
+            else:
+                self._provider_save_result = (
+                    "Verified vLLM target staged. Review it, then choose Save "
+                    "to make it the default for new chats."
+                )
+            self._set_static_text(
+                "#settings-provider-save-result", self._provider_save_result
+            )
+            self._update_provider_dynamic_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+            self.call_after_refresh(
+                self._acknowledge_vllm_default_intent,
+                claim,
+                intent,
+            )
+            return True
+        except BaseException as error:
+            self._rollback_vllm_default_intent(claim=claim)
+            if isinstance(
+                error,
+                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
+            ):
+                raise
+            logger.warning(
+                "vLLM Settings handoff will retry "
+                "(channel=%s, revision=%s, exception_category=%s)",
+                claim.channel.value,
+                claim.revision,
+                type(error).__name__,
+            )
+            return False
+
+    def _acknowledge_vllm_default_intent(
+        self,
+        claim: HandoffClaim[VllmDefaultIntent],
+        intent: VllmDefaultIntent,
+    ) -> None:
+        """Acknowledge only after the staged draft and widgets reached a paint."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        draft = self._provider_draft()
+        try:
+            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            if (
+                type(store) is not PendingHandoffStore
+                or self._vllm_default_claim is not claim
+                or not self.is_mounted
+                or not owner_has_current_intent(owner, intent)
+                or draft is None
+                or draft.values.get("provider") != "vllm"
+                or draft.values.get("model") != intent.model_id
+                or draft.values.get("endpoint") != intent.api_url
+                or self.query_one("#settings-model-value", Input).value
+                != intent.model_id
+                or self.query_one("#settings-provider-endpoint-value", Input).value
+                != intent.api_url
+                or not store.acknowledge_current(claim)
+            ):
+                raise RuntimeError("vLLM Settings handoff changed before render")
+        except BaseException:
+            self._rollback_vllm_default_intent(claim=claim)
+            return
+        self._vllm_default_claim = None
+        self._vllm_default_before_draft = None
+
+    def _rollback_vllm_default_intent(
+        self,
+        *,
+        claim: HandoffClaim[VllmDefaultIntent] | None = None,
+    ) -> None:
+        """Restore the prefill draft and release only this exact claim."""
+
+        current_claim = self._vllm_default_claim or claim
+        if current_claim is None:
+            return
+        before = self._vllm_default_before_draft
+        if before is None:
+            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+        else:
+            self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = before
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is PendingHandoffStore:
+            try:
+                store.release(current_claim)
+            except BaseException:
+                pass
+        self._vllm_default_claim = None
+        self._vllm_default_before_draft = None
+        if self.is_mounted:
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
         store = getattr(self, "_provider_test_evidence_store", None)
