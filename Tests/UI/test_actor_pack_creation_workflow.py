@@ -21,7 +21,7 @@ from textual.widgets._select import SelectCurrent
 from Tests.UI.test_personas_workbench import (
     PersonasTestApp,
     StyledPersonasTestApp,
-    _mounted,
+    _mounted as _workbench_mounted,
     stub_characters as _stub_characters,  # noqa: F401 - registers fixture
     stub_scope_service as _stub_scope_service,  # noqa: F401 - registers fixture
 )
@@ -36,6 +36,15 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 
 
 pytestmark = pytest.mark.asyncio
+
+
+async def _mounted(pilot):
+    """Return a Personas screen after its initial loading overlay has settled."""
+
+    screen = await _workbench_mounted(pilot)
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    return screen
 
 
 def _portrait_bytes(color: tuple[int, int, int, int] = (20, 40, 60, 255)) -> bytes:
@@ -192,7 +201,7 @@ async def test_server_persona_actor_pack_explains_local_copy_requirement(
         await screen._begin_create_actor_pack()
 
         assert notifications[-1] == ("Save a local copy first", "warning", None)
-        assert screen.query_one("#ccp-persona-editor-view").display is False
+        assert not list(screen.query("#ccp-persona-editor-view"))
 
 
 @pytest.mark.parametrize("size", [(80, 24), (160, 48)])
@@ -232,12 +241,16 @@ async def test_character_actor_pack_save_uses_atomic_creation_service_once(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
+        assert screen._actor_pack_session is not None
+        assert screen._edit_mode == "create"
         screen.query_one("#personas-char-editor-name", Input).value = "Pack Hero"
         screen.query_one(
             "#personas-char-editor-first-message", TextArea
         ).text = "Welcome"
         editor.set_avatar_image(_character_rows()[0]["image"])
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -272,7 +285,9 @@ async def test_persona_actor_pack_save_pins_selected_portrait_identity(
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         screen.query_one("#personas-editor-name", Input).value = "Pack Guide"
+        await pilot.pause()
         await pilot.click("#personas-editor-save")
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -318,9 +333,11 @@ async def test_navigation_signals_and_drains_pack_creation_before_continuing(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Cancelled"
         editor.set_avatar_image(_character_rows()[0]["image"])
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         for _ in range(100):
             if started.is_set():
@@ -354,6 +371,7 @@ async def test_declined_dirty_navigation_preserves_actor_pack_draft(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         session = screen._actor_pack_session
         screen.state.has_unsaved_changes = True
 
@@ -386,6 +404,7 @@ async def test_stale_editor_session_is_rejected_before_pack_service_call(
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one("#ccp-persona-editor-view")
         editor.load_persona({}, runtime_source="local")
         screen.query_one("#personas-editor-name", Input).value = "Stale"
@@ -435,9 +454,11 @@ async def test_stale_pack_result_does_not_reconcile_into_newer_editor_authority(
         refresh = AsyncMock()
         screen.character_handler.refresh_character_list = refresh
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Stale result"
         editor.set_avatar_image(_character_rows()[0]["image"])
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         for _ in range(100):
             if started.is_set():
@@ -488,7 +509,7 @@ async def test_runtime_source_change_fences_inflight_portrait_inventory(
         await opening
 
         assert screen._actor_pack_session is None
-        assert screen.query_one("#ccp-persona-editor-view").display is False
+        assert not list(screen.query("#ccp-persona-editor-view"))
 
 
 async def test_cancel_signals_and_drains_owned_pack_operation(
@@ -511,9 +532,11 @@ async def test_cancel_signals_and_drains_owned_pack_operation(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Cancel me"
         editor.set_avatar_image(_character_rows()[0]["image"])
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         for _ in range(100):
             if started.is_set():
@@ -548,11 +571,13 @@ async def test_pack_error_copy_is_plain_text_and_path_free(
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Private"
         editor.set_avatar_image(_character_rows()[0]["image"])
         status = screen.query_one("#personas-char-editor-pack-status", Static)
         assert status.region.width > 0 and status.region.height > 0
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         await app.workers.wait_for_complete()
 
@@ -586,9 +611,11 @@ async def test_portrait_change_during_commit_signals_authority_and_skips_reconci
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-library-new-actor-pack")
+        await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Changing"
         editor.set_avatar_image(_portrait_bytes())
+        await pilot.pause()
         await pilot.click("#personas-char-editor-save")
         for _ in range(100):
             if started.is_set():

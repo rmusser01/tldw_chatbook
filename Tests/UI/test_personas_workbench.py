@@ -927,6 +927,9 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
             assert editor.display is True
+            assert not list(screen.query("#ccp-persona-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
             selected_name = str(
                 screen.query_one("#personas-selected-name", Static).renderable
             )
@@ -1346,6 +1349,9 @@ class TestPersonasMode:
             # read-only card).
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
+            assert not list(screen.query("#ccp-character-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
 
     async def test_profile_save_refresh_failure_updates_purpose_line_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -6871,7 +6877,7 @@ class TestServerCharacterSourceIsolation:
             save_worker = Mock()
             screen._full_character_record = full_record
             screen._save_character_worker = save_worker
-            screen._handle_edit_requested(EditCharacterRequested("7"))
+            await screen._handle_edit_requested(EditCharacterRequested("7"))
             screen._handle_save_requested(
                 CharacterSaveRequested({"name": "Must stay remote"})
             )
