@@ -5477,6 +5477,99 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
         db.close_connection()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_run_uses_canvas", [False, True])
+async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
+    tmp_path,
+    failed_run_uses_canvas,
+):
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-retry-{failed_run_uses_canvas}.sqlite",
+        "canvas-retry",
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    bound_runs = []
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        bound_runs.append((coordinator, run_id))
+        attempt = len(bound_runs)
+        if failed_run_uses_canvas:
+            with use_run_id(run_id), use_tool_call_id("retry-canvas-call"):
+                invoked = provider.invoke(
+                    "canvas:canvas_create",
+                    {"title": f"Attempt {attempt}", "html": f"<p>{attempt}</p>"},
+                )
+            assert invoked.ok is True
+        status = RUN_ERROR if attempt == 1 else RUN_DONE
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=status,
+        )
+        return run_id, RunOutcome(
+            status=status,
+            steps=[],
+            final_text="" if failed_run_uses_canvas else "retry recovered",
+        )
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = _arm_session(store)
+        first = await controller.submit_draft("retry this Canvas turn")
+        assistant = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+
+        assert first.accepted is True
+        assert assistant.status == "failed"
+        retried = await controller.retry_message(assistant.id)
+
+        assert retried.accepted is True
+        assert len(bound_runs) == 2
+        assert bound_runs[0][1] != bound_runs[1][1]
+        assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+        durable_assistant = store.get_message(assistant.id)
+        rows = db.execute_query(
+            "SELECT html, origin_message_id FROM canvas_revisions ORDER BY sequence"
+        ).fetchall()
+        if failed_run_uses_canvas:
+            assert [row["html"] for row in rows] == ["<p>2</p>"]
+            assert rows[0]["origin_message_id"] == (
+                durable_assistant.persisted_message_id
+            )
+            metadata_json = db.get_message_by_id(
+                durable_assistant.persisted_message_id
+            )["metadata_json"]
+            assert "<p>1</p>" not in metadata_json
+            assert "<p>2</p>" not in metadata_json
+        else:
+            assert rows == []
+        assert bound_runs[0][0].finish_assistant_run(
+            assistant.id,
+            actual_run_id=bound_runs[0][1],
+            terminal_status=RUN_ERROR,
+        ) is None
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
 class _SpyAgentBridge:
     """Records calls and refuses to be used -- for asserting the agent
     bridge is never invoked on a character session's send (task-427)."""

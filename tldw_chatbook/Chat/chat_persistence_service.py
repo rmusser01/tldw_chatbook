@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     List,
     Mapping,
@@ -2291,6 +2292,71 @@ class ChatPersistenceService:
             usage_json=usage_json,
             expected_version=expected_version,
         )
+
+    def replace_assistant_generation_projection_with_contributions(
+        self,
+        *,
+        native_message_id: str,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        metadata_json: str | None,
+        contributions: Sequence[ConsolePromotionTransactionContribution],
+        on_durable_commit: Callable[[], object] | None = None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Replace one generation and append exact contributions atomically."""
+
+        def write_contributions(cursor: Any) -> None:
+            row = cursor.execute(
+                "SELECT conversation_id FROM messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Durable assistant owner is unavailable.")
+            conversation_id = str(row["conversation_id"])
+            message_ids = MappingProxyType(
+                {
+                    native_message_id: message_id,
+                    message_id: message_id,
+                    "assistant": message_id,
+                }
+            )
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                for contribution in contributions:
+                    if isinstance(
+                        contribution, ConsoleExactNativeIdTransactionContribution
+                    ):
+                        contribution.write_exact(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            native_message_ids=message_ids,
+                        )
+                    else:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+
+        committed_version = self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
+            metadata_json=metadata_json,
+            update_metadata=metadata_json is not None,
+            transaction_callback=write_contributions,
+        )
+        if on_durable_commit is not None:
+            on_durable_commit()
+        return committed_version
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
         """Persist a message's normalized usage WITHOUT touching sync metadata.

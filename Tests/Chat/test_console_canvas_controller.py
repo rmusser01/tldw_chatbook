@@ -567,6 +567,80 @@ def test_temporary_branch_switching_resolves_each_reachable_head() -> None:
     assert right.revision.parent_revision_id == root.revision.revision_id
 
 
+def test_production_temporary_scope_never_queries_nonexistent_durable_owner(
+    tmp_path,
+) -> None:
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "temporary-production-scope.sqlite", "temp")
+    try:
+        controller = ConsoleCanvasController(durable_service=CanvasService(db))
+        controller.activate_session(SESSION_ID)
+        run = controller.register_run(
+            _scope(), assistant_message_id=ASSISTANT_ID, temporary=True
+        )
+
+        assert run.list_canvases(_scope()) == ()
+        with pytest.raises(RuntimeError, match="canvas_base_unavailable"):
+            run.read_canvas(_scope(), "11111111-1111-4111-8111-111111111111")
+        with pytest.raises(RuntimeError, match="canvas_base_unavailable"):
+            run.update_canvas(
+                _scope(),
+                tool_call_id="missing-update",
+                canvas_id="11111111-1111-4111-8111-111111111111",
+                expected_parent_revision_id=(
+                    "22222222-2222-4222-8222-222222222222"
+                ),
+                html="<p>must not stage</p>",
+            )
+    finally:
+        db.close_connection()
+
+
+def test_temporary_sequence_ignores_other_committed_canvas_rows() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+
+    def commit_create(run_id: str, assistant_id: str, title: str):
+        scope = _scope(
+            run_id=run_id,
+            active_message_ids=(assistant_id,),
+        )
+        controller.register_run(scope, assistant_message_id=assistant_id, temporary=True)
+        created = controller.create_canvas(
+            scope,
+            tool_call_id=f"create-{run_id}",
+            title=title,
+            html=f"<p>{title}</p>",
+        )
+        controller.finish_run(run_id, "done")
+        controller.confirm_settlement(run_id)
+        return created
+
+    first = commit_create("run-a", "assistant-a", "A")
+    commit_create("run-b", "assistant-b", "B")
+    update_scope = _scope(
+        run_id="run-a-update",
+        active_message_ids=("assistant-a", "user-next", "assistant-a-update"),
+        selected_canvas_id=first.revision.canvas_id,
+        selected_revision_id=first.revision.revision_id,
+    )
+    controller.register_run(
+        update_scope, assistant_message_id="assistant-a-update", temporary=True
+    )
+
+    updated = controller.update_canvas(
+        update_scope,
+        tool_call_id="update-a",
+        canvas_id=first.revision.canvas_id,
+        expected_parent_revision_id=first.revision.revision_id,
+        html="<p>A2</p>",
+    )
+
+    assert updated.revision.sequence == 2
+
+
 def test_two_open_runs_cannot_mutate_the_same_durable_parent() -> None:
     controller = _controller()
     created = controller.create_canvas(
@@ -714,10 +788,36 @@ def test_promotion_remaps_card_and_revision_origins_together(tmp_path) -> None:
         controller.confirm_exact_settlement(settlement)
 
         conversation_id = store.promote_ephemeral_session(session.id)
-        durable_id = store._message_or_raise(assistant.id).persisted_message_id
+        promoted = store._message_or_raise(assistant.id)
+        durable_id = promoted.persisted_message_id
         assert durable_id is not None
+        assert promoted.metadata.canvas_cards[0].origin.message_id == durable_id
+        store.set_message_feedback(assistant.id, "up")
         raw = db.get_message_by_id(durable_id)["metadata_json"]
-        hydrated = MessageMetadata.from_json(raw)
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            console_messages_from_conversation_tree,
+        )
+
+        tree = ChatConversationService(db).get_conversation_tree(
+            conversation_id, root_limit=100, depth_cap=100
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restarted_store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=ConsoleCanvasController(),
+        )
+        restarted = restarted_store.restore_persisted_session(
+            title="Restarted Canvas",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=durable_id,
+        )
+        restarted_message = restarted_store.messages_for_session(restarted.id)[0]
+        hydrated = restarted_message.metadata
         revision_origin = (
             db.get_connection()
             .execute(
@@ -728,6 +828,7 @@ def test_promotion_remaps_card_and_revision_origins_together(tmp_path) -> None:
         )
 
         assert conversation_id is not None
+        assert hydrated is not None
         assert hydrated.canvas_cards[0].origin.message_id == durable_id
         assert revision_origin == durable_id
         assert "private origin source" not in raw

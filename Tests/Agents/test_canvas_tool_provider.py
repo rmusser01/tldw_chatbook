@@ -424,6 +424,40 @@ def test_list_read_and_conflict_results_match_the_bounded_contract() -> None:
     assert SOURCE_SENTINEL not in conflict.content
 
 
+def test_ambiguous_ancestry_conflict_survives_every_bounded_projection() -> None:
+    provider, coordinator, authority = _provider()
+    coordinator.update_result = CanvasConflictResult(
+        code="ambiguous_ancestry",
+        canvas_id=CANVAS_ID,
+        current_revision_id=REVISION_ID,
+        content_sha256="c" * 64,
+        title="Concurrent parent",
+        sequence=8,
+        origin=CanvasOrigin(message_id="message-current", run_id="run-current"),
+    )
+    args = {
+        "canvas_id": CANVAS_ID,
+        "expected_parent_revision_id": NEXT_REVISION_ID,
+        "html": SOURCE_SENTINEL,
+    }
+    result = _invoke(provider, "canvas_update", args)
+
+    assert result.ok is True
+    assert json.loads(result.content)["conflict"]["code"] == "ambiguous_ancestry"
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority) is True
+    for audience in ("display", "log", "cycle", "continuation"):
+        projected = registry.project_tool_record(
+            audience,
+            ToolCall("canvas_update", args, call_id="ambiguous-call"),
+            result,
+        )
+        assert json.loads(projected.content)["conflict"]["code"] == (
+            "ambiguous_ancestry"
+        )
+        assert SOURCE_SENTINEL not in str(projected)
+
+
 @pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
 @pytest.mark.parametrize("name", sorted(CANVAS_TOOL_NAMES))
 def test_every_non_model_projection_omits_canvas_source(audience, name) -> None:

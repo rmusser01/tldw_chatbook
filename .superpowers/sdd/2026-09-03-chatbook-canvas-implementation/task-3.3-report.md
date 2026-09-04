@@ -201,3 +201,103 @@ For a temporary turn, source stays only in incarnation-owned committed history. 
 
 - Repository policy forbids an unrequested full-suite sweep; verification is limited to the original 722-test focused baseline, the new canonical repository probes, branch-aware service/controller tests, and exact production/postcommit tests.
 - An exploratory broader atomic-promotion file still contains a pre-existing unrelated failure where `test_promotion_persists_sparse_context_policy_inside_the_bundle` deliberately makes `_flush_context_policy_on_first_persist` raise even though the baseline implementation still calls it postcommit. This correction neither introduced nor modifies that context-policy path.
+
+## Round 2/5 independent-review fixes (2026-09-04)
+
+### Implementation
+
+- A failed Canvas run now releases assistant ownership only when the assistant map still names that exact run ID. The bounded discarded settlement remains queryable, while a retry can register a fresh opaque run owner against the same assistant ID. Pruning, session retirement, promotion confirmation, and shutdown use the same compare-and-pop helper, so an old run can never erase its replacement's ownership.
+- Temporary `list`, `read`, and `update` resolve exclusively from the incarnation-owned branch-filtered committed overlay plus the current run. They never ask `CanvasService` to resolve a native ephemeral conversation ID; an absent reachable temporary base returns bounded `canvas_base_unavailable` without mutation.
+- `ambiguous_ancestry` is now an explicit member of the provider's bounded conflict-result contract at both initial encoding and every display/log/cycle/continuation projection. Unknown conflict codes still fail closed as `operation_failed`.
+- Temporary sequence calculation now visits only matching Canvas rows in each committed stage. An unrelated committed stage with no row for the target Canvas contributes nothing and cannot trigger the former empty-variadic `max` failure.
+- Promotion retains the typed `MessageMetadata.remap_canvas_origins(...)` result prepared for each row and publishes that same typed object to the live message in the exact postcommit identity-publication loop. A later feedback/content write therefore reuses durable Canvas-card origins instead of overwriting the committed metadata with native IDs.
+- Successful retries of an already-durable failed assistant use a new exact generation-projection contribution seam. The assistant generation, remapped card metadata, and canonical Canvas batch share the caller-owned SQLite transaction. The exact settlement is confirmed only after that transaction returns committed and before mutable generation sidecars/publication; a transaction failure leaves the frozen stage READY.
+
+### Exact RED/GREEN evidence
+
+The five review probes were added before their production fixes. The first aggregate RED was:
+
+```text
+../../.venv/bin/pytest -q Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry Tests/Chat/test_console_canvas_controller.py::test_production_temporary_scope_never_queries_nonexistent_durable_owner Tests/Chat/test_console_canvas_controller.py::test_temporary_sequence_ignores_other_committed_canvas_rows Tests/Chat/test_console_canvas_controller.py::test_promotion_remaps_card_and_revision_origins_together Tests/Agents/test_canvas_tool_provider.py::test_ambiguous_ancestry_conflict_survives_every_bounded_projection
+6 failed, 1 warning in 2.60s
+```
+
+Four failure classes directly exposed the production gaps: temporary service fallthrough, an empty-variadic sequence `TypeError`, live native-origin metadata overwriting the durable remap, and ambiguity being downgraded to `operation_failed`. The retry probe initially selected the appended failure SYSTEM row rather than the failed ASSISTANT row; after correcting that test harness, its exact RED was:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry
+2 failed: RuntimeError: canvas_assistant_owner_already_registered
+```
+
+The same aggregate command after the production correction:
+
+```text
+6 passed, 1 warning in 1.56s
+```
+
+The retry proof was strengthened after GREEN to verify that a failed Canvas attempt contributes no durable revision, the successful attempt contributes exactly its own source, its revision origin is the durable assistant ID, and neither attempt source appears in message metadata:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry
+2 passed, 1 warning in 1.10s
+```
+
+Fresh prior broad Task-3.3 gate:
+
+```text
+../../.venv/bin/python -m pytest Tests/Chat/test_console_canvas_controller.py Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_message_metadata.py Tests/Agents/test_canvas_tool_provider.py Tests/Chat/test_console_agent_bridge.py Tests/Agents/test_agent_runtime.py Tests/Agents/test_provider_continuation_runtime.py Tests/Chat/test_provider_continuation_privacy.py Tests/Chat/test_console_agent_bridge_cancel_all.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_generation_card.py Tests/Canvas/test_repository.py -q --tb=short --show-capture=no
+766 passed, 1 warning in 75.00s
+```
+
+Fresh production composition/retry/promotion/projection proof:
+
+```text
+../../.venv/bin/pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_real_agent_composition_advertises_and_invokes_shared_canvas_owner Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry Tests/Chat/test_console_runtime_lifetime.py::test_runtime_composes_one_shared_canvas_owner_into_real_store Tests/Chat/test_console_canvas_controller.py::test_promotion_remaps_card_and_revision_origins_together Tests/Agents/test_canvas_tool_provider.py::test_ambiguous_ancestry_conflict_survives_every_bounded_projection
+6 passed, 1 warning in 1.89s
+```
+
+The mutation inventory initially reported the existing Canvas hard-purge SQL route and the new generation-contribution DB boundary as unclassified. After adding exact classifications, the two census tests produced `2 passed, 4 warnings in 38.93s`. Fatal Ruff (`E9,F63,F7,F82`), `py_compile`, and `git diff --check` all pass.
+
+The final post-report verification combined production composition, both retry variants, runtime identity, temporary durable-service isolation, A/B/A sequencing, promotion/restart, and ambiguity projection: `8 passed, 1 warning in 2.15s`; fresh fatal Ruff, `py_compile`, and `git diff --check` then returned zero errors.
+
+An additional generation/promotion slice produced `47 passed, 25 deselected` plus the same known unrelated baseline failure `test_promotion_persists_sparse_context_policy_inside_the_bundle`; the failing postcommit context-policy hook and its caller are unchanged from reviewed parent `74c26cc5d0` and were already recorded under Round 1 concerns. No full suite was run.
+
+### Transaction and settlement model
+
+Fresh durable turns continue through dispatch settlement. Retried durable assistants now take the equivalent existing-row path: generation replacement runs inside the DB's semantic-mutation transaction; the transaction callback writes exact contributions through `_scoped_console_transaction_writer`, mapping the native assistant ID to its existing durable ID; card metadata is written in the same message update. Once the DB context returns, the persistence service confirms the exact opaque Canvas settlement before returning to mutable generation reconciliation. Any message, ancestry, quota, sequence, or contribution error unwinds the shared transaction and never runs confirmation, retaining READY for retry.
+
+Discarded runs remain bounded records keyed by run ID, but no longer occupy the assistant-registration map. A newly registered retry owns the assistant key. Every release is an exact compare-and-pop, and every callback supplied by a provider is additionally fenced by its opaque `CanvasRunOwner`; a late callback from the discarded run therefore observes the replacement owner and returns inertly.
+
+Temporary history remains incarnation-owned and branch-authorized. Promotion prepares one immutable native-to-durable ID map, uses it for both revision contributions and typed card metadata, and publishes the typed remap only after commit under the existing reservation identity check.
+
+### Source-leak sentinel evidence
+
+- Provider ambiguity tests project the result through immediate, AgentStep, log, cycle, and continuation paths while retaining the existing source sentinel assertions.
+- The production retry proof reads the one committed revision source to show attempt isolation, then asserts neither failed nor successful exact source occurs in durable message metadata.
+- The promotion/restart proof performs a later feedback write after promotion, rebuilds the conversation through persisted hydration, verifies card origin equals revision origin, and asserts the source sentinel is absent from stored metadata.
+
+### Files changed in this correction
+
+- `tldw_chatbook/Agents/canvas_tool_provider.py`
+- `tldw_chatbook/Chat/chat_persistence_service.py`
+- `tldw_chatbook/Chat/console_canvas_controller.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `tldw_chatbook/DB/ChaChaNotes_DB.py`
+- `Tests/Agents/test_canvas_tool_provider.py`
+- `Tests/Chat/test_console_canvas_controller.py`
+- `Tests/Chat/test_console_chat_controller.py`
+- `Tests/Chat/test_console_semantic_mutation_inventory.py`
+
+### Self-review
+
+- Verified assistant ownership is released only for the exact retired run and that an old run-fenced coordinator cannot settle or mutate the replacement.
+- Verified temporary service isolation does not relax active-path or selected-revision authority; sibling branch tests remain green.
+- Verified the retry contribution writes through the canonical Canvas batch validator inside the existing semantic generation transaction, with no nested Canvas transaction and no ID publication before commit.
+- Verified postcommit confirmation precedes metadata/sync sidecars and DB failure paths do not call it.
+- Verified promotion assigns only the typed remapped metadata prepared for that exact native message and preserves unrelated metadata fields.
+- Verified conflict projection still rejects every code outside the two closed, reviewed conflict values.
+
+### Concerns
+
+- Repository policy forbids an unrequested full-suite sweep; verification stayed on the focused 766-test gate, exact new regressions, generation persistence, production composition, and static mutation inventory.
+- The unrelated sparse-context-policy atomic-promotion baseline failure remains unchanged and out of scope, as documented above.

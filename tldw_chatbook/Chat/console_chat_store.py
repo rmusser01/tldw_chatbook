@@ -15600,6 +15600,10 @@ class ConsoleChatStore:
         current: ConsoleVariant | None = None,
         selected_index: int | None = None,
         append_variant: bool = False,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> tuple[bool, int | None]:
         """Persist a candidate without changing its live row owner."""
         current = current or self._generation_variant(message)
@@ -15736,17 +15740,43 @@ class ConsoleChatStore:
                     raise
                 boundary.sidecar_error = exc
             return True, candidate.provider_continuation_message_version
-        committed_version = writer(
-            message_id=message.persisted_message_id,
-            content=variant.content,
-            thinking_blocks_json=dump_thinking_blocks_json(variant.thinking),
-            provider_continuation_json=dump_provider_continuation_json(
+        generation_kwargs = {
+            "message_id": message.persisted_message_id,
+            "content": variant.content,
+            "thinking_blocks_json": dump_thinking_blocks_json(variant.thinking),
+            "provider_continuation_json": dump_provider_continuation_json(
                 variant.provider_continuation
             ),
-            assistant_generation_state=variant.assistant_generation_state,
-            usage_json=(variant.usage.to_json() if variant.usage is not None else None),
-            expected_version=message.provider_continuation_message_version,
-        )
+            "assistant_generation_state": variant.assistant_generation_state,
+            "usage_json": (
+                variant.usage.to_json() if variant.usage is not None else None
+            ),
+            "expected_version": message.provider_continuation_message_version,
+        }
+        if transaction_contributions or on_durable_commit is not None:
+            transaction_writer = getattr(
+                self.persistence,
+                "replace_assistant_generation_projection_with_contributions",
+                None,
+            )
+            if not callable(transaction_writer):
+                raise RuntimeError(
+                    "Generation contribution persistence is unavailable."
+                )
+            committed_version = transaction_writer(
+                native_message_id=message.id,
+                metadata_json=(
+                    candidate.metadata.to_json()
+                    if candidate.metadata is not None
+                    and not candidate.metadata.is_empty
+                    else None
+                ),
+                contributions=tuple(transaction_contributions),
+                on_durable_commit=on_durable_commit,
+                **generation_kwargs,
+            )
+        else:
+            committed_version = writer(**generation_kwargs)
         if type(committed_version) is not int or committed_version <= 0:
             raise RuntimeError("Selected generation persistence did not commit.")
         candidate.provider_continuation_message_version = committed_version
@@ -15877,10 +15907,60 @@ class ConsoleChatStore:
 
     def _persist_terminal_generation(self, message: ConsoleChatMessage) -> None:
         """Persist a terminal assistant as one paired generation projection."""
+        canvas_settlement = None
+        canvas_contributions: tuple[ConsolePromotionTransactionContribution, ...] = ()
+        canvas_controller = self.canvas_turn_controller
+        if (
+            canvas_controller is not None
+            and message.assistant_generation_state == "complete"
+        ):
+            candidate = canvas_controller.settlement_for_assistant(message.id)
+            if (
+                candidate is not None
+                and getattr(candidate.state, "value", None) == "ready"
+            ):
+                existing = (
+                    json.loads(message.metadata.to_json())
+                    if message.metadata is not None and not message.metadata.is_empty
+                    else {}
+                )
+                canvas_payload = json.loads(candidate.metadata_json)
+                if type(existing) is not dict or type(canvas_payload) is not dict:
+                    raise RuntimeError("Canvas settlement metadata is invalid.")
+                existing.update(canvas_payload)
+                merged = MessageMetadata.from_json(
+                    json.dumps(
+                        existing,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                if merged is None:
+                    raise RuntimeError("Canvas settlement metadata is invalid.")
+                if message.persisted_message_id is not None:
+                    merged = merged.remap_canvas_origins(
+                        {message.id: message.persisted_message_id}
+                    )
+                message.metadata = merged
+                canvas_settlement = candidate
+                if candidate.contribution is not None:
+                    canvas_contributions = (candidate.contribution,)
         try:
             if not (
                 message.role is ConsoleMessageRole.ASSISTANT
-                and self.persist_selected_generation(message.id)
+                and self.persist_selected_generation(
+                    message.id,
+                    transaction_contributions=canvas_contributions,
+                    on_durable_commit=(
+                        lambda: canvas_controller.confirm_exact_settlement(
+                            canvas_settlement
+                        )
+                    )
+                    if canvas_settlement is not None
+                    else None,
+                )
             ) and not self._persist_existing_message(
                 message, preserve_provider_continuation=True
             ):
@@ -16830,6 +16910,7 @@ class ConsoleChatStore:
         identity = self.stage_first_persistence(session_id)
         staged_message_ids = {message.id: str(uuid4()) for message in messages}
         prepared_messages: list[dict[str, object]] = []
+        remapped_message_metadata: dict[str, MessageMetadata] = {}
         for message in messages:
             native_parent = self._native_parent_by_message.get(message.id)
             create_kwargs: dict[str, object] = {
@@ -16896,9 +16977,11 @@ class ConsoleChatStore:
                     raise ValueError("Console message metadata shape is invalid.")
                 create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
-                create_kwargs["metadata_json"] = message.metadata.remap_canvas_origins(
+                remapped_metadata = message.metadata.remap_canvas_origins(
                     staged_message_ids
-                ).to_json()
+                )
+                create_kwargs["metadata_json"] = remapped_metadata.to_json()
+                remapped_message_metadata[message.id] = remapped_metadata
             prepared_messages.append(
                 {"native_id": message.id, "create_kwargs": create_kwargs}
             )
@@ -17031,6 +17114,9 @@ class ConsoleChatStore:
             session.library_policy_holder.save_pending = False
             for message in messages:
                 message.persisted_message_id = staged_message_ids[message.id]
+                remapped_metadata = remapped_message_metadata.get(message.id)
+                if remapped_metadata is not None:
+                    message.metadata = remapped_metadata
                 native_parent = self._native_parent_by_message.get(message.id)
                 message.parent_message_id = (
                     staged_message_ids[native_parent]
@@ -18247,12 +18333,24 @@ class ConsoleChatStore:
         # replacement wins, so it must not be treated like an omitted field.
         self._persist_existing_message(message, force_metadata_write=True)
 
-    def persist_selected_generation(self, message_id: str) -> bool:
+    def persist_selected_generation(
+        self,
+        message_id: str,
+        *,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
+    ) -> bool:
         """Atomically project the complete selected assistant generation."""
         with self._generation_owner_scope(message_id):
             return self._run_commit_aware_generation_mutation(
                 message_id,
-                lambda: self._persist_selected_generation(message_id),
+                lambda: self._persist_selected_generation(
+                    message_id,
+                    transaction_contributions=transaction_contributions,
+                    on_durable_commit=on_durable_commit,
+                ),
             )
 
     def reload_quarantined_generation(self, message_id: str) -> ConsoleChatMessage:
@@ -18398,13 +18496,25 @@ class ConsoleChatStore:
         except Exception as exc:
             raise RuntimeError("Canonical generation reload is unavailable.") from exc
 
-    def _persist_selected_generation(self, message_id: str) -> bool:
+    def _persist_selected_generation(
+        self,
+        message_id: str,
+        *,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
+    ) -> bool:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages own generation projections.")
         current = self._generation_variant(message)
         durably_committed, committed_version = self._persist_generation_variant(
-            message, current, current=current
+            message,
+            current,
+            current=current,
+            transaction_contributions=transaction_contributions,
+            on_durable_commit=on_durable_commit,
         )
         if not durably_committed:
             return False

@@ -312,7 +312,7 @@ class ConsoleCanvasController:
             self._session_owners[session_id] = owner
             for run_id, stage in tuple(self._runs.items()):
                 if stage.scope.session_id == session_id:
-                    self._assistant_runs.pop(stage.assistant_message_id, None)
+                    self._release_assistant_run(run_id, stage)
                     self._runs.pop(run_id, None)
             self._session_generations[session_id] = (
                 self._session_generations.get(session_id, 0) + 1
@@ -380,7 +380,11 @@ class ConsoleCanvasController:
     ) -> tuple[CanvasListItem, ...]:
         with self._lock:
             stage = self._require_open(scope, _run_owner)
-            committed = self._service_call("list_canvases", scope, default=())
+            committed = (
+                ()
+                if stage.temporary
+                else self._service_call("list_canvases", scope, default=())
+            )
             items = {item.canvas_id: item for item in committed}
             if stage.temporary:
                 for canvas_id, row in self._temporary_latest_rows(scope).items():
@@ -412,6 +416,7 @@ class ConsoleCanvasController:
                 row = self._temporary_latest_rows(scope).get(canvas_id)
                 if row is not None:
                     return CanvasReadResult(revision=row.info, source=row.source)
+                raise RuntimeError("canvas_base_unavailable")
             return self._service_call("read_canvas", scope, canvas_id)
 
     def create_canvas(
@@ -501,6 +506,8 @@ class ConsoleCanvasController:
                     )
                 parent = latest.info
             else:
+                if stage.temporary:
+                    raise RuntimeError("canvas_base_unavailable")
                 read = self._service_call("read_canvas", scope, canvas_id)
                 parent = read.revision
                 if parent.revision_id != expected_parent_revision_id:
@@ -574,6 +581,7 @@ class ConsoleCanvasController:
                 stage.run_owner,
             )
             if not success:
+                self._release_assistant_run(run_id, stage)
                 self._prune_closed_stages()
             return stage.settlement
 
@@ -624,7 +632,12 @@ class ConsoleCanvasController:
         with self._lock:
             run_id = self._assistant_runs.get(assistant_message_id)
             stage = self._runs.get(run_id or "")
-            return stage.settlement if stage is not None else None
+            if stage is not None:
+                return stage.settlement
+            for retired in reversed(tuple(self._runs.values())):
+                if retired.assistant_message_id == assistant_message_id:
+                    return retired.settlement
+            return None
 
     def confirm_settlement(self, run_id: str) -> bool:
         with self._lock:
@@ -691,6 +704,7 @@ class ConsoleCanvasController:
                 None,
                 stage.run_owner,
             )
+            self._release_assistant_run(run_id, stage)
             self._prune_closed_stages()
             return True
 
@@ -734,7 +748,7 @@ class ConsoleCanvasController:
                 if stage.state in {CanvasRunState.OPEN, CanvasRunState.READY}:
                     self.abort_settlement(run_id, "session_closed")
                 elif stage.state is CanvasRunState.COMMITTED and stage.temporary:
-                    self._assistant_runs.pop(stage.assistant_message_id, None)
+                    self._release_assistant_run(run_id, stage)
                     self._runs.pop(run_id, None)
             self._session_owners.pop(session_id, None)
             self._promotion_leases.pop(session_id, None)
@@ -747,7 +761,7 @@ class ConsoleCanvasController:
                 if stage.state in {CanvasRunState.OPEN, CanvasRunState.READY}:
                     self.abort_settlement(run_id, "state_replaced")
                 elif stage.state is CanvasRunState.COMMITTED and stage.temporary:
-                    self._assistant_runs.pop(stage.assistant_message_id, None)
+                    self._release_assistant_run(run_id, stage)
                     self._runs.pop(run_id, None)
             leased_sessions = set(self._promotion_leases)
             self._session_owners = {
@@ -810,7 +824,7 @@ class ConsoleCanvasController:
                     return False
             for run_id in contribution.run_ids:
                 stage = self._runs.pop(run_id)
-                self._assistant_runs.pop(stage.assistant_message_id, None)
+                self._release_assistant_run(run_id, stage)
             self._promotion_leases.pop(session_id, None)
             self._session_owners.pop(session_id, None)
             return True
@@ -826,7 +840,7 @@ class ConsoleCanvasController:
                 for run_id in contribution.run_ids:
                     stage = self._runs.pop(run_id, None)
                     if stage is not None:
-                        self._assistant_runs.pop(stage.assistant_message_id, None)
+                        self._release_assistant_run(run_id, stage)
                 self._session_owners.pop(session_id, None)
             return True
 
@@ -863,7 +877,7 @@ class ConsoleCanvasController:
                     continue
                 self.abort_settlement(run_id, "runtime_closed")
                 if stage.state is CanvasRunState.COMMITTED and stage.temporary:
-                    self._assistant_runs.pop(stage.assistant_message_id, None)
+                    self._release_assistant_run(run_id, stage)
                     self._runs.pop(run_id, None)
             self._closed = True
             leased_sessions = set(self._promotion_leases)
@@ -1040,14 +1054,9 @@ class ConsoleCanvasController:
                     and candidate_stage.state is CanvasRunState.COMMITTED
                     and self._stage_owner_current(candidate_stage)
                 ):
-                    maximum = max(
-                        maximum,
-                        *(
-                            row.info.sequence
-                            for row in candidate_stage.revisions
-                            if row.info.canvas_id == canvas_id
-                        ),
-                    )
+                    for row in candidate_stage.revisions:
+                        if row.info.canvas_id == canvas_id:
+                            maximum = max(maximum, row.info.sequence)
         else:
             next_sequence = self._service_call(
                 "next_revision_sequence", stage.scope, canvas_id, default=0
@@ -1083,6 +1092,12 @@ class ConsoleCanvasController:
         ]
         for run_id, stage in closed[:-_MAX_RETAINED_CLOSED_RUNS]:
             self._runs.pop(run_id, None)
+            self._release_assistant_run(run_id, stage)
+
+    def _release_assistant_run(self, run_id: str, stage: _RunStage) -> None:
+        """Release assistant ownership only when it still names this exact run."""
+
+        if self._assistant_runs.get(stage.assistant_message_id) == run_id:
             self._assistant_runs.pop(stage.assistant_message_id, None)
 
     @staticmethod

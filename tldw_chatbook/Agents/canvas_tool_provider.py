@@ -674,7 +674,7 @@ def _conflict_payload(conflict: CanvasConflictResult) -> dict[str, object]:
     _validated_digest(conflict.content_sha256)
     _validated_sequence(conflict.sequence)
     origin = _validated_origin(conflict.origin)
-    if conflict.code != "stale_parent":
+    if conflict.code not in {"stale_parent", "ambiguous_ancestry"}:
         raise _ArgumentError("operation_failed")
     return {
         "code": conflict.code,
@@ -904,12 +904,13 @@ def _project_conflict(value: object) -> dict[str, object]:
         "origin",
     }:
         raise _ArgumentError("operation_failed")
-    if value["code"] != "stale_parent":
+    code = value["code"]
+    if code not in {"stale_parent", "ambiguous_ancestry"}:
         raise _ArgumentError("operation_failed")
     _validated_digest(value["content_sha256"])
     _validated_sequence(value["sequence"])
     return {
-        "code": "stale_parent",
+        "code": code,
         "canvas_id": _uuid(value["canvas_id"], "operation_failed"),
         "current_revision_id": _uuid(value["current_revision_id"], "operation_failed"),
         "content_sha256": value["content_sha256"],

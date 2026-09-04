@@ -13309,6 +13309,9 @@ UPDATE db_schema_version
         assistant_generation_state: str | None,
         usage_json: str | None,
         expected_version: int | None = None,
+        metadata_json: str | None = None,
+        update_metadata: bool = False,
+        transaction_callback: Callable[[sqlite3.Cursor], None] | None = None,
     ) -> int:
         """Coordinate replacement of one selected assistant generation."""
 
@@ -13365,7 +13368,7 @@ UPDATE db_schema_version
                 )
             if current["role"] != "assistant":
                 raise InputError("Generation projection requires an assistant message.")
-            return int(
+            committed_version = int(
                 self._coordinate_semantic_mutation(
                     cursor,
                     message_id=message_id,
@@ -13379,10 +13382,15 @@ UPDATE db_schema_version
                             assistant_generation_state=assistant_generation_state,
                             usage_json=usage_json,
                             expected_version=expected_version,
+                            metadata_json=metadata_json,
+                            update_metadata=update_metadata,
                         )
                     ),
                 )
             )
+            if transaction_callback is not None:
+                transaction_callback(cursor)
+            return committed_version
 
     def _replace_assistant_generation_projection_uncoordinated(
         self,
@@ -13394,6 +13402,8 @@ UPDATE db_schema_version
         assistant_generation_state: str | None,
         usage_json: str | None,
         expected_version: int | None = None,
+        metadata_json: str | None = None,
+        update_metadata: bool = False,
     ) -> int:
         """Atomically replace one active assistant row's selected generation."""
         if type(message_id) is not str or not message_id.strip():
@@ -13406,6 +13416,10 @@ UPDATE db_schema_version
             raise InputError("Expected message version must be positive.")
         if usage_json is not None and type(usage_json) is not str:
             raise InputError("Usage data must be text or None.")
+        if type(update_metadata) is not bool or (
+            metadata_json is not None and type(metadata_json) is not str
+        ):
+            raise InputError("Message metadata must be text or None.")
 
         canonical_thinking = (
             None
@@ -13472,6 +13486,7 @@ UPDATE db_schema_version
                        SET content = ?, thinking_blocks_json = ?,
                            provider_continuation_json = ?,
                            assistant_generation_state = ?, usage_json = ?,
+                           metadata_json = CASE WHEN ? THEN ? ELSE metadata_json END,
                            last_modified = ?, version = version + 1, client_id = ?
                      WHERE id = ? AND role = 'assistant' AND deleted = 0
                        AND (? IS NULL OR version = ?)
@@ -13485,6 +13500,8 @@ UPDATE db_schema_version
                         if normalized_state is not None
                         else None,
                         usage_json,
+                        int(update_metadata),
+                        metadata_json,
                         now,
                         self.client_id,
                         message_id,
