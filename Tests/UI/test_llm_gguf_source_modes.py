@@ -1183,6 +1183,10 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
 async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def load_fixture_profiles(screen: LLMScreen) -> None:
+        screen._accept_vllm_profiles(screen._vllm_profiles)
+
+    monkeypatch.setattr(LLMScreen, "_load_vllm_profiles", load_fixture_profiles)
     long_choice = ManagedGGUFChoice(
         REF_A,
         "A very long managed model name that must not push actions out · "
