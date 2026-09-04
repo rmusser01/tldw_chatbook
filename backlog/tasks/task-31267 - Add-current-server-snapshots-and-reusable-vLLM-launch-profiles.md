@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 15:25'
+updated_date: '2026-09-04 16:28'
 labels:
   - vllm
   - lab
@@ -31,6 +31,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #6 Profile-loaded structured expert values are always visible and editable under Advanced, invalid/repairable profile fields receive adjacent recovery, and active-runtime Current versus Next restart context stays accurate through selection, lifecycle, and draft changes.
 - [x] #7 Create/save/rename/duplicate validation failures map to the correct visible adjacent profile, source, model, environment, network, or Advanced control with bounded actionable copy; duplicate-name and invalid-rename outcomes do not fall back to generic reload messaging.
 - [x] #8 Initial saved-profile hydration is distinguished from deliberate profile selection: exact current launch evidence survives only for the bound profile/runtime fingerprint, and all profile mutation/select handlers are inert in existing-server mode even when invoked programmatically.
+- [x] #9 Initial profile-store hydration is a fail-closed readiness gate: success reconciles the exact selected profile before exposing READY, while corrupt, future, unavailable, or failed loads invalidate stale evidence and show persistent adjacent recovery without hiding truthful Stop.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -96,6 +97,15 @@ UX Fix Round 3/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This is a narrow correction within ADR-117's existing profile, ownership, and readiness contract.
+
+UX Fix Round 4/5:
+29. Add sequential RED delayed-profile-load success and failure regressions around a newly mounted screen carrying app-scoped READY evidence.
+30. Project hydration as an explicit readiness prerequisite, retain bounded adjacent profile-store recovery across recomposition, and reconcile exact saved-profile identity before restoring actions.
+31. Run focused profile/workflow GREEN checks and the requested full gates before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This tightens ADR-117's existing selected-profile restoration and fail-closed corrupt-store behavior; no profile schema, storage, or ownership boundary changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -168,6 +178,27 @@ The V1 schema, CAS/atomic storage, and launch-only argument policy are untouched
 so ADR-117 remains sufficient and no storage migration is introduced.
 Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
 and `329`-case five-file primary gates under the normal descriptor limit.
+
+UX Fix Round 4/5 makes selected-profile hydration a persistent, fail-closed
+readiness prerequisite. A new screen masks inherited target evidence while the
+repository worker is pending, disables the selector and all profile mutations,
+and reconciles the loaded profile against the exact launch-bound identity before
+revealing READY. Corrupt, future, unavailable, or failed loads clear stale
+external candidates, invalidate inherited readiness, preserve independently
+truthful Stop, and keep repair/reload guidance adjacent to the disabled profile
+selector without focus theft. The delayed success/lifecycle and corrupt failure
+paths were RED at their owning seams before the gate and are GREEN in
+`test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff` and
+`test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery`.
+
+Shared final evidence is `65` workflow, `71` geometry/Tab, and `334` complete
+primary tests passing under the normal descriptor limit; compatibility remains
+`350/352` with only the two documented untouched Console/Settings baseline
+failures. CSS `39`, credential/retention privacy `7`, critical Ruff, scoped
+format, `compileall`, both direct inventories, scope review, and diff checks
+passed. No profile schema, storage, CSS source, Console/Settings persistence, or
+handoff-consumer file changed. ADR-117 remains the governing profile/readiness
+boundary; no new ADR or generalized lesson was needed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

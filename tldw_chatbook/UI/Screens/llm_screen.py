@@ -376,6 +376,7 @@ class LLMScreen(LabScreen):
         )
         self._vllm_profile_repository = VllmProfileRepository()
         self._vllm_profiles_loaded = False
+        self._vllm_profile_store_error = False
         self._vllm_profile_worker: Worker | None = None
         self._vllm_preflight: VllmPreflightResult | None = None
         self._vllm_preflight_worker: Worker | None = None
@@ -400,6 +401,10 @@ class LLMScreen(LabScreen):
         )
         self._vllm_body_mounts = 0
         self._vllm_handoff_departure_generation: int | None = None
+        self._vllm_staged_handoffs: dict[
+            HandoffChannel,
+            tuple[int, VllmConsoleIntent | VllmDefaultIntent, str],
+        ] = {}
         self._vllm_probe_window_seconds = 30.0
         self._model_install_active = False
         self._model_install_phase: str | None = None
@@ -640,19 +645,27 @@ class LLMScreen(LabScreen):
         """
         if self._vllm_is_active_view():
             snapshot = self._vllm_owner.snapshot()
-            status, status_label = {
-                VllmReadinessState.NOT_CONFIGURED: ("blocked", "Setup incomplete"),
-                VllmReadinessState.CHECKING: ("loading", "Checking"),
-                VllmReadinessState.READY_TO_START: ("ready", "Ready to start"),
-                VllmReadinessState.LAUNCHING: ("running", "Starting"),
-                VllmReadinessState.LOADING_MODEL: ("running", "Loading model"),
-                VllmReadinessState.READY: ("ready", "Ready"),
-                VllmReadinessState.STOPPING: ("running", "Stopping"),
-                VllmReadinessState.NEEDS_ATTENTION: (
-                    "error",
-                    "Needs attention",
-                ),
-            }[snapshot.state]
+            if self._vllm_profile_store_error:
+                status, status_label = ("error", "Profiles need repair")
+            elif not self._vllm_profiles_loaded:
+                status, status_label = ("loading", "Loading profiles")
+            else:
+                status, status_label = {
+                    VllmReadinessState.NOT_CONFIGURED: (
+                        "blocked",
+                        "Setup incomplete",
+                    ),
+                    VllmReadinessState.CHECKING: ("loading", "Checking"),
+                    VllmReadinessState.READY_TO_START: ("ready", "Ready to start"),
+                    VllmReadinessState.LAUNCHING: ("running", "Starting"),
+                    VllmReadinessState.LOADING_MODEL: ("running", "Loading model"),
+                    VllmReadinessState.READY: ("ready", "Ready"),
+                    VllmReadinessState.STOPPING: ("running", "Stopping"),
+                    VllmReadinessState.NEEDS_ATTENTION: (
+                        "error",
+                        "Needs attention",
+                    ),
+                }[snapshot.state]
             return WorkbenchHeaderState(
                 title="vLLM",
                 subtitle="Launch locally or connect to an existing API.",
@@ -2646,6 +2659,14 @@ class LLMScreen(LabScreen):
             launch_snapshot is not None
             and changed_launch_field_labels(launch_snapshot, self._vllm_draft)
         )
+        if not self._vllm_profiles_loaded:
+            if runtime_active:
+                return "Stop vLLM"
+            return (
+                "Repair profiles"
+                if self._vllm_profile_store_error
+                else "Wait for profiles"
+            )
         if snapshot.state is VllmReadinessState.CHECKING:
             return "Cancel check"
         if snapshot.state is VllmReadinessState.READY and snapshot.target is not None:
@@ -2680,7 +2701,7 @@ class LLMScreen(LabScreen):
 
         snapshot = self._vllm_owner.snapshot()
         runtime_active, launch_snapshot = self._vllm_runtime_context()
-        target = snapshot.target
+        target = snapshot.target if self._vllm_profiles_loaded else None
         if runtime_active:
             ownership = "Chatbook process"
         elif target is not None and target.runtime_owner == "external":
@@ -2692,7 +2713,11 @@ class LLMScreen(LabScreen):
         verified = (
             f"{target.api_url} · {target.model_id}"
             if target is not None
-            else "Not available"
+            else (
+                "Pending profile check"
+                if not self._vllm_profiles_loaded
+                else "Not available"
+            )
         )
         if target is not None and target.runtime_owner == "external":
             configuration = "Current · Verified external; Next · Matches"
@@ -2705,7 +2730,18 @@ class LLMScreen(LabScreen):
         else:
             configuration = "Current · None; Next · Draft"
         rows = (
-            ("lab-vllm-profile", f"Profile · {self._vllm_profile_name()}"),
+            (
+                "lab-vllm-profile",
+                (
+                    f"Profile · {self._vllm_profile_name()}"
+                    if self._vllm_profiles_loaded
+                    else (
+                        "Profile · Needs repair"
+                        if self._vllm_profile_store_error
+                        else "Profile · Loading"
+                    )
+                ),
+            ),
             ("lab-vllm-ownership", f"Ownership · {ownership}"),
             ("lab-vllm-target", f"Verified · {verified}"),
             (
@@ -2772,6 +2808,8 @@ class LLMScreen(LabScreen):
             else None
         )
         state = snapshot.state
+        if not self._vllm_profiles_loaded:
+            state = VllmReadinessState.NOT_CONFIGURED
         preflight = self._vllm_preflight
         if (
             preflight is not None
@@ -2786,12 +2824,14 @@ class LLMScreen(LabScreen):
             draft=self._vllm_draft,
             state=state,
             preflight=preflight,
-            connection=snapshot,
+            connection=snapshot if self._vllm_profiles_loaded else None,
             current_launch_snapshot=current_launch_snapshot,
             profiles=self._vllm_profiles,
             runtime_active=runtime_active,
             discovered_model_ids=self._vllm_external_models,
             credential_configured=bool(get_api_key("vllm")),
+            profiles_ready=self._vllm_profiles_loaded,
+            profile_store_error=self._vllm_profile_store_error,
         )
         self.refresh_lab_status()
         if focus:
@@ -2843,7 +2883,8 @@ class LLMScreen(LabScreen):
         claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
         if (
             claim is None
-            or not process_is_running(process)
+            or claim.cancel_event.is_set()
+            or not self._vllm_process_liveness_proven(process)
             or not self._vllm_owner.owns_launch_claim(claim)
         ):
             return None
@@ -2856,6 +2897,17 @@ class LLMScreen(LabScreen):
             return None
         return launch_snapshot
 
+    @staticmethod
+    def _vllm_process_liveness_proven(process: Any | None) -> bool:
+        """Require a positive, exception-free process poll for handoff evidence."""
+
+        if process is None:
+            return False
+        try:
+            return process.poll() is None
+        except Exception:  # noqa: BLE001 - process handles may use arbitrary backends
+            return False
+
     def _accept_vllm_profiles(self, document: VllmProfileDocumentV1) -> None:
         """Hydrate selected structured fields while retaining launch-only arguments."""
 
@@ -2867,6 +2919,7 @@ class LLMScreen(LabScreen):
             selected,
             raw_arguments=self._vllm_draft.raw_arguments,
         )
+        self._vllm_profile_store_error = False
         self._vllm_profiles_loaded = True
         hydrated_fingerprint = semantic_fingerprint(self._vllm_draft)
         preserves_live_launch = (
@@ -2903,9 +2956,13 @@ class LLMScreen(LabScreen):
         try:
             document = await asyncio.to_thread(self._vllm_profile_repository.load)
         except (VllmProfileCorrupt, VllmProfileFutureVersion, OSError):
-            view = self._vllm_view()
-            if view is not None:
-                view.show_profile_validation_error("profile")
+            if not self.is_attached:
+                return
+            self._vllm_profile_store_error = True
+            self._vllm_external_models = ()
+            self._vllm_owner.invalidate("invalidated")
+            self._cancel_vllm_workers()
+            self._apply_vllm_view_state(focus=False)
             self.notify(
                 "vLLM profiles could not be read safely.",
                 severity="error",
@@ -3148,11 +3205,16 @@ class LLMScreen(LabScreen):
     ) -> bool:
         """Stage the exact current target and dispatch one normal navigation."""
 
-        if not self.is_attached:
+        if not self.is_attached or not self._vllm_profiles_loaded:
             return False
         snapshot = self._vllm_owner.snapshot()
         target = snapshot.target
         if target is None:
+            return False
+        if (
+            target.runtime_owner == "chatbook"
+            and self._live_vllm_ready_launch_snapshot() is None
+        ):
             return False
         try:
             intent = intent_type.from_target(target)
@@ -3171,6 +3233,11 @@ class LLMScreen(LabScreen):
         if not owner_has_current_intent(self._vllm_owner, intent):
             store.discard_pending_exact(channel, revision, intent)
             return False
+        self._vllm_staged_handoffs[channel] = (
+            revision,
+            intent,
+            target.runtime_owner,
+        )
         self._vllm_handoff_departure_generation = intent.generation
         try:
             posted = self.post_message(NavigateToScreen(route, context))
@@ -3180,7 +3247,23 @@ class LLMScreen(LabScreen):
             return True
         self._vllm_handoff_departure_generation = None
         store.discard_pending_exact(channel, revision, intent)
+        self._vllm_staged_handoffs.pop(channel, None)
         return False
+
+    def _discard_staged_vllm_handoffs(self, *, runtime_owner: str) -> None:
+        """Discard only exact pending receipts owned by this departing screen."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            self._vllm_staged_handoffs.clear()
+            return
+        store = cast(PendingHandoffStore, store)
+        for channel, receipt in tuple(self._vllm_staged_handoffs.items()):
+            revision, intent, owner = receipt
+            if owner != runtime_owner:
+                continue
+            store.discard_pending_exact(channel, revision, intent)
+            self._vllm_staged_handoffs.pop(channel, None)
 
     @on(VllmSetupView.UseInConsoleRequested)
     def _on_vllm_use_in_console_requested(
@@ -3885,18 +3968,21 @@ class LLMScreen(LabScreen):
 
         preserve_generation = self._vllm_handoff_departure_generation
         store = getattr(self.app_instance, "pending_handoffs", None)
-        preserve_handoff = bool(
+        snapshot = self._vllm_owner.snapshot()
+        preserve_external_handoff = bool(
             preserve_generation is not None
             and type(store) is PendingHandoffStore
-            and self._vllm_owner.snapshot().generation == preserve_generation
-            and (
-                store.has_pending(HandoffChannel.VLLM_CONSOLE)
-                or store.has_pending(HandoffChannel.VLLM_DEFAULT)
+            and snapshot.generation == preserve_generation
+            and any(
+                runtime_owner == "external" and store.has_pending(channel)
+                for channel, (_, _, runtime_owner) in self._vllm_staged_handoffs.items()
             )
         )
         preserve_live_launch = self._live_vllm_ready_launch_snapshot() is not None
+        if not preserve_live_launch:
+            self._discard_staged_vllm_handoffs(runtime_owner="chatbook")
         self._vllm_handoff_departure_generation = None
-        if not preserve_handoff and not preserve_live_launch:
+        if not preserve_external_handoff and not preserve_live_launch:
             self._vllm_owner.invalidate("screen_detached")
         self._cancel_vllm_workers()
 

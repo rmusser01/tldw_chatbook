@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 15:26'
+updated_date: '2026-09-04 16:29'
 labels:
   - vllm
   - lab
@@ -36,6 +36,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #7 The production-stylesheet evidence matrix covers actual Checking, existing-server discovery and selection, Console/default presentations where applicable, mounted edit -> check -> restart, and presentation recomposition with assertion-level mappings for every claimed outcome.
 - [x] #8 The contextual Inspector describes Console use truthfully before and after handoff/return as session-only with defaults unchanged, without claiming an adoption state the Lab does not own.
 - [x] #9 The 11-state responsive/Tab matrix treats the existing-server profile selector as disabled and unreachable while keeping Local-mode selection reachable, and fresh-screen hydration preserves truthful Use/Reverify/recovery actions without stealing focus.
+- [x] #10 During initial hydration the mounted Lab hides Use, Console, and Reverify actions derived only from unreconciled app state, keeps exact owned Stop reachable, and projects persistent adjacent profile-store recovery on load failure without focus theft.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -105,6 +106,15 @@ UX Fix Round 3/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already fixes the responsive containment, focus, and truthful readiness requirements; no new UI architecture is introduced.
+
+UX Fix Round 4/5:
+14. Add RED mounted assertions for the delayed-hydration action/focus surface and persistent adjacent profile-store failure recovery.
+15. Change only the view/controller projection needed to mask unreconciled READY state while preserving independently truthful runtime Stop.
+16. Re-run workflow, geometry, primary, compatibility, CSS, static, inventory, privacy, and diff gates before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This directly enforces ADR-117's existing truthful-action and focus contract during initial profile hydration; it introduces no new UI or handoff architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -376,4 +386,31 @@ untouched persistent-diagnostic owners, while diagnostic path privacy passed
 exact invocation was not recorded and was not guessed or presented as replayed.
 Critical Ruff, scoped format, `compileall`, and the one valid post-edit Impeccable
 scan pass. ADR-117 remains sufficient; no new ADR or generalized lesson arose.
+
+UX Fix Round 4/5 adds the pending-profile and failed-store presentations to the
+real mounted workflow without changing the existing responsive composition or
+keyboard grammar. Until hydration reconciles, the child view and contextual
+outer Lab mask inherited READY/verified target copy, keep Use, Make default, and
+Reverify out of the action surface, disable profile controls, and retain Stop
+for an exact live owned process. A lifecycle projection cannot bypass that
+fence. Profile-load failure persists adjacent repair/reload copy and an outer
+`Profiles need repair` status while preserving the user's current focus. The
+production-shaped assertions live in
+`test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff` and
+`test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery`; the
+unchanged eleven-state/three-size matrix remains the assertion owner for
+containment and complete Tab order.
+
+Round 4 verification passed workflow `65`, geometry/Tab `71`, and the full
+five-file primary `334` in `411.92s` with the normal FD limit. Compatibility
+remains `350/352`, matching the two untouched Console/Settings baseline nodes.
+CSS build/sync/staleness passed `39`; two source builds reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`
+without generated drift. Profile and diagnostic inventories, critical Ruff,
+scoped format, `compileall`, the `7`-case privacy selection, forbidden-scope
+review, and `git diff --check` passed. No stylesheet source changed in this
+round. The exact prior Round 2 broad-static aggregate remains provenance-only
+and was not guessed. The host has neither an installed executable nor importable
+vLLM module, so loopback remains contract evidence rather than live-server
+qualification. ADR-117 remains sufficient; no new ADR or lesson was required.
 <!-- SECTION:NOTES:END -->

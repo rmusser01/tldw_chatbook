@@ -1591,13 +1591,22 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         await app.handle_screen_navigation(NavigateToScreen(TAB_LLM))
         first_screen = app.screen
         assert isinstance(first_screen, LLMScreen)
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if list(first_screen.query(LLMManagementWindow)):
+                break
         first_window = first_screen.query_one(LLMManagementWindow)
         first_window.active_view = "vllm"
         for _ in range(30):
             await pilot.pause()
-            if first_screen._vllm_profiles_loaded and first_screen.query(VllmSetupView):
+            if first_screen._vllm_profiles_loaded and list(
+                first_screen.query(VllmSetupView)
+            ):
                 break
         assert first_screen._vllm_profiles_loaded
+        for _ in range(5):
+            await pilot.pause()
+        first_view = first_screen.query_one(VllmSetupView)
         profile = first_screen._selected_vllm_profile()
         draft = draft_from_profile(profile)
         token = first_screen._vllm_owner.begin(
@@ -1614,7 +1623,7 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         first_screen._vllm_draft = draft
         first_screen._apply_vllm_view_state(focus=False)
         await pilot.pause()
-        assert not first_screen.query_one("#vllm-use-console", Button).disabled
+        assert not first_view.query_one("#vllm-use-console", Button).disabled
 
         await pilot.click("#vllm-use-console")
         for _ in range(200):
@@ -1635,8 +1644,44 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         fresh_screen = app.screen
         assert isinstance(fresh_screen, LLMScreen)
         assert fresh_screen is not first_screen
-        assert second_load_entered.wait(1)
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if list(fresh_screen.query(LLMManagementWindow)):
+                break
+        fresh_window = fresh_screen.query_one(LLMManagementWindow)
+        fresh_window.active_view = "vllm"
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if second_load_entered.is_set() and list(fresh_screen.query(VllmSetupView)):
+                break
+        assert second_load_entered.is_set()
         assert not fresh_screen._vllm_profiles_loaded
+        fresh_view = fresh_screen.query_one(VllmSetupView)
+        for _ in range(5):
+            await pilot.pause()
+        fresh_view.project_lifecycle(active=True)
+        await pilot.pause()
+        assert not fresh_view.query_one("#vllm-use-console", Button).display
+        assert fresh_view.query_one("#vllm-use-console", Button).disabled
+        assert not fresh_view.query_one("#vllm-make-default", Button).display
+        assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+        assert not fresh_view.query_one("#vllm-stop", Button).disabled
+        assert "Next: Stop vLLM" in str(
+            fresh_screen.query_one("#lab-status-chip-model-install", Static).renderable
+        )
+
+        from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+        original_post_message = fresh_screen.post_message
+        monkeypatch.setattr(fresh_screen, "post_message", lambda *_args: True)
+        staged_before_hydration = fresh_screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(fresh_screen, "post_message", original_post_message)
+        assert not staged_before_hydration
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         focus_target = app.focused
         assert focus_target is not None
 
@@ -1648,13 +1693,6 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert fresh_screen._vllm_profiles_loaded
         assert app.focused is focus_target
 
-        fresh_window = fresh_screen.query_one(LLMManagementWindow)
-        fresh_window.active_view = "vllm"
-        for _ in range(100):
-            await pilot.pause(0.02)
-            if fresh_screen.query(VllmSetupView):
-                break
-        fresh_view = fresh_screen.query_one(VllmSetupView)
         for _ in range(5):
             await pilot.pause()
         snapshot = fresh_screen._vllm_owner.snapshot()
@@ -1664,6 +1702,197 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert not fresh_view.query_one("#vllm-use-console", Button).disabled
         assert not fresh_view.query_one("#vllm-stop", Button).disabled
         assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+
+
+async def test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery(
+    monkeypatch,
+):
+    """An unreadable profile store cannot leave inherited READY actions usable."""
+
+    load_entered = threading.Event()
+    release_load = threading.Event()
+
+    class _FailingRepository:
+        def load(self):
+            load_entered.set()
+            release_load.wait(5)
+            raise VllmProfileCorrupt("profile document is unavailable")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.VllmProfileRepository",
+        _FailingRepository,
+    )
+    app = _build_test_app()
+    owner = VllmConnectionOwner()
+    app._vllm_connection_owner = owner
+    profile = default_vllm_profile()
+    draft = draft_from_profile(profile)
+    token = owner.begin(
+        draft,
+        runtime_owner="chatbook",
+        profile_id=profile.profile_id,
+        profile_name=profile.name,
+    )
+    claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+    assert claim is not None
+    assert owner.bind_launch_claim(token, claim)
+    assert publish_server_process(app, "vllm", claim, _RunningProcess())
+    assert owner.settle(token, _ready_result(token))
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        assert load_entered.wait(1)
+        focused = view.query_one("#vllm-python-environment", Input)
+        focused.focus()
+        await pilot.pause()
+        assert app.focused is focused
+
+        release_load.set()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            worker = screen._vllm_profile_worker
+            if worker is not None and worker.is_finished:
+                break
+
+        snapshot = owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.target is None
+        assert not screen._vllm_profiles_loaded
+        assert not view.query_one("#vllm-use-console", Button).display
+        assert view.query_one("#vllm-use-console", Button).disabled
+        assert not view.query_one("#vllm-stop", Button).disabled
+        assert view.query_one("#vllm-profile-select", Select).disabled
+        profile_help = view.query_one("#vllm-profile-help", Label)
+        assert profile_help.display
+        assert "repair or reload" in str(profile_help.renderable)
+        assert app.focused is focused
+
+
+@pytest.mark.parametrize("liveness", ("cancelled", "dead", "poll_exception"))
+async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
+    monkeypatch,
+    liveness: str,
+):
+    """Unmount cannot preserve a pending owned target on uncertain evidence."""
+
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    class _ControllableProcess(_RunningProcess):
+        poll_raises = False
+
+        def poll(self):
+            if self.poll_raises:
+                raise RuntimeError("liveness unavailable")
+            return super().poll()
+
+    app = _build_test_app()
+    process = _ControllableProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        profile = screen._selected_vllm_profile()
+        draft = draft_from_profile(profile)
+        token = screen._vllm_owner.begin(
+            draft,
+            runtime_owner="chatbook",
+            profile_id=profile.profile_id,
+            profile_name=profile.name,
+        )
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        assert publish_server_process(app, "vllm", claim, process)
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._vllm_draft = draft
+        screen._apply_vllm_view_state(focus=False)
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        staged = screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+        assert staged
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+
+        if liveness == "cancelled":
+            claim.cancel_event.set()
+        elif liveness == "dead":
+            process.running = False
+        else:
+            process.poll_raises = True
+
+        screen.on_unmount()
+        assert app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE) is None
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.target is None
+
+        process.poll_raises = False
+        process.running = False
+        assert clear_server_process(app, "vllm", claim, process)
+
+
+async def test_staged_owned_handoff_survives_exact_live_unmount_for_consumption(
+    monkeypatch,
+):
+    """The exact uncancelled live claim remains consumable after departure."""
+
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        profile = screen._selected_vllm_profile()
+        draft = draft_from_profile(profile)
+        token = screen._vllm_owner.begin(
+            draft,
+            runtime_owner="chatbook",
+            profile_id=profile.profile_id,
+            profile_name=profile.name,
+        )
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        assert publish_server_process(app, "vllm", claim, process)
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._vllm_draft = draft
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        staged = screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+        assert staged
+
+        screen.on_unmount()
+        pending_claim = app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE)
+        assert pending_claim is not None
+        assert pending_claim.value.generation == token.generation
+        assert screen._vllm_owner.snapshot().target == _ready_result(token).target
+        assert app.pending_handoffs.acknowledge(pending_claim)
+
+        process.running = False
+        assert clear_server_process(app, "vllm", claim, process)
 
 
 async def test_fresh_screen_mismatched_profile_invalidates_ready_target_safely(
@@ -2607,7 +2836,11 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
             model_value="org/model",
         )
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
-        _bind_local_claim(screen._vllm_owner, token)
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        process = _RunningProcess()
+        assert publish_server_process(app, "vllm", claim, process)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         seen: list[NavigateToScreen] = []
         original_post_message = screen.post_message
@@ -2641,9 +2874,11 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
         monkeypatch.setattr(screen, "post_message", original_post_message)
 
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
-        _bind_local_claim(screen._vllm_owner, token)
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         monkeypatch.setattr(screen, "post_message", lambda _message: False)
         screen._on_vllm_use_in_console_requested(VllmSetupView.UseInConsoleRequested())
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         monkeypatch.setattr(screen, "post_message", original_post_message)
+        process.running = False
+        assert clear_server_process(app, "vllm", claim, process)

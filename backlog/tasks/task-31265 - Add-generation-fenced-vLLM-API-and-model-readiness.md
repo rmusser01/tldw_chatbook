@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 15:25'
+updated_date: '2026-09-04 16:28'
 labels:
   - vllm
   - lab
@@ -33,6 +33,7 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 - [x] #7 Presentation-only recomposition preserves valid exact-claim evidence or exposes a reachable Reverify action, while an active runtime with a dirty checked draft exposes Restart with draft without losing Stop or synchronized network-warning recovery.
 - [x] #8 Active credential values are excluded before candidate retention; Chatbook-owned probes/results/snapshots retain no candidate list, while external discovery and exact selection retain only bounded safe IDs necessary for the visible selection flow.
 - [x] #9 A newly mounted Models screen preserves an app-scoped READY target only when the restored profile, current owner token, exact claim-bound launch snapshot, and live runtime ownership still agree; profile mismatch invalidates safely and recovery remains reachable without focus theft.
+- [x] #10 App-scoped READY and handoff actions remain unavailable until initial profile hydration completes and exact reconciliation succeeds; corrupt, future, unavailable, cancelled, dead, or indeterminate owned evidence fails closed while truthful Stop and profile-store recovery remain reachable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,6 +84,16 @@ UX Fix Round 3/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already requires app-scoped readiness evidence, exact lifecycle ownership, generation fencing, and safe invalidation; this round corrects first-screen hydration at that boundary.
+
+UX Fix Round 4/5:
+18. Add a RED production-shaped delayed-hydration regression proving that a fresh screen cannot expose or stage READY actions before the selected profile has loaded and exactly reconciled, plus corrupt/unavailable-load recovery coverage.
+19. Add RED staged-handoff regressions for cancellation, process death, and an indeterminate liveness probe, alongside the exact-live preservation path.
+20. Gate READY projection and handoff staging on completed reconciliation, require an uncancelled exact claim with positive local liveness for Chatbook-owned preservation, and discard only exact stale pending receipts on fail-closed unmount.
+21. Run the focused lifecycle/workflow GREEN nodes and every requested complete gate before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already requires exact profile reconciliation, current claim ownership, generation fencing, and safe handoff rollback; this round closes two lifecycle projection gaps without changing that boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -161,6 +172,41 @@ are GREEN after it. ADR-117 remains the governing ownership contract; no new ADR
 or generalized lesson is required.
 Final Round 3 qualification passed the `60`-case workflow, `71`-case geometry,
 and `329`-case five-file primary gates under the normal descriptor limit.
+
+UX Fix Round 4/5 gates inherited app-scoped readiness on completed initial
+profile hydration and exact reconciliation. The fresh-screen production flow
+opens vLLM while the repository worker is deliberately blocked and proves that
+Use, Make default, Reverify, and direct handoff staging remain unavailable while
+the independently live owned process keeps Stop reachable. A lifecycle refresh
+was separately RED because it could re-project READY into the child view during
+that wait; the view now applies the same profile-ready fence, and the exact
+success path enables Use only after hydration. Corrupt/unavailable profile load
+invalidates the owner target and keeps persistent adjacent repair copy without
+moving focus. On unmount, Chatbook-owned staged evidence now requires the exact
+uncancelled bound claim and an exception-free `poll() is None`; cancellation,
+death, and poll exception each discard only the screen's exact pending receipt
+and invalidate the target, while the exact-live control remains consumable.
+Assertion owners are
+`test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff`,
+`test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery`,
+`test_staged_owned_handoff_is_discarded_without_positive_liveness`, and
+`test_staged_owned_handoff_survives_exact_live_unmount_for_consumption`.
+
+Round 4 qualification passed the `65`-case workflow, `71`-case
+production-stylesheet geometry/Tab matrix, and complete normal-FD five-file
+primary (`334 passed` in `411.92s`). The exact incumbent matrix remains
+`350/352`; both failures are the previously documented untouched Console and
+Settings baselines. Credential/retention privacy passed `7`; CSS
+build/sync/staleness passed `39`; two builds reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`
+with no generated diff. Critical Ruff, scoped format, `compileall`, profile-path
+and persistent-diagnostic inventories, scope review, and `git diff --check`
+passed. The first primary/privacy attempts inside the restricted sandbox were
+not counted because their loopback fixtures could not bind `127.0.0.1`; the
+identical permitted commands produced the green results above. The host still
+has no vLLM executable or importable module, so no live-vLLM claim, download, or
+unrelated service start was made. ADR-117 remains sufficient; no new ADR or
+generalized lesson arose.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -244,6 +244,8 @@ class VllmSetupView(VerticalScroll):
         self._runtime_active = False
         self._discovered_model_ids: tuple[str, ...] = ()
         self._credential_configured = False
+        self._profiles_ready = True
+        self._profile_store_error = False
         self._rendering = False
 
     def compose(self) -> ComposeResult:
@@ -510,6 +512,8 @@ class VllmSetupView(VerticalScroll):
         runtime_active: bool | None = None,
         discovered_model_ids: tuple[str, ...] | None = None,
         credential_configured: bool | None = None,
+        profiles_ready: bool | None = None,
+        profile_store_error: bool | None = None,
     ) -> None:
         self._draft = draft
         self._state = state
@@ -524,6 +528,10 @@ class VllmSetupView(VerticalScroll):
             self._discovered_model_ids = discovered_model_ids
         if credential_configured is not None:
             self._credential_configured = credential_configured
+        if profiles_ready is not None:
+            self._profiles_ready = profiles_ready
+        if profile_store_error is not None:
+            self._profile_store_error = profile_store_error
         if self.is_mounted:
             self._render_projection()
 
@@ -861,7 +869,7 @@ class VllmSetupView(VerticalScroll):
                 )
                 if profile_select.value != self._profiles.selected_profile_id:
                     profile_select.value = self._profiles.selected_profile_id
-            profile_select.disabled = not local
+            profile_select.disabled = not local or not self._profiles_ready
             selected_profile = next(
                 profile
                 for profile in self._profiles.profiles
@@ -871,7 +879,7 @@ class VllmSetupView(VerticalScroll):
             if profile_name.value != selected_profile.name:
                 with profile_name.prevent(Input.Changed):
                     profile_name.value = selected_profile.name
-            profile_name.disabled = not local
+            profile_name.disabled = not local or not self._profiles_ready
             for profile_action_id in (
                 "vllm-profile-create-button",
                 "vllm-profile-save-button",
@@ -879,7 +887,9 @@ class VllmSetupView(VerticalScroll):
                 "vllm-profile-duplicate-button",
                 "vllm-profile-delete-button",
             ):
-                self.query_one(f"#{profile_action_id}", Button).disabled = not local
+                self.query_one(f"#{profile_action_id}", Button).disabled = (
+                    not local or not self._profiles_ready
+                )
             for selector, value in projected_inputs.items():
                 input_widget = self.query_one(selector, Input)
                 if input_widget.value != value:
@@ -911,7 +921,8 @@ class VllmSetupView(VerticalScroll):
                 self._connection.current_token if self._connection is not None else None
             )
             current_target = bool(
-                self._state is VllmReadinessState.READY
+                self._profiles_ready
+                and self._state is VllmReadinessState.READY
                 and self._connection is not None
                 and self._connection.state is VllmReadinessState.READY
                 and target is not None
@@ -991,7 +1002,19 @@ class VllmSetupView(VerticalScroll):
             for help_label in help_labels:
                 help_label.update("")
                 help_label.display = False
-            if not local:
+            if self._profile_store_error:
+                profile_help = self.query_one("#vllm-profile-help", Label)
+                profile_help.update(
+                    "Profile data needs repair or reload before it can be used."
+                )
+                profile_help.display = True
+            elif not self._profiles_ready:
+                profile_help = self.query_one("#vllm-profile-help", Label)
+                profile_help.update(
+                    "Loading saved profiles before readiness can be used."
+                )
+                profile_help.display = True
+            elif not local:
                 profile_help = self.query_one("#vllm-profile-help", Label)
                 profile_help.update(
                     "Profiles are for local starts. Switch to Start on this computer "
@@ -1059,7 +1082,11 @@ class VllmSetupView(VerticalScroll):
         }
         connection = self._connection
         readiness = state_copy[self._state]
-        if connection is not None and connection.target is not None:
+        if (
+            self._profiles_ready
+            and connection is not None
+            and connection.target is not None
+        ):
             readiness = (
                 f"Ready at {connection.launch_snapshot.client_api_url}"
                 if connection.launch_snapshot is not None
