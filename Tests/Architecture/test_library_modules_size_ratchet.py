@@ -150,7 +150,11 @@ _BUDGETS: dict[str, int] = {
     # a 43rd candidate, `_load_library_search_history`, was excluded
     # mid-task -- module-globals coupling on a bare `get_cli_setting`
     # reference broke a real test fixture -- and stays on the screen).
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1857,
+    # 2026-09-03, wave-3 task 3 fix round 1: two false-caller-count claims
+    # in this module's own docstring were corrected in place (no methods
+    # touched, no bodies re-shaped -- byte-for-byte canon on the 42 moved
+    # bodies is unaffected). 1857 -> 1890.
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1890,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
 }

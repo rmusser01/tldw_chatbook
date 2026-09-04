@@ -195,18 +195,51 @@ instruction to re-verify rather than lean on the field-level finding.
      making the ``call_count == 0`` assertion trivially (and silently)
      true regardless of whether the real logic still behaves correctly.
 
-   Two additional monkeypatch sites the same repo-wide census found are
-   confirmed SAFE and need no exclusion, because their only caller stays
-   screen-resident (not a moved cluster member) and therefore always
-   invokes them with ``self`` = the real, patched screen instance
-   regardless of where the underlying implementation lives:
-   ``_focused_library_rag_result_card_index`` (patched in
-   ``Tests/UI/test_screen_navigation.py:2430``, but its only caller,
-   ``LibraryScreen.check_action``, is not a cluster member) and
-   ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` itself (``Mock``
-   -wrapped in ``test_library_shell.py:28843``, but its only external
-   caller, ``_apply_local_source_snapshot``, is one of recipe §3's four
-   permanently screen-routed names) -- MOVE normally.
+   Two additional monkeypatch sites the same repo-wide census found need a
+   closer look than "only caller stays screen-resident, so it's safe" --
+   fix-round correction (the caller counts below were wrong in the first
+   pass of this docstring):
+
+   - ``_focused_library_rag_result_card_index`` (patched in
+     ``Tests/UI/test_screen_navigation.py:2430``) has FOUR callers, not
+     one: ``LibraryScreen.check_action`` (screen-resident, never a cluster
+     member) plus THREE controller-internal movers, all on THIS class --
+     ``action_library_rag_result_card_select`` (~1123),
+     ``action_library_rag_result_card_open`` (~1135), and
+     ``action_library_rag_use_in_console`` (~1155). The one test that
+     patches this name (``screen._focused_library_rag_result_card_index =
+     lambda: ...``, a bare instance-attribute assignment) only ever calls
+     ``screen.check_action(...)`` -- it never invokes any of the three
+     ``action_library_rag_result_card_*``/``action_library_rag_use_in_
+     console`` methods, so it happens to be safe today. But the bypass
+     hazard is real and live, the SAME shape as the ``_sync_library_
+     canvas`` paragraph above: because the three action methods moved to
+     THIS controller, they call ``self._focused_library_rag_result_card_
+     index()`` with ``self`` = the CONTROLLER instance. A future test that
+     patches ``screen._focused_library_rag_result_card_index`` and then
+     presses Enter/``o``/``u`` (rather than calling ``check_action``
+     directly) would silently miss the patch on those three paths while
+     ``check_action`` alone still observed it. MOVES normally today (no
+     current test is broken by it), but this paragraph exists so that gap
+     can be diagnosed quickly if it is ever tripped, rather than
+     rediscovered from scratch.
+   - ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` itself
+     (``Mock``-wrapped as a screen-instance attribute in
+     ``test_library_shell.py:28843``) has exactly ONE external caller:
+     ``_reconcile_library_entry_state`` (``library_screen.py:~12509``), a
+     screen-resident method that was never a cluster candidate and never
+     moved. It is NOT one of recipe §3's four permanently screen-routed
+     names (``_list_local_source_snapshot``/``_refresh_local_source_
+     snapshot``/``_apply_local_source_snapshot``/``_refresh_library_note_
+     detail``, an unrelated list guarding unrelated shell infrastructure);
+     it is simply screen-resident on its own, independent merits, with no
+     protection borrowed from that list. Because that caller invokes
+     ``self._sync_library_rag_scope_toggle_and_run_gate_widgets()`` with
+     ``self`` = the real, patched screen instance, the instance-level
+     ``Mock`` shadows the class-level delegator (instance attributes shadow
+     class attributes in Python's attribute lookup) regardless of where
+     the underlying implementation lives -- MOVES normally.
+
    ``_apply_library_rag_search_outcome`` is also patched (instance- and
    class-level, ``test_library_shell.py:7407``/``:7556``) but every site
    uses a REAL, fully-constructed ``LibraryScreen`` (never an unbound fake),

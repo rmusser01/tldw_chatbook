@@ -254,20 +254,20 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # constructor call plus a generated shim loop; methods unchanged (pure
     # field move, zero FunctionDefs touched). 43977/1316 -> 43923/1316.
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
-    # 2/3): 43 of the 50 combined search+RAG candidates (60 raw "search"/
+    # 2/3): 42 of the 50 combined search+RAG candidates (60 raw "search"/
     # "rag" matches minus 3 Prompts-owned + 7 Media-owned) moved verbatim
     # into `LibraryRagSearchController`
     # (`UI/Library_Modules/library_rag_search_controller.py`), each
-    # replaced by a one-line screen delegator (42 `self._rag_search_
-    # controller.<name>(...)` forwards + 1 `LibraryRagSearchController.
+    # replaced by a one-line screen delegator (41 `self._rag_search_
+    # controller.<name>(...)` instance-forwards + 1 `LibraryRagSearchController.
     # <name>(...)` class-forward for the cluster's single staticmethod,
     # `_library_rag_scope_summary`) -- a pure move, so the method count is
-    # unchanged (43 `FunctionDef`s out, 43 one-line delegators in). 7 of
+    # unchanged (42 `FunctionDef`s out, 42 one-line delegators in). 8 of
     # the 50 candidates stay screen-resident, unmoved and byte-for-byte
     # untouched: 3 carry `@work` and would fail Textual's `isinstance(self,
     # DOMNode)` check on a plain controller (`_execute_library_rag_
     # answer`/`_execute_library_rag_search`/`_save_library_search_
-    # history`), and 4 more are the "instance-attribute monkeypatch"
+    # history`); 4 more are the "instance-attribute monkeypatch"
     # test-bypass shape (recipe §11 lesson 2) -- `_library_rag_panel_
     # state`, `_refresh_search_rag_panel_state_widgets`, `_patch_sibling_
     # library_search_input`, `_mirror_library_rag_scope_recovery` -- found
@@ -275,20 +275,22 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # the 4 already flagged by task 2's own forward note; the other 2 are
     # new findings from this task's own wider census) -- see
     # `library_rag_search_controller.py`'s module docstring for the full
-    # per-name reasoning. 42, not 43: `_load_library_search_history` was
+    # per-name reasoning; and 1 more, `_load_library_search_history`, was
     # excluded mid-task after the verification battery found a real
     # regression -- its bare `get_cli_setting` reference resolves against
     # the DEFINING module's globals, and moving it silently broke every
     # `monkeypatch.setattr(library_screen_module, "get_cli_setting", ...)`
     # test (a `test_library_shell.py` fixture several tests depend on).
-    # It stays a real, full-bodied screen method (byte-for-byte identical
-    # to before this task), constructed at its original `__init__`
-    # position with no controller involvement. Net diff: +96 insertions
-    # (the import line, the new `LibraryRagSearchController` constructor
-    # call in `__init__` right after `self._collections_controller`, plus
-    # the 42 one-line delegator bodies) / -1010 deletions (the 42 moved
-    # bodies' original lines, net of restoring `_load_library_search_
-    # history`'s full body once it was excluded). 43923/1316 -> 43009/1316.
+    # (3 + 4 + 1 = 8 excluded; 50 - 8 = 42 moved -- every count in this
+    # entry agrees.) It stays a real, full-bodied screen method
+    # (byte-for-byte identical to before this task), constructed at its
+    # original `__init__` position with no controller involvement. Net
+    # diff: +96 insertions (the import line, the new
+    # `LibraryRagSearchController` constructor call in `__init__` right
+    # after `self._collections_controller`, plus the 42 one-line delegator
+    # bodies) / -1010 deletions (the 42 moved bodies' original lines, net
+    # of restoring `_load_library_search_history`'s full body once it was
+    # excluded). 43923/1316 -> 43009/1316.
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43009, 1316),
 }
 

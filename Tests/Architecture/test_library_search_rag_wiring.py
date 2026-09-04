@@ -131,7 +131,7 @@ _RAG_SEARCH_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 
 @pytest.mark.unit
 def test_rag_search_controller_owns_its_cluster() -> None:
-    """Every one of the 43 moved names is a callable on the controller.
+    """Every one of the 42 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     `test_collections_controller_owns_its_cluster`.
@@ -150,7 +150,7 @@ def test_rag_search_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_rag_search_handlers() -> None:
-    """Every one of the 43 moved names is a one-line screen delegator that
+    """Every one of the 42 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 1
     staticmethod, to the module-level controller CLASS).
 
