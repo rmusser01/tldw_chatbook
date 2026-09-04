@@ -1,16 +1,30 @@
 """Pure-state tests for the Console Environment panel (no I/O, no Textual app)."""
 from datetime import datetime, timedelta, timezone
 
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 from tldw_chatbook.Chat.console_environment_state import (
+    ENV_ROW_BRANCH,
+    ENV_ROW_CHANGES,
+    ENV_ROW_CHECKS,
+    ENV_ROW_CHECKS_FIX,
+    ENV_ROW_COMMIT_PUSH,
+    ENV_ROW_LOCAL,
+    ENV_ROW_PR,
+    ENV_ROW_PR_ADD,
+    ENV_ROW_PR_OPEN,
     EnvSourceAvailability,
     ExecTargetKind,
     GitEnvState,
+    PrCheck,
     PrEnvState,
     TasksEnvState,
     ExecTargetState,
     EnvironmentSnapshot,
     branch_task_id,
     compact_count,
+    failing_checks_text,
+    pr_summary_text,
+    project_environment_section,
     relative_age,
     signed_change_counts,
 )
@@ -53,3 +67,111 @@ def test_environment_snapshot_defaults_are_not_applicable():
     assert snapshot.pr.availability is EnvSourceAvailability.NOT_APPLICABLE
     assert snapshot.tasks.availability is EnvSourceAvailability.NOT_APPLICABLE
     assert snapshot.target.kind is ExecTargetKind.LOCAL
+
+
+_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+
+
+def _git_state(**kw) -> GitEnvState:
+    base = dict(
+        availability=EnvSourceAvailability.OK,
+        root="/w/repo",
+        branch="feat/task-3401-video-generation",
+        adds=1204,
+        dels=86,
+        files=(ChangedFile(path="a.py", status="M", adds=1200, dels=80),
+               ChangedFile(path="b.py", status="A", adds=4, dels=6)),
+    )
+    base.update(kw)
+    return GitEnvState(**base)
+
+
+def test_no_git_workspace_projects_a_single_quiet_row():
+    state = project_environment_section(EnvironmentSnapshot(), frozenset(), now=_NOW)
+    assert [r.row_id for r in state.rows] == ["env-empty"]
+    assert state.rows[0].primary_text == "No git workspace"
+    assert not state.rows[0].clickable
+
+
+def test_changes_row_shows_signed_totals_and_branch_row_shows_divergence():
+    snapshot = EnvironmentSnapshot(git=_git_state(ahead=2, behind=1, upstream="origin/feat/x"))
+    state = project_environment_section(snapshot, frozenset(), now=_NOW)
+    by_id = {r.row_id: r for r in state.rows}
+    assert by_id[ENV_ROW_CHANGES].secondary_text == "+1,204 −86"
+    assert "↑2" in by_id[ENV_ROW_BRANCH].secondary_text
+    assert "↓1" in by_id[ENV_ROW_BRANCH].secondary_text
+    assert by_id[ENV_ROW_CHANGES].clickable and by_id[ENV_ROW_BRANCH].clickable
+
+
+def test_commit_or_push_row_hidden_when_clean_and_synced_shown_when_dirty():
+    clean = EnvironmentSnapshot(git=_git_state(adds=0, dels=0, files=()))
+    dirty = EnvironmentSnapshot(git=_git_state())
+    clean_ids = [r.row_id for r in project_environment_section(clean, frozenset(), now=_NOW).rows]
+    dirty_ids = [r.row_id for r in project_environment_section(dirty, frozenset(), now=_NOW).rows]
+    assert ENV_ROW_COMMIT_PUSH not in clean_ids
+    assert ENV_ROW_COMMIT_PUSH in dirty_ids
+
+
+def test_push_only_variant_when_tree_clean_but_ahead():
+    snapshot = EnvironmentSnapshot(git=_git_state(adds=0, dels=0, files=(), ahead=2))
+    by_id = {r.row_id: r for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows}
+    assert by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Push ↑2"
+
+
+def test_changes_expansion_lists_files_with_per_file_counts():
+    snapshot = EnvironmentSnapshot(git=_git_state())
+    state = project_environment_section(snapshot, frozenset({ENV_ROW_CHANGES}), now=_NOW)
+    ids = [r.row_id for r in state.rows]
+    assert "env-file-0" in ids and "env-file-1" in ids
+    file_row = next(r for r in state.rows if r.row_id == "env-file-0")
+    assert file_row.primary_text == "M a.py"
+    assert file_row.secondary_text == "+1,200 −80"
+
+
+def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
+    no_pr = EnvironmentSnapshot(git=_git_state())
+    assert ENV_ROW_PR not in [r.row_id for r in project_environment_section(no_pr, frozenset(), now=_NOW).rows]
+    pr = PrEnvState(
+        availability=EnvSourceAvailability.OK, number=2281, title="Split boot CSS",
+        state="OPEN", url="https://github.com/o/r/pull/2281", adds=36643, dels=2871,
+        checks=(PrCheck("lint", "success"), PrCheck("ci", "failure", "https://ci/1"),
+                PrCheck("docs", "pending")),
+    )
+    snapshot = EnvironmentSnapshot(git=_git_state(), pr=pr)
+    collapsed = project_environment_section(snapshot, frozenset(), now=_NOW)
+    by_id = {r.row_id: r for r in collapsed.rows}
+    assert by_id[ENV_ROW_PR].primary_text == "PR #2281 · Open"
+    assert by_id[ENV_ROW_CHECKS].primary_text == "1 failing check"
+    expanded = project_environment_section(
+        snapshot, frozenset({ENV_ROW_PR, ENV_ROW_CHECKS}), now=_NOW)
+    expanded_ids = [r.row_id for r in expanded.rows]
+    assert ENV_ROW_PR_OPEN in expanded_ids and ENV_ROW_PR_ADD in expanded_ids
+    assert ENV_ROW_CHECKS_FIX in expanded_ids
+
+
+def test_detached_head_labels_and_skipped_pr():
+    snapshot = EnvironmentSnapshot(git=_git_state(branch=None, detached=True, head_short="abc1234"))
+    by_id = {r.row_id: r for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows}
+    assert by_id[ENV_ROW_BRANCH].primary_text == "detached @ abc1234"
+
+
+def test_stale_marker_survives_on_error_with_prior_data():
+    snapshot = EnvironmentSnapshot(git=_git_state(stale=True))
+    by_id = {r.row_id: r for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows}
+    assert by_id[ENV_ROW_CHANGES].status == "blocked"
+
+
+def test_local_row_expansion_shows_remote_placeholder():
+    snapshot = EnvironmentSnapshot(git=_git_state())
+    state = project_environment_section(snapshot, frozenset({ENV_ROW_LOCAL}), now=_NOW)
+    texts = [r.primary_text for r in state.rows]
+    assert any("Remote tldw_server" in t for t in texts)
+
+
+def test_composer_payload_builders():
+    pr = PrEnvState(availability=EnvSourceAvailability.OK, number=7, title="T",
+                    state="OPEN", url="https://x/pull/7",
+                    checks=(PrCheck("ci", "failure", "https://ci/1"),))
+    assert "PR #7" in pr_summary_text(pr) and "https://x/pull/7" in pr_summary_text(pr)
+    fix = failing_checks_text(pr)
+    assert "ci" in fix and "https://ci/1" in fix
