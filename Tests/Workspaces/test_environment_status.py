@@ -177,3 +177,70 @@ def test_run_gh_missing_binary_returns_none(tmp_path: Path):
         assert run_gh(tmp_path, ["pr", "view"]) is None
     finally:
         mod._GH_EXECUTABLE = original
+
+
+from tldw_chatbook.Workspaces.environment_status import BacklogTaskScanner
+
+
+def _write_task(tasks_dir: Path, task_id: str, title: str, status: str,
+                body: str = "") -> Path:
+    path = tasks_dir / f"task-{task_id} - {title}.md"
+    path.write_text(f"---\nid: task-{task_id}\ntitle: {title}\nstatus: {status}\n---\n\n{body}")
+    return path
+
+
+@pytest.fixture()
+def backlog_ws(tmp_path: Path) -> Path:
+    tasks_dir = tmp_path / "backlog" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    _write_task(tasks_dir, "101", "Fix frobnicator", "In Progress")
+    _write_task(tasks_dir, "102", "Polish widget", "To Do")
+    _write_task(tasks_dir, "103", "Old thing", "Done")
+    _write_task(
+        tasks_dir, "3401", "Video foundation", "In Progress",
+        body=("## Acceptance Criteria\n\n- [x] adapter builds\n- [x] tests green\n"
+              "- [ ] docs updated\n"),
+    )
+    return tmp_path
+
+
+def test_scan_counts_statuses_and_excludes_done_from_entries(backlog_ws: Path):
+    state = BacklogTaskScanner().scan(backlog_ws, branch=None)
+    assert state.availability is EnvSourceAvailability.OK
+    assert state.in_progress == 2 and state.todo == 1
+    assert {e.task_id for e in state.entries} == {"101", "102", "3401"}
+
+
+def test_scan_no_backlog_dir_is_not_applicable(tmp_path: Path):
+    state = BacklogTaskScanner().scan(tmp_path, branch=None)
+    assert state.availability is EnvSourceAvailability.NOT_APPLICABLE
+
+
+def test_branch_task_gets_ac_progress(backlog_ws: Path):
+    state = BacklogTaskScanner().scan(backlog_ws, branch="feat/task-3401-video")
+    assert state.branch_task is not None
+    assert state.branch_task.task_id == "3401"
+    assert state.branch_task.ac_done == 2 and state.branch_task.ac_total == 3
+
+
+def test_malformed_frontmatter_is_skipped_not_fatal(backlog_ws: Path):
+    bad = backlog_ws / "backlog" / "tasks" / "task-999 - Broken.md"
+    bad.write_text("---\nstatus: [unclosed\n---\n")
+    state = BacklogTaskScanner().scan(backlog_ws, branch=None)
+    assert "999" not in {e.task_id for e in state.entries}
+    assert state.in_progress == 2  # rest of the scan unaffected
+
+
+def test_mtime_cache_avoids_reparsing_unchanged_files(backlog_ws: Path, monkeypatch):
+    scanner = BacklogTaskScanner()
+    scanner.scan(backlog_ws, branch=None)
+    calls = {"n": 0}
+    original = BacklogTaskScanner._parse_status
+
+    def counting(self, path):
+        calls["n"] += 1
+        return original(self, path)
+
+    monkeypatch.setattr(BacklogTaskScanner, "_parse_status", counting)
+    scanner.scan(backlog_ws, branch=None)
+    assert calls["n"] == 0  # nothing changed on disk -> zero re-parses

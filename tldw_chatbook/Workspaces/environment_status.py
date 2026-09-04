@@ -8,19 +8,25 @@ from __future__ import annotations
 
 import json
 import os
+import re as _re
 import subprocess
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import yaml
 from loguru import logger
 
 from tldw_chatbook.Chat.console_environment_state import (
+    BacklogTaskEntry,
+    BranchTaskState,
     EnvSourceAvailability,
     GitEnvState,
     PrCheck,
     PrEnvState,
+    TasksEnvState,
+    branch_task_id,
 )
 from tldw_chatbook.Workspaces.git_workspace import (
     GitWorkspaceError,
@@ -178,3 +184,95 @@ def gather_pr_env(
     except (ValueError, TypeError) as exc:
         logger.debug("environment_status: gh JSON parse failed: {}", exc)
         return PrEnvState(availability=EnvSourceAvailability.ERROR)
+
+
+_TASK_FILENAME_RE = _re.compile(r"^task-(\d+(?:\.\d+)*) - (.+)\.md$")
+_FRONT_MATTER_RE = _re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", _re.DOTALL)
+_AC_DONE_RE = _re.compile(r"^- \[x\]", _re.MULTILINE | _re.IGNORECASE)
+_AC_OPEN_RE = _re.compile(r"^- \[ \]", _re.MULTILINE)
+
+
+class BacklogTaskScanner:
+    """Scans <workspace>/backlog/tasks/ with an instance-scoped (mtime, size) cache."""
+
+    def __init__(self) -> None:
+        self._cache: dict[str, tuple[tuple[float, int], str]] = {}
+
+    def _parse_status(self, path: Path) -> str:
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+        except OSError:
+            return ""
+        match = _FRONT_MATTER_RE.match(head)
+        if not match:
+            return ""
+        try:
+            meta = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            return ""
+        if not isinstance(meta, dict):
+            return ""
+        return str(meta.get("status") or "").strip()
+
+    def _status_for(self, path: Path) -> str:
+        try:
+            stat = path.stat()
+        except OSError:
+            return ""
+        signature = (stat.st_mtime, stat.st_size)
+        cached = self._cache.get(str(path))
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        status = self._parse_status(path)
+        self._cache[str(path)] = (signature, status)
+        return status
+
+    @staticmethod
+    def _ac_progress(path: Path) -> tuple[int, int]:
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return (0, 0)
+        done = len(_AC_DONE_RE.findall(body))
+        open_count = len(_AC_OPEN_RE.findall(body))
+        return (done, done + open_count)
+
+    def scan(self, workspace_root: Path, branch: str | None) -> TasksEnvState:
+        tasks_dir = workspace_root / "backlog" / "tasks"
+        if not tasks_dir.is_dir():
+            return TasksEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
+        wanted_id = branch_task_id(branch)
+        entries: list[BacklogTaskEntry] = []
+        branch_task: BranchTaskState | None = None
+        in_progress = todo = 0
+        try:
+            listing = sorted(tasks_dir.iterdir())
+        except OSError:
+            return TasksEnvState(availability=EnvSourceAvailability.ERROR)
+        for path in listing:
+            match = _TASK_FILENAME_RE.match(path.name)
+            if not match:
+                continue
+            task_id, title = match.group(1), match.group(2)
+            status = self._status_for(path)
+            if not status:
+                continue
+            if status == "In Progress":
+                in_progress += 1
+            elif status == "To Do":
+                todo += 1
+            if status != "Done" or task_id == wanted_id:
+                entries.append(BacklogTaskEntry(task_id=task_id, title=title, status=status))
+            if wanted_id is not None and task_id == wanted_id:
+                done, total = self._ac_progress(path)
+                branch_task = BranchTaskState(
+                    task_id=task_id, title=title, status=status,
+                    ac_done=done, ac_total=total, path=str(path),
+                )
+        return TasksEnvState(
+            availability=EnvSourceAvailability.OK,
+            branch_task=branch_task,
+            in_progress=in_progress,
+            todo=todo,
+            entries=tuple(entries),
+        )
