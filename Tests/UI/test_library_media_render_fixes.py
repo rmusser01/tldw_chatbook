@@ -414,7 +414,9 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
 
 
 def _footer_labels(screen) -> list[str]:
-    return [label for _key, label in screen._library_footer_shortcuts_for_current_state()]
+    return [
+        label for _key, label in screen._library_footer_shortcuts_for_current_state()
+    ]
 
 
 def _painted_footer(host, screen) -> str:

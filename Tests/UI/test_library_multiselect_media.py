@@ -2120,7 +2120,6 @@ def test_space_gate_is_scoped_to_the_media_surface_and_its_own_grips():
             fake, "library_media_toggle_row_selection", ()
         )
 
-
     fake.focused = _focused_media_row("7")
     assert gate() is True
     fake.focused = _grip(

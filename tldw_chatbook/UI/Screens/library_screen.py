@@ -39072,26 +39072,6 @@ class LibraryScreen(BaseAppScreen):
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
         return review_progress(review_set.items, review_set.cursor, is_live)
 
-    def _active_review_set_progress(self) -> str | None:
-        """Return the active set's Reader progress line, or ``None``.
-
-        task-28241 (AC3): ``"12 of 40 · 7 reviewed"`` / ``"All N reviewed"`` /
-        ``"No items to review"`` -- computed over LIVE items so a deleted item
-        never inflates the count.
-
-        Returns:
-            The formatted progress string when a set is active, else ``None``.
-        """
-        progress = self._active_review_progress()
-        if progress is None:
-            return None
-        # Lazy: review sets are one Reader mode.
-        from tldw_chatbook.Library.review_set_state import (
-            format_review_progress,
-        )
-
-        return format_review_progress(progress)
-
     def _active_review_set_banner(self) -> str | None:
         """Build the Reader's one-line review-set banner (task-30045).
 

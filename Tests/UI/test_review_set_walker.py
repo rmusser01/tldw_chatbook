@@ -299,22 +299,6 @@ def test_walk_returns_false_when_service_is_absent():
     assert LibraryScreen._walk_active_review_set(fake, 1) is False
 
 
-def test_active_review_set_progress_formats_the_line(tmp_path):
-    service = _service(tmp_path)
-    set_id = service.create_review_set(
-        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
-    )
-    service.mark_item_done(set_id, backing_media_id=10, done=True)
-    fake = _walker_fake(service)
-
-    assert LibraryScreen._active_review_set_progress(fake) == "1 of 3 · 1 reviewed"
-
-
-def test_active_review_set_progress_is_none_without_an_active_set(tmp_path):
-    fake = _walker_fake(_service(tmp_path))
-    assert LibraryScreen._active_review_set_progress(fake) is None
-
-
 def test_exit_review_deactivates_but_keeps_the_set(tmp_path):
     service = _service(tmp_path)
     set_id = service.create_review_set("X", origin="browse", items=[(1, "a")])

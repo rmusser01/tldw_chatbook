@@ -349,20 +349,35 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 **Escape** cancels without applying a choice and returns focus to its opener.
-The Media grips accept **Enter** and **Space**. Arrow-key traversal moves the
-Items selection with a short settle delay; **Enter** loads immediately.
+The Media grips accept **Enter**; in Select mode **Space** is reserved for
+toggling the focused row, so the grips take Enter only there. Arrow-key
+traversal moves the Items selection with a short settle delay; **Enter**
+loads immediately.
 **Escape** closes transient Reader state first — the Find bar, the More
-menu, or an armed delete or edit; the footer reads `esc close` for all of
-them — and then steps outward: from the Reader to the loaded **Items row**,
-from Items to the **Media row in the rail**. It never lands in a text box.
-In the three-pane layout it never leaves the Reader either: the Items pane
-is already showing the list, so the document stays open and `]`/`[` keep
-working from the row. The rail row is the last stop, and the footer drops
-its `esc` chip there rather than advertise a key that does nothing.
-Narrower layouts — where the Library pane is collapsed — keep the "‹ Back"
-control and Escape's return to the list. **F6** cycles Library → Items →
-the Reader's content box, which tints its own border in the accent colour
-while it holds focus (no overlay, so the text stays readable).
+menu, an open type/sort strip, or an armed delete or edit — and then steps
+outward: from the Reader to the loaded **Items row**, from Items to the
+**Media row in the rail**. Neither of those steps lands in a text box.
+In the three-pane layout (verified at 235x52) Escape never leaves the
+Reader at all: the Items pane is already showing the list, so the document
+stays open and `]`/`[` keep working from the row. The rail row is the last
+stop, and the footer drops its `esc` chip there rather than advertise a key
+that does nothing.
+Where the Library pane is collapsed but the Items pane still shows the list
+(verified at 100x30) the "‹ Back" control returns you to the list, and so
+does Escape from the Items row. Below about 92 columns both panes are
+collapsed: the control and the key still register the exit, but nothing on
+screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
+stop working until you re-enter Media from the rail. A follow-up will open
+the Items pane on that exit.
+**F6** cycles Library → Items → the Reader's content box, which tints its
+own border in the accent colour while it holds focus (no overlay, so the
+text stays readable).
+From a focused Items row beside the Reader, the Reader's own keys stay
+live and are advertised with it: **]** / **[** walk items, **l** toggles
+read-later, **c** sends the item to Console, **t** arms Move to trash, and
+**s** enters Select mode (where Space toggles a row and **s** again is
+Done). On the last item of an active review set **]** reads "finish
+review" and marks it done in place.
 While a review set is active, the Reader adds **]** (next in
 set, marking the item you leave), **[** (previous, never marks), **m**
 (toggle reviewed), and **R** (exit review, keeping the set resumable); the

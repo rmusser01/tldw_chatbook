@@ -11093,7 +11093,8 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
-        search_input = screen.query_one("#library-media-content-search", Input)
+        # task-31237 collapsed the Find bar until the Find action opens it.
+        search_input = await _open_media_find(screen, pilot)
         controls = viewer.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -11189,6 +11190,11 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+        # task-31237 collapsed the Find bar until the Find action opens it,
+        # and that mount recomposes the viewer -- open it before the
+        # baseline identities are taken, so the measured submit/Next/Prev
+        # are what they claim to be.
+        await _open_media_find(screen, pilot)
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
@@ -12100,7 +12106,8 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         # older-timestamp row under the default newest-first sort); row 0
         # is the OTHER (unmodified, non-markdown "video") item.
         screen.query_one("#library-media-row-0").press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        await _open_media_find(screen, pilot)
         assert screen._library_media_content_mode == "raw"
         assert not screen.query("#library-media-content-mode-strip")
 
