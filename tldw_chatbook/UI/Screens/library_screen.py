@@ -39388,6 +39388,10 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._open_library_media_viewer(f"local:media:{landing}")
         except Exception:
+            # task-31220: the one review-set wrapper task-30042 missed -- a
+            # live wedge left NO trace in the log because this swallowed the
+            # traceback.
+            logger.opt(exception=True).warning("review-set picker failed")
             self._notify_review_set(
                 "Couldn't open review sets.", severity="error"
             )

@@ -2336,13 +2336,37 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-31221. The third widget bitten by core/_reset.tcss's
+   ``*:focus { outline: solid }`` fallback, after TASK-1160 (DataTable) and
+   TASK-2300 (SelectOverlay, components/_lists.tcss) -- read TASK-2300's
+   block for the mechanics; this is its raw-OptionList sibling. The media
+   type chooser opens at option-count height and the screen focuses it
+   immediately, so the outline's top+bottom rows overwrote the FIRST and
+   LAST options outright: with the common two-option catalogue the chooser
+   rendered as a bare box with nothing in it and selection was blind
+   (root-caused live 2026-09-03 via painted-text probes -- every REGION
+   measured correct while the paint was covered, which is why no geometry
+   assertion ever caught it). Focus stays visible the sanctioned way: the
+   highlighted-option recolour already says which option is current. */
+#library-media-type-choices:focus {
+    outline: none;
+}
+
+/* task-31222: the Read-mode wrapper held only a heading yet defaulted to
+   1fr, inserting a blank band above the Find bar while the content sat in
+   a fixed 18-row box below -- the Reader's product got ~1/3 of its pane. */
+#library-media-reader-mode-read {
+    height: auto;
+}
+
 #library-media-viewer-content {
     /* Bounded so short content stays compact and long content scrolls inside
        this region; height:1fr here ballooned the pane and split the sections.
-       max-height is generous so typical content shows in full (only long
-       transcripts engage the inner scroll), reducing nested-scroll friction. */
+       task-31222: the bound scales with the terminal instead of a fixed 18
+       rows, so a tall window reads tall (only long content engages the
+       inner scroll). */
     height: auto;
-    max-height: 18;
+    max-height: 75vh;
     min-height: 3;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
