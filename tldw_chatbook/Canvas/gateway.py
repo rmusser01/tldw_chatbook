@@ -269,6 +269,48 @@ class BridgeConfirmationResponse:
             raise ValueError("unsupported bridge confirmation status")
 
 
+@dataclass(frozen=True, slots=True)
+class BridgePreparationResponse:
+    """Complete trusted-confirmation copy plus source-free exact target metadata."""
+
+    request_id: str
+    kind: str
+    conversation_id: str
+    canvas_id: str
+    revision_id: str
+    complete_text: str | None = field(default=None, repr=False)
+    filename: str | None = None
+    mime_type: str | None = None
+    byte_size: int | None = None
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.request_id, field_name="bridge request ID")
+        if self.kind not in {"submit", "download"}:
+            raise ValueError("unsupported bridge preparation kind")
+        for name in ("conversation_id", "canvas_id", "revision_id"):
+            validate_opaque_identifier(
+                getattr(self, name), field_name=name.replace("_", " ")
+            )
+        if self.complete_text is not None:
+            limit = (
+                CanvasLimits().submit_payload_bytes
+                if self.kind == "submit"
+                else CanvasLimits().download_payload_bytes
+            )
+            validate_utf8_text(
+                self.complete_text,
+                limit=limit,
+                field_name="bridge confirmation text",
+            )
+        if self.byte_size is not None and (
+            not isinstance(self.byte_size, int)
+            or isinstance(self.byte_size, bool)
+            or self.byte_size < 0
+            or self.byte_size > CanvasLimits().download_payload_bytes
+        ):
+            raise ValueError("invalid bridge preparation byte size")
+
+
 class CanvasGatewayAuthority(Protocol):
     """Narrow callback seam into the application-owned Canvas authority."""
 
@@ -297,12 +339,17 @@ class CanvasGatewayAuthority(Protocol):
         self, scope: CanvasGatewayScope, *, after_event_id: str | None
     ) -> tuple[CanvasGatewayEvent, ...] | Awaitable[tuple[CanvasGatewayEvent, ...]]: ...
 
+    def prepare_bridge(
+        self, scope: CanvasGatewayScope, request: CanvasBridgeRequest
+    ) -> tuple[BridgePreparationResponse, object] | Awaitable[tuple[BridgePreparationResponse, object]]: ...
+
     def confirm_bridge(
         self,
         scope: CanvasGatewayScope,
         request: BridgeConfirmationRequest,
         *,
         settlement: CanvasBridgeSettlementLease,
+        preparation: object | None = None,
     ) -> BridgeConfirmationResponse | Awaitable[BridgeConfirmationResponse]: ...
 
 
@@ -340,6 +387,20 @@ class _BridgeSettlementRecord:
 
 
 @dataclass(slots=True, repr=False)
+class _BridgePendingRecord:
+    """One payload-free preparation bound to the current renderer load."""
+
+    load_id: str
+    selection_epoch: int
+    request_id: str
+    request_kind: str
+    payload_digest: bytes
+    preparation: object | None
+    expires_at: float
+    expiry_handle: asyncio.TimerHandle | None = None
+
+
+@dataclass(slots=True, repr=False)
 class _BrowserSession:
     digest: bytes
     csrf_digest: bytes
@@ -349,6 +410,7 @@ class _BrowserSession:
     selection_epoch: int = 0
     current_load_id: str | None = None
     unavailable: bool = False
+    pending_bridge: _BridgePendingRecord | None = None
     bridge_settlements: dict[str, _BridgeSettlementRecord] = field(default_factory=dict)
 
 
@@ -512,7 +574,8 @@ class CanvasGateway:
         self._max_request_bytes = (
             max_request_bytes
             if max_request_bytes is not None
-            else CanvasLimits().download_payload_bytes + 64 * 1024
+            else ((CanvasLimits().download_payload_bytes + 2) // 3) * 4
+            + 64 * 1024
         )
         if self._max_request_bytes < 64:
             raise ValueError("max_request_bytes is too small")
@@ -817,6 +880,7 @@ class CanvasGateway:
         self._app.router.add_get(
             f"{root}/api/source-download", self._source_download, allow_head=False
         )
+        self._app.router.add_post(f"{root}/api/bridge/prepare", self._prepare_bridge)
         self._app.router.add_post(f"{root}/api/bridge", self._bridge)
         self._app.router.add_post(f"{root}/api/close", self._close_session)
         self._app.router.add_get(
@@ -1182,7 +1246,12 @@ class CanvasGateway:
         if not isinstance(value, Mapping) or set(value) != {"action"}:
             return _error_response("invalid_action_request", 400)
         action = value["action"]
-        if action not in {"source_read", "source_download", "bridge_confirm"}:
+        if action not in {
+            "source_read",
+            "source_download",
+            "bridge_prepare",
+            "bridge_confirm",
+        }:
             return _error_response("action_refused", 400)
         load_id = session.current_load_id or f"action-{uuid4()}"
         grant = self.capabilities.issue(
@@ -1249,6 +1318,84 @@ class CanvasGateway:
             )
         return response
 
+    async def _prepare_bridge(self, request: web.Request) -> web.Response:
+        session = self._require_session(request, csrf=True)
+        token = _authorization_capability(request)
+        if session is None or token is None:
+            return _error_response("bridge_refused", 403)
+        value = await self._read_json(request)
+        if not isinstance(value, Mapping) or set(value) != {"request"}:
+            return _error_response("invalid_bridge_request", 400)
+        try:
+            bridge_request = CanvasBridgeRequest.from_wire(value["request"])
+        except (TypeError, ValueError):
+            return _error_response("invalid_bridge_request", 400)
+        load_id = session.current_load_id
+        if load_id is None:
+            return _error_response("bridge_refused", 409)
+        expected = self._session_capability_scope(
+            session, load_id=load_id, action="bridge_prepare"
+        )
+        try:
+            self.capabilities.consume(token, expected_scope=expected)
+        except CanvasCapabilityError:
+            return _error_response("bridge_refused", 401)
+        with self._state_lock:
+            self._discard_expired_pending_bridge(session)
+            if session.pending_bridge is not None:
+                return _error_response("bridge_confirmation_pending", 409)
+            placeholder = _BridgePendingRecord(
+                load_id=load_id,
+                selection_epoch=session.selection_epoch,
+                request_id=bridge_request.request_id,
+                request_kind=bridge_request.kind,
+                payload_digest=_bridge_payload_digest(bridge_request.value),
+                preparation=None,
+                expires_at=min(
+                    session.expires_at, self._clock() + _ACTION_TTL_SECONDS
+                ),
+            )
+            session.pending_bridge = placeholder
+        try:
+            prepared = await _maybe_await(
+                self._authority.prepare_bridge(session.scope, bridge_request)
+            )
+        except asyncio.CancelledError:
+            self._clear_pending_bridge(session, expected=placeholder)
+            raise
+        except Exception:  # noqa: BLE001 - preparation failures remain source-free
+            self._clear_pending_bridge(session, expected=placeholder)
+            return _error_response("bridge_refused", 409)
+        if (
+            not isinstance(prepared, tuple)
+            or len(prepared) != 2
+            or not isinstance(prepared[0], BridgePreparationResponse)
+            or prepared[1] is None
+            or prepared[0].request_id != bridge_request.request_id
+            or prepared[0].kind != bridge_request.kind
+        ):
+            self._clear_pending_bridge(session, expected=placeholder)
+            return _error_response("bridge_refused", 503)
+        presentation, preparation = prepared
+        with self._state_lock:
+            if (
+                session.pending_bridge is not placeholder
+                or not self._bridge_lease_is_current(
+                    session,
+                    load_id=load_id,
+                    selection_epoch=placeholder.selection_epoch,
+                )
+            ):
+                self._clear_pending_bridge(session, expected=placeholder)
+                return _error_response("bridge_refused", 409)
+            placeholder.preparation = preparation
+            try:
+                self._schedule_pending_bridge_expiry(session, placeholder)
+            except Exception:  # noqa: BLE001 - fail closed without retaining guards
+                self._clear_pending_bridge(session, expected=placeholder)
+                return _error_response("bridge_refused", 503)
+        return web.json_response(_bridge_preparation_wire(presentation))
+
     async def _bridge(self, request: web.Request) -> web.Response:
         session = self._require_session(request, csrf=True)
         token = _authorization_capability(request)
@@ -1270,6 +1417,41 @@ class CanvasGateway:
             self.capabilities.consume(token, expected_scope=expected)
         except CanvasCapabilityError:
             return _error_response("bridge_refused", 401)
+        with self._state_lock:
+            self._discard_expired_pending_bridge(session)
+            pending = session.pending_bridge
+            preparation = None
+            if pending is not None:
+                matches_pending = (
+                    pending.load_id == load_id
+                    and pending.selection_epoch == session.selection_epoch
+                    and pending.request_id == confirmation.request.request_id
+                    and pending.request_kind == confirmation.request.kind
+                    and hmac.compare_digest(
+                        pending.payload_digest,
+                        _bridge_payload_digest(confirmation.request.value),
+                    )
+                )
+                if not matches_pending:
+                    return _error_response("bridge_request_collision", 409)
+                preparation = pending.preparation
+                self._clear_pending_bridge(session, expected=pending)
+            else:
+                # Exact transport retries may join/replay an already-authorized
+                # settlement, but a fresh request can never skip preparation.
+                existing = session.bridge_settlements.get(
+                    confirmation.request.request_id
+                )
+                payload_digest = _bridge_payload_digest(confirmation.request.value)
+                if existing is None:
+                    return _error_response("bridge_not_prepared", 409)
+                if not (
+                    existing.load_id == load_id
+                    and existing.selection_epoch == session.selection_epoch
+                    and existing.request_kind == confirmation.request.kind
+                    and hmac.compare_digest(existing.payload_digest, payload_digest)
+                ):
+                    return _error_response("bridge_request_collision", 409)
         reservation, record = self._reserve_bridge_record(
             session,
             load_id=load_id,
@@ -1306,6 +1488,7 @@ class CanvasGateway:
                     scope,
                     confirmation,
                     settlement=settlement,
+                    preparation=preparation,
                 )
             )
         except asyncio.CancelledError:
@@ -1423,6 +1606,7 @@ class CanvasGateway:
     def _discard_expired_sessions(self) -> None:
         with self._state_lock:
             for session in tuple(self._sessions.values()):
+                self._discard_expired_pending_bridge(session)
                 self._discard_expired_bridge_records(session)
             expired = [
                 session.scope.browser_session_id
@@ -1683,6 +1867,7 @@ class CanvasGateway:
             )
 
     def _clear_bridge_records(self, session: _BrowserSession) -> None:
+        self._clear_pending_bridge(session)
         records = tuple(session.bridge_settlements.values())
         for record in records:
             self._terminally_remove_bridge_record(
@@ -1690,6 +1875,34 @@ class CanvasGateway:
                 record,
                 reason="revoked",
             )
+
+    def _schedule_pending_bridge_expiry(
+        self, session: _BrowserSession, record: _BridgePendingRecord
+    ) -> None:
+        delay = max(0.0, record.expires_at - self._clock())
+        record.expiry_handle = asyncio.get_running_loop().call_later(
+            delay, self._clear_pending_bridge, session, record
+        )
+
+    def _discard_expired_pending_bridge(self, session: _BrowserSession) -> None:
+        pending = session.pending_bridge
+        if pending is not None and self._clock() >= pending.expires_at:
+            self._clear_pending_bridge(session, expected=pending)
+
+    def _clear_pending_bridge(
+        self,
+        session: _BrowserSession,
+        expected: _BridgePendingRecord | None = None,
+    ) -> None:
+        pending = session.pending_bridge
+        if pending is None or (expected is not None and pending is not expected):
+            return
+        session.pending_bridge = None
+        handle = pending.expiry_handle
+        pending.expiry_handle = None
+        pending.preparation = None
+        if handle is not None and not handle.cancelled():
+            handle.cancel()
 
     def _revoke_session_id(
         self,
@@ -1827,6 +2040,20 @@ def _canonical_json_wire(value: object) -> object:
 
 def _bridge_confirmation_response(result: BridgeConfirmationResponse) -> web.Response:
     return web.json_response({"request_id": result.request_id, "status": result.status})
+
+
+def _bridge_preparation_wire(result: BridgePreparationResponse) -> dict[str, object]:
+    return {
+        "request_id": result.request_id,
+        "kind": result.kind,
+        "conversation_id": result.conversation_id,
+        "canvas_id": result.canvas_id,
+        "revision_id": result.revision_id,
+        "complete_text": result.complete_text,
+        "filename": result.filename,
+        "mime_type": result.mime_type,
+        "byte_size": result.byte_size,
+    }
 
 
 def _render_plan_wire(plan: CanvasRenderPlan) -> dict[str, Any]:

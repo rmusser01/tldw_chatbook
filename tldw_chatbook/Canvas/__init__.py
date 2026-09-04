@@ -4,6 +4,7 @@ from .limits import CanvasLimitError, CanvasLimits
 from .models import (
     CanvasBridgeRequest,
     CanvasCompatibilityIssue,
+    CanvasDownloadPayload,
     CanvasRenderPlan,
     CanvasRuntimeFailure,
     CanvasSourceIdentity,
@@ -15,6 +16,7 @@ from .models import (
 __all__ = [
     "CanvasBridgeRequest",
     "CanvasCompatibilityIssue",
+    "CanvasDownloadPayload",
     "CanvasLimitError",
     "CanvasLimits",
     "CanvasRenderPlan",

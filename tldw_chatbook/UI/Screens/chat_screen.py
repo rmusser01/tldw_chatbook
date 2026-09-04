@@ -8926,6 +8926,7 @@ class ChatScreen(BaseAppScreen):
             runtime.ensure_canvas_native_authority(
                 scope_resolver=self._console_canvas_scope,
                 bridge_sink=self._prefill_console_canvas_repair,
+                bridge_prepare=self._prepare_console_canvas_submit,
                 auto_open=self._schedule_console_canvas_tool_open,
                 publication_guard=self._console_canvas_publication_is_current,
             )
@@ -19442,6 +19443,67 @@ class ChatScreen(BaseAppScreen):
         store.set_session_draft(session_id, repair_text)
         composer.focus()
 
+    def _prepare_console_canvas_submit(self, target: Any) -> Callable[[str], None]:
+        """Capture one exact composer generation before browser confirmation."""
+
+        from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
+
+        if not isinstance(target, CanvasBridgeTarget):
+            raise RuntimeError("Canvas submit target is unavailable")
+        store = self._ensure_console_chat_store()
+        composer = self._console_composer_or_none()
+        if store.active_session_id != target.session_id or composer is None:
+            raise RuntimeError("Canvas submit composer is unavailable")
+        session = next(
+            (item for item in store.sessions() if item.id == target.session_id),
+            None,
+        )
+        active_ids = tuple(
+            (message.persisted_message_id or message.id)
+            for message in (
+                store.get_message(native_id)
+                for native_id in store.active_path_message_ids(target.session_id)
+            )
+        )
+        if (
+            session is None
+            or (session.persisted_conversation_id or session.id)
+            != target.conversation_id
+            or active_ids != target.active_message_ids
+        ):
+            raise RuntimeError("Canvas submit target is unavailable")
+        captured = composer.capture_draft_snapshot()
+
+        def apply(text: str) -> None:
+            current = self._console_composer_or_none()
+            current_store = self._ensure_console_chat_store()
+            live_session = next(
+                (item for item in current_store.sessions() if item.id == target.session_id),
+                None,
+            )
+            live_ids = tuple(
+                (message.persisted_message_id or message.id)
+                for message in (
+                    current_store.get_message(native_id)
+                    for native_id in current_store.active_path_message_ids(target.session_id)
+                )
+            )
+            if (
+                current_store.active_session_id != target.session_id
+                or current is not composer
+                or live_session is None
+                or (live_session.persisted_conversation_id or live_session.id)
+                != target.conversation_id
+                or live_ids != target.active_message_ids
+                or current.capture_draft_snapshot() != captured
+            ):
+                raise RuntimeError("Canvas submit composer changed")
+            current.load_draft(text)
+            current_store.set_session_draft(target.session_id, text)
+            current.focus()
+
+        return apply
+
     def _console_canvas_authority(self) -> Any:
         store = self._ensure_console_chat_store()
         if store.active_session_id is None:
@@ -19450,6 +19512,7 @@ class ChatScreen(BaseAppScreen):
         return runtime.ensure_canvas_native_authority(
             scope_resolver=self._console_canvas_scope,
             bridge_sink=self._prefill_console_canvas_repair,
+            bridge_prepare=self._prepare_console_canvas_submit,
             auto_open=self._schedule_console_canvas_tool_open,
             publication_guard=self._console_canvas_publication_is_current,
         )

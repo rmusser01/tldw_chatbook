@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
@@ -501,5 +501,170 @@ async def test_runtime_failure_and_javascript_disabled_have_visible_recovery() -
         box = await recovery.bounding_box()
         assert box is not None and box["y"] < 600
         await no_js.close()
+        await browser.close()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blob() -> None:
+    session_id = "temporary-confirmation-session"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    composer = {"generation": 1}
+    drafts: list[str] = []
+
+    def capture(_target):
+        generation = composer["generation"]
+
+        def apply(text: str) -> None:
+            if composer["generation"] != generation:
+                raise RuntimeError("composer changed")
+            drafts.append(text)
+
+        return apply
+
+    def scope_resolver(requested: str) -> CanvasScope:
+        assert requested == session_id
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=session_id,
+            active_message_ids=("user-1", "assistant-1"),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="confirmation-run",
+        )
+
+    source = """<!doctype html><html><body>
+    <button id="submit-text">Submit text</button>
+    <button id="submit-json">Submit JSON</button>
+    <button id="download-text">Download text</button>
+    <script>
+      document.getElementById("submit-text").addEventListener("click", () => canvas.submit("  exact\\ntext  "));
+      document.getElementById("submit-json").addEventListener("click", () => canvas.submit({z: 1, a: [true, null]}));
+      document.getElementById("download-text").addEventListener("click", () => canvas.download({filename: " result.txt ", mime_type: "text/plain", data: "full result\\n"}));
+    </script></body></html>"""
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=scope_resolver,
+        canvas_controller=controller,
+        bridge_prepare=capture,
+    )
+    created = authority.import_html(
+        session_id=session_id,
+        source=source,
+        create_new=True,
+    )
+    scope = authority.gateway_scope(
+        session_id=session_id,
+        browser_session_id="browser-confirmation",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(scope)
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 1200, "height": 780})
+        page.set_default_timeout(7_000)
+        await page.add_init_script(
+            """(() => {
+              const revoke = URL.revokeObjectURL.bind(URL);
+              URL.revokeObjectURL = (value) => { window.__canvasLastObjectUrlRevoked = true; revoke(value); };
+              Document.prototype.execCommand = function(command) {
+                if (command !== "copy") return false;
+                const text = this.getElementById("bridge-complete-text");
+                window.__canvasCopiedText = text.value.slice(text.selectionStart, text.selectionEnd);
+                return true;
+              };
+            })();"""
+        )
+        await page.goto(launch.browser_url)
+        frame = page.frame_locator("#canvas-preview")
+        await frame.get_by_role("button", name="Submit text").click()
+        dialog = page.get_by_role("dialog", name="Send result to chat")
+        await dialog.wait_for()
+        assert await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
+        assert await page.locator("#bridge-complete-text").input_value() == "  exact\ntext  "
+        assert await page.locator("#bridge-target").text_content() == (
+            f"Conversation {session_id} · Canvas {created.canvas_id} · Revision {created.revision_id}"
+        )
+        assert await page.locator(".canvas-toolbar").get_attribute("inert") is not None
+        await page.get_by_role("button", name="Copy result").click()
+        assert await page.evaluate("window.__canvasCopiedText") == "  exact\ntext  "
+        await page.keyboard.press("Escape")
+        await dialog.wait_for(state="hidden")
+        assert drafts == []
+
+        await frame.get_by_role("button", name="Submit text").click()
+        await page.get_by_role("button", name="Send to composer").click()
+        await page.get_by_text("Draft inserted · Review it in Chatbook before sending.", exact=True).wait_for()
+        assert drafts == ["  exact\ntext  "]
+
+        await frame.get_by_role("button", name="Submit JSON").click()
+        await expect(page.locator("#bridge-complete-text")).to_have_value('{"a":[true,null],"z":1}')
+        composer["generation"] += 1
+        await page.get_by_role("button", name="Send to composer").click()
+        await page.get_by_text("The Chatbook draft changed. Nothing was inserted.", exact=True).wait_for()
+        assert await page.get_by_role("button", name="Copy result").is_visible()
+        assert drafts == ["  exact\ntext  "]
+        await page.keyboard.press("Escape")
+
+        await frame.get_by_role("button", name="Download text").click()
+        await page.get_by_role("dialog", name="Download generated file").wait_for()
+        assert await page.get_by_text("result.txt", exact=True).is_visible()
+        assert await page.get_by_text("text/plain", exact=True).is_visible()
+        assert await page.get_by_text("12 bytes", exact=True).is_visible()
+        async with page.expect_download() as download_info:
+            await page.get_by_role("button", name="Download file").click()
+        download = await download_info.value
+        assert download.suggested_filename == "result.txt"
+        assert await page.evaluate("window.__canvasLastObjectUrlRevoked === true")
+
+        capture_dir = os.environ.get("TLDW_CANVAS_CONFIRMATION_CAPTURE_DIR")
+        if capture_dir:
+            output = Path(capture_dir)
+            output.mkdir(parents=True, exist_ok=True)
+            await frame.get_by_role("button", name="Submit JSON").click()
+            await page.get_by_role("dialog", name="Send result to chat").wait_for()
+            await page.screenshot(path=output / "canvas-confirmation-desktop.png")
+            await page.set_viewport_size({"width": 390, "height": 844})
+            await page.screenshot(path=output / "canvas-confirmation-narrow.png")
+        await browser.close()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_source_download_defaults_inert_and_runnable_html_requires_warning() -> None:
+    authority = _NativeFlowAuthority()
+    authority.publish("revision-1", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("revision-1"))
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 1000, "height": 700})
+        await page.goto(launch.browser_url)
+        async with page.expect_download() as inert_info:
+            await page.get_by_role("button", name="Download").click()
+        assert (await inert_info.value).suggested_filename.endswith(".canvas.html.txt")
+
+        await page.get_by_role("button", name="Inspect source").click()
+        await page.get_by_role("button", name="Download as runnable HTML").click()
+        warning = page.get_by_role("dialog", name="Run outside the Canvas sandbox?")
+        await warning.wait_for()
+        await page.get_by_text(
+            "This HTML runs outside Chatbook and bypasses Canvas zero-egress and sandbox protections.",
+            exact=True,
+        ).wait_for()
+        assert await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
+        await page.get_by_role("button", name="Cancel").click()
+        await warning.wait_for(state="hidden")
         await browser.close()
     await gateway.aclose()

@@ -896,6 +896,7 @@ class ConsoleRuntime:
         *,
         scope_resolver: Callable[[str], Any],
         bridge_sink: Callable[[Any, str], None] | None = None,
+        bridge_prepare: Callable[[Any], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, Any], None] | None = None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> Any:
@@ -910,6 +911,7 @@ class ConsoleRuntime:
                 scope_resolver=scope_resolver,
                 canvas_controller=self._canvas_controller,
                 bridge_sink=bridge_sink,
+                bridge_prepare=bridge_prepare,
                 auto_open=auto_open,
                 publication_guard=publication_guard,
             )
@@ -920,6 +922,7 @@ class ConsoleRuntime:
             self._canvas_native_authority.rebind_view(
                 scope_resolver=scope_resolver,
                 bridge_sink=bridge_sink,
+                bridge_prepare=bridge_prepare,
                 auto_open=auto_open,
                 publication_guard=publication_guard,
             )

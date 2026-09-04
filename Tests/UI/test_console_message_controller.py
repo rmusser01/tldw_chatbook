@@ -451,6 +451,50 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     assert store.session_draft(session.id) == "exact draft"
 
 
+def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    root = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    target = CanvasBridgeTarget(
+        browser_session_id="browser-confirm",
+        session_id=session.id,
+        conversation_id=session.id,
+        active_message_ids=(root.id, assistant.id),
+        canvas_id="canvas-confirm",
+        revision_id="revision-confirm",
+    )
+    composer = Mock()
+    unchanged = object()
+    composer.capture_draft_snapshot.side_effect = [unchanged, unchanged]
+    screen._console_composer_or_none = Mock(return_value=composer)
+
+    apply = screen._prepare_console_canvas_submit(target)
+    apply("exact unsent draft")
+
+    composer.load_draft.assert_called_once_with("exact unsent draft")
+    composer.focus.assert_called_once_with()
+    assert store.session_draft(session.id) == "exact unsent draft"
+
+    composer.load_draft.reset_mock()
+    composer.capture_draft_snapshot.side_effect = [unchanged, object()]
+    stale_apply = screen._prepare_console_canvas_submit(target)
+    with pytest.raises(RuntimeError, match="changed"):
+        stale_apply("must not replace")
+    composer.load_draft.assert_not_called()
+    assert store.session_draft(session.id) == "exact unsent draft"
+
+
 async def _closed_coroutine() -> None:
     return None
 

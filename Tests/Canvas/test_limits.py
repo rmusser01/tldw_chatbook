@@ -246,3 +246,158 @@ def test_canvas_contract_records_are_immutable_slotted_and_validate_wire_message
             kind="submit",
             value="ok",
         )
+
+
+def test_submit_text_is_preserved_and_structured_submit_is_canonical_json() -> None:
+    text = CanvasBridgeRequest.from_wire(
+        {
+            "version": "canvas-v1",
+            "request_id": "submit-text",
+            "kind": "submit",
+            "value": "  exact\ntext  ",
+        }
+    )
+    structured = CanvasBridgeRequest.from_wire(
+        {
+            "version": "canvas-v1",
+            "request_id": "submit-json",
+            "kind": "submit",
+            "value": {"z": 1, "a": [True, None]},
+        }
+    )
+
+    assert text.submit_text() == "  exact\ntext  "
+    assert structured.submit_text() == '{"a":[true,null],"z":1}'
+
+
+def test_submit_request_rejects_bytes_depth_nonfinite_and_cycles() -> None:
+    base = {
+        "version": "canvas-v1",
+        "request_id": "submit-refused",
+        "kind": "submit",
+    }
+    with pytest.raises(ValueError, match="submit payload exceeds 3 UTF-8 bytes"):
+        CanvasBridgeRequest.from_wire(
+            {**base, "value": "four"},
+            limits=CanvasLimits(submit_payload_bytes=3),
+        )
+    with pytest.raises(ValueError, match="numbers must be finite"):
+        CanvasBridgeRequest.from_wire({**base, "value": float("inf")})
+
+    too_deep: object = "leaf"
+    for _ in range(17):
+        too_deep = [too_deep]
+    with pytest.raises(ValueError, match="exceeds JSON depth 16"):
+        CanvasBridgeRequest.from_wire({**base, "value": too_deep})
+
+    cycle: list[object] = []
+    cycle.append(cycle)
+    with pytest.raises(ValueError, match="must not contain a cycle"):
+        CanvasBridgeRequest.from_wire({**base, "value": cycle})
+
+
+def test_generated_download_accepts_only_closed_passive_schema_and_decodes_images() -> None:
+    text = CanvasBridgeRequest.from_wire(
+        {
+            "version": "canvas-v1",
+            "request_id": "download-text",
+            "kind": "download",
+            "value": {
+                "filename": " report.csv ",
+                "mime_type": "text/csv",
+                "data": "name,value\nalpha,1\n",
+            },
+        }
+    ).download_payload()
+    image = CanvasBridgeRequest.from_wire(
+        {
+            "version": "canvas-v1",
+            "request_id": "download-image",
+            "kind": "download",
+            "value": {
+                "filename": "pixel.png",
+                "mime_type": "image/png",
+                "data": "data:image/png;base64,iVBORw0KGgo=",
+            },
+        }
+    ).download_payload()
+
+    assert text.filename == "report.csv"
+    assert text.data == b"name,value\nalpha,1\n"
+    assert text.text_preview == "name,value\nalpha,1\n"
+    assert image.filename == "pixel.png"
+    assert image.data == b"\x89PNG\r\n\x1a\n"
+    assert image.text_preview is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (
+            {"filename": "../report.txt", "mime_type": "text/plain", "data": "x"},
+            "path separators",
+        ),
+        (
+            {"filename": "CON.backup.txt", "mime_type": "text/plain", "data": "x"},
+            "reserved",
+        ),
+        (
+            {"filename": "report:final.txt", "mime_type": "text/plain", "data": "x"},
+            "unsafe characters",
+        ),
+        (
+            {"filename": "report.html", "mime_type": "text/plain", "data": "x"},
+            "extension does not match",
+        ),
+        (
+            {"filename": "report.svg", "mime_type": "image/svg+xml", "data": "x"},
+            "passive V1 MIME",
+        ),
+        (
+            {
+                "filename": "report.txt",
+                "mime_type": "text/plain",
+                "data": "x",
+                "extra": True,
+            },
+            "unknown fields",
+        ),
+        (
+            {
+                "filename": "pixel.png",
+                "mime_type": "image/png",
+                "data": "data:image/jpeg;base64,iVBORw0KGgo=",
+            },
+            "MIME type does not match",
+        ),
+    ],
+)
+def test_generated_download_rejects_active_ambiguous_or_mismatched_values(
+    value: object, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        CanvasBridgeRequest.from_wire(
+            {
+                "version": "canvas-v1",
+                "request_id": "download-refused",
+                "kind": "download",
+                "value": value,
+            }
+        )
+
+
+def test_generated_download_enforces_decoded_bytes_not_base64_text_size() -> None:
+    with pytest.raises(ValueError, match="decoded bytes"):
+        CanvasBridgeRequest.from_wire(
+            {
+                "version": "canvas-v1",
+                "request_id": "download-too-large",
+                "kind": "download",
+                "value": {
+                    "filename": "pixel.png",
+                    "mime_type": "image/png",
+                    "data": "data:image/png;base64,YWJjZA==",
+                },
+            },
+            limits=CanvasLimits(download_payload_bytes=3),
+        )

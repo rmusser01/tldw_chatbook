@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, TypeAlias
 
@@ -12,6 +13,7 @@ from .limits import (
     CanvasLimitError,
     CanvasLimits,
     JsonValue,
+    decode_data_url,
     sha256_utf8,
     validate_asset_payloads,
     validate_count,
@@ -23,9 +25,31 @@ from .limits import (
     verify_sha256_utf8,
 )
 
-
 RuntimeProfile: TypeAlias = Literal["canvas-v1"]
 BridgeRequestKind: TypeAlias = Literal["submit", "download"]
+
+_PASSIVE_DOWNLOAD_TYPES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "text/plain": (".txt",),
+        "text/csv": (".csv",),
+        "application/json": (".json",),
+        "image/png": (".png",),
+        "image/jpeg": (".jpg", ".jpeg"),
+        "image/gif": (".gif",),
+        "image/webp": (".webp",),
+    }
+)
+_WINDOWS_RESERVED_BASENAMES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{index}" for index in range(1, 10)),
+        *(f"lpt{index}" for index in range(1, 10)),
+    }
+)
+_UNSAFE_FILENAME_CHARACTER = re.compile(r'[\x00-\x1f\x7f<>:"|?*]')
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +182,7 @@ class RenderNode:
     tag: str
     attributes: tuple[tuple[str, str], ...] = ()
     text: str | None = None
-    children: tuple["RenderNode", ...] = ()
+    children: tuple[RenderNode, ...] = ()
 
     def __post_init__(self) -> None:
         validate_opaque_identifier(self.node_id, field_name="node ID")
@@ -194,7 +218,7 @@ class CanvasSourceIdentity:
     sha256: str
 
     @classmethod
-    def from_source(cls, source: str) -> "CanvasSourceIdentity":
+    def from_source(cls, source: str) -> CanvasSourceIdentity:
         """Create the only valid identity for exact UTF-8 Canvas source text."""
         identity = object.__new__(cls)
         object.__setattr__(
@@ -289,7 +313,7 @@ class CanvasBridgeRequest:
         object.__setattr__(self, "value", _freeze_json_value(self.value))
 
     @classmethod
-    def from_wire(cls, message: object, *, limits: CanvasLimits | None = None) -> "CanvasBridgeRequest":
+    def from_wire(cls, message: object, *, limits: CanvasLimits | None = None) -> CanvasBridgeRequest:
         """Decode exactly the Canvas V1 request fields and reject all extras."""
         if not isinstance(message, Mapping):
             raise ValueError("Canvas bridge request must be an object")
@@ -318,6 +342,38 @@ class CanvasBridgeRequest:
             kind=message["kind"],
             value=message["value"],
         )
+
+    def submit_text(self) -> str:
+        """Return exact text or deterministic compact JSON for a submit request."""
+
+        if self.kind != "submit":
+            raise ValueError("Canvas bridge request is not a submit request")
+        if isinstance(self.value, str):
+            return self.value
+        return json.dumps(
+            _thaw_json_value(self.value),
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def download_payload(self) -> CanvasDownloadPayload:
+        """Decode one validated passive generated-download request."""
+
+        if self.kind != "download":
+            raise ValueError("Canvas bridge request is not a download request")
+        return _decode_download_payload(self.value, limits=CanvasLimits())
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasDownloadPayload:
+    """Sanitized passive browser download with decoded bytes kept out of repr."""
+
+    filename: str
+    mime_type: str
+    data: bytes = field(repr=False)
+    text_preview: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,15 +406,105 @@ def _validate_bridge_request(
     if kind not in ("submit", "download"):
         raise CanvasLimitError("unsupported Canvas bridge request kind")
     validate_json_value(value, max_depth=limits.json_depth, field_name="bridge request value")
+    if kind == "submit":
+        if isinstance(value, str):
+            encoded_value = value
+        else:
+            try:
+                encoded_value = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise CanvasLimitError("bridge request value must be JSON-compatible") from exc
+        validate_utf8_text(
+            encoded_value,
+            limit=limits.submit_payload_bytes,
+            field_name="submit payload",
+        )
+        return
+    _decode_download_payload(value, limits=limits)
+
+
+def _decode_download_payload(value: object, *, limits: CanvasLimits) -> CanvasDownloadPayload:
+    if not isinstance(value, Mapping):
+        raise CanvasLimitError("download request must be an object")
+    expected = {"filename", "mime_type", "data"}
+    actual = set(value)
+    if actual != expected:
+        if actual - expected:
+            raise CanvasLimitError("download request contains unknown fields")
+        raise CanvasLimitError("download request is missing required fields")
+    raw_filename = value["filename"]
+    mime_type = value["mime_type"]
+    raw_data = value["data"]
+    if not all(isinstance(item, str) for item in (raw_filename, mime_type, raw_data)):
+        raise CanvasLimitError("download filename, MIME type, and data must be text")
+    assert isinstance(raw_filename, str)
+    assert isinstance(mime_type, str)
+    assert isinstance(raw_data, str)
+    filename = raw_filename.strip()
+    validate_utf8_text(filename, limit=255, field_name="download filename")
+    if not filename:
+        raise CanvasLimitError("download filename must not be empty")
+    if "/" in filename or "\\" in filename:
+        raise CanvasLimitError("download filename must not contain path separators")
+    if _UNSAFE_FILENAME_CHARACTER.search(filename) or filename in {".", ".."}:
+        raise CanvasLimitError("download filename contains unsafe characters")
+    if filename.startswith(".") or filename.endswith((".", " ")):
+        raise CanvasLimitError("download filename is reserved or hidden")
+    stem = filename.split(".", 1)[0].casefold()
+    if stem in _WINDOWS_RESERVED_BASENAMES:
+        raise CanvasLimitError("download filename is reserved")
+    extensions = _PASSIVE_DOWNLOAD_TYPES.get(mime_type)
+    if extensions is None:
+        raise CanvasLimitError("download MIME type is not an allowed passive V1 MIME type")
+    if not filename.casefold().endswith(extensions):
+        raise CanvasLimitError("download filename extension does not match MIME type")
+
+    if mime_type.startswith("image/"):
+        decoded = decode_data_url(raw_data, field_name="download image")
+        if decoded.mime_type != mime_type:
+            raise CanvasLimitError("download image MIME type does not match request MIME type")
+        data = decoded.data
+        text_preview = None
+    else:
+        if raw_data.startswith("data:"):
+            raise CanvasLimitError("text downloads use literal UTF-8 data, not data URLs")
+        try:
+            data = raw_data.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as exc:
+            raise CanvasLimitError("download data must contain valid Unicode") from exc
+        text_preview = raw_data
+        if mime_type == "application/json":
+            try:
+                json.loads(raw_data)
+            except json.JSONDecodeError as exc:
+                raise CanvasLimitError("JSON download data must be valid JSON") from exc
+    if len(data) > limits.download_payload_bytes:
+        raise CanvasLimitError(
+            f"download payload exceeds {limits.download_payload_bytes} decoded bytes"
+        )
     try:
-        encoded_value = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        encoded_value = json.dumps(
+            _thaw_json_value(value),
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
     except (TypeError, ValueError) as exc:
-        raise CanvasLimitError("bridge request value must be JSON-compatible") from exc
+        raise CanvasLimitError("download request must be JSON-compatible") from exc
+    encoded_limit = ((limits.download_payload_bytes + 2) // 3) * 4 + 4 * 1024
     validate_utf8_text(
         encoded_value,
-        limit=(limits.submit_payload_bytes if kind == "submit" else limits.download_payload_bytes),
-        field_name=f"{kind} payload",
+        limit=encoded_limit,
+        field_name="download encoded payload",
     )
+    return CanvasDownloadPayload(filename, mime_type, data, text_preview)
 
 
 def _freeze_json_value(value: JsonValue) -> JsonValue:
@@ -366,6 +512,14 @@ def _freeze_json_value(value: JsonValue) -> JsonValue:
         return MappingProxyType({key: _freeze_json_value(child) for key, child in value.items()})
     if isinstance(value, list):
         return tuple(_freeze_json_value(child) for child in value)  # type: ignore[return-value]
+    return value
+
+
+def _thaw_json_value(value: JsonValue) -> JsonValue:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json_value(child) for child in value]  # type: ignore[return-value]
     return value
 
 

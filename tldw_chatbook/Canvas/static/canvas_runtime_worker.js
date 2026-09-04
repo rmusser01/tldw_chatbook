@@ -25,8 +25,9 @@ const LIMITS = Object.freeze({
   scriptBytes: 256 * 1024,
   submitBytes: 16 * 1024,
   downloadBytes: 10 * 1024 * 1024,
+  downloadEncodedBytes: Math.ceil((10 * 1024 * 1024) / 3) * 4 + 4096,
   jsonDepth: 16,
-  hostMessageBytes: 12 * 1024 * 1024,
+  hostMessageBytes: 15 * 1024 * 1024,
 });
 
 const encoder = new TextEncoder();
@@ -379,6 +380,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     bridges: 16,
     submitBytes: 16384,
     downloadBytes: 10485760,
+    downloadEncodedBytes: 13985108,
     jsonDepth: 16,
     consoleEntries: 100,
     consoleBytes: 16384,
@@ -440,6 +442,14 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   const safeArrayPushMethod = Array.prototype.push;
   const safeArrayPopMethod = Array.prototype.pop;
   const safeArrayIndexOfMethod = Array.prototype.indexOf;
+  const safeStringCharCodeAtMethod = String.prototype.charCodeAt;
+  const safeStringEndsWithMethod = String.prototype.endsWith;
+  const safeStringSliceMethod = String.prototype.slice;
+  const safeStringSplitMethod = String.prototype.split;
+  const safeStringStartsWithMethod = String.prototype.startsWith;
+  const safeStringToLowerCaseMethod = String.prototype.toLowerCase;
+  const safeStringTrimMethod = String.prototype.trim;
+  const safeRegExpTestMethod = RegExp.prototype.test;
   const safeMapForEachMethod = Map.prototype.forEach;
   const safeMapGetMethod = Map.prototype.get;
   const safeMapSetMethod = Map.prototype.set;
@@ -452,6 +462,12 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   function apply(method, receiver, arguments_ = []) {
     return safeReflectApply(method, receiver, arguments_);
   }
+  function stringEndsWith(value, suffix) { return apply(safeStringEndsWithMethod, value, [suffix]); }
+  function stringSlice(value, start) { return apply(safeStringSliceMethod, value, [start]); }
+  function stringStartsWith(value, prefix) { return apply(safeStringStartsWithMethod, value, [prefix]); }
+  function stringToLowerCase(value) { return apply(safeStringToLowerCaseMethod, value); }
+  function stringTrim(value) { return apply(safeStringTrimMethod, value); }
+  function regexTest(pattern, value) { return apply(safeRegExpTestMethod, pattern, [value]); }
   function push(list, value) { apply(safeArrayPushMethod, list, [value]); }
   function pop(list) { return apply(safeArrayPopMethod, list); }
   function listIncludes(list, value) {
@@ -463,6 +479,15 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     return list;
   }
   function makeRecord() { return safeObjectCreate(null); }
+  function ownRecord(value, keys) {
+    if (value === null || typeof value !== "object" || safeArrayIsArray(value)) return false;
+    const actual = safeObjectKeys(value);
+    if (actual.length !== keys.length) return false;
+    for (let index = 0; index < actual.length; index += 1) {
+      if (!listIncludes(keys, actual[index])) return false;
+    }
+    return true;
+  }
   function mapForEach(map, callback) { apply(safeMapForEachMethod, map, [callback]); }
   function mapGet(map, key) { return apply(safeMapGetMethod, map, [key]); }
   function mapSet(map, key, value) { apply(safeMapSetMethod, map, [key, value]); }
@@ -482,10 +507,10 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   function utf8Length(value) {
     let count = 0;
     for (let index = 0; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
+      const code = apply(safeStringCharCodeAtMethod, value, [index]);
       if (code < 128) count += 1;
       else if (code < 2048) count += 2;
-      else if (code >= 0xD800 && code <= 0xDBFF && index + 1 < value.length && value.charCodeAt(index + 1) >= 0xDC00 && value.charCodeAt(index + 1) <= 0xDFFF) { count += 4; index += 1; }
+      else if (code >= 0xD800 && code <= 0xDBFF && index + 1 < value.length && apply(safeStringCharCodeAtMethod, value, [index + 1]) >= 0xDC00 && apply(safeStringCharCodeAtMethod, value, [index + 1]) <= 0xDFFF) { count += 4; index += 1; }
       else count += 3;
     }
     return count;
@@ -765,12 +790,68 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   function cancelTimer(id) { mapDelete(timers, safeNumber(id)); }
   function bridge(kind, value) {
     if (state.bridges.length >= MAX.bridges) poison("bridge-limit");
-    const limit = kind === "submit" ? MAX.submitBytes : MAX.downloadBytes;
+    let cloned;
+    if (kind === "submit" && typeof value === "string") {
+      if (utf8Length(value) > MAX.submitBytes) throw new RangeError("Canvas bridge value exceeds its byte limit");
+      cloned = value;
+    } else {
+      const limit = kind === "submit" ? MAX.submitBytes : MAX.downloadEncodedBytes;
+      cloned = validateJson(value, limit);
+    }
+    if (kind === "download") validateDownload(cloned);
     const record = makeRecord();
     record.request_id = "bridge-" + nextBridge++;
     record.kind = kind;
-    record.value = validateJson(value, limit);
+    record.value = cloned;
     push(state.bridges, record);
+  }
+  function validateDownload(value) {
+    if (!ownRecord(value, ["filename", "mime_type", "data"]) ||
+        typeof value.filename !== "string" || typeof value.mime_type !== "string" || typeof value.data !== "string") {
+      throw new TypeError("Canvas download request has an invalid schema");
+    }
+    const filename = stringTrim(value.filename);
+    if (!filename || utf8Length(filename) > 255 || regexTest(/[\\/\x00-\x1f\x7f<>:"|?*]/, filename) ||
+        stringStartsWith(filename, ".") || stringEndsWith(filename, ".") || stringEndsWith(filename, " ")) {
+      throw new TypeError("Canvas download filename is unsafe");
+    }
+    const stem = stringToLowerCase(apply(safeStringSplitMethod, filename, [".", 1])[0]);
+    if (regexTest(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/, stem)) {
+      throw new TypeError("Canvas download filename is reserved");
+    }
+    const allowed = makeRecord();
+    allowed["text/plain"] = [".txt"]; allowed["text/csv"] = [".csv"]; allowed["application/json"] = [".json"];
+    allowed["image/png"] = [".png"]; allowed["image/jpeg"] = [".jpg", ".jpeg"];
+    allowed["image/gif"] = [".gif"]; allowed["image/webp"] = [".webp"];
+    const extensions = allowed[value.mime_type];
+    let extensionMatches = false;
+    if (extensions) {
+      const lowerFilename = stringToLowerCase(filename);
+      for (let index = 0; index < extensions.length; index += 1) {
+        if (stringEndsWith(lowerFilename, extensions[index])) extensionMatches = true;
+      }
+    }
+    if (!extensionMatches) {
+      throw new TypeError("Canvas download type is not passive or does not match its filename");
+    }
+    if (stringStartsWith(value.mime_type, "image/")) {
+      const prefix = "data:" + value.mime_type + ";base64,";
+      const encoded = stringSlice(value.data, prefix.length);
+      if (!stringStartsWith(value.data, prefix) || encoded.length % 4 !== 0 || !regexTest(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, encoded)) {
+        throw new TypeError("Canvas image download must use matching base64 data URL encoding");
+      }
+      const padding = stringEndsWith(encoded, "==") ? 2 : (stringEndsWith(encoded, "=") ? 1 : 0);
+      if ((encoded.length / 4) * 3 - padding > MAX.downloadBytes) {
+        throw new RangeError("Canvas download exceeds its byte limit");
+      }
+    } else {
+      if (stringStartsWith(value.data, "data:") || utf8Length(value.data) > MAX.downloadBytes) {
+        throw new RangeError("Canvas download exceeds its byte limit");
+      }
+      if (value.mime_type === "application/json") {
+        try { safeJsonParse(value.data); } catch (_) { throw new TypeError("Canvas JSON download data is invalid"); }
+      }
+    }
   }
   function log(...values) {
     if (logs.length >= MAX.consoleEntries) return;

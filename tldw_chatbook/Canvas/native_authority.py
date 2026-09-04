@@ -15,6 +15,7 @@ from .compiler import compile_canvas_document
 from .gateway import (
     BridgeConfirmationRequest,
     BridgeConfirmationResponse,
+    BridgePreparationResponse,
     CanvasBridgeSettlementLease,
     CanvasGatewayEvent,
     CanvasGatewayNavigation,
@@ -114,6 +115,22 @@ class CanvasBridgeTarget:
     revision_id: str
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _PreparedNativeBridge:
+    """Ephemeral composer guard or passive-download approval without payload data."""
+
+    target: CanvasBridgeTarget
+    request_id: str
+    kind: str
+    apply_submit: Callable[[str], None] | None = None
+
+    def __repr__(self) -> str:
+        return (
+            "_PreparedNativeBridge("
+            f"request_id={self.request_id!r}, kind={self.kind!r}, payload=<absent>)"
+        )
+
+
 @dataclass(slots=True)
 class _PublicationReceipt:
     state_published: bool = False
@@ -135,12 +152,14 @@ class NativeConsoleCanvasAuthority:
         scope_resolver: Callable[[str], CanvasScope],
         canvas_controller: Any,
         bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None = None,
+        bridge_prepare: Callable[[CanvasBridgeTarget], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
         self._scope_resolver = scope_resolver
         self._canvas_controller = canvas_controller
         self._bridge_sink = bridge_sink
+        self._bridge_prepare = bridge_prepare
         self._auto_open = auto_open
         self._publication_guard = publication_guard
         self._gateway_invalidator: Callable[[str], None] | None = None
@@ -180,6 +199,7 @@ class NativeConsoleCanvasAuthority:
         *,
         scope_resolver: Callable[[str], CanvasScope],
         bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None,
+        bridge_prepare: Callable[[CanvasBridgeTarget], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None,
         publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
@@ -187,6 +207,7 @@ class NativeConsoleCanvasAuthority:
 
         self._scope_resolver = scope_resolver
         self._bridge_sink = bridge_sink
+        self._bridge_prepare = bridge_prepare
         self._auto_open = auto_open
         self._publication_guard = publication_guard
 
@@ -645,38 +666,107 @@ class NativeConsoleCanvasAuthority:
         request: BridgeConfirmationRequest,
         *,
         settlement: CanvasBridgeSettlementLease,
+        preparation: object | None = None,
     ) -> BridgeConfirmationResponse:
-        if (
-            not request.approved
-            or request.request.kind != "submit"
-            or self._bridge_sink is None
-        ):
+        if not request.approved:
             return BridgeConfirmationResponse(request.request.request_id, "cancelled")
-        target = self._browser_targets.get(scope.browser_session_id)
-        if target is None or not self._bridge_target_is_current(scope, target):
+        if (
+            not isinstance(preparation, _PreparedNativeBridge)
+            or preparation.request_id != request.request.request_id
+            or preparation.kind != request.request.kind
+        ):
             return BridgeConfirmationResponse(request.request.request_id, "refused")
-        text = _draft_payload(request.request.value)
+        target = preparation.target
+        if not self._bridge_target_is_current(scope, target):
+            return BridgeConfirmationResponse(request.request.request_id, "refused")
         try:
-            if settlement.try_settle(
-                lambda: self._apply_bridge_effect(scope, target, text)
-            ):
+            if request.request.kind == "submit":
+                if preparation.apply_submit is None:
+                    return BridgeConfirmationResponse(request.request.request_id, "cancelled")
+                text = request.request.submit_text()
+                effect = lambda: self._apply_bridge_effect(
+                    scope, target, text, preparation.apply_submit
+                )
+            else:
+                request.request.download_payload()
+                effect = lambda: self._apply_passive_download_approval(scope, target)
+            if settlement.try_settle(effect):
                 return BridgeConfirmationResponse(request.request.request_id, "confirmed")
         except RuntimeError:
             pass
         return BridgeConfirmationResponse(request.request.request_id, "refused")
+
+    def prepare_bridge(
+        self,
+        scope: CanvasGatewayScope,
+        request: Any,
+    ) -> tuple[BridgePreparationResponse, object]:
+        """Capture the exact composer before trusted UI exposes a confirmation."""
+
+        from .models import CanvasBridgeRequest
+
+        if not isinstance(request, CanvasBridgeRequest):
+            raise TypeError("Canvas bridge preparation requires a validated request")
+        target = self._browser_targets.get(scope.browser_session_id)
+        if target is None or not self._bridge_target_is_current(scope, target):
+            raise RuntimeError("Canvas bridge target is unavailable")
+        if request.kind == "submit":
+            apply_submit = None
+            if self._bridge_prepare is not None:
+                apply_submit = self._bridge_prepare(target)
+            elif self._bridge_sink is not None:
+                apply_submit = lambda text: self._bridge_sink(target, text)
+            complete_text = request.submit_text()
+            presentation = BridgePreparationResponse(
+                request_id=request.request_id,
+                kind=request.kind,
+                conversation_id=target.conversation_id,
+                canvas_id=target.canvas_id,
+                revision_id=target.revision_id,
+                complete_text=complete_text,
+                byte_size=len(complete_text.encode("utf-8")),
+            )
+        else:
+            download = request.download_payload()
+            apply_submit = None
+            presentation = BridgePreparationResponse(
+                request_id=request.request_id,
+                kind=request.kind,
+                conversation_id=target.conversation_id,
+                canvas_id=target.canvas_id,
+                revision_id=target.revision_id,
+                complete_text=download.text_preview,
+                filename=download.filename,
+                mime_type=download.mime_type,
+                byte_size=len(download.data),
+            )
+        return presentation, _PreparedNativeBridge(
+            target=target,
+            request_id=request.request_id,
+            kind=request.kind,
+            apply_submit=apply_submit,
+        )
 
     def _apply_bridge_effect(
         self,
         scope: CanvasGatewayScope,
         target: CanvasBridgeTarget,
         text: str,
+        apply_submit: Callable[[str], None],
     ) -> None:
         """Revalidate inside settlement immediately before the composer effect."""
 
         if not self._bridge_target_is_current(scope, target):
             raise RuntimeError("Canvas bridge target is unavailable")
-        assert self._bridge_sink is not None
-        self._bridge_sink(target, text)
+        apply_submit(text)
+
+    def _apply_passive_download_approval(
+        self, scope: CanvasGatewayScope, target: CanvasBridgeTarget
+    ) -> None:
+        """Linearize browser-owned passive download approval against live scope."""
+
+        if not self._bridge_target_is_current(scope, target):
+            raise RuntimeError("Canvas bridge target is unavailable")
 
     def _bridge_target_is_current(
         self, scope: CanvasGatewayScope, target: CanvasBridgeTarget

@@ -20,6 +20,7 @@ CanvasCapabilityAction: TypeAlias = Literal[
     "render_plan",
     "source_read",
     "source_download",
+    "bridge_prepare",
     "bridge_confirm",
 ]
 
@@ -30,6 +31,7 @@ _ACTIONS = frozenset(
         "render_plan",
         "source_read",
         "source_download",
+        "bridge_prepare",
         "bridge_confirm",
     }
 )

@@ -1,7 +1,6 @@
 """Production native Canvas authority and temporary-promotion coverage."""
 
 import threading
-
 from dataclasses import replace
 
 import pytest
@@ -1099,14 +1098,112 @@ def test_confirmed_json_submit_reaches_composer_as_valid_json_text():
         ),
     )
 
+    presentation, prepared = authority.prepare_bridge(browser_scope, request.request)
     response = authority.confirm_bridge(
         browser_scope,
         request,
         settlement=Settlement(),
+        preparation=prepared,
     )
 
+    assert presentation.complete_text == '{"answer":42,"ok":true}'
     assert response.status == "confirmed"
     assert drafts[0][1] == '{"answer":42,"ok":true}'
+
+
+def test_submit_confirmation_refuses_when_captured_composer_changed() -> None:
+    class Settlement:
+        def try_settle(self, callback):
+            callback()
+            return True
+
+    composer = {"revision": 1}
+    drafts: list[str] = []
+
+    def capture(_target):
+        captured = composer["revision"]
+
+        def apply(text: str) -> None:
+            if composer["revision"] != captured:
+                raise RuntimeError("Canvas composer changed")
+            drafts.append(text)
+
+        return apply
+
+    controller = ConsoleCanvasController()
+    controller.activate_session("temporary-changed-composer")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: _scope("temporary-changed-composer"),
+        canvas_controller=controller,
+        bridge_prepare=capture,
+    )
+    created = authority.import_html(
+        session_id="temporary-changed-composer",
+        source="<!doctype html><p>bridge</p>",
+        create_new=True,
+    )
+    browser_scope = authority.gateway_scope(
+        session_id="temporary-changed-composer",
+        browser_session_id="browser-changed-composer",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    bridge_request = CanvasBridgeRequest(
+        version="canvas-v1",
+        request_id="bridge-changed-composer",
+        kind="submit",
+        value="replacement",
+    )
+
+    _presentation, prepared = authority.prepare_bridge(browser_scope, bridge_request)
+    composer["revision"] += 1
+    response = authority.confirm_bridge(
+        browser_scope,
+        BridgeConfirmationRequest(approved=True, request=bridge_request),
+        settlement=Settlement(),
+        preparation=prepared,
+    )
+
+    assert response.status == "refused"
+    assert drafts == []
+
+
+def test_download_preparation_exposes_safe_metadata_without_retaining_bytes() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session("temporary-download")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: _scope("temporary-download"),
+        canvas_controller=controller,
+    )
+    created = authority.import_html(
+        session_id="temporary-download",
+        source="<!doctype html><p>download</p>",
+        create_new=True,
+    )
+    browser_scope = authority.gateway_scope(
+        session_id="temporary-download",
+        browser_session_id="browser-download",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    request = CanvasBridgeRequest(
+        version="canvas-v1",
+        request_id="bridge-download",
+        kind="download",
+        value={
+            "filename": " result.json ",
+            "mime_type": "application/json",
+            "data": '{"answer":42}',
+        },
+    )
+
+    presentation, prepared = authority.prepare_bridge(browser_scope, request)
+
+    assert presentation.filename == "result.json"
+    assert presentation.mime_type == "application/json"
+    assert presentation.byte_size == 13
+    assert presentation.complete_text == '{"answer":42}'
+    assert '{"answer":42}' not in repr(prepared)
 
 
 def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
@@ -1161,7 +1258,10 @@ def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
         ),
     )
 
-    exact = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    _presentation, prepared = authority.prepare_bridge(browser, request.request)
+    exact = authority.confirm_bridge(
+        browser, request, settlement=_Settlement(), preparation=prepared
+    )
     assert exact.status == "confirmed"
     assert drafts[0][0].session_id == "bridge-session"
     assert drafts[0][0].active_message_ids == ("user-root", "assistant-left")
@@ -1172,7 +1272,9 @@ def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
         scopes["bridge-session"],
         active_message_ids=("user-root", "assistant-right"),
     )
-    sibling = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    sibling = authority.confirm_bridge(
+        browser, request, settlement=_Settlement(), preparation=prepared
+    )
     assert sibling.status == "refused"
     assert drafts == []
 
@@ -1181,7 +1283,9 @@ def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
         active_message_ids=("user-root", "assistant-left"),
     )
     active["session_id"] = "other-session"
-    switched = authority.confirm_bridge(browser, request, settlement=_Settlement())
+    switched = authority.confirm_bridge(
+        browser, request, settlement=_Settlement(), preparation=prepared
+    )
     assert switched.status == "refused"
     assert drafts == []
 
@@ -1231,10 +1335,12 @@ def test_bridge_effect_revalidates_after_switch_during_settlement():
             callback()
             return True
 
+    _presentation, prepared = authority.prepare_bridge(browser, request.request)
     response = authority.confirm_bridge(
         browser,
         request,
         settlement=SwitchDuringSettlement(),
+        preparation=prepared,
     )
 
     assert response.status == "refused"

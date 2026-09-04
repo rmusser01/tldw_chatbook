@@ -29,8 +29,9 @@ const MAX = Object.freeze({
   bridgeRequestsPerOperation: 16,
   eventQueue: 100,
   bridgeBytes: 10 * 1024 * 1024,
+  bridgeEncodedBytes: Math.ceil((10 * 1024 * 1024) / 3) * 4 + 4096,
   jsonDepth: 16,
-  rendererMessageBytes: 12 * 1024 * 1024,
+  rendererMessageBytes: 15 * 1024 * 1024,
   trustedPrepareMilliseconds: 10000,
   workerStartupBackstopMilliseconds: 750,
   workerEventBackstopMilliseconds: 250,
@@ -1006,14 +1007,51 @@ function prepareBridge(bridge) {
   if (!boundedIdentifier(bridge.request_id) || !["submit", "download"].includes(bridge.kind)) {
     throw new Error("bridge identity");
   }
+  let value;
+  if (bridge.kind === "submit" && typeof bridge.value === "string") {
+    if (!boundedString(bridge.value, 16 * 1024)) throw new Error("bridge value");
+    value = bridge.value;
+  } else {
+    value = jsonDepthAndShape(
+      bridge.value,
+      bridge.kind === "submit" ? 16 * 1024 : MAX.bridgeEncodedBytes,
+    );
+  }
+  if (bridge.kind === "download") validateDownloadRequest(value);
   return {
     request_id: bridge.request_id,
     kind: bridge.kind,
-    value: jsonDepthAndShape(
-      bridge.value,
-      bridge.kind === "submit" ? 16 * 1024 : MAX.bridgeBytes,
-    ),
+    value,
   };
+}
+
+function validateDownloadRequest(value) {
+  if (!ownRecord(value, ["filename", "mime_type", "data"]) ||
+      typeof value.filename !== "string" || typeof value.mime_type !== "string" || typeof value.data !== "string") {
+    throw new Error("download schema");
+  }
+  const filename = value.filename.trim();
+  if (!filename || new TextEncoder().encode(filename).length > 255 || /[\\/\x00-\x1f\x7f<>:"|?*]/.test(filename) ||
+      filename.startsWith(".") || filename.endsWith(".") || filename.endsWith(" ")) throw new Error("download filename");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(filename.split(".", 1)[0])) throw new Error("download filename");
+  const allowed = {
+    "text/plain": [".txt"], "text/csv": [".csv"], "application/json": [".json"],
+    "image/png": [".png"], "image/jpeg": [".jpg", ".jpeg"], "image/gif": [".gif"], "image/webp": [".webp"],
+  };
+  const extensions = allowed[value.mime_type];
+  if (!extensions || !extensions.some((extension) => filename.toLowerCase().endsWith(extension))) throw new Error("download type");
+  if (value.mime_type.startsWith("image/")) {
+    const prefix = `data:${value.mime_type};base64,`;
+    if (!value.data.startsWith(prefix)) throw new Error("download encoding");
+    let decoded;
+    try { decoded = atob(value.data.slice(prefix.length)); } catch (_) { throw new Error("download encoding"); }
+    if (decoded.length > MAX.bridgeBytes) throw new Error("download bytes");
+  } else {
+    if (value.data.startsWith("data:") || new TextEncoder().encode(value.data).length > MAX.bridgeBytes) throw new Error("download bytes");
+    if (value.mime_type === "application/json") {
+      try { JSON.parse(value.data); } catch (_) { throw new Error("download json"); }
+    }
+  }
 }
 
 function prepareTransaction(patches, bridges) {

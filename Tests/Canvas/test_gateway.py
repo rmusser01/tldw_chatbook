@@ -20,6 +20,7 @@ from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
     BridgeConfirmationResponse,
+    BridgePreparationResponse,
     CanvasGateway,
     CanvasGatewayEvent,
     CanvasGatewayLaunch,
@@ -66,12 +67,30 @@ class _Authority:
         request: BridgeConfirmationRequest,
         *,
         settlement: object | None = None,
+        preparation: object | None = None,
     ) -> BridgeConfirmationResponse:
         self.calls.append(("bridge", scope))
+        assert preparation is not None
         if settlement is not None:
             assert settlement.try_settle(lambda: None)  # type: ignore[attr-defined]
         return BridgeConfirmationResponse(
             request_id=request.request.request_id, status="confirmed"
+        )
+
+    async def prepare_bridge(self, scope, request):
+        self.calls.append(("bridge_prepare", scope))
+        complete_text = request.submit_text() if request.kind == "submit" else None
+        return (
+            BridgePreparationResponse(
+                request_id=request.request_id,
+                kind=request.kind,
+                conversation_id=scope.conversation_session_id,
+                canvas_id=scope.canvas_id,
+                revision_id=scope.revision_id,
+                complete_text=complete_text,
+                byte_size=len((complete_text or "").encode("utf-8")),
+            ),
+            object(),
         )
 
 
@@ -122,8 +141,11 @@ async def _ready_bridge(
     session: aiohttp.ClientSession,
     gateway: CanvasGateway,
     launch: CanvasGatewayLaunch,
+    *,
+    request: object | None = None,
+    prepare: bool = True,
 ) -> tuple[str, str, str]:
-    """Boot one shell, load one frame, and mint one bridge capability."""
+    """Boot one shell, load one frame, prepare, and mint one confirm capability."""
 
     assert gateway.origin is not None
     origin = gateway.origin
@@ -143,6 +165,15 @@ async def _ready_bridge(
         csrf=csrf,
     )
     assert frame.status == 200
+    if prepare:
+        prepared = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=request if request is not None else _bridge_wire(),
+        )
+        assert prepared.status == 200
     grant = await _post_json(
         session,
         _launch_url(launch, "api/actions"),
@@ -187,6 +218,226 @@ def _bridge_request(
             "value": value,
         },
     }
+
+
+def _bridge_wire(
+    *,
+    request_id: str = "request-idempotent",
+    kind: str = "submit",
+    value: object = "bounded",
+) -> dict[str, object]:
+    return {
+        "version": "canvas-v1",
+        "request_id": request_id,
+        "kind": kind,
+        "value": value,
+    }
+
+
+async def _prepare_bridge(
+    session: aiohttp.ClientSession,
+    launch: CanvasGatewayLaunch,
+    *,
+    origin: str,
+    csrf: str,
+    request: object,
+) -> aiohttp.ClientResponse:
+    grant = await _post_json(
+        session,
+        _launch_url(launch, "api/actions"),
+        {"action": "bridge_prepare"},
+        origin=origin,
+        csrf=csrf,
+    )
+    assert grant.status == 200
+    return await _post_json(
+        session,
+        _launch_url(launch, "api/bridge/prepare"),
+        {"request": request},
+        origin=origin,
+        csrf=csrf,
+        capability=(await grant.json())["capability"],
+    )
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_bridge_requires_one_exact_preparation_before_confirmation() -> None:
+    authority = _Authority([])
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope())
+    jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=jar) as session:
+        origin, csrf, confirm_capability = await _ready_bridge(
+            session, gateway, launch, prepare=False
+        )
+        direct = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            _bridge_request(),
+            origin=origin,
+            csrf=csrf,
+            capability=confirm_capability,
+        )
+        assert direct.status == 409
+        assert (await direct.json())["error"] == "bridge_not_prepared"
+
+        prepared = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=_bridge_wire(),
+        )
+        assert prepared.status == 200
+        assert await prepared.json() == {
+            "request_id": "request-idempotent",
+            "kind": "submit",
+            "conversation_id": "conversation-session-a",
+            "canvas_id": "canvas-a",
+            "revision_id": "revision-a",
+            "complete_text": "bounded",
+            "filename": None,
+            "mime_type": None,
+            "byte_size": 7,
+        }
+        second = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=_bridge_wire(request_id="request-second"),
+        )
+        assert second.status == 409
+        assert (await second.json())["error"] == "bridge_confirmation_pending"
+
+        confirmed = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            _bridge_request(),
+            origin=origin,
+            csrf=csrf,
+            capability=await _fresh_bridge_capability(
+                session, launch, origin=origin, csrf=csrf
+            ),
+        )
+        assert confirmed.status == 200
+        assert await confirmed.json() == {
+            "request_id": "request-idempotent",
+            "status": "confirmed",
+        }
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_two_canvas_windows_cannot_cross_route_confirmations() -> None:
+    authority = _Authority([])
+    gateway = CanvasGateway(authority=authority)
+    first_scope = _scope()
+    second_scope = _scope(
+        browser_session_id="browser-b",
+        conversation_session_id="conversation-session-b",
+        canvas_id="canvas-b",
+        revision_id="revision-b",
+    )
+    first_launch = await gateway.open_shell(first_scope)
+    second_launch = await gateway.open_shell(second_scope)
+    first_body = _bridge_request(request_id="request-window-a", value="window A")
+    second_body = _bridge_request(request_id="request-window-b", value="window B")
+
+    async with (
+        aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as first,
+        aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as second,
+    ):
+        first_origin, first_csrf, first_capability = await _ready_bridge(
+            first, gateway, first_launch, request=first_body["request"]
+        )
+        second_origin, second_csrf, second_capability = await _ready_bridge(
+            second, gateway, second_launch, request=second_body["request"]
+        )
+        crossed = await _post_json(
+            second,
+            _launch_url(second_launch, "api/bridge"),
+            first_body,
+            origin=second_origin,
+            csrf=second_csrf,
+            capability=second_capability,
+        )
+        assert crossed.status == 409
+        assert (await crossed.json())["error"] == "bridge_request_collision"
+
+        first_result = await _post_json(
+            first,
+            _launch_url(first_launch, "api/bridge"),
+            first_body,
+            origin=first_origin,
+            csrf=first_csrf,
+            capability=first_capability,
+        )
+        second_result = await _post_json(
+            second,
+            _launch_url(second_launch, "api/bridge"),
+            second_body,
+            origin=second_origin,
+            csrf=second_csrf,
+            capability=await _fresh_bridge_capability(
+                second,
+                second_launch,
+                origin=second_origin,
+                csrf=second_csrf,
+            ),
+        )
+        assert first_result.status == second_result.status == 200
+        assert authority.calls.count(("bridge", first_scope)) == 1
+        assert authority.calls.count(("bridge", second_scope)) == 1
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_expired_preparation_cannot_confirm_or_retain_its_guard() -> None:
+    now = [100.0]
+    authority = _Authority([])
+    gateway = CanvasGateway(authority=authority, clock=lambda: now[0])
+    launch = await gateway.open_shell(_scope())
+    first_body = _bridge_request(request_id="request-expired", value="expired payload")
+    second_body = _bridge_request(request_id="request-current", value="current payload")
+
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        origin, csrf, expired_capability = await _ready_bridge(
+            session, gateway, launch, request=first_body["request"]
+        )
+        live_session = next(iter(gateway._sessions.values()))
+        expired_record = live_session.pending_bridge
+        assert expired_record is not None
+        assert "expired payload" not in repr(expired_record)
+
+        now[0] += 31.0
+        current = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=second_body["request"],
+        )
+        assert current.status == 200
+        assert expired_record.preparation is None
+        assert expired_record.expiry_handle is None
+
+        expired = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            first_body,
+            origin=origin,
+            csrf=csrf,
+            capability=expired_capability,
+        )
+        assert expired.status == 401
+        assert authority.calls.count(("bridge", _scope())) == 0
+    await gateway.aclose()
 
 
 @pytest.mark.loopback_network
@@ -663,6 +914,14 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
             )
         ).status == 401
 
+        prepared_bridge = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=_bridge_wire(request_id="request-a", value={"answer": 42}),
+        )
+        assert prepared_bridge.status == 200
         bridge_grant = await _post_json(
             session,
             _launch_url(launch, "api/actions"),
@@ -705,6 +964,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         ("plan", _scope()),
         ("events", _scope()),
         ("source", _scope()),
+        ("bridge_prepare", _scope()),
         ("bridge", _scope()),
     ]
     assert not any(
@@ -962,7 +1222,9 @@ async def test_bridge_settlement_prevents_host_effect_after_scope_race(
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.entered.set()
             await self.release.wait()
             if settlement is None:
@@ -1002,6 +1264,14 @@ async def test_bridge_settlement_prevents_host_effect_after_scope_race(
                 csrf=csrf,
             )
         ).status == 200
+        prepared_bridge = await _prepare_bridge(
+            session,
+            launch,
+            origin=origin,
+            csrf=csrf,
+            request=_bridge_wire(request_id="request-race"),
+        )
+        assert prepared_bridge.status == 200
         grant = await _post_json(
             session,
             _launch_url(launch, "api/actions"),
@@ -1085,7 +1355,9 @@ async def test_bridge_callback_finalizes_an_unused_settlement_lease(
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> object:
+            assert preparation is not None
             self.lease = settlement
             if outcome == "refused":
                 return BridgeConfirmationResponse(
@@ -1102,7 +1374,12 @@ async def test_bridge_callback_finalizes_an_unused_settlement_lease(
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session,
+            gateway,
+            launch,
+            request=_bridge_wire(request_id="request-retained"),
+        )
         response = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1152,7 +1429,9 @@ async def test_committed_bridge_settlement_returns_exact_result_after_transition
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             assert settlement is not None
             assert settlement.try_settle(  # type: ignore[attr-defined]
                 lambda: self.effects.append(request.request.request_id)
@@ -1181,7 +1460,9 @@ async def test_committed_bridge_settlement_returns_exact_result_after_transition
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session, gateway, launch, request=request_body["request"]
+        )
         bridge_task = asyncio.create_task(
             _post_json(
                 session,
@@ -1263,7 +1544,9 @@ async def test_fresh_capability_replays_committed_bridge_without_authority() -> 
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.bridge_calls += 1
             assert settlement is not None
             assert settlement.try_settle(  # type: ignore[attr-defined]
@@ -1281,7 +1564,9 @@ async def test_fresh_capability_replays_committed_bridge_without_authority() -> 
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, first_capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, first_capability = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         first = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1334,7 +1619,9 @@ async def test_cancelled_transport_after_settlement_replays_without_duplicate() 
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.bridge_calls += 1
             assert settlement is not None
             assert settlement.try_settle(  # type: ignore[attr-defined]
@@ -1355,7 +1642,9 @@ async def test_cancelled_transport_after_settlement_replays_without_duplicate() 
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         lost = asyncio.create_task(
             _post_json(
                 session,
@@ -1396,7 +1685,13 @@ async def test_cancelled_transport_after_settlement_replays_without_duplicate() 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("changed_kind", "changed_value"),
-    [("submit", "changed-payload"), ("download", "bounded")],
+    [
+        ("submit", "changed-payload"),
+        (
+            "download",
+            {"filename": "result.txt", "mime_type": "text/plain", "data": "bounded"},
+        ),
+    ],
 )
 async def test_same_bridge_request_id_with_changed_content_is_refused(
     changed_kind: str,
@@ -1447,7 +1742,12 @@ async def test_bridge_settlement_capacity_expiry_and_load_revocation() -> None:
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session,
+            gateway,
+            launch,
+            request=_bridge_wire(request_id="request-capacity-a"),
+        )
         first = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1459,6 +1759,15 @@ async def test_bridge_settlement_capacity_expiry_and_load_revocation() -> None:
         assert first.status == 200
         assert gateway.bridge_settlement_count == 1
 
+        assert (
+            await _prepare_bridge(
+                session,
+                launch,
+                origin=origin,
+                csrf=csrf,
+                request=_bridge_wire(request_id="request-capacity-b"),
+            )
+        ).status == 200
         full = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1473,6 +1782,15 @@ async def test_bridge_settlement_capacity_expiry_and_load_revocation() -> None:
         assert authority.calls.count(("bridge", _scope())) == 1
 
         now[0] += 301.0
+        assert (
+            await _prepare_bridge(
+                session,
+                launch,
+                origin=origin,
+                csrf=csrf,
+                request=_bridge_wire(request_id="request-capacity-b"),
+            )
+        ).status == 200
         after_expiry = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1521,7 +1839,12 @@ async def test_bridge_settlements_revoke_with_authority_lifecycle(
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session,
+            gateway,
+            launch,
+            request=_bridge_wire(request_id="request-revoke"),
+        )
         committed = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1576,7 +1899,9 @@ async def test_concurrent_fresh_bridge_retries_share_one_authority_settlement() 
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.bridge_calls += 1
             self.entered.set()
             await self.release.wait()
@@ -1596,7 +1921,9 @@ async def test_concurrent_fresh_bridge_retries_share_one_authority_settlement() 
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, first = await _ready_bridge(session, gateway, launch)
+        origin, csrf, first = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         capabilities = [first]
         for _ in range(5):
             capabilities.append(
@@ -1649,7 +1976,9 @@ async def test_hung_bridge_owner_expires_pending_record_and_wakes_joiners() -> N
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             assert settlement is not None
             self.record = settlement._record  # type: ignore[attr-defined]
             self.entered.set()
@@ -1673,7 +2002,9 @@ async def test_hung_bridge_owner_expires_pending_record_and_wakes_joiners() -> N
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, owner_capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, owner_capability = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         owner = asyncio.create_task(
             _post_json(
                 session,
@@ -1734,7 +2065,9 @@ async def test_bridge_pending_waiter_cap_refuses_excess_and_releases_on_completi
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.entered.set()
             await self.release.wait()
             assert settlement is not None
@@ -1757,7 +2090,9 @@ async def test_bridge_pending_waiter_cap_refuses_excess_and_releases_on_completi
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, owner_capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, owner_capability = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         owner = asyncio.create_task(
             _post_json(
                 session,
@@ -1835,7 +2170,9 @@ async def test_pending_bridge_joiner_wakes_on_lifecycle_revocation(
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             self.entered.set()
             await self.release.wait()
             assert settlement is not None
@@ -1852,8 +2189,10 @@ async def test_pending_bridge_joiner_wakes_on_lifecycle_revocation(
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, owner_capability = await _ready_bridge(session, gateway, launch)
         body = _bridge_request(request_id=f"request-pending-{transition}")
+        origin, csrf, owner_capability = await _ready_bridge(
+            session, gateway, launch, request=body["request"]
+        )
         owner = asyncio.create_task(
             _post_json(
                 session,
@@ -1935,7 +2274,12 @@ async def test_committed_bridge_record_self_expires_without_later_request() -> N
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session,
+            gateway,
+            launch,
+            request=_bridge_wire(request_id="request-self-expiry"),
+        )
         committed = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),
@@ -1974,7 +2318,9 @@ async def test_bridge_expiry_handles_settle_on_completion_and_lifecycle(
             request: BridgeConfirmationRequest,
             *,
             settlement: object | None = None,
+            preparation: object | None = None,
         ) -> BridgeConfirmationResponse:
+            assert preparation is not None
             assert settlement is not None
             self.record = settlement._record  # type: ignore[attr-defined]
             self.pending_handle = self.record.expiry_handle  # type: ignore[attr-defined]
@@ -1993,7 +2339,12 @@ async def test_bridge_expiry_handles_settle_on_completion_and_lifecycle(
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        origin, csrf, capability = await _ready_bridge(
+            session,
+            gateway,
+            launch,
+            request=_bridge_wire(request_id="request-handle-lifecycle"),
+        )
         committed = await _post_json(
             session,
             _launch_url(launch, "api/bridge"),

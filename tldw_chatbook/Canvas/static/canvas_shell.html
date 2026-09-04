@@ -93,10 +93,41 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <h2 id="source-heading">Revision source</h2>
           <p>Read-only. Copying or running this HTML outside Chatbook bypasses the Canvas sandbox.</p>
         </div>
-        <button id="source-close-button" type="button">Close source</button>
+        <div class="source-actions">
+          <button id="runnable-download-button" type="button">Download as runnable HTML</button>
+          <button id="source-close-button" type="button">Close source</button>
+        </div>
       </div>
       <textarea id="source-view" readonly aria-label="Canvas revision source" spellcheck="false"></textarea>
     </aside>
+
+    <section id="bridge-dialog" class="bridge-dialog" role="dialog" aria-modal="true" aria-labelledby="bridge-heading" aria-describedby="bridge-summary" tabindex="-1" hidden>
+      <header class="bridge-header">
+        <div>
+          <h2 id="bridge-heading">Confirm Canvas action</h2>
+          <p id="bridge-summary">Review the complete request before allowing it.</p>
+        </div>
+        <span id="bridge-kind" class="state-badge">Confirmation</span>
+      </header>
+      <dl id="bridge-metadata" class="bridge-metadata">
+        <div><dt>Target</dt><dd id="bridge-target"></dd></div>
+        <div id="bridge-filename-row" hidden><dt>File</dt><dd id="bridge-filename"></dd></div>
+        <div id="bridge-mime-row" hidden><dt>Type</dt><dd id="bridge-mime"></dd></div>
+        <div id="bridge-size-row" hidden><dt>Size</dt><dd id="bridge-size"></dd></div>
+      </dl>
+      <div id="bridge-text-region" class="bridge-text-region">
+        <label for="bridge-complete-text">Complete content</label>
+        <textarea id="bridge-complete-text" readonly spellcheck="false"></textarea>
+      </div>
+      <p id="bridge-recovery" class="bridge-recovery" role="status" aria-live="assertive" hidden></p>
+      <footer class="bridge-actions">
+        <button id="bridge-cancel-button" type="button">Cancel</button>
+        <button id="bridge-copy-button" type="button">Copy result</button>
+        <button id="bridge-retry-button" type="button" hidden>Retry</button>
+        <button id="bridge-switch-button" type="button" hidden>Switch to chat</button>
+        <button id="bridge-confirm-button" class="primary-action" type="button">Confirm</button>
+      </footer>
+    </section>
   </main>
 </body>
 </html>
