@@ -1,0 +1,248 @@
+"""Immutable Canvas V1 render-plan and bridge wire contracts."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Literal, TypeAlias
+
+from .limits import (
+    CanvasLimitError,
+    CanvasLimits,
+    JsonValue,
+    validate_asset_payloads,
+    validate_count,
+    validate_json_value,
+    validate_opaque_identifier,
+    validate_unique_identifiers,
+    validate_utf8_text,
+)
+
+
+RuntimeProfile: TypeAlias = Literal["canvas-v1"]
+BridgeRequestKind: TypeAlias = Literal["submit", "download"]
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasCompatibilityIssue:
+    """A bounded compiler/runtime incompatibility without source disclosure."""
+
+    code: str
+    message: str
+    location: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.code, field_name="compatibility issue code")
+        validate_utf8_text(self.message, limit=4 * 1024, field_name="compatibility issue message")
+        if self.location is not None:
+            validate_utf8_text(self.location, limit=512, field_name="compatibility issue location")
+
+
+@dataclass(frozen=True, slots=True)
+class RenderAsset:
+    """An opaque compiler-extracted asset; never a browser-resolvable URL."""
+
+    asset_id: str
+    mime_type: str
+    data: bytes
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.asset_id, field_name="asset ID")
+        if not isinstance(self.mime_type, str) or "/" not in self.mime_type:
+            raise CanvasLimitError("asset MIME type must be a MIME string")
+        validate_utf8_text(self.mime_type, limit=256, field_name="asset MIME type")
+        if not isinstance(self.data, bytes):
+            raise CanvasLimitError("asset data must be bytes")
+
+
+@dataclass(frozen=True, slots=True)
+class RenderNode:
+    """A compiler-normalized DOM node, represented without browser markup sinks."""
+
+    node_id: str
+    tag: str
+    attributes: tuple[tuple[str, str], ...] = ()
+    text: str | None = None
+    children: tuple["RenderNode", ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.node_id, field_name="node ID")
+        if not isinstance(self.tag, str) or not self.tag:
+            raise CanvasLimitError("node tag must be a non-empty string")
+        validate_utf8_text(self.tag, limit=128, field_name="node tag")
+        if not isinstance(self.attributes, tuple):
+            raise CanvasLimitError("node attributes must be an immutable tuple")
+        attribute_names: list[str] = []
+        for item in self.attributes:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise CanvasLimitError("node attribute must be a string pair")
+            name, value = item
+            if not isinstance(name, str) or not isinstance(value, str):
+                raise CanvasLimitError("node attribute must be a string pair")
+            validate_utf8_text(name, limit=256, field_name="node attribute name")
+            validate_utf8_text(value, limit=16 * 1024, field_name="node attribute value")
+            attribute_names.append(name)
+        validate_unique_identifiers(tuple(attribute_names), field_name="node attribute names")
+        if self.text is not None:
+            validate_utf8_text(self.text, limit=CanvasLimits().html_bytes, field_name="node text")
+        if not isinstance(self.children, tuple) or not all(
+            isinstance(child, RenderNode) for child in self.children
+        ):
+            raise CanvasLimitError("node children must be an immutable tuple of render nodes")
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasRenderPlan:
+    """A closed, derived render plan for exactly one supported runtime profile."""
+
+    runtime_profile: RuntimeProfile
+    root: RenderNode
+    assets: tuple[RenderAsset, ...] = ()
+    css_rules: tuple[str, ...] = ()
+    scripts: tuple[str, ...] = ()
+    compatibility_issues: tuple[CanvasCompatibilityIssue, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.runtime_profile != "canvas-v1":
+            raise CanvasLimitError("unsupported Canvas runtime profile")
+        if not isinstance(self.root, RenderNode):
+            raise CanvasLimitError("render plan root must be a render node")
+        _require_tuple_of(self.assets, RenderAsset, "render plan assets")
+        _require_tuple_of(self.compatibility_issues, CanvasCompatibilityIssue, "compatibility issues")
+        if not isinstance(self.css_rules, tuple) or not all(
+            isinstance(rule, str) for rule in self.css_rules
+        ):
+            raise CanvasLimitError("CSS rules must be an immutable tuple of strings")
+        if not isinstance(self.scripts, tuple) or not all(isinstance(script, str) for script in self.scripts):
+            raise CanvasLimitError("scripts must be an immutable tuple of strings")
+
+        limits = CanvasLimits()
+        validate_unique_identifiers(tuple(asset.asset_id for asset in self.assets), field_name="asset IDs")
+        validate_asset_payloads(
+            tuple(_asset_payload(asset) for asset in self.assets),
+            per_asset_limit=limits.asset_bytes,
+            aggregate_limit=limits.aggregate_asset_bytes,
+        )
+        validate_count(len(self.css_rules), limit=limits.css_rules, field_name="CSS rules")
+        validate_utf8_text("".join(self.scripts), limit=limits.script_bytes, field_name="script")
+        validate_count(len(_all_nodes(self.root)), limit=limits.dom_nodes, field_name="DOM nodes")
+        validate_unique_identifiers(
+            tuple(node.node_id for node in _all_nodes(self.root)), field_name="node IDs"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasBridgeRequest:
+    """One untrusted browser-to-shell bridge request with a closed V1 schema."""
+
+    version: RuntimeProfile
+    request_id: str
+    kind: BridgeRequestKind
+    value: JsonValue
+
+    def __post_init__(self) -> None:
+        _validate_bridge_request(
+            version=self.version,
+            request_id=self.request_id,
+            kind=self.kind,
+            value=self.value,
+            limits=CanvasLimits(),
+        )
+        object.__setattr__(self, "value", _freeze_json_value(self.value))
+
+    @classmethod
+    def from_wire(cls, message: object, *, limits: CanvasLimits | None = None) -> "CanvasBridgeRequest":
+        """Decode exactly the Canvas V1 request fields and reject all extras."""
+        if not isinstance(message, Mapping):
+            raise ValueError("Canvas bridge request must be an object")
+        expected_fields = {"version", "request_id", "kind", "value"}
+        actual_fields = set(message.keys())
+        if actual_fields != expected_fields:
+            unknown = actual_fields - expected_fields
+            missing = expected_fields - actual_fields
+            if unknown:
+                raise ValueError("Canvas bridge request contains unknown fields")
+            raise ValueError(f"Canvas bridge request is missing fields: {', '.join(sorted(missing))}")
+
+        try:
+            _validate_bridge_request(
+                version=message["version"],
+                request_id=message["request_id"],
+                kind=message["kind"],
+                value=message["value"],
+                limits=limits or CanvasLimits(),
+            )
+        except CanvasLimitError as exc:
+            raise ValueError(str(exc)) from exc
+        return cls(
+            version=message["version"],
+            request_id=message["request_id"],
+            kind=message["kind"],
+            value=message["value"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasRuntimeFailure:
+    """A bounded, content-free runtime failure sent to trusted UI only."""
+
+    code: str
+    message: str
+    retryable: bool = False
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.code, field_name="runtime failure code")
+        validate_utf8_text(self.message, limit=4 * 1024, field_name="runtime failure message")
+        if not isinstance(self.retryable, bool):
+            raise CanvasLimitError("runtime failure retryable must be a boolean")
+
+
+def _asset_payload(asset: RenderAsset):
+    from .limits import DecodedDataUrl
+
+    return DecodedDataUrl(mime_type=asset.mime_type, data=asset.data)
+
+
+def _validate_bridge_request(
+    *, version: object, request_id: object, kind: object, value: object, limits: CanvasLimits
+) -> None:
+    if version != "canvas-v1":
+        raise CanvasLimitError("unsupported Canvas bridge request version")
+    validate_opaque_identifier(request_id, field_name="bridge request ID")
+    if kind not in ("submit", "download"):
+        raise CanvasLimitError("unsupported Canvas bridge request kind")
+    validate_json_value(value, max_depth=limits.json_depth, field_name="bridge request value")
+    try:
+        encoded_value = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise CanvasLimitError("bridge request value must be JSON-compatible") from exc
+    validate_utf8_text(
+        encoded_value,
+        limit=(limits.submit_payload_bytes if kind == "submit" else limits.download_payload_bytes),
+        field_name=f"{kind} payload",
+    )
+
+
+def _freeze_json_value(value: JsonValue) -> JsonValue:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json_value(child) for key, child in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(child) for child in value)  # type: ignore[return-value]
+    return value
+
+
+def _all_nodes(root: RenderNode) -> tuple[RenderNode, ...]:
+    nodes: list[RenderNode] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        nodes.append(node)
+        stack.extend(reversed(node.children))
+    return tuple(nodes)
+
+
+def _require_tuple_of(values: object, item_type: type[object], field_name: str) -> None:
+    if not isinstance(values, tuple) or not all(isinstance(value, item_type) for value in values):
+        raise CanvasLimitError(f"{field_name} must be an immutable tuple")

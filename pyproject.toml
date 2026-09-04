@@ -77,6 +77,8 @@ dependencies = [
     "textual-image",
     "tiktoken==0.14.0",  # exact pin: reviewed offline encoding bundle/runtime seam
     "defusedxml",    # engine xml security parsing (Q9: core)
+    "html5lib>=1.1,<2",
+    "tinycss2>=1.4,<2",
 ]
 
 # --- Optional Dependencies ---
