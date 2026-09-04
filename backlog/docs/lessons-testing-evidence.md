@@ -11219,7 +11219,7 @@ just watched the feature not work, and both passed on the broken build.
 
 ## Textual projection writes must suppress their own deferred change messages
 
-**TASK-31284, 2026-09-03.** The mounted vLLM generation-fencing test initially
+**TASK-31389, 2026-09-03.** The mounted vLLM generation-fencing test initially
 hung after one model edit and advanced the connection generation thousands of
 times. The view's `_rendering` flag covered the synchronous `Input.value` writes,
 but Textual delivered their `Input.Changed` messages after the flag had already
@@ -11236,7 +11236,7 @@ semantic generation advance.
 
 ## Closing a thread-local database on the fixture thread does not close worker-owned handles
 
-**TASK-31287 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
+**TASK-31392 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
 reported 237 additional file descriptors. File-level bisection isolated the
 growth to mounted Textual tests; `lsof`, GC inspection, and live connection
 registries then showed one `_QuiescentSQLiteConnection` per app instance. The

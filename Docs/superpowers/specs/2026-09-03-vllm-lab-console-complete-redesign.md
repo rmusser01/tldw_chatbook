@@ -4,7 +4,7 @@
 
 **Status:** Approved on 2026-09-03
 
-**Tasks:** TASK-31282, TASK-31283, TASK-31284, TASK-31285, TASK-31286, TASK-31287
+**Tasks:** TASK-31387, TASK-31388, TASK-31389, TASK-31390, TASK-31391, TASK-31392
 
 **Decision:** [ADR-117](../../../backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md)
 
@@ -545,16 +545,16 @@ do not describe loopback fixtures as real vLLM qualification.
 
 ## Delivery sequence
 
-1. **TASK-31282 — Contract:** ADR-117 and this specification only.
-2. **TASK-31283 — Guided preflight:** launch/connect modes, source-specific setup,
+1. **TASK-31387 — Contract:** ADR-117 and this specification only.
+2. **TASK-31388 — Guided preflight:** launch/connect modes, source-specific setup,
    environment/network checks, safe public CLI builder.
-3. **TASK-31284 — Readiness:** app-scoped connection owner, current snapshot,
+3. **TASK-31389 — Readiness:** app-scoped connection owner, current snapshot,
    generation fencing, health/model probing, Activity.
-4. **TASK-31285 — Console adoption:** session Apply, Settings default delegation,
+4. **TASK-31390 — Console adoption:** session Apply, Settings default delegation,
    navigation, stale/rollback behavior.
-5. **TASK-31286 — Profiles:** device-local repository, management actions,
+5. **TASK-31391 — Profiles:** device-local repository, management actions,
    current-versus-next projection, restart with draft.
-6. **TASK-31287 — Responsive completion:** compact composition, Inspector behavior,
+6. **TASK-31392 — Responsive completion:** compact composition, Inspector behavior,
    focus containment, production-stylesheet matrix, final end-to-end evidence.
 
 Each task is one reviewable PR and may begin only after its listed dependencies are

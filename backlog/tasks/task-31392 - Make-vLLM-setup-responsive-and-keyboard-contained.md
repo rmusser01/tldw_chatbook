@@ -1,5 +1,5 @@
 ---
-id: TASK-31287
+id: TASK-31392
 title: Make vLLM setup responsive and keyboard-contained
 status: Done
 assignee:
@@ -12,10 +12,10 @@ labels:
   - accessibility
   - responsive
 dependencies:
-  - TASK-31283
-  - TASK-31284
-  - TASK-31285
-  - TASK-31286
+  - TASK-31388
+  - TASK-31389
+  - TASK-31390
+  - TASK-31391
 priority: high
 ---
 
@@ -69,7 +69,7 @@ ADR required: no
 
 ADR path: `backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md`
 
-Reason: TASK-31287 directly implements ADR-117's already accepted responsive composition, keyboard ownership, focus, and live-evidence contract; it introduces no new runtime, persistence, security, or cross-module boundary.
+Reason: TASK-31392 directly implements ADR-117's already accepted responsive composition, keyboard ownership, focus, and live-evidence contract; it introduces no new runtime, persistence, security, or cross-module boundary.
 
 Task 6 Fix Round 2:
 1. Reproduce the primary-suite FD-growth warning, bisect/group the owning test files, and inventory descriptor types/owners before changing code.
@@ -239,7 +239,7 @@ same node name).
 8. Loopback health/models ready/missing/auth/timeout/cancel/stale contracts — `test_ready_requires_health_and_exact_models_identity`, `test_healthy_api_without_exact_model_is_not_ready`, `test_auth_required_never_echoes_response_or_credential`, `test_probe_timeout_is_bounded_and_sanitized`, `test_cancellation_prevents_any_http_probe`, `test_older_generation_cannot_replace_newer_owner_state`.
 9. Exact launch/stop/restart process ownership — `test_stop_request_settles_the_owned_server_without_opening_a_picker`, `test_restart_proves_old_process_dead_and_released_before_new_generation`, `test_restart_termination_failure_keeps_old_snapshot_and_never_reserves`.
 10. Mounted session adoption without config writes — `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
-11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31287.
+11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31392.
 12. Recomposition/profile restore/obsolete-worker invalidation — `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
 13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `checking`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, `profile_management`, `existing_discovery`, and `existing_ready` at 80x24, 100x30, and 120x40, with per-state outcome copy and first-action assertions plus every visible enabled focusable fully inside both its direct owner and the active vLLM viewport; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` applies the same rule to the real modal.
 14. Complete Tab walk/hidden providers/lifecycle landing — `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
@@ -251,7 +251,7 @@ The final primary focused matrix passed 217 tests. The compatibility matrix pass
 271 tests and retained two unrelated baseline failures. Both exact failures
 reproduce in detached worktrees at Task 5 base `0643c2713a`, original feature base
 `127cc898ab`, and the real `origin/dev` fetched at `2026-09-04T06:46:11Z`
-(`d6eb7fe1c24188ead22359b6bc8d0713de2829fa`), proving they are not TASK-31287
+(`d6eb7fe1c24188ead22359b6bc8d0713de2829fa`), proving they are not TASK-31392
 regressions. No unrelated Console test-harness/database repair was included. Fix
 Round 1 changed no stylesheet source, so the generated bundle was intentionally not
 rebuilt. The Impeccable detector returned no findings.
@@ -292,7 +292,7 @@ This task previously held id TASK-31221. During the branch integration sweep,
 current `origin/dev` already shipped `task-31221 -
 Media-type-chooser-options-are-invisible-zero-height-OptionList.md` at add commit
 `f9577ba8a913b09c523b643193dbbf1eb777a3af`. The unmerged vLLM task therefore
-moved to collision-free TASK-31287 as the last member of a monotonic vLLM task
+moved to collision-free TASK-31268 as the last member of a monotonic vLLM task
 block, carrying every dependency and documentation
 reference with it. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
@@ -487,3 +487,12 @@ The complete vLLM sequence therefore moved together from TASK-31263..31268 to
 the next contiguous block proven free across every fetched non-vLLM ref,
 TASK-31282..31287. This responsive-completion task maps TASK-31268 ->
 TASK-31287; ADR-117 remained collision-free.
+
+A third merge-time sweep found that `origin/dev`
+`24d931d0a4f6beec3e0fd7e94d24850ca196e86c` had made the unrelated theme
+TASK-31282..31284 claims canonical. Across every fetched non-vLLM local and
+remote ref, TASK-31386 was the numeric maximum and TASK-31387..31392 were the
+first six contiguous IDs strictly above it. The complete vLLM chain therefore
+moved together from TASK-31282..31287 to TASK-31387..31392; this responsive task
+maps TASK-31287 -> TASK-31392. ADR-117 remained collision-free across the same
+refs.

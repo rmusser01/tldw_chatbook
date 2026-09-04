@@ -1,5 +1,5 @@
 ---
-id: TASK-31285
+id: TASK-31390
 title: Adopt verified vLLM targets into Console
 status: Done
 assignee: []
@@ -11,7 +11,7 @@ labels:
   - console
   - handoff
 dependencies:
-  - TASK-31284
+  - TASK-31389
 priority: high
 ---
 
@@ -234,8 +234,8 @@ Exact RED: both pinned and one-shot real-SQLite Capture-On nodes failed before a
 
 This task previously held id TASK-31217. The Task 6 collision correction moved
 the full dependent vLLM sequence into one collision-free monotonic block so no
-task depends on a future/higher task id. It therefore moved to TASK-31285 after
-TASK-31283 preflight and TASK-31284 readiness. The record was originally added
+task depends on a future/higher task id. It therefore moved to TASK-31266 after
+TASK-31264 preflight and TASK-31265 readiness. The record was originally added
 by `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
 
 A second merge-time sweep found that `origin/dev` had advanced to
@@ -245,3 +245,12 @@ The complete vLLM sequence therefore moved together from TASK-31263..31268 to
 the next contiguous block proven free across every fetched non-vLLM ref,
 TASK-31282..31287. This Console-adoption task maps TASK-31266 -> TASK-31285;
 ADR-117 remained collision-free.
+
+A third merge-time sweep found that `origin/dev`
+`24d931d0a4f6beec3e0fd7e94d24850ca196e86c` had made the unrelated theme
+TASK-31282..31284 claims canonical. Across every fetched non-vLLM local and
+remote ref, TASK-31386 was the numeric maximum and TASK-31387..31392 were the
+first six contiguous IDs strictly above it. The complete vLLM chain therefore
+moved together from TASK-31282..31287 to TASK-31387..31392; this Console task
+maps TASK-31285 -> TASK-31390. ADR-117 remained collision-free across the same
+refs.

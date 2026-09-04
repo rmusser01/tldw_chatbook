@@ -1,5 +1,5 @@
 ---
-id: TASK-31286
+id: TASK-31391
 title: Add current-server snapshots and reusable vLLM launch profiles
 status: Done
 assignee:
@@ -11,7 +11,7 @@ labels:
   - lab
   - profiles
 dependencies:
-  - TASK-31284
+  - TASK-31389
 priority: medium
 ---
 
@@ -280,8 +280,8 @@ generalized lesson is required.
 
 This task previously held id TASK-31219. The Task 6 collision correction moved
 the full dependent vLLM sequence into one collision-free monotonic block so no
-task depends on a future/higher task id. It therefore moved to TASK-31286 after
-TASK-31283 preflight, TASK-31284 readiness, and TASK-31285 Console handoff. The
+task depends on a future/higher task id. It therefore moved to TASK-31267 after
+TASK-31264 preflight, TASK-31265 readiness, and TASK-31266 Console handoff. The
 record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
 
@@ -292,3 +292,12 @@ The complete vLLM sequence therefore moved together from TASK-31263..31268 to
 the next contiguous block proven free across every fetched non-vLLM ref,
 TASK-31282..31287. This profiles task maps TASK-31267 -> TASK-31286; ADR-117
 remained collision-free.
+
+A third merge-time sweep found that `origin/dev`
+`24d931d0a4f6beec3e0fd7e94d24850ca196e86c` had made the unrelated theme
+TASK-31282..31284 claims canonical. Across every fetched non-vLLM local and
+remote ref, TASK-31386 was the numeric maximum and TASK-31387..31392 were the
+first six contiguous IDs strictly above it. The complete vLLM chain therefore
+moved together from TASK-31282..31287 to TASK-31387..31392; this profiles task
+maps TASK-31286 -> TASK-31391. ADR-117 remained collision-free across the same
+refs.

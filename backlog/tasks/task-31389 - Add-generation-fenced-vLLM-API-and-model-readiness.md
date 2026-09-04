@@ -1,5 +1,5 @@
 ---
-id: TASK-31284
+id: TASK-31389
 title: Add generation-fenced vLLM API and model readiness
 status: Done
 assignee:
@@ -11,8 +11,8 @@ labels:
   - lab
   - readiness
 dependencies:
-  - TASK-31282
-  - TASK-31283
+  - TASK-31387
+  - TASK-31388
 priority: high
 ---
 
@@ -294,7 +294,7 @@ This task previously held id TASK-31215. During the branch integration sweep,
 current `origin/dev` already shipped `task-31215 -
 Personas-mount-heavy-center-views-on-first-use.md` at add commit
 `2516735cfd27df249ab45e96c96f15b8aee35d15`. The unmerged vLLM task therefore
-moved to collision-free TASK-31284, carrying every dependency and documentation
+moved to collision-free TASK-31265, carrying every dependency and documentation
 reference with it. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
 
@@ -305,3 +305,12 @@ The complete vLLM sequence therefore moved together from TASK-31263..31268 to
 the next contiguous block proven free across every fetched non-vLLM ref,
 TASK-31282..31287. This readiness task maps TASK-31265 -> TASK-31284; ADR-117
 remained collision-free.
+
+A third merge-time sweep found that `origin/dev`
+`24d931d0a4f6beec3e0fd7e94d24850ca196e86c` had made the unrelated theme
+TASK-31282..31284 claims canonical. Across every fetched non-vLLM local and
+remote ref, TASK-31386 was the numeric maximum and TASK-31387..31392 were the
+first six contiguous IDs strictly above it. The complete vLLM chain therefore
+moved together from TASK-31282..31287 to TASK-31387..31392; this readiness task
+maps TASK-31284 -> TASK-31389. ADR-117 remained collision-free across the same
+refs.
