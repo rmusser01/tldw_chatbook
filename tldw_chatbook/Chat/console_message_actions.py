@@ -438,13 +438,13 @@ class ConsoleMessageActionService:
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
             # e.g. the TASK-457(a) optimistic echo rejected before any provider
             # send — has nothing to regenerate, so it must not offer retry (the
-            # user re-sends from the composer instead). Speak is also absent
-            # here (spec §1a) -- a failed row's content is not a completed
-            # response worth reading aloud.
+            # user re-sends from the composer instead). Speak and Continue are
+            # also absent: a failed response is retried in place rather than
+            # read aloud or extended as a new assistant turn.
             completed_actions = [
                 ("retry", "Retry") if action_id == "regenerate" else (action_id, label)
                 for action_id, label in completed_actions
-                if action_id != "speak"
+                if action_id not in {"speak", "continue"}
             ]
         return [
             ConsoleMessageAction(
@@ -828,6 +828,16 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="blocked",
                 visible_copy="Only assistant messages can be regenerated.",
+            )
+        if (
+            action_id == "continue"
+            and message.status == "failed"
+            and ConsoleMessageActionService._is_assistant_message(message)
+        ):
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="blocked",
+                visible_copy="Retry the failed response instead.",
             )
         if action_id == "continue":
             target_content = (

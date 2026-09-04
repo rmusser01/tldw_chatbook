@@ -9246,7 +9246,7 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_console_failed_stream_renders_inline_retry_and_recovers():
+async def test_console_failed_stream_renders_retry_without_continue_and_recovers():
     gateway = FailThenRecoverGateway()
     app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -9284,8 +9284,9 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         )
         assert str(retry_button.label) == "Retry"
         assert retry_button.tooltip == "Retry the failed response."
+        assert not console.query(f"#console-message-action-continue-{failed.id}")
 
-        await pilot.click(f"#console-message-action-retry-{failed.id}")
+        retry_button.press()
         await _wait_for_text(console, pilot, "recovered")
 
     assert store.get_message(failed.id).status == "complete"
