@@ -1921,6 +1921,78 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
     assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("release_failure", ("false", "exception"))
+async def test_vllm_console_failed_release_survives_for_later_readoption(
+    monkeypatch,
+    release_failure,
+) -> None:
+    """Console cannot strand the only exact claim when release itself fails."""
+
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _console_app()
+    _owner, target = _install_ready_vllm_target(app)
+    harness = _ConsoleFlowHarness(app)
+
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        session_store = console._ensure_console_chat_store()
+        real_adopt = session_store.adopt_session_ephemeral_endpoint
+        real_release = app.pending_handoffs.release
+
+        def fail_adoption(*_args, **_kwargs):
+            raise RuntimeError("controlled adoption failure")
+
+        def fail_release(_claim):
+            if release_failure == "exception":
+                raise RuntimeError("controlled release failure")
+            return False
+
+        monkeypatch.setattr(
+            session_store,
+            "adopt_session_ephemeral_endpoint",
+            fail_adoption,
+        )
+        monkeypatch.setattr(app.pending_handoffs, "release", fail_release)
+        revision = app.pending_handoffs.stage(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent.from_target(target),
+        )
+
+        assert console.consume_pending_vllm_console_intent() is False
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        recovery = app.pending_handoffs.release_recovery(
+            HandoffChannel.VLLM_CONSOLE
+        )
+        assert recovery is not None
+        assert recovery.revision == revision
+        assert recovery.last_failure == release_failure
+
+        monkeypatch.setattr(
+            session_store,
+            "adopt_session_ephemeral_endpoint",
+            real_adopt,
+        )
+        monkeypatch.setattr(app.pending_handoffs, "release", real_release)
+        assert console.consume_pending_vllm_console_intent() is True
+        assert (
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
+            is None
+        )
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+        session_id = session_store.active_session_id
+        assert session_id is not None
+        effective = session_store.effective_session_settings(session_id)
+        assert effective is not None
+        assert effective.provider == "vllm"
+        assert effective.model == target.model_id
+        assert effective.base_url == target.api_url
+
+
 class _SettingsFlowHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance) -> None:
         super().__init__()
@@ -2118,8 +2190,9 @@ async def test_vllm_default_handoff_stale_target_rolls_back_and_replays() -> Non
 
 
 @pytest.mark.asyncio
-async def test_vllm_default_late_ack_failure_restores_complete_provider_presentation(
-) -> None:
+async def test_vllm_default_late_ack_failure_restores_complete_provider_presentation() -> (
+    None
+):
     """Late compensation restores authoritative draft and every staged widget."""
 
     from tldw_chatbook.config import get_cli_config_path
@@ -2145,9 +2218,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             "#settings-provider-credential-env-var", Input
         ).value = "DIRTY_LLAMA_KEY"
         screen.query_one("#settings-provider-api-key", Input).value = "dirty-secret"
-        screen.query_one(
-            "#settings-model-profile-temperature", Input
-        ).value = "0.42"
+        screen.query_one("#settings-model-profile-temperature", Input).value = "0.42"
         await pilot.pause(0.2)
         screen._provider_save_result = "Earlier provider result."
         screen._set_static_text(
@@ -2195,8 +2266,18 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
                 "#settings-provider-credential-env-var", Input
             )
             api_key = screen.query_one("#settings-provider-api-key", Input)
-            temperature = screen.query_one(
-                "#settings-model-profile-temperature", Input
+            temperature = screen.query_one("#settings-model-profile-temperature", Input)
+            dynamic_static_ids = (
+                "settings-provider-readiness",
+                "settings-provider-inspector-readiness",
+                "settings-provider-source",
+                "settings-model-source",
+                "settings-provider-endpoint-key",
+                "settings-provider-endpoint",
+                "settings-provider-generation-support",
+                "settings-provider-api-mode-guidance",
+                "settings-provider-credential-guidance",
+                "settings-hosted-provider-guidance",
             )
             return {
                 "provider": (provider.value, provider.disabled),
@@ -2238,9 +2319,14 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
                         "#settings-selected-category-draft-status", Static
                     ).renderable
                 ),
-                "save": screen.query_one(
-                    "#settings-save-category", Button
-                ).disabled,
+                "dynamic_rows": tuple(
+                    (
+                        widget_id,
+                        str(screen.query_one(f"#{widget_id}", Static).renderable),
+                    )
+                    for widget_id in dynamic_static_ids
+                ),
+                "save": screen.query_one("#settings-save-category", Button).disabled,
                 "revert": screen.query_one(
                     "#settings-revert-category", Button
                 ).disabled,
@@ -2276,6 +2362,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
         ) == suppression_before
         assert screen.query_one("#settings-providers-models-card").disabled is False
         assert target.api_url not in str(screen._provider_draft().values)
+        assert target.api_url not in str(presentation())
         assert config_path.read_bytes() == config_before
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
 
@@ -2341,9 +2428,14 @@ async def test_vllm_default_late_ack_release_failure_stays_fenced_until_retry(
 
         assert release_calls == 1
         assert screen._provider_draft() == draft_before
-        assert screen._vllm_default_claim is claim
-        assert screen._vllm_default_before_presentation is not None
+        assert screen._vllm_default_claim is None
+        assert screen._vllm_default_before_presentation is None
+        recovery = app.pending_handoffs.release_recovery(HandoffChannel.VLLM_DEFAULT)
+        assert recovery is not None
+        assert recovery.revision == claim.revision
+        assert recovery.failed_attempts == 1
         assert screen.query_one("#settings-providers-models-card").disabled is True
+        assert screen.query_one("#settings-vllm-handoff-recovery").display is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
         assert len(deferred) == 1
         assert config_path.read_bytes() == config_before
@@ -2355,8 +2447,12 @@ async def test_vllm_default_late_ack_release_failure_stays_fenced_until_retry(
         assert screen._vllm_default_claim is None
         assert screen._vllm_default_before_presentation is None
         assert screen.query_one("#settings-providers-models-card").disabled is False
+        assert screen.query_one("#settings-vllm-handoff-recovery").display is False
         assert screen._provider_draft() == draft_before
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+        assert (
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_DEFAULT) is None
+        )
         assert config_path.read_bytes() == config_before
 
 
@@ -2408,14 +2504,98 @@ async def test_vllm_default_release_auto_retries_are_bounded_and_recoverable(
             callback(*args)
 
         assert releases == screen._VLLM_DEFAULT_RELEASE_RETRY_LIMIT
-        assert screen._vllm_default_claim is claim
-        assert screen._vllm_default_before_presentation is not None
+        assert screen._vllm_default_claim is None
+        assert screen._vllm_default_before_presentation is None
+        recovery = app.pending_handoffs.release_recovery(HandoffChannel.VLLM_DEFAULT)
+        assert recovery is not None
+        assert recovery.revision == claim.revision
+        assert recovery.automatic_retry_exhausted is True
         assert screen.query_one("#settings-providers-models-card").disabled is True
+        assert screen.query_one("#settings-vllm-handoff-recovery").display is True
 
         monkeypatch.setattr(app.pending_handoffs, "release", real_release)
-        screen._retry_vllm_default_cleanup()
+        assert screen.recover_vllm_default_handoff() is True
 
         assert screen._vllm_default_claim is None
         assert screen._vllm_default_before_presentation is None
         assert screen.query_one("#settings-providers-models-card").disabled is False
+        assert screen.query_one("#settings-vllm-handoff-recovery").display is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+
+
+@pytest.mark.asyncio
+async def test_vllm_default_unscheduled_ack_cleanup_survives_screen_replacement(
+    monkeypatch,
+) -> None:
+    """A false scheduler result cannot strand cleanup in an unmounted screen."""
+
+    from tldw_chatbook.config import get_cli_config_path
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
+
+    app = _console_app()
+    _owner, target = _install_ready_vllm_target(app)
+    config_path = get_cli_config_path()
+    config_before = config_path.read_bytes()
+    harness = _SettingsFlowHarness(app)
+
+    async with harness.run_test(size=(180, 50)) as pilot:
+        screen = harness.screen_stack[-1]
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_selector(screen, pilot, "#settings-provider-save-result")
+        model_input = screen.query_one("#settings-model-value", Input)
+        model_input.value = "surviving-draft"
+        await pilot.pause(0.2)
+        draft_before = copy.deepcopy(screen._provider_draft())
+        real_release = app.pending_handoffs.release
+        monkeypatch.setattr(app.pending_handoffs, "release", lambda _claim: False)
+        monkeypatch.setattr(screen, "call_after_refresh", lambda *_args: False)
+        revision = app.pending_handoffs.stage(
+            HandoffChannel.VLLM_DEFAULT,
+            VllmDefaultIntent.from_target(target),
+        )
+
+        assert screen._consume_pending_vllm_default_intent() is False
+        assert screen._provider_draft() == draft_before
+        assert target.api_url not in str(screen._provider_draft().values)
+        assert screen._vllm_default_claim is None
+        assert screen.query_one("#settings-providers-models-card").disabled is True
+        assert screen.query_one("#settings-vllm-handoff-recovery").display is True
+        assert (
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_DEFAULT)
+            is not None
+        )
+        assert config_path.read_bytes() == config_before
+
+        monkeypatch.setattr(app.pending_handoffs, "release", real_release)
+        replacement = SettingsScreen(app)
+        replacement.apply_navigation_context(
+            {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+        )
+        await harness.switch_screen(replacement)
+        await _wait_for_selector(
+            replacement,
+            pilot,
+            "#settings-provider-save-result",
+        )
+        await pilot.pause(0.2)
+
+        assert (
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_DEFAULT) is None
+        )
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.VLLM_DEFAULT,
+                revision,
+            )
+            == "settled"
+        )
+        assert replacement.query_one("#settings-vllm-handoff-recovery").display is False
+        assert (
+            replacement.query_one("#settings-providers-models-card").disabled is False
+        )
+        replacement_draft = replacement._provider_draft()
+        assert replacement_draft is not None
+        assert replacement_draft.values.get("endpoint") == target.api_url
+        assert config_path.read_bytes() == config_before

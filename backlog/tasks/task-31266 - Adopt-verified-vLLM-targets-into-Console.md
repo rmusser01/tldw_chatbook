@@ -4,7 +4,7 @@ title: Adopt verified vLLM targets into Console
 status: Done
 assignee: []
 created_date: '2026-09-03 22:33'
-updated_date: '2026-09-04 11:31'
+updated_date: '2026-09-04 12:53'
 labels:
   - vllm
   - lab
@@ -36,6 +36,11 @@ Complete the Lab workflow by applying a verified vLLM provider, canonical endpoi
 - [x] #11 A genuine concurrent metadata conflict leaves Console in an explicit unusable state instead of sending from divergent adopted memory.
 - [x] #12 Settings compensation restores provider-test copy, evidence ownership, draft/credential revisions, and the complete authoritative provider presentation.
 - [x] #13 Failed or rejected claim release retains cleanup authority, retries within a bounded lifecycle, and clears ownership only after confirmed release.
+- [x] #14 Capture-On reconstructs vLLM/local_vLLM adapter semantics without persisting a session-only endpoint in headers, requests, exchanges, or trace artifacts.
+- [x] #15 Durable dispatch checkpoints and every endpoint-bearing persistence sink omit ephemeral endpoint targets; restart/resume cannot silently use saved configuration without re-adoption.
+- [x] #16 Settings compensation restores endpoint/readiness/model guidance rows after authoritative inputs and semantic state, with no staged target text remaining.
+- [x] #17 Failed Settings claim release survives unmount and screen replacement under a bounded owner and exposes a public recovery action after automatic retries are exhausted.
+- [x] #18 Failed Console claim release retains cleanup authority across false/exception outcomes and supports later successful re-adoption.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,6 +61,14 @@ Fix Round 4 plan:
 11. Strengthen the mounted Settings rollback test with pre-existing test evidence/copy and semantic revision state, then restore those owners exactly.
 12. Add false/exception claim-release RED coverage and a bounded retry-success lifecycle that retains its exact cleanup owner and snapshot until release is confirmed.
 13. Rerun the focused nodes after each fix, then the prior Console/Settings/handoff matrices, static checks, diagnostic inventory, and diff review; document the standard first-persistence qualification and all exact evidence.
+
+Fix Round 5 plan:
+14. Reproduce direct-gateway and controller Capture-On alignment plus the durable checkpoint/exchange endpoint leaks; inventory every endpoint-bearing serializer before defining one explicit ephemeral provenance/omission contract.
+15. Add provenance to the request-time provider selection and frozen dispatch authority, retain the exact live URL only for in-process execution, and strip it at checkpoint/capture/trace persistence boundaries; prove restart/resume fails closed without re-adoption.
+16. Strengthen the mounted Settings compensation test for dynamic endpoint/readiness/model guidance rows, then restore authoritative widget/semantic state before deriving those rows.
+17. Reproduce Settings claim-release loss across unmount/replacement and failed scheduling, then move bounded cleanup and public recovery to a surviving existing owner.
+18. Reproduce Console release false/exception outcomes, retain cleanup authority under the surviving owner, and prove later re-adoption after confirmed cleanup.
+19. Run focused RED/GREEN after each item, then the established handoff, Console, Settings, fork, provider, static, diagnostic-inventory, and diff gates; document inherited baselines without changing them.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
@@ -160,6 +173,51 @@ mechanically rewritten. Reviewed diagnostics add only session/conversation
 identifiers, integer revisions, and exception class names--no user content,
 secrets, paths, or URLs. No generalized new lesson was discovered; existing
 testing/backlog lessons cover the observed baseline classification.
+
+Fix Round 5 adds explicit endpoint provenance to Console's live provider
+selection. The exact session-only URL reaches the in-process adapter, while
+checkpoint intent stores `null`, durable destination/trace headers store a
+non-URL omission marker, and Capture-On omits `api_base_url` and endpoint from
+request shadows and message exchanges. Independent reconstruction covers both
+`vllm` and `local_vllm`, so alignment still compares the exact adapter call. A
+recovered checkpoint carrying the omission marker stays blocked and cannot
+replay through saved configuration without a fresh adoption. The SQLite test
+inspects checkpoint JSON, trace headers/components, message exchanges, and the
+complete database dump.
+
+Settings compensation now restores semantic/input state before deriving
+dynamic endpoint, readiness, model-source, generation, credential, and hosted
+guidance rows. Failed release transfers the exact claim to
+`PendingHandoffStore`, which survives screen replacement, bounds automatic
+attempts, exposes content-free status, and supplies a public Settings recovery
+action. Console uses the same app-owned owner for false and exceptional release
+outcomes and refuses another adoption until cleanup is confirmed.
+
+Sequential RED evidence: vLLM/local_vLLM Capture-On alignment failed 2 nodes
+because independent reconstruction omitted `api_base_url`; the first real send
+persisted the target in `provider_intent.endpoint`, destination identity, trace
+header/components, and message-exchange endpoint/request fields. The mounted
+Settings rollback derived rows from staged `8000` instead of authoritative
+dirty `7777`. Store recovery initially failed to import; four Settings cleanup
+nodes lost or stranded ownership after false scheduling/unmount; and two
+Console false/exception nodes could not re-adopt. Sequential GREEN evidence:
+endpoint/capture 11 passed; dynamic presentation 1 passed; store recovery 2
+passed; Settings recovery 4 passed; Console recovery 2 passed.
+
+Final Round 5 evidence: all new/strengthened nodes pass (13 passed), and the
+combined changed-surface matrix passes 566 with 2 restricted-loopback skips and
+one deliberately excluded unchanged direct-provider baseline. The larger
+compatibility slice passed 651; its 7 failures reproduce at the prior Round 2
+commit (four checkpoint semantic-authorization fixtures, provider-shape
+fixture, sparse-context postcommit injection, and compaction cleanup), while
+21 vLLM connection errors are loopback `PermissionError`s. Changed-file Ruff
+fatal/undefined-name checks, focused formatting of new code/tests,
+`py_compile`, `git diff --check`, and the regenerated diagnostic inventory pass
+(570 owners, 1,338 TASK-492 calls, 7,602 TASK-494 calls, 10 sinks). The three
+reviewed warning deltas contain only integer revisions and exception class
+names. The new durable fields contain only the fixed omission marker and
+provenance enum--never the live URL, user content, credentials, or paths.
+ADR-117 remains governing; no new ADR or generalized lesson was needed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

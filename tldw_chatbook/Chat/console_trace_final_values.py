@@ -528,8 +528,10 @@ def reconstruct_provider_gateway_kwargs(
         "anthropic",
         "custom-openai-api",
         "custom-openai-api-2",
+        "local_vllm",
         "mistral",
         "mistralai",
+        "vllm",
     }:
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
         if execution_key in {"custom-openai-api", "custom-openai-api-2"}:
@@ -561,6 +563,7 @@ def verify_provider_request_shadow(
     preparation_identity: str | None = None,
     system_component_values: tuple[object, ...] = (),
     surface_boundary: object | None = None,
+    omit_ephemeral_endpoint: bool = False,
 ) -> ProviderRequestShadowBundle:
     """Sanitize, independently compare, bind, and project final provider values."""
 
@@ -617,7 +620,13 @@ def verify_provider_request_shadow(
         sanitizer.sanitize(literal_payload) if literal_payload is not None else None
     )
     system_parts = sanitizer.sanitize(system_component_values)
-    if endpoint_identity is None:
+    if omit_ephemeral_endpoint:
+        from tldw_chatbook.Chat.console_endpoint_provenance import (
+            EPHEMERAL_SESSION_ENDPOINT_OMITTED,
+        )
+
+        canonical_endpoint: str | None = EPHEMERAL_SESSION_ENDPOINT_OMITTED
+    elif endpoint_identity is None:
         canonical_endpoint: str | None = None
     else:
         try:
@@ -706,6 +715,9 @@ def verify_provider_request_shadow(
             credential_source,
             effective_preparation_identity,
         )
+    omitted_component_names = (
+        frozenset({"api_base_url"}) if omit_ephemeral_endpoint else frozenset()
+    )
     components = tuple(
         _bind_component(
             name,
@@ -714,6 +726,7 @@ def verify_provider_request_shadow(
             redacted=component_redactions.get(name, False),
         )
         for name, value in actual.value.items()
+        if name not in omitted_component_names
     )
     handler_components = tuple(
         FinalValueBinding(
@@ -728,6 +741,8 @@ def verify_provider_request_shadow(
             ),
         )
         for name, value in projected.value.items()
+        if (handler_source_names or {}).get(name, name)
+        not in omitted_component_names
     )
     was_redacted = (
         actual.redacted
@@ -763,6 +778,16 @@ def verify_provider_request_shadow(
         overlays=(
             *_provider_overlays(actual.value),
             *extra_overlays,
+            *(
+                (
+                    ProviderOverlayProvenance(
+                        "ephemeral_endpoint",
+                        "session_policy",
+                    ),
+                )
+                if omit_ephemeral_endpoint
+                else ()
+            ),
             *redaction_overlay,
         ),
         credential_source=credential_source,

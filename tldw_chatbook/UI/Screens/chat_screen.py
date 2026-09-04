@@ -335,6 +335,7 @@ from ...Chat.console_session_endpoint_policy import (
     ConsoleEndpointRollbackOutcome,
     ConsoleEphemeralEndpointPolicy,
 )
+from ...Chat.console_endpoint_provenance import ConsoleEndpointProvenance
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
@@ -7443,6 +7444,18 @@ class ChatScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
+        if store.release_recovery(HandoffChannel.VLLM_CONSOLE) is not None:
+            recovery_result = store.retry_release_recovery(
+                HandoffChannel.VLLM_CONSOLE,
+                automatic=False,
+            )
+            if recovery_result != "released":
+                self.app_instance.notify(
+                    "vLLM session handoff cleanup is still pending. It will "
+                    "retry on the next Console activation.",
+                    severity="warning",
+                )
+                return False
         claim = store.claim(HandoffChannel.VLLM_CONSOLE)
         if claim is None:
             return False
@@ -7591,18 +7604,36 @@ class ChatScreen(BaseAppScreen):
                         "state. Review the current provider before sending.",
                         severity="error",
                     )
+            release_failure = "false"
             try:
-                store.release(claim)
+                released = store.release(claim) is True
             except BaseException as release_error:
+                released = False
+                release_failure = "exception"
                 logger.warning(
                     "vLLM Console handoff claim release failed "
                     "(revision={}, exception_category={})",
                     claim.revision,
                     type(release_error).__name__,
                 )
+            if not released:
+                try:
+                    store.retain_release_recovery(
+                        claim,
+                        failed_attempts=1,
+                        automatic_retry_limit=3,
+                        last_failure=release_failure,
+                    )
+                except BaseException as retention_error:
+                    logger.warning(
+                        "vLLM Console handoff cleanup ownership transfer failed "
+                        "(revision={}, exception_category={})",
+                        claim.revision,
+                        type(retention_error).__name__,
+                    )
                 self.app_instance.notify(
-                    "vLLM session handoff could not be re-queued. Reopen vLLM "
-                    "Lab before trying again.",
+                    "vLLM session handoff could not be re-queued yet. Console "
+                    "retained cleanup ownership and will retry before adoption.",
                     severity="error",
                 )
             if isinstance(
@@ -8190,6 +8221,11 @@ class ChatScreen(BaseAppScreen):
             base_url=base_url,
             configured_endpoint_fallback_allowed=(
                 not endpoint_policy_owns_selection
+            ),
+            endpoint_provenance=(
+                ConsoleEndpointProvenance.EPHEMERAL_SESSION
+                if endpoint_policy_owns_selection
+                else ConsoleEndpointProvenance.DURABLE_CONFIGURATION
             ),
             explicit_model=explicit_model,
             configured_model=configured_model,

@@ -82,6 +82,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     fold_greeting_into_system_prompt,
     is_default_console_session_title,
 )
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
 from tldw_chatbook.Chat.citation_repair import (
     REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,
     CitationRepairContract,
@@ -17223,6 +17226,7 @@ class ConsoleChatController:
             selection = replace(
                 selection,
                 configured_endpoint_fallback_allowed=False,
+                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
             )
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
@@ -17378,6 +17382,7 @@ class ConsoleChatController:
                 endpoint=(
                     str(selection.base_url) if selection.base_url is not None else None
                 ),
+                endpoint_provenance=selection.endpoint_provenance,
             ),
             attempt_id=str(uuid4()),
         )
@@ -20584,6 +20589,7 @@ class ConsoleChatController:
                 generation_token=generation_token,
                 before_provider_dispatch=before_provider_dispatch,
                 capture_mode_override=capture_mode_override,
+                trace_request=trace_request,
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
@@ -21155,6 +21161,7 @@ class ConsoleChatController:
         generation_token: int | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        trace_request: PreparedConsoleRequest | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -21185,8 +21192,10 @@ class ConsoleChatController:
                 capture_mode = preparation.capture_mode
         prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
         if callable(prepare_request):
-            preparation_input: Any = provider_messages
-            if (
+            preparation_input: Any = (
+                trace_request if trace_request is not None else provider_messages
+            )
+            if trace_request is None and (
                 preparation_id is not None
                 and preparation is not None
                 and not continuation_sidecar

@@ -14821,6 +14821,13 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             self._settle_owned_dispatch_terminal(message, "complete")
+            # The checkpoint settlement above owns the terminal content write,
+            # so this shortcut bypasses both ordinary persistence paths that
+            # flush local-only exchange captures.  Preserve the same
+            # version-neutral capture contract once the durable message row is
+            # known to exist.
+            if message.exchanges:
+                self._persist_exchanges_only(message)
             self._settle_provider_trace_settlements(
                 message.id,
                 message.persisted_message_id,

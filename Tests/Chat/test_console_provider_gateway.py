@@ -380,6 +380,22 @@ def _prepared_request_with_continuation(
             execution_key="custom-openai-api",
             api_key="secret",
         ),
+        ConsoleProviderResolution(
+            provider="vllm",
+            base_url="http://127.0.0.1:9099/v1",
+            model="local-model",
+            ready=True,
+            execution_key="vllm",
+            api_key="secret",
+        ),
+        ConsoleProviderResolution(
+            provider="local_vllm",
+            base_url="http://127.0.0.1:9100/v1",
+            model="local-model",
+            ready=True,
+            execution_key="local_vllm",
+            api_key="secret",
+        ),
     ],
     ids=lambda resolution: resolution.execution_key,
 )
@@ -502,6 +518,64 @@ async def test_capture_on_sanitizes_verified_shadow_before_adapter_entry() -> No
     assert len(shadows) == 1 and shadows[0].available is True
     assert shadows[0].redacted is True
     assert shadows[0].endpoint_identity == "https://api.openai.com/v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_key", ["vllm", "local_vllm"])
+async def test_ephemeral_vllm_capture_on_keeps_live_target_out_of_durable_shadows(
+    execution_key: str,
+) -> None:
+    """Alignment sees the exact target, while every capture shape omits it."""
+
+    target = "http://127.0.0.1:9099/v1"
+    calls: list[dict] = []
+    shadows: list[ProviderRequestShadowBundle] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        base_url=target,
+        model="local-model",
+        ready=True,
+        execution_key=execution_key,
+        endpoint_provenance="ephemeral_session",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_shadow_sink=shadows.append,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == target
+    assert len(shadows) == 1 and shadows[0].available is True
+    assert shadows[0].endpoint_identity == "ephemeral_session_endpoint_omitted"
+    assert "api_base_url" not in shadows[0].boundary_kwargs
+    assert target not in json.dumps(shadows[0].boundary_kwargs)
+    assert target not in json.dumps(shadows[0].handler_kwargs)
+    assert ("ephemeral_endpoint", "session_policy") in {
+        (overlay.kind, overlay.source) for overlay in shadows[0].overlays
+    }
+    (capture,) = signals.exchange_captures()
+    assert capture.endpoint is None
+    assert "api_base_url" not in capture.request
+    assert {"api_base_url", "endpoint"}.issubset(capture.omitted_keys)
+    assert target not in json.dumps(capture.request)
 
 
 @pytest.mark.asyncio

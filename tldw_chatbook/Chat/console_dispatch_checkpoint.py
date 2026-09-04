@@ -16,6 +16,10 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    EPHEMERAL_SESSION_ENDPOINT_OMITTED,
+    ConsoleEndpointProvenance,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
 )
@@ -102,6 +106,9 @@ class ConsoleProviderIntent:
     provider: str
     model: str | None
     endpoint: str | None
+    endpoint_provenance: ConsoleEndpointProvenance = (
+        ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +131,9 @@ class ConsoleResolvedDestination:
     model: str | None
     endpoint_identity: str
     egress_class: ConsoleEgressClass
+    endpoint_provenance: ConsoleEndpointProvenance = (
+        ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+    )
 
     @property
     def identity_key(self) -> tuple[str, str | None, str, ConsoleEgressClass]:
@@ -394,7 +404,15 @@ def _authority_value(authority: ConsoleTurnLibraryAuthority) -> dict[str, object
     error_code = _error_code(policy.error_code)
     provider = _string(authority.provider_intent.provider)
     model = _string(authority.provider_intent.model, optional=True)
-    endpoint = _string(authority.provider_intent.endpoint, optional=True)
+    endpoint = _string(
+        (
+            None
+            if authority.provider_intent.endpoint_provenance
+            == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+            else authority.provider_intent.endpoint
+        ),
+        optional=True,
+    )
     if not _credential_free_endpoint(endpoint):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     return {
@@ -547,7 +565,15 @@ def dump_console_resolved_destination_json(
         destination.egress_class, ConsoleEgressClass
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
-    endpoint_identity = cast(str, _string(destination.endpoint_identity))
+    endpoint_identity = cast(
+        str,
+        _string(
+            EPHEMERAL_SESSION_ENDPOINT_OMITTED
+            if destination.endpoint_provenance
+            == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+            else destination.endpoint_identity
+        ),
+    )
     if not _credential_free_endpoint(endpoint_identity):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     return _bounded_dump(
@@ -580,6 +606,11 @@ def parse_console_resolved_destination_json(
             model=_string(data["model"], optional=True),
             endpoint_identity=endpoint_identity,
             egress_class=ConsoleEgressClass(_string(data["egress_class"])),
+            endpoint_provenance=(
+                ConsoleEndpointProvenance.EPHEMERAL_SESSION
+                if endpoint_identity == EPHEMERAL_SESSION_ENDPOINT_OMITTED
+                else ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+            ),
         )
     except ValueError as exc:
         raise ConsoleDispatchCheckpointValidationError(
