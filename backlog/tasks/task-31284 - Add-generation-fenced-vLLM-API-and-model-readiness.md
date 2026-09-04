@@ -1,5 +1,5 @@
 ---
-id: TASK-31265
+id: TASK-31284
 title: Add generation-fenced vLLM API and model readiness
 status: Done
 assignee:
@@ -11,8 +11,8 @@ labels:
   - lab
   - readiness
 dependencies:
-  - TASK-31263
-  - TASK-31264
+  - TASK-31282
+  - TASK-31283
 priority: high
 ---
 
@@ -287,6 +287,14 @@ This task previously held id TASK-31215. During the branch integration sweep,
 current `origin/dev` already shipped `task-31215 -
 Personas-mount-heavy-center-views-on-first-use.md` at add commit
 `2516735cfd27df249ab45e96c96f15b8aee35d15`. The unmerged vLLM task therefore
-moved to collision-free TASK-31265, carrying every dependency and documentation
+moved to collision-free TASK-31284, carrying every dependency and documentation
 reference with it. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
+
+A second merge-time sweep found that `origin/dev` had advanced to
+`1a1b5c19e0bb3243effb1ae9671158b6670ad6da` and now canonically claimed the
+intermediate TASK-31263 and TASK-31264 IDs for unrelated theme follow-up work.
+The complete vLLM sequence therefore moved together from TASK-31263..31268 to
+the next contiguous block proven free across every fetched non-vLLM ref,
+TASK-31282..31287. This readiness task maps TASK-31265 -> TASK-31284; ADR-117
+remained collision-free.

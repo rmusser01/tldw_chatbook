@@ -1,5 +1,5 @@
 ---
-id: TASK-31264
+id: TASK-31283
 title: Add guided vLLM environment and model preflight
 status: Done
 assignee:
@@ -11,7 +11,7 @@ labels:
   - lab
   - onboarding
 dependencies:
-  - TASK-31263
+  - TASK-31282
 priority: high
 ---
 
@@ -214,6 +214,14 @@ This task previously held id TASK-31214. During the branch integration sweep,
 current `origin/dev` already shipped `task-31214 -
 Prevent-main-PyPI-workflow-from-publishing-stale-versions.md` at add commit
 `3d2d5403e2994a717674f6f6e0217cc41c1c6e26`. The unmerged vLLM task therefore
-moved to collision-free TASK-31264, carrying every dependency and documentation
+moved to collision-free TASK-31283, carrying every dependency and documentation
 reference with it. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
+
+A second merge-time sweep found that `origin/dev` had advanced to
+`1a1b5c19e0bb3243effb1ae9671158b6670ad6da` and now canonically claimed the
+intermediate TASK-31263 and TASK-31264 IDs for unrelated theme follow-up work.
+The complete vLLM sequence therefore moved together from TASK-31263..31268 to
+the next contiguous block proven free across every fetched non-vLLM ref,
+TASK-31282..31287. This preflight task maps TASK-31264 -> TASK-31283; ADR-117
+remained collision-free.

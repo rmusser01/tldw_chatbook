@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-03
-Related Tasks: TASK-31263, TASK-31264, TASK-31265, TASK-31266, TASK-31267, TASK-31268
+Related Tasks: TASK-31282, TASK-31283, TASK-31284, TASK-31285, TASK-31286, TASK-31287
 Extends: ADR-002, ADR-006, ADR-095
 Related: ADR-114
 
@@ -204,7 +204,7 @@ patterns. No database migration is required.
 
 Version 1 stores at most 32 profiles:
 
-The exact V1 names below incorporate the accepted TASK-31267 implementation plan.
+The exact V1 names below incorporate the accepted TASK-31286 implementation plan.
 They replace the earlier design-draft spellings in this ADR so the durable contract
 uses the same field vocabulary as `VllmLaunchDraft`. Revision belongs to the whole
 CAS document, so V1 deliberately omits a per-profile `updated_at`; this keeps the
@@ -321,12 +321,12 @@ requirements without amending ADR-114.
 
 ## Consequences
 
-- TASK-31264 adds the guided launch/connect setup and preflight boundary.
-- TASK-31265 adds the app-scoped target owner, snapshots, generation fencing, and
+- TASK-31283 adds the guided launch/connect setup and preflight boundary.
+- TASK-31284 adds the app-scoped target owner, snapshots, generation fencing, and
   API/model readiness.
-- TASK-31266 connects verified targets to Console's existing session/default owners.
-- TASK-31267 adds device-local structured profiles and current-versus-next restart.
-- TASK-31268 completes compact layout, focus containment, and production-stylesheet
+- TASK-31285 connects verified targets to Console's existing session/default owners.
+- TASK-31286 adds device-local structured profiles and current-versus-next restart.
+- TASK-31287 completes compact layout, focus containment, and production-stylesheet
   verification.
 - Existing explicit vLLM provider endpoints remain unchanged. No migration rewrites
   `api_settings.vllm`.

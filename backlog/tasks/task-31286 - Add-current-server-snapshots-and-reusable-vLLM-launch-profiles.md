@@ -1,5 +1,5 @@
 ---
-id: TASK-31267
+id: TASK-31286
 title: Add current-server snapshots and reusable vLLM launch profiles
 status: Done
 assignee:
@@ -11,7 +11,7 @@ labels:
   - lab
   - profiles
 dependencies:
-  - TASK-31265
+  - TASK-31284
 priority: medium
 ---
 
@@ -260,7 +260,15 @@ was required.
 
 This task previously held id TASK-31219. The Task 6 collision correction moved
 the full dependent vLLM sequence into one collision-free monotonic block so no
-task depends on a future/higher task id. It therefore moved to TASK-31267 after
-TASK-31264 preflight, TASK-31265 readiness, and TASK-31266 Console handoff. The
+task depends on a future/higher task id. It therefore moved to TASK-31286 after
+TASK-31283 preflight, TASK-31284 readiness, and TASK-31285 Console handoff. The
 record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
+
+A second merge-time sweep found that `origin/dev` had advanced to
+`1a1b5c19e0bb3243effb1ae9671158b6670ad6da` and now canonically claimed the
+intermediate TASK-31263 and TASK-31264 IDs for unrelated theme follow-up work.
+The complete vLLM sequence therefore moved together from TASK-31263..31268 to
+the next contiguous block proven free across every fetched non-vLLM ref,
+TASK-31282..31287. This profiles task maps TASK-31267 -> TASK-31286; ADR-117
+remained collision-free.

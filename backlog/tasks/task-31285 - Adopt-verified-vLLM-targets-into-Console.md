@@ -1,5 +1,5 @@
 ---
-id: TASK-31266
+id: TASK-31285
 title: Adopt verified vLLM targets into Console
 status: Done
 assignee: []
@@ -11,7 +11,7 @@ labels:
   - console
   - handoff
 dependencies:
-  - TASK-31265
+  - TASK-31284
 priority: high
 ---
 
@@ -234,6 +234,14 @@ Exact RED: both pinned and one-shot real-SQLite Capture-On nodes failed before a
 
 This task previously held id TASK-31217. The Task 6 collision correction moved
 the full dependent vLLM sequence into one collision-free monotonic block so no
-task depends on a future/higher task id. It therefore moved to TASK-31266 after
-TASK-31264 preflight and TASK-31265 readiness. The record was originally added
+task depends on a future/higher task id. It therefore moved to TASK-31285 after
+TASK-31283 preflight and TASK-31284 readiness. The record was originally added
 by `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
+
+A second merge-time sweep found that `origin/dev` had advanced to
+`1a1b5c19e0bb3243effb1ae9671158b6670ad6da` and now canonically claimed the
+intermediate TASK-31263 and TASK-31264 IDs for unrelated theme follow-up work.
+The complete vLLM sequence therefore moved together from TASK-31263..31268 to
+the next contiguous block proven free across every fetched non-vLLM ref,
+TASK-31282..31287. This Console-adoption task maps TASK-31266 -> TASK-31285;
+ADR-117 remained collision-free.

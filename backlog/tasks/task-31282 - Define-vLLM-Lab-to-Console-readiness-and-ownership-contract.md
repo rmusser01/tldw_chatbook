@@ -1,5 +1,5 @@
 ---
-id: TASK-31263
+id: TASK-31282
 title: Define vLLM Lab-to-Console readiness and ownership contract
 status: Done
 assignee:
@@ -36,7 +36,7 @@ Define the authoritative process, connection, model, persistence, privacy, and r
 2. Record ADR-117 for vLLM process/readiness/adoption/profile ownership.
 3. Write the approved end-to-end first-time and power-user design specification and responsive wireframe.
 4. Verify task/ADR links, dependency order, placeholders, scope, and documentation-only diff.
-5. Mark TASK-31263 Done with implementation notes after the contract package passes focused documentation checks.
+5. Mark TASK-31282 Done with implementation notes after the contract package passes focused documentation checks.
 
 ADR required: yes
 
@@ -57,6 +57,14 @@ This task previously held id TASK-31213. During the post-rebase merge-candidate
 guard, current `origin/dev` already shipped `task-31213 -
 Restrict-production-PyPI-publishing-to-main.md` at add commit
 `2a6f760fbdf0ffc9a25c7f9cdef2be469da34a63`. The unmerged vLLM contract moved
-to collision-free TASK-31263 and the complete dependent sequence shifted to
-TASK-31264 through TASK-31268. The vLLM record was originally added by
+to collision-free TASK-31282 and the complete dependent sequence shifted to
+TASK-31283 through TASK-31287. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0` (rebased as `3e835a6045`).
+
+A second merge-time sweep found that `origin/dev` had advanced to
+`1a1b5c19e0bb3243effb1ae9671158b6670ad6da` and now canonically claimed the
+intermediate TASK-31263 and TASK-31264 IDs for unrelated theme follow-up work.
+The complete vLLM sequence therefore moved together from TASK-31263..31268 to
+the next contiguous block proven free across every fetched non-vLLM ref,
+TASK-31282..31287. This contract maps TASK-31263 -> TASK-31282; ADR-117 remained
+collision-free.
