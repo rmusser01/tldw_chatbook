@@ -12,11 +12,11 @@ from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
-from textual.events import Click, DescendantFocus, Key
+from textual.events import Click, Key
 from textual.message import Message
 from textual.reactive import reactive
 from textual.theme import Theme
-from textual.widgets import Button, Checkbox, Input, Static, Tree
+from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 from ..Utils.path_validation import validate_filename
@@ -75,7 +75,6 @@ class SettingsThemeEditor(Vertical):
         self.custom_themes_path.mkdir(parents=True, exist_ok=True)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
-        self.last_focused_color_input: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -102,7 +101,9 @@ class SettingsThemeEditor(Vertical):
             )
         with Horizontal(classes="settings-input-row"):
             yield Static("Dark theme", classes="settings-input-label")
-            yield Checkbox(value=True, id="settings-theme-dark-mode")
+            # TASK-31254: the label carries the state in text ("On"/"Off") so
+            # colour is never the only carrier.
+            yield Checkbox("On", value=True, id="settings-theme-dark-mode")
         with Horizontal(classes="settings-action-row"):
             yield Button("New", id="settings-theme-new", variant="primary")
             yield Button("Clone", id="settings-theme-clone")
@@ -131,10 +132,22 @@ class SettingsThemeEditor(Vertical):
                 )
                 yield Static("", id=f"settings-theme-swatch-{color_name}", classes="color-swatch")
         yield Static("Color Presets", classes="destination-section")
+        # TASK-31254/31256: the preset target is an explicit, visible choice.
+        # It used to follow keyboard focus, so Tabbing through the colour
+        # inputs to reach a swatch silently moved the target to Error.
+        with Horizontal(classes="settings-input-row settings-select-row"):
+            yield Static("Presets fill", classes="settings-input-label")
+            yield Select(
+                [(name.title(), name) for name in self.BASE_COLORS],
+                value="primary",
+                allow_blank=False,
+                id="settings-theme-preset-target",
+                classes="settings-compact-select",
+            )
         # task-1369: swatches are focusable and apply on Enter/Space, not
         # just on mouse click.
         yield Static(
-            "Focus a swatch and press Enter or Space to apply it to the selected color.",
+            "Pick the colour above, then click a swatch or focus it and press Enter or Space.",
             classes="settings-help-copy",
         )
         for palette_name, colors in self.COLOR_PRESETS.items():
@@ -220,10 +233,6 @@ class SettingsThemeEditor(Vertical):
             self.color_inputs.clear()
             self.color_swatches.clear()
             return
-
-        if "primary" in self.color_inputs:
-            self.color_inputs["primary"].add_class("selected")
-            self.last_focused_color_input = "primary"
 
     def watch_is_modified(self, is_modified: bool) -> None:
         """Notify parent screen when modified state changes."""
@@ -340,6 +349,7 @@ class SettingsThemeEditor(Vertical):
         """Update the dark mode checkbox."""
         checkbox = self.query_one("#settings-theme-dark-mode", Checkbox)
         checkbox.value = self.is_dark_theme
+        checkbox.label = "On" if self.is_dark_theme else "Off"
 
     def _update_color_swatch(self, color_name: str, color_value: str) -> None:
         """Update a color swatch preview."""
@@ -369,19 +379,13 @@ class SettingsThemeEditor(Vertical):
         except Exception:
             return False
 
-    def on_descendant_focus(self, event: DescendantFocus) -> None:
-        """Track focus changes on color inputs to update selection."""
-        widget = event.control
-        if (
-            widget
-            and isinstance(widget, Input)
-            and widget.id
-            and widget.id.startswith("settings-theme-color-")
-        ):
-            for input_widget in self.color_inputs.values():
-                input_widget.remove_class("selected")
-            widget.add_class("selected")
-            self.last_focused_color_input = widget.id[len("settings-theme-color-") :]
+    def _preset_target(self) -> str:
+        """The colour a preset swatch fills: the visible Select's value."""
+        try:
+            value = self.query_one("#settings-theme-preset-target", Select).value
+        except QueryError:
+            value = "primary"
+        return value if value in self.color_inputs else "primary"
 
     @on(Input.Changed)
     def on_color_input_changed(self, event: Input.Changed) -> None:
@@ -408,10 +412,14 @@ class SettingsThemeEditor(Vertical):
                     if self.current_theme_data.get(color_name) != color_value:
                         self.current_theme_data[color_name] = color_value
                         self.is_modified = True
-                    event.input.remove_class("invalid-color")
+                    event.input.remove_class("settings-invalid-input")
                 else:
-                    event.input.add_class("invalid-color")
-                    self._update_color_swatch(color_name, "#000000")
+                    # TASK-31254: Settings' invalid-input convention (styled in
+                    # the bundle) instead of an unstyled class, and the swatch
+                    # says so instead of silently turning black.
+                    event.input.add_class("settings-invalid-input")
+                    if color_name in self.color_swatches:
+                        self.color_swatches[color_name].update("invalid")
 
     @on(Input.Changed, "#settings-theme-name")
     def on_theme_name_changed(self, event: Input.Changed) -> None:
@@ -431,6 +439,7 @@ class SettingsThemeEditor(Vertical):
         """Handle dark mode checkbox changes."""
         # task-1338: ignore programmatic syncs from _update_dark_mode_checkbox;
         # only a real change counts as a modification.
+        event.checkbox.label = "On" if event.value else "Off"
         if event.value != self.is_dark_theme:
             self.is_dark_theme = event.value
             self.is_modified = True
@@ -756,15 +765,12 @@ class SettingsThemeEditor(Vertical):
         # str(Color) is "Color(r, g, b)", not a usable hex value -- normalize.
         color = background.hex if isinstance(background, Color) else str(background)
 
-        target = self.last_focused_color_input or "primary"
-        if target not in self.color_inputs:
-            target = "primary"
+        target = self._preset_target()
 
         self.color_inputs[target].value = color
         self._update_color_swatch(target, color)
         self.current_theme_data[target] = color
         self.is_modified = True
-        self.color_inputs[target].add_class("selected")
 
     @on(Click, ".color-preset-swatch")
     def on_preset_color_clicked(self, event: Click) -> None:

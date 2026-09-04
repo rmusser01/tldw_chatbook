@@ -6101,30 +6101,53 @@ StatCard:hover {
     padding: 0 1;
 }
 
+/* TASK-31254: a 1-row Static with `border: solid` paints only its top border
+   glyphs -- the hex text (and the "invalid" label) never had a content row.
+   No border; the colour IS the swatch and the text sits on it. */
 .color-swatch {
-    width: 7;
-    min-width: 7;
+    width: 9;
+    min-width: 9;
     height: 1;
     min-height: 1;
-    border: solid $ds-grid-line;
+    border: none;
     content-align: center middle;
     text-style: bold;
 }
 
 .color-preset-swatch {
-    width: 2;
-    min-width: 2;
+    width: 3;
+    min-width: 3;
     height: 1;
     min-height: 1;
     margin: 0 1 0 0;
-    border: solid $ds-grid-line;
+    border: none;
 }
 
 /* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
-   Space), so they need a visible focus indicator. */
+   Space), so they need a visible focus indicator. An outline paints over the
+   swatch's own cells without needing a border row, so the colour stays
+   visible (TASK-31254). */
 .color-preset-swatch:focus {
-    border: solid $ds-focus-accent;
+    outline: solid $ds-focus-accent;
     text-style: bold;
+}
+
+/* TASK-31254: escape the app-wide `Checkbox { height: 2 }` + tall border that
+   leaves zero content rows (the TASK-18960 family; same idiom as
+   `.settings-imagegen-backend-row Checkbox`). One row: glyph + On/Off label. */
+#settings-theme-dark-mode {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+#settings-theme-dark-mode > .toggle--button {
+    color: $ds-surface-panel;
+}
+#settings-theme-dark-mode.-on > .toggle--button {
+    color: $success;
 }
 
 .preview-button {
