@@ -7287,7 +7287,7 @@ async def test_library_shell_stale_mirror_events_do_not_replenish_changed_traffi
             rail_input.value = "B"
         with rag_input.prevent(Input.Changed):
             rag_input.value = "B"
-        screen._library_rag_query = "B"
+        screen._rag_search_state.query = "B"
 
         patch_calls: list[tuple[str, str]] = []
         refresh_calls = 0
@@ -7325,7 +7325,7 @@ async def test_library_shell_stale_mirror_events_do_not_replenish_changed_traffi
         )
         assert rail_input.value == "B"
         assert rag_input.value == "B"
-        assert screen._library_rag_query == "B"
+        assert screen._rag_search_state.query == "B"
 
 
 @pytest.mark.asyncio
@@ -7514,9 +7514,9 @@ async def test_library_shell_repeated_supersession_serializes_underlying_retriev
             await _wait_for_selector(screen, pilot, "#library-rag-result-0")
             assert service.snapshot() == (("B", "D"), 0, 1)
             assert applied_queries == ["D"]
-            assert screen._library_rag_query == "D"
+            assert screen._rag_search_state.query == "D"
             assert screen.query_one("#library-rag-query-input", Input).value == "D"
-            assert screen._library_rag_results[0].title == "D"
+            assert screen._rag_search_state.results[0].title == "D"
         finally:
             service.release_all()
             await _wait_for_condition(
@@ -7679,9 +7679,9 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
     assert second is not None
     assert service.snapshot() == (("B", "D"), 0, 1)
     assert applied_queries == [(id(second), "D")]
-    assert second._library_rag_query == "D"
-    assert [row.title for row in second._library_rag_results] == ["D"]
-    assert second._library_rag_retrieval_status == "ready"
+    assert second._rag_search_state.query == "D"
+    assert [row.title for row in second._rag_search_state.results] == ["D"]
+    assert second._rag_search_state.retrieval_status == "ready"
 
 
 @pytest.mark.asyncio
@@ -7690,14 +7690,14 @@ async def test_library_shell_restore_normalizes_transient_rag_searching_state():
     _seed_conversations(app, _two_conversations())
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
-    original._library_rag_query = "B"
-    original._library_rag_retrieval_status = "searching"
+    original._rag_search_state.query = "B"
+    original._rag_search_state.retrieval_status = "searching"
     saved = original.save_state()
     assert saved["library_rag_retrieval_status"] == "searching"
 
     restored = LibraryScreen(app)
     restored.restore_state(saved)
-    assert restored._library_rag_retrieval_status == ""
+    assert restored._rag_search_state.retrieval_status == ""
     host = LibraryHarness(app, screen=restored)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -7707,7 +7707,7 @@ async def test_library_shell_restore_normalizes_transient_rag_searching_state():
         await _wait_for_selector(screen, pilot, "#library-rag-query-input")
         await _wait_for_library_rag_query_ready(screen, pilot, "B")
 
-        assert screen._library_rag_retrieval_status == ""
+        assert screen._rag_search_state.retrieval_status == ""
         assert screen.query_one("#library-rag-query-input", Input).value == "B"
         assert screen.query_one("#library-rag-run-query", Button).disabled is False
         assert not screen.query("#library-rag-searching-line")
@@ -8096,7 +8096,7 @@ async def test_library_shell_search_history_loads_from_cli_config_fallback(monke
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen._library_search_history == ("alpha", "bravo")
+        assert screen._rag_search_state.history == ("alpha", "bravo")
         assert calls, "get_cli_setting fallback was never consulted"
 
         screen.query_one("#library-row-browse-search").press()
@@ -8132,7 +8132,7 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen._library_search_history == ("from-app-config",)
+        assert screen._rag_search_state.history == ("from-app-config",)
 
     # Recorded rather than raised. Two reasons: the screen legitimately reads
     # OTHER settings during load (rail state, which this test does not seed, and
@@ -8473,7 +8473,7 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
         else:
             raise AssertionError("Rail submit never reached the gated search service.")
 
-        assert screen._library_rag_retrieval_status == "searching"
+        assert screen._rag_search_state.retrieval_status == "searching"
 
         # Leave the Search canvas while the gated fake is still in flight.
         screen.query_one("#library-row-browse-media").press()
@@ -8482,17 +8482,17 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
 
         service.release_event.set()
 
-        # The outcome must resolve _library_rag_retrieval_status even
+        # The outcome must resolve _rag_search_state.retrieval_status even
         # though the panel is unmounted right now (user is on Media).
         for _ in range(150):
-            if screen._library_rag_retrieval_status not in ("", "searching"):
+            if screen._rag_search_state.retrieval_status not in ("", "searching"):
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError("Retrieval status was never resolved off-canvas.")
 
-        assert screen._library_rag_retrieval_status == "ready"
-        assert screen._library_rag_results
+        assert screen._rag_search_state.retrieval_status == "ready"
+        assert screen._rag_search_state.results
 
         # Re-entering the Search canvas must compose from the settled
         # state -- no stale "searching" line.
@@ -8920,7 +8920,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
             message=conflict_search_input_timeout_message,
         )
 
-        history_before = screen._library_search_history
+        history_before = screen._rag_search_state.history
         await _wait_for_selector(screen, pilot, "#library-search-input")
         search_input = screen.query_one("#library-search-input", Input)
         search_input.value = "zeta"
@@ -8931,7 +8931,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         await pilot.pause()
 
         assert service.calls == []
-        assert screen._library_search_history == history_before
+        assert screen._rag_search_state.history == history_before
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         assert screen._library_note_autosave_state == "conflict"
 
@@ -8959,7 +8959,7 @@ async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_o
 
         screen.query_one("#library-rag-query-input", Input).value = "policy"
         await _wait_for_library_rag_query_ready(screen, pilot, "policy")
-        assert screen._library_rag_mode == "search"
+        assert screen._rag_search_state.mode == "search"
         screen.query_one("#library-rag-run-query", Button).press()
 
         for _ in range(150):
@@ -8975,7 +8975,7 @@ async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_o
         # gate releases.
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
-            if screen._library_rag_mode == "rag":
+            if screen._rag_search_state.mode == "rag":
                 break
             await pilot.pause(0.02)
         else:
@@ -8985,8 +8985,8 @@ async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_o
         for _ in range(20):
             await pilot.pause(0.02)
 
-        assert screen._library_rag_results == ()
-        assert screen._library_rag_retrieval_status == ""
+        assert screen._rag_search_state.results == ()
+        assert screen._rag_search_state.retrieval_status == ""
 
 
 @pytest.mark.asyncio
@@ -14520,7 +14520,7 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_submit_runs_search_canvas_query():
     """Submitting the rail-top search box feeds the promoted Search canvas
-    (single query truth = ``_library_rag_query``): it selects the Search
+    (single query truth = ``_rag_search_state.query``): it selects the Search
     row, runs the fast ``search`` mode query against the recording fake
     service, and returns focus to the rail box (which remains mounted --
     it is not torn down when leaving the conversations canvas).
@@ -14930,7 +14930,7 @@ def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_z
 def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded():
     """PR-T1 C2: restored evidence must survive the pre-snapshot window.
 
-    `save_state`/`restore_state` deliberately carry `_library_rag_results`
+    `save_state`/`restore_state` deliberately carry `_rag_search_state.results`
     but NOT `_local_source_counts` (bulk snapshots re-fetch), so a fresh
     `LibraryScreen` composes with results present and every count still
     zero while `_refresh_local_source_snapshot` is in flight. Feeding an
@@ -14938,7 +14938,7 @@ def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded()
     source to nothing and D4/task-5's scope filter then hides EVERY
     attributable row -- the panel announced "No evidence matched the
     current query" about the restored query, with the rows sitting right
-    there in `_library_rag_results`. Nor did it recover: the real snapshot
+    there in `_rag_search_state.results`. Nor did it recover: the real snapshot
     lands via `_apply_local_source_snapshot`'s BROWSE_SEARCH branch, which
     syncs the rail and scope toggles but deliberately never the results
     region (RAG-27). Only a revisit inside `LIBRARY_SNAPSHOT_CACHE_TTL_
@@ -14953,10 +14953,10 @@ def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded()
 
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
-    original._library_rag_query = "credential rotation"
-    original._library_rag_searched_query = "credential rotation"
-    original._library_rag_retrieval_status = "ready"
-    original._library_rag_results = (
+    original._rag_search_state.query = "credential rotation"
+    original._rag_search_state.searched_query = "credential rotation"
+    original._rag_search_state.retrieval_status = "ready"
+    original._rag_search_state.results = (
         {
             "document_title": "Note Evidence",
             "snippet": "note snippet",
@@ -14990,7 +14990,7 @@ def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded()
         "media": 0,
         "conversations": 0,
     }
-    assert len(restored._library_rag_results) == 2
+    assert len(restored._rag_search_state.results) == 2
 
     pre_snapshot = restored._library_rag_panel_state()
     assert [row.title for row in pre_snapshot.results] == [
@@ -15036,10 +15036,10 @@ def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
 
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
-    original._library_rag_query = "credential rotation"
-    original._library_rag_searched_query = "credential rotation"
-    original._library_rag_retrieval_status = "ready"
-    original._library_rag_results = (
+    original._rag_search_state.query = "credential rotation"
+    original._rag_search_state.searched_query = "credential rotation"
+    original._rag_search_state.retrieval_status = "ready"
+    original._rag_search_state.results = (
         {
             "document_title": "Note Evidence",
             "snippet": "note snippet",
@@ -15061,7 +15061,7 @@ def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
 
     # Precondition: same restored-but-uncounted setup as the sibling test.
     assert restored._library_loaded is False
-    assert len(restored._library_rag_results) == 2
+    assert len(restored._rag_search_state.results) == 2
 
     # The snapshot-timeout failsafe fires before any real snapshot lands.
     restored._apply_source_snapshot_timeout()
@@ -15110,7 +15110,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
 
     Also pins a review finding from implementing this fix: `_select_
     library_rag_result_by_index`/`_open_library_rag_result_by_index` used
-    to index into the screen's raw, unfiltered `self._library_rag_results`
+    to index into the screen's raw, unfiltered `self._rag_search_state.results`
     -- once `from_values` hides a row, the rendered cards' indices (built
     from the FILTERED `state.results`) no longer align with that raw list's
     positions. Selecting the second still-visible card (Conversation, raw
@@ -15167,7 +15167,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         # Select the Media row (raw/rendered index 1) before toggling it off.
         screen.query_one("#library-rag-select-result-1", Button).press()
         await pilot.pause()
-        assert screen._library_rag_selected_result_id == "media-1"
+        assert screen._rag_search_state.selected_result_id == "media-1"
 
         # Toggle Media off -- its row must disappear from the canvas.
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
@@ -15205,7 +15205,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         # what's actually rendered after filtering.
         screen.query_one("#library-rag-select-result-1", Button).press()
         await pilot.pause()
-        assert screen._library_rag_selected_result_id == "chat-1"
+        assert screen._rag_search_state.selected_result_id == "chat-1"
         panel_state = screen._library_rag_panel_state()
         assert panel_state.selected_result is not None
         assert panel_state.selected_result.title == "Conversation Evidence"
@@ -15378,7 +15378,7 @@ async def test_library_shell_history_clear_button_empties_history():
 
         screen.query_one("#library-rag-history-clear", Button).press()
         for _ in range(150):
-            if screen._library_search_history == ():
+            if screen._rag_search_state.history == ():
                 break
             await pilot.pause(0.02)
         else:
@@ -15444,7 +15444,7 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
 
     Unlike a query edit (which only refreshes widgets in place), a scope
     toggle tears down and rebuilds the whole canvas via `compose()`, which
-    reads `_library_rag_history_collapsed`. The live `Collapsible.collapsed`
+    reads `_rag_search_state.history_collapsed`. The live `Collapsible.collapsed`
     reactive must be synced back into that field on user interaction, or the
     recompose reads the stale (force-collapsed) field and silently discards
     the manual expand.
@@ -15484,12 +15484,12 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
         # Mirror a user click on the collapsible header.
         screen.query_one("#library-rag-history", Collapsible).collapsed = False
         for _ in range(120):
-            if screen._library_rag_history_collapsed is False:
+            if screen._rag_search_state.history_collapsed is False:
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError(
-                "Manual expand never synced back to _library_rag_history_collapsed."
+                "Manual expand never synced back to _rag_search_state.history_collapsed."
             )
 
         # A scope toggle triggers a full `refresh(recompose=True)`, unlike a
@@ -25747,12 +25747,12 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
         screen._collections_state.requested_page = 1
     else:
-        screen._library_rag_query = "retrieval"
-        screen._library_rag_searched_query = "retrieval"
-        screen._library_rag_mode = "rag"
-        screen._library_rag_scope_deselected = {"media"}
-        screen._library_rag_retrieval_status = "ready"
-        screen._library_rag_results = ({"private": "PRIVATE SEARCH ROW"},)
+        screen._rag_search_state.query = "retrieval"
+        screen._rag_search_state.searched_query = "retrieval"
+        screen._rag_search_state.mode = "rag"
+        screen._rag_search_state.scope_deselected = {"media"}
+        screen._rag_search_state.retrieval_status = "ready"
+        screen._rag_search_state.results = ({"private": "PRIVATE SEARCH ROW"},)
 
     state = screen.save_state()
 
@@ -26384,9 +26384,9 @@ def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     original._selected_media_id = "media-42"
     original._library_media_view = "viewer"
-    original._library_rag_query = "alpha"
-    original._library_rag_mode = "rag"
-    original._library_rag_scope_deselected = {"notes"}
+    original._rag_search_state.query = "alpha"
+    original._rag_search_state.mode = "rag"
+    original._rag_search_state.scope_deselected = {"notes"}
     state = original.save_state()
     # New-format saves always carry the returning-Library receipt key; even
     # ``None`` deliberately routes the next visit through Landing.  This
@@ -26401,15 +26401,15 @@ def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     assert restored._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
     assert restored._selected_media_id == "media-42"
     assert restored._library_media_view == "viewer"
-    assert restored._library_rag_query == "alpha"
-    assert restored._library_rag_mode == "rag"
-    assert restored._library_rag_scope_deselected == {"notes"}
+    assert restored._rag_search_state.query == "alpha"
+    assert restored._rag_search_state.mode == "rag"
+    assert restored._rag_search_state.scope_deselected == {"notes"}
 
     # The restore must not alias the saved dict's mutable set -- mutating
     # the restored instance's copy must never bleed back into the saved
     # state dict (a shallow-copied structure the app's runtime-policy
     # reconciliation touches on every navigation).
-    restored._library_rag_scope_deselected.add("media")
+    restored._rag_search_state.scope_deselected.add("media")
     assert state["library_rag_scope_deselected"] == {"notes"}
 
 
@@ -26451,10 +26451,10 @@ def test_library_shell_restore_state_tolerates_garbage_values():
         }
     )
 
-    assert screen._library_rag_mode == "search"
-    assert screen._library_rag_results == ()
-    assert screen._library_rag_scope_deselected == set()
-    assert screen._library_rag_recovery_state is None
+    assert screen._rag_search_state.mode == "search"
+    assert screen._rag_search_state.results == ()
+    assert screen._rag_search_state.scope_deselected == set()
+    assert screen._rag_search_state.recovery_state is None
 
     # A completely non-dict payload (e.g. a runtime-policy mismatch that
     # ``reconcile_saved_screen_state`` failed to catch) must be a no-op,
@@ -28758,7 +28758,7 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
         # The screen-side echo must track typing: it feeds both every
         # rail rebuild (query=...) and save_state, which is where stale
         # queries resurrected from ("cake and pie pla…" in the UAT).
-        assert screen._library_rag_query == "cake"
+        assert screen._rag_search_state.query == "cake"
 
         screen._handle_library_ingest_registry_changed()
         await pilot.pause()

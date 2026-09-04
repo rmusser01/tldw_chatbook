@@ -59,3 +59,17 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # -- every per-line change is a mechanical receiver swap or a removal, not
 # new logic.
 39a9763215eab9b8a832e45e4ebb7e85893d8b60
+
+# Wave-3 task 3: combined search+RAG controller move (search+RAG series
+# 2/3). 42 method bodies moved verbatim from library_screen.py to the new
+# LibraryRagSearchController (UI/Library_Modules/library_rag_search_
+# controller.py), each replaced by a one-line delegator.
+877eeaf9a883b809aca49f2328d769b4b43fb4de
+
+# Wave-3 task 4: search+RAG cleanup (search+RAG series 3/3, closing
+# commit). Not a pure relocation in the strictest sense (receiver
+# rewrites + a shim-block deletion + 12 dead delegators pruned + 5 dead
+# imports pruned), same shape as the export/collections series' own
+# Task 4/Task 7 closing commits above -- every per-line change is a
+# mechanical receiver swap or a removal, not new logic.
+5bea63cdced8d3ff933087e26c2d087685f9b22c

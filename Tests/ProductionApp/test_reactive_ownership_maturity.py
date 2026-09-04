@@ -209,7 +209,7 @@ async def _exercise_route(route: str, screen: object, pilot: Any) -> None:
     elif route == "library":
         assert type(screen) is LibraryScreen
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "notes"})
-        screen._library_rag_query = LIBRARY_QUERY
+        screen._rag_search_state.query = LIBRARY_QUERY
         await pilot.pause()
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
     elif route == "media":
@@ -267,7 +267,7 @@ async def _assert_restored_route(route: str, screen: object, pilot: Any) -> None
         assert screen.state.search_query == PERSONAS_QUERY
     elif route == "library":
         assert type(screen) is LibraryScreen
-        assert screen._library_rag_query == LIBRARY_QUERY
+        assert screen._rag_search_state.query == LIBRARY_QUERY
         # Current-format snapshots restore the canonical Library landing
         # hub; source routes are resumed explicitly through Continue.
         assert screen._library_selected_row_id == ""

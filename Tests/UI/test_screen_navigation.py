@@ -4012,7 +4012,7 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         await pilot.pause()
         await pilot.pause()
 
-        assert app.screen._library_rag_query == "roadmap notes"
+        assert app.screen._rag_search_state.query == "roadmap notes"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
@@ -4034,7 +4034,7 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
-        assert restored_screen._library_rag_query == "roadmap notes"
+        assert restored_screen._rag_search_state.query == "roadmap notes"
         assert restored_screen._library_selected_row_id == ""
 
         await app.handle_screen_navigation(NavigateToScreen("search"))

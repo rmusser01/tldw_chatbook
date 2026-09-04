@@ -92,8 +92,8 @@ async def test_query_edit_never_touches_results_or_history_widgets(monkeypatch):
 @pytest.mark.asyncio
 async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch):
     """Typing a new (unsubmitted) query must not desync the visible Evidence
-    rows from ``_library_rag_results`` -- the widget is deliberately left
-    alone, so the backing list must be too (otherwise a click on an
+    rows from ``_rag_search_state.results`` -- the widget is deliberately
+    left alone, so the backing list must be too (otherwise a click on an
     already-visible row would silently no-op)."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -124,7 +124,7 @@ async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch)
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
-        landed_results = screen._library_rag_results
+        landed_results = screen._rag_search_state.results
         assert len(landed_results) == 1
         result_widget_before = screen.query_one("#library-rag-result-0")
 
@@ -143,7 +143,7 @@ async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch)
 
         assert results_calls == []
         assert history_calls == []
-        assert screen._library_rag_results == landed_results
+        assert screen._rag_search_state.results == landed_results
         # Same widget instance -- proves no remove()/mount() cycle happened.
         assert screen.query_one("#library-rag-result-0") is result_widget_before
 
@@ -182,7 +182,7 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
 
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
-        assert screen._library_rag_retrieval_status == "ready"
+        assert screen._rag_search_state.retrieval_status == "ready"
 
         query_input.value = "second query"
         await screen.update_library_rag_query(
@@ -195,7 +195,7 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
         assert str(run_button.label) != "Searching…"
         # Results are still the OLD landed set (B5 contract) -- only the
         # in-flight status was cleared, not the results themselves.
-        assert len(screen._library_rag_results) == 1
+        assert len(screen._rag_search_state.results) == 1
 
 
 @pytest.mark.asyncio
@@ -235,7 +235,7 @@ async def test_input_submitted_still_runs_the_full_refresh(monkeypatch):
 
         assert results_calls  # the full refresh path still rebuilds results...
         assert history_calls  # ...and history.
-        assert len(screen._library_rag_results) == 1
+        assert len(screen._rag_search_state.results) == 1
 
 
 def test_refresh_search_rag_panel_state_widgets_skips_results_and_history_when_asked():
@@ -328,4 +328,4 @@ async def test_rag_mode_query_edit_never_remounts_the_landed_answer(monkeypatch)
         # Same widget instances -- proves no remove()/mount() cycle happened.
         assert screen.query_one("#library-rag-answer") is answer_region_before
         assert screen.query_one("#library-rag-answer-text") is answer_text_before
-        assert screen._library_rag_answer is not None
+        assert screen._rag_search_state.answer is not None

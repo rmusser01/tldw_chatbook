@@ -1750,7 +1750,7 @@ async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_noti
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_until(
             pilot,
-            lambda: screen._library_rag_query == query,
+            lambda: screen._rag_search_state.query == query,
             "the restored query never reached the panel state",
         )
 
@@ -2896,7 +2896,7 @@ async def test_library_search_rag_worker_completion_ignores_unmounted_screen(
     # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
     # _sync_search_rag_panel), so that is the method the test must poison.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
-    screen._library_rag_query = "Find evidence"
+    screen._rag_search_state.query = "Find evidence"
     monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 
     async def fail_refresh() -> None:
@@ -3130,11 +3130,11 @@ async def test_library_search_rag_rag_mode_generates_answer_after_results_land(
         answer_text = str(screen.query_one("#library-rag-answer-text").renderable)
         assert "An expired credential caused the incident" in answer_text
 
-        assert screen._library_rag_answer is not None
-        assert screen._library_rag_answer.status == "ready"
-        assert screen._library_rag_answer_query == query
-        assert screen._library_rag_answer_mode == "rag"
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.answer is not None
+        assert screen._rag_search_state.answer.status == "ready"
+        assert screen._rag_search_state.answer_query == query
+        assert screen._rag_search_state.answer_mode == "rag"
+        assert screen._rag_search_state.answer_in_flight is False
 
         # The in-flight status was really entered, and really settled.
         assert "answering" in statuses
@@ -3184,7 +3184,7 @@ async def test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer()
                 lambda: bool(chat.calls),
                 "Generation never reached the gated chat seam.",
             )
-            assert screen._library_rag_answer_in_flight is True
+            assert screen._rag_search_state.answer_in_flight is True
             assert screen.query("#library-rag-answer-status")
 
             # The mode guard, exercised directly while the fields are still
@@ -3198,12 +3198,12 @@ async def test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer()
                 ),
                 LibraryRagAnswer(status=ANSWER_STATUS_READY, text="wrong-mode answer"),
             )
-            assert screen._library_rag_answer is None
+            assert screen._rag_search_state.answer is None
 
             screen.query_one("#library-rag-mode-toggle", Button).press()
             await _wait_until(
                 pilot,
-                lambda: screen._library_rag_mode == "search",
+                lambda: screen._rag_search_state.mode == "search",
                 "Mode toggle never switched back to keyword Search.",
             )
         finally:
@@ -3212,10 +3212,10 @@ async def test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer()
         for _ in range(30):
             await pilot.pause(0.02)
 
-        assert screen._library_rag_answer is None
-        assert screen._library_rag_answer_query == ""
-        assert screen._library_rag_answer_mode == ""
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.answer is None
+        assert screen._rag_search_state.answer_query == ""
+        assert screen._rag_search_state.answer_mode == ""
+        assert screen._rag_search_state.answer_in_flight is False
         assert not screen.query("#library-rag-answer")
         assert screen._library_rag_panel_state().retrieval_status != "answering"
 
@@ -3266,7 +3266,7 @@ async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_statu
                 lambda: bool(chat.calls),
                 "The first generation never reached the gated chat seam.",
             )
-            assert screen._library_rag_answer_in_flight is True
+            assert screen._rag_search_state.answer_in_flight is True
 
             # Typing un-sticks the run gate (the same escape hatch the
             # retrieval phase already offers), so a new search can start
@@ -3277,7 +3277,7 @@ async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_statu
                 Input.Changed(query_input, second_query)
             )
             await _wait_for_query_ready(screen, pilot, second_query)
-            assert screen._library_rag_answer_in_flight is False
+            assert screen._rag_search_state.answer_in_flight is False
 
             screen.query_one("#library-rag-run-query", Button).press()
             await _wait_until(
@@ -3296,21 +3296,21 @@ async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_statu
                 ),
                 LibraryRagAnswer(status=ANSWER_STATUS_READY, text="stale answer"),
             )
-            assert screen._library_rag_answer is None
+            assert screen._rag_search_state.answer is None
         finally:
             chat.release_event.set()
 
         await _wait_until(
             pilot,
-            lambda: screen._library_rag_answer is not None,
+            lambda: screen._rag_search_state.answer is not None,
             "The second query's answer never landed.",
         )
         for _ in range(20):
             await pilot.pause(0.02)
 
-        assert "Fresh answer from the second query" in screen._library_rag_answer.text
-        assert screen._library_rag_answer_query == second_query
-        assert screen._library_rag_answer_in_flight is False
+        assert "Fresh answer from the second query" in screen._rag_search_state.answer.text
+        assert screen._rag_search_state.answer_query == second_query
+        assert screen._rag_search_state.answer_in_flight is False
         assert screen._library_rag_panel_state().retrieval_status == "ready"
         run_button = screen.query_one("#library-rag-run-query", Button)
         assert run_button.disabled is False
@@ -3338,7 +3338,7 @@ async def test_library_search_rag_keyword_mode_never_calls_the_answer_seam() -> 
 
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-        assert screen._library_rag_mode == "search"
+        assert screen._rag_search_state.mode == "search"
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
 
@@ -3348,8 +3348,8 @@ async def test_library_search_rag_keyword_mode_never_calls_the_answer_seam() -> 
             await pilot.pause(0.02)
 
         assert chat.calls == []
-        assert screen._library_rag_answer is None
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.answer is None
+        assert screen._rag_search_state.answer_in_flight is False
         assert not screen.query("#library-rag-answer")
 
 
@@ -3389,12 +3389,12 @@ async def test_library_search_rag_zero_results_answer_needs_no_provider(
         await _wait_for_selector(screen, pilot, "#library-rag-empty-state")
         await _wait_until(
             pilot,
-            lambda: screen._library_rag_answer is not None,
+            lambda: screen._rag_search_state.answer is not None,
             "The no-evidence answer never landed.",
         )
 
         assert chat.calls == []
-        assert screen._library_rag_answer.status == "no_evidence"
+        assert screen._rag_search_state.answer.status == "no_evidence"
         answer_text = str(screen.query_one("#library-rag-answer-text").renderable)
         assert answer_text == "Nothing in your library supports an answer to that."
 
@@ -3406,13 +3406,13 @@ async def test_library_search_rag_zero_results_answer_needs_no_provider(
         )
         assert not screen.query("#library-rag-results-empty")
         assert "answering" not in statuses
-        assert screen._library_rag_retrieval_status == "empty"
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.retrieval_status == "empty"
+        assert screen._rag_search_state.answer_in_flight is False
 
 
 def test_library_rag_answer_state_survives_restore_without_dangling_status() -> None:
     """Save/restore carries the answer with the results it belongs to (the
-    same lifecycle `_library_rag_diagnostics`/`_library_rag_searched_query`
+    same lifecycle `_rag_search_state.diagnostics`/`_rag_search_state.searched_query`
     already follow) -- but NEVER the in-flight flag: the restored screen is a
     brand-new instance with no worker running, so a restored "answering"
     status could never be resolved by anything."""
@@ -3435,24 +3435,24 @@ def test_library_rag_answer_state_survives_restore_without_dangling_status() -> 
         text="An expired credential caused the incident [S1].",
         citation_status="validated",
     )
-    screen._library_rag_mode = "rag"
-    screen._library_rag_query = "Why did the incident happen?"
-    screen._library_rag_searched_query = "Why did the incident happen?"
-    screen._library_rag_results = (row,)
-    screen._library_rag_retrieval_status = "ready"
-    screen._library_rag_answer = answer
-    screen._library_rag_answer_query = "Why did the incident happen?"
-    screen._library_rag_answer_mode = "rag"
+    screen._rag_search_state.mode = "rag"
+    screen._rag_search_state.query = "Why did the incident happen?"
+    screen._rag_search_state.searched_query = "Why did the incident happen?"
+    screen._rag_search_state.results = (row,)
+    screen._rag_search_state.retrieval_status = "ready"
+    screen._rag_search_state.answer = answer
+    screen._rag_search_state.answer_query = "Why did the incident happen?"
+    screen._rag_search_state.answer_mode = "rag"
     # Navigating away mid-generation is exactly when this matters.
-    screen._library_rag_answer_in_flight = True
+    screen._rag_search_state.answer_in_flight = True
 
     restored = LibraryScreen(app)
     restored.restore_state(screen.save_state())
 
-    assert restored._library_rag_answer == answer
-    assert restored._library_rag_answer_query == "Why did the incident happen?"
-    assert restored._library_rag_answer_mode == "rag"
-    assert restored._library_rag_answer_in_flight is False
+    assert restored._rag_search_state.answer == answer
+    assert restored._rag_search_state.answer_query == "Why did the incident happen?"
+    assert restored._rag_search_state.answer_mode == "rag"
+    assert restored._rag_search_state.answer_in_flight is False
     # A restored instance has not run `_refresh_local_source_snapshot` yet,
     # so its scope counts are all 0 and the run gate would read "blocked";
     # seed them so the assertion below is about the answer status overlay
@@ -3493,8 +3493,8 @@ async def test_library_search_rag_disabled_answer_seam_generates_nothing() -> No
         for _ in range(25):
             await pilot.pause(0.02)
 
-        assert screen._library_rag_answer is None
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.answer is None
+        assert screen._rag_search_state.answer_in_flight is False
         assert not screen.query("#library-rag-answer")
         assert screen._library_rag_panel_state().retrieval_status == "ready"
 
@@ -3552,7 +3552,7 @@ async def test_library_search_rag_starting_a_new_search_drops_the_previous_answe
         await _wait_for_query_ready(screen, pilot, first_query)
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-answer-text")
-        assert screen._library_rag_answer is not None
+        assert screen._rag_search_state.answer is not None
 
         # Hold the SECOND retrieval open.
         service.release_event.clear()
@@ -3571,9 +3571,9 @@ async def test_library_search_rag_starting_a_new_search_drops_the_previous_answe
 
             # Mid-search: the previous answer is already gone, together with
             # the guards that would otherwise let a late arrival re-apply it.
-            assert screen._library_rag_answer is None
-            assert screen._library_rag_answer_query == ""
-            assert screen._library_rag_answer_mode == ""
+            assert screen._rag_search_state.answer is None
+            assert screen._rag_search_state.answer_query == ""
+            assert screen._rag_search_state.answer_mode == ""
             assert not screen.query("#library-rag-answer")
             await screen._apply_library_rag_answer(
                 LibraryRagSearchRequest(
@@ -3583,17 +3583,17 @@ async def test_library_search_rag_starting_a_new_search_drops_the_previous_answe
                 ),
                 LibraryRagAnswer(status=ANSWER_STATUS_READY, text="stale answer"),
             )
-            assert screen._library_rag_answer is None
+            assert screen._rag_search_state.answer is None
         finally:
             service.release_event.set()
 
         await _wait_until(
             pilot,
-            lambda: screen._library_rag_answer is not None,
+            lambda: screen._rag_search_state.answer is not None,
             "The second query's answer never landed.",
         )
-        assert screen._library_rag_answer_query == second_query
-        assert screen._library_rag_answer_in_flight is False
+        assert screen._rag_search_state.answer_query == second_query
+        assert screen._rag_search_state.answer_in_flight is False
 
 
 def test_library_rag_answer_seam_absent_resolves_to_the_shipping_default() -> None:
@@ -3658,7 +3658,7 @@ async def test_panel_refresh_rechecks_the_panel_after_taking_the_lock() -> None:
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        async with screen._library_rag_panel_refresh_lock:
+        async with screen._rag_search_state.panel_refresh_lock:
             queued = asyncio.create_task(
                 screen._refresh_search_rag_panel_state_widgets()
             )
@@ -3780,8 +3780,8 @@ async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-answer-caution")
 
-        assert screen._library_rag_answer is not None
-        assert screen._library_rag_answer.citation_status == "uncited"
+        assert screen._rag_search_state.answer is not None
+        assert screen._rag_search_state.answer.citation_status == "uncited"
 
         answer_region = screen.query_one("#library-rag-answer")
         region_ids = [child.id for child in answer_region.children]

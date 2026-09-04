@@ -1,0 +1,115 @@
+# Review package: 77750c85d..8efc79655
+
+## Commits
+8efc79655 docs(library): correct the search+RAG state-shape evidence to what the code shows
+
+## Files changed
+ .../UI/Library_Modules/library_rag_search_state.py | 80 +++++++++++++++++-----
+ 1 file changed, 63 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/tldw_chatbook/UI/Library_Modules/library_rag_search_state.py b/tldw_chatbook/UI/Library_Modules/library_rag_search_state.py
+index 100f9cae4..bab5c81b3 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_rag_search_state.py
++++ b/tldw_chatbook/UI/Library_Modules/library_rag_search_state.py
+@@ -12,37 +12,83 @@ alive as a generated getter/setter ``@property`` shim pointing at
+ delete that screen-side shim block once the subsystem's methods have all
+ moved to a controller and the screen's own remaining references have been
+ retargeted; that controller will carry its OWN generated shim block in its
+ place, exactly the export/collections precedent.
+ 
+ Why ONE combined state object, not two (search-only + rag-only): wave-2
+ task 8's entanglement census (57.1% of the 14 search-cluster candidates
+ cross-call RAG-named methods; the top search bar's submit path *is* the RAG
+ query entry point) already forced the combined series decision at the
+ METHOD level. This task's own field-level census confirms the same
+-conclusion holds at the FIELD level and goes further: ``_library_rag_panel_
+-state`` (the single presentation-object builder every render path funnels
+-through) reads across literally all 20 fields in one call --
+-``_library_rag_scope_deselected``/``_library_loaded`` gate the scope
+-selection, ``_library_rag_query``/``_library_rag_searched_query``/``_library_
+-rag_mode``/``_library_rag_results``/``_library_rag_selected_result_id``/
+-``_library_rag_retrieval_status``/``_library_rag_answer_in_flight`` feed the
+-retrieval half, and a sibling read of the answer fields happens in the same
+-builder's continuation. There is no field subset one half of a two-object
+-split could own without the OTHER half's builder reaching across a
+-controller boundary for it on every single render. The plan's own
+-hypothetical clean seam ("rag-answer pipeline vs search/history surface")
+-does not hold under this evidence: even the 6 fields used ONLY by
+-``_library_rag_answer*``-named methods (no search-cluster-named caller) are
+-still read by ``_library_rag_panel_state`` in the SAME call that reads the
+-retrieval/history fields. See the task-2 report's ownership table for the
+-full per-field consumer breakdown that established this.
++conclusion holds at the FIELD level, on evidence read directly from the
++method bodies (a prior draft of this docstring overstated that evidence --
++corrected below to what the code actually shows):
++
++``_library_rag_panel_state`` (``library_screen.py:13802``, ending at
++``13945`` -- no continuation) reads **14 of the 20** fields directly:
++``mode``, ``query``, ``results``, ``retrieval_status``, ``recovery_state``,
++``selected_result_id``, ``diagnostics``, ``searched_query``, ``answer``,
++``answer_in_flight``, ``answer_in_flight_provider``, ``scope_deselected``,
++``history_collapsed``, ``history``. It does NOT read ``answer_query``,
++``answer_mode``, ``answer_render_key``, ``history_refresh_lock``,
++``panel_refresh_lock``, or ``scope_recovery_visible`` -- those 6 are
++consumed elsewhere, but every one of those "elsewhere" sites is an
++immediate sibling in the SAME lock-serialized refresh call chain this
++builder is the root of, not an independent, unrelated caller:
++
++- ``answer_query``/``answer_mode`` are staleness guards, written by
++  ``_start_library_rag_answer`` and read back by ``_apply_library_rag_
++  answer`` (the answer worker's own completion handler) to discard an
++  answer generated for a query/mode the panel has since left --
++  cross-referencing ``_library_rag_panel_state()``'s own OUTPUT
++  (``coverage_note = self._library_rag_panel_state().coverage_note``) is
++  how ``_start_library_rag_answer`` builds the very answer these two
++  fields guard.
++- ``answer_render_key`` is a render-skip cache read/written by
++  ``_refresh_library_rag_answer_widgets``, which takes the panel-state
++  OBJECT this builder returns as its own parameter and compares against
++  values derived from it.
++- ``history_refresh_lock`` and ``panel_refresh_lock`` are ``asyncio.Lock``
++  synchronization primitives, not display values -- held by
++  ``_refresh_library_rag_history_widget`` and by both
++  ``_refresh_search_rag_panel_state_widgets``/``_mirror_library_rag_scope_
++  recovery`` respectively, the last two of which call
++  ``self._library_rag_panel_state()`` FRESH from inside the lock they hold.
++- ``scope_recovery_visible`` is a change-gate cache: written inside
++  ``_refresh_search_rag_panel_state_widgets`` immediately after that same
++  method calls the builder (``self._library_rag_scope_recovery_visible =
++  library_rag_scope_shows_recovery(panel_state.scope)``), and read back by
++  ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` to decide whether
++  a background snapshot changed enough to schedule
++  ``_mirror_library_rag_scope_recovery``.
++
++So the correct claim is narrower and better-evidenced than "one method
++reads all 20 fields": all 20 fields are consumed inside ONE tightly-coupled,
++lock-serialized call graph rooted at ``_refresh_search_rag_panel_state_
++widgets``/``_library_rag_panel_state`` (14 directly by the builder itself;
++the other 6 by its immediate callees/siblings in that same sequence, or by
++the answer-worker completion pair that produces the builder's own inputs).
++The conclusion still holds: there is no field subset a two-object split
++could own without those SAME functions (the panel-state builder's own
++caller, the answer worker pair, the scope-recovery mirror pair) reaching
++across a controller boundary repeatedly within one refresh -- the coupling
++is real, just expressed across a small cluster of cooperating methods
++rather than inside a single function body. The plan's own hypothetical
++clean seam ("rag-answer pipeline vs search/history surface") still does not
++hold: the answer fields' own staleness guards and render-skip cache are
++wired into the exact same refresh sequence (``_refresh_search_rag_panel_
++state_widgets`` calls ``_refresh_library_rag_answer_widgets`` unconditionally,
++above the results/history gate) that the retrieval/history fields flow
++through, so an answer/search split would still cut through that one
++sequence's own internals. See the task-2 report's ownership table and this
++correction's own verification trail for the full per-field consumer
++breakdown.
+ 
+ Every field's ``__init__`` assignment sat in ONE contiguous, unentangled
+ block (`library_screen.py` lines 2146-2243 at this task's own measurement) --
+ unlike the conversations/collections exemplars' entangled reader-preferences
+ trios, nothing here interleaves with another subsystem's initialization
+ code, so no field needed the "keep the original __init__ line untouched"
+ accommodation those two subsystems required.
+ 
+ Every field uses the ``_library_rag_`` prefix except ONE:
+ ``_library_search_history`` (dataclass field name ``history``, since the

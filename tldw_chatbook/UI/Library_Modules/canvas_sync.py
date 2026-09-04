@@ -464,6 +464,16 @@ def _sync_library_canvas(
             canvas = screen.query_one(
                 "#library-search-rag-panel", LibrarySearchRagPanel
             )
+            # Deliberately the FLAT name, not `screen._rag_search_state.
+            # answer_render_key`: every "search"-kind caller of this
+            # dispatcher forwards the CONTROLLER as `screen`
+            # (`LibraryRagSearchController.cycle_library_rag_mode`/
+            # `toggle_library_rag_scope_source`), and the controller's own
+            # permanent generated shim exposes this flat setter -- the
+            # controller has no `_rag_search_state` attribute at all. A
+            # genuine screen-forwarded call would silently create a dead
+            # instance attribute instead of raising (no such caller exists,
+            # AST-verified). See recipe §18 ("A genuinely new finding...").
             screen._library_rag_answer_render_key = None
             sync_args = (screen._library_rag_panel_state(),)
         elif kind == "export":

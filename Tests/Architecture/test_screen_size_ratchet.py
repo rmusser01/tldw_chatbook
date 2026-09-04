@@ -247,7 +247,99 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # landed on dev while this PR was in flight (dev's own pin going into
     # this merge was 45522/1331). Measured on the merged tree: 42420/1267
     # -> 43977/1316.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43977, 1316),
+    #
+    # 2026-09-03, wave-3 task 2 (combined search+RAG state PR, series 1/3):
+    # the 20-field `__init__` block (19 `_library_rag_*` + 1
+    # `_library_search_history`) collapsed into one `LibraryRagSearchState`
+    # constructor call plus a generated shim loop; methods unchanged (pure
+    # field move, zero FunctionDefs touched). 43977/1316 -> 43923/1316.
+    # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
+    # 2/3): 42 of the 50 combined search+RAG candidates (60 raw "search"/
+    # "rag" matches minus 3 Prompts-owned + 7 Media-owned) moved verbatim
+    # into `LibraryRagSearchController`
+    # (`UI/Library_Modules/library_rag_search_controller.py`), each
+    # replaced by a one-line screen delegator (41 `self._rag_search_
+    # controller.<name>(...)` instance-forwards + 1 `LibraryRagSearchController.
+    # <name>(...)` class-forward for the cluster's single staticmethod,
+    # `_library_rag_scope_summary`) -- a pure move, so the method count is
+    # unchanged (42 `FunctionDef`s out, 42 one-line delegators in). 8 of
+    # the 50 candidates stay screen-resident, unmoved and byte-for-byte
+    # untouched: 3 carry `@work` and would fail Textual's `isinstance(self,
+    # DOMNode)` check on a plain controller (`_execute_library_rag_
+    # answer`/`_execute_library_rag_search`/`_save_library_search_
+    # history`); 4 more are the "instance-attribute monkeypatch"
+    # test-bypass shape (recipe §11 lesson 2) -- `_library_rag_panel_
+    # state`, `_refresh_search_rag_panel_state_widgets`, `_patch_sibling_
+    # library_search_input`, `_mirror_library_rag_scope_recovery` -- found
+    # by a repo-wide monkeypatch census across all three test roots (2 of
+    # the 4 already flagged by task 2's own forward note; the other 2 are
+    # new findings from this task's own wider census) -- see
+    # `library_rag_search_controller.py`'s module docstring for the full
+    # per-name reasoning; and 1 more, `_load_library_search_history`, was
+    # excluded mid-task after the verification battery found a real
+    # regression -- its bare `get_cli_setting` reference resolves against
+    # the DEFINING module's globals, and moving it silently broke every
+    # `monkeypatch.setattr(library_screen_module, "get_cli_setting", ...)`
+    # test (a `test_library_shell.py` fixture several tests depend on).
+    # (3 + 4 + 1 = 8 excluded; 50 - 8 = 42 moved -- every count in this
+    # entry agrees.) It stays a real, full-bodied screen method
+    # (byte-for-byte identical to before this task), constructed at its
+    # original `__init__` position with no controller involvement. Net
+    # diff: +96 insertions (the import line, the new
+    # `LibraryRagSearchController` constructor call in `__init__` right
+    # after `self._collections_controller`, plus the 42 one-line delegator
+    # bodies) / -1010 deletions (the 42 moved bodies' original lines, net
+    # of restoring `_load_library_search_history`'s full body once it was
+    # excluded). 43923/1316 -> 43009/1316.
+    # 2026-09-03, wave-3 task 4 (combined search+RAG cleanup, series 3/3):
+    # the generated search+rag-state shim block (task 2) deleted wholesale;
+    # every remaining screen-side `_library_rag_<field>`/`_library_search_
+    # history` literal retargeted to `self._rag_search_state.<field>` (66
+    # occurrences across 11 screen methods via one mechanical regex pass,
+    # AST-reverified to zero remaining live consumers -- corrected here
+    # from an initial undercount of "35 occurrences across 9 methods";
+    # see the fix-round comment below). A wider census also
+    # flagged `canvas_sync.py`'s `_sync_library_canvas` (its `"search"`
+    # branch writes `screen._library_rag_answer_render_key` directly) as a
+    # candidate -- an initial retarget to `screen._rag_search_state.
+    # answer_render_key` broke `test_library_canvas_scoped_sync.py::
+    # test_media_choice_and_rag_toggles_are_canvas_scoped` (caught by this
+    # task's own sweep, not left latent): that branch's ONLY two callers
+    # (`cycle_library_rag_mode`/`toggle_library_rag_scope_source`) forward
+    # `self` = the CONTROLLER as the `screen` parameter, which has no
+    # `_rag_search_state` attribute at all (by design -- see the
+    # controller's own permanent shim's docstring). Reverted: the flat
+    # name is correct AS-IS, resolving through the controller's own
+    # mirrored shim exactly the way the conversations controller's
+    # identical `self`-forwarding shape already relies on;
+    # `canvas_sync.py` needed NO change. Of the 42 delegators
+    # task 3 left in place, 12 had ZERO references anywhere outside their
+    # own one-line body (14 `@on` handlers + 3 `action_*` handlers always
+    # kept per the recipe's transform whitelist; 13 more non-`@on` names
+    # kept for a genuine screen-resident or test caller) -- pruned, along
+    # with the one import (`build_library_rag_console_live_work_payload`)
+    # that prune made newly dead, plus 3 more already-dead-since-task-3
+    # imports (`LIBRARY_RAG_QUERY_MAX_LENGTH`, `LIBRARY_RAG_USE_IN_CONSOLE_
+    # LOCKED_NOTICE`, `library_rag_scope_summary`) and the `SEARCH_PREFIXED_
+    # STATE_FIELDS` import the deleted shim was the screen's only consumer
+    # of. 12 fewer `FunctionDef`s -- exactly the 12 pruned delegators; no
+    # method body touched. 43009/1316 -> 42949/1304.
+    # 2026-09-03, wave-3 task 4 fix round 1: 9 more cluster-caused dead
+    # imports pruned from the same `Widgets.Library` import block --
+    # `library_rag_answer_children`, `library_rag_history_children`,
+    # `library_rag_query_quiet_text`, `library_rag_query_shows_full_
+    # recovery`, `library_rag_query_status_children`, `library_rag_
+    # results_body_children`, `library_rag_scope_recovery_children`,
+    # `results_heading_text`, `scope_toggle_label` -- each verified
+    # single-occurrence (import line only) before deletion; the neighbour
+    # `library_rag_scope_shows_recovery` stayed (still live, ~line 42446).
+    # Comment-only otherwise; no method body touched. 42949/1304 ->
+    # 42940/1304.
+    #: Re-measured 2026-09-03 at the wave-3 dev catch-up merge (42 dev commits
+    #: incl. Console-interaction PRD work landed inside the budgeted file):
+    #: 42940/1304 -> 43225/1311. Post-merge re-measure per the standing
+    #: dev-race protocol; the decomposition's own trajectory remains down.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43225, 1311),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

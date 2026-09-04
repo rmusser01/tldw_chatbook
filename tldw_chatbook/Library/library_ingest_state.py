@@ -1236,7 +1236,7 @@ class LibraryIngestFormState:
             a recompose -- the analyze/chunk toggle handlers' own, or a
             registry-listener-driven one -- never snaps an expanded panel
             shut out from under the user (mirrors
-            ``_library_rag_history_collapsed``/
+            ``_rag_search_state.history_collapsed``/
             ``sync_library_rag_history_collapsed`` in ``library_screen.py``).
         expanded_type_groups: Set of type-group ids whose collapsible option
             panels are currently expanded, so user toggles survive
