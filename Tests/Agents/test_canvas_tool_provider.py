@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.agent_service import AgentService, FirstRequestSchemaP
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
     CANVAS_TOOL_NAMES,
+    MAX_CANVAS_TOOL_RESULT_BYTES,
     CanvasToolProvider,
 )
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
@@ -91,6 +92,9 @@ class _Coordinator:
             ),
         )
         self.create_result = CanvasMutationResult(revision=_revision())
+        self.read_result = CanvasReadResult(
+            revision=_revision(), source=SOURCE_SENTINEL
+        )
         self.failure: Exception | None = None
 
     def is_scope_current(self, scope: CanvasScope) -> bool:
@@ -122,7 +126,7 @@ class _Coordinator:
 
     def read_canvas(self, scope: CanvasScope, canvas_id: str):
         self.calls.append(("read", scope, canvas_id))
-        return CanvasReadResult(revision=_revision(), source=SOURCE_SENTINEL)
+        return self.read_result
 
     def create_canvas(
         self,
@@ -587,6 +591,119 @@ def test_input_byte_limits_reject_multibyte_overflow_before_coordinator() -> Non
     assert json.loads(title_result.error)["code"] == "title_bytes"
     assert json.loads(html_result.error)["code"] == "revision_source_bytes"
     assert coordinator.calls == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "1 < 2",
+        "2 > 1",
+        "hidden\x00source",
+        "hidden\x07source",
+    ],
+)
+def test_markup_shaped_and_unsafe_control_titles_fail_before_mutation(title) -> None:
+    """A title rejected after staging must be rejected before coordinator dispatch."""
+    provider, coordinator, _authority = _provider()
+
+    result = _invoke(
+        provider,
+        "canvas_create",
+        {"title": title, "html": SOURCE_SENTINEL},
+    )
+
+    assert result.ok is False
+    assert json.loads(result.error) == {
+        "code": "invalid_title",
+        "message": "Canvas title must not be empty.",
+    }
+    assert len(result.error.encode("utf-8")) <= PROJECTION_BYTE_CAP
+    assert coordinator.calls == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Revenue explorer",
+        "line one\nline two",
+        "tab\tseparated",
+        "carriage\rreturn",
+        "é" * (MAX_CANVAS_TITLE_BYTES // 2),
+        "x" * MAX_CANVAS_TITLE_BYTES,
+    ],
+)
+def test_every_predispatch_title_boundary_is_accepted_by_result_boundary(title) -> None:
+    """Input and output title policy must not diverge after coordinator mutation."""
+    provider, coordinator, _authority = _provider()
+    coordinator.create_result = CanvasMutationResult(
+        revision=replace(_revision(), title=title)
+    )
+
+    result = _invoke(
+        provider,
+        "canvas_create",
+        {"title": title, "html": SOURCE_SENTINEL},
+    )
+
+    assert result.ok is True
+    assert json.loads(result.content)["canvas"]["title"] == title
+    assert coordinator.calls == [("create", SCOPE, "call-1", title, SOURCE_SENTINEL)]
+
+
+def test_canvas_read_worst_case_json_escaping_fits_result_envelope() -> None:
+    """A valid source ceiling remains readable under six-byte JSON escapes."""
+    provider, coordinator, _authority = _provider()
+    source = "\x00" * MAX_DURABLE_SOURCE_BYTES_PER_REVISION
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    coordinator.read_result = CanvasReadResult(
+        revision=replace(
+            _revision(),
+            content_sha256=digest,
+            source_bytes=MAX_DURABLE_SOURCE_BYTES_PER_REVISION,
+        ),
+        source=source,
+    )
+
+    result = _invoke(provider, "canvas_read", {"canvas_id": CANVAS_ID})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload["html"] == source
+    assert payload["canvas"]["content_sha256"] == digest
+    assert payload["canvas"]["source_bytes"] == len(source.encode("utf-8"))
+    assert len(result.content.encode("utf-8")) <= MAX_CANVAS_TOOL_RESULT_BYTES
+
+
+def test_canvas_read_over_source_limit_fails_before_source_serialization(
+    monkeypatch,
+) -> None:
+    """The expanded envelope must not weaken the shared source byte ceiling."""
+    provider, coordinator, _authority = _provider()
+    source = "\x00" * (MAX_DURABLE_SOURCE_BYTES_PER_REVISION + 1)
+    coordinator.read_result = CanvasReadResult(
+        revision=replace(
+            _revision(),
+            content_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            source_bytes=len(source.encode("utf-8")),
+        ),
+        source=source,
+    )
+    serialized_payloads = []
+    from tldw_chatbook.Agents import canvas_tool_provider as provider_module
+
+    real_json = provider_module._json
+
+    def observe_json(payload):
+        serialized_payloads.append(payload)
+        return real_json(payload)
+
+    monkeypatch.setattr(provider_module, "_json", observe_json)
+
+    result = _invoke(provider, "canvas_read", {"canvas_id": CANVAS_ID})
+
+    assert result.ok is False
+    assert json.loads(result.error)["code"] == "operation_failed"
+    assert not any("html" in payload for payload in serialized_payloads)
 
 
 def _metadata_payload() -> dict[str, object]:

@@ -54,9 +54,13 @@ _SAFE_LOCATION = re.compile(
 )
 _COMPATIBILITY_MESSAGE = "Canvas compatibility issue."
 MAX_CANVAS_TOOL_PROJECTION_BYTES = 64 * 1024
+# JSON escapes each one-byte control character as six ASCII bytes (``\u0000``),
+# the worst expansion possible with ``ensure_ascii=False``.  The projection cap
+# is a conservative envelope for the closed, separately bounded metadata and
+# JSON structure surrounding one maximum-size source string.
 MAX_CANVAS_TOOL_RESULT_BYTES = (
-    MAX_DURABLE_SOURCE_BYTES_PER_REVISION + MAX_CANVAS_TOOL_PROJECTION_BYTES
-)
+    6 * MAX_DURABLE_SOURCE_BYTES_PER_REVISION
+) + MAX_CANVAS_TOOL_PROJECTION_BYTES
 
 
 class CanvasApprovalClassification(StrEnum):
@@ -408,15 +412,11 @@ def _validate_arguments(name: str, args: object) -> dict[str, str]:
             checked["expected_parent_revision_id"], "invalid_expected_parent"
         )
     if "title" in checked:
-        title = checked["title"]
-        if not isinstance(title, str) or not title.strip():
-            raise _ArgumentError("invalid_title")
-        try:
-            validate_utf8_text(
-                title, limit=MAX_CANVAS_TITLE_BYTES, field_name="Canvas title"
-            )
-        except CanvasLimitError:
-            raise _ArgumentError("title_bytes") from None
+        checked["title"] = _validated_title(
+            checked["title"],
+            invalid_code="invalid_title",
+            byte_limit_code="title_bytes",
+        )
     if "html" in checked:
         try:
             validate_utf8_text(
@@ -538,19 +538,24 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
     }
 
 
-def _validated_title(title: object) -> str:
+def _validated_title(
+    title: object,
+    *,
+    invalid_code: str = "operation_failed",
+    byte_limit_code: str = "operation_failed",
+) -> str:
     if type(title) is not str or not title.strip():
-        raise _ArgumentError("operation_failed")
+        raise _ArgumentError(invalid_code)
     if any(character in title for character in ("<", ">")) or any(
         ord(character) < 32 and character not in "\t\n\r" for character in title
     ):
-        raise _ArgumentError("operation_failed")
+        raise _ArgumentError(invalid_code)
     try:
         validate_utf8_text(
             title, limit=MAX_CANVAS_TITLE_BYTES, field_name="Canvas title"
         )
     except CanvasLimitError:
-        raise _ArgumentError("operation_failed") from None
+        raise _ArgumentError(byte_limit_code) from None
     return title
 
 

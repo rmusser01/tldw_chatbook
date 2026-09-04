@@ -248,6 +248,89 @@ Review-fix self-review:
 - Confirmed the change defines only the Task 3.2 coordinator/provider and review
   boundary and does not implement Task 3.3 finalization or transcript cards.
 
+## Review fix round 2
+
+The second review confirmed two boundary mismatches. Create input validation
+accepted markup-shaped or unsafe-control titles that the post-coordinator result
+boundary rejected, permitting staging before an `operation_failed` response.
+Separately, the aggregate read-result cap assumed one encoded byte per source
+byte even though JSON represents each one-byte control character with a
+six-byte `\u0000` escape.
+
+Input and result titles now use the same validator. Empty titles, `<`, `>`, and
+all C0 control characters except tab, newline, and carriage return are rejected
+before dispatch; input violations retain the bounded `invalid_title` response,
+while UTF-8 byte overflow retains `title_bytes`. Boundary cases accepted before
+dispatch—including the exact 4 KiB title ceiling and permitted whitespace
+controls—serialize successfully after coordinator execution.
+
+`MAX_CANVAS_TOOL_RESULT_BYTES` is now the deterministic conservative envelope
+`6 * MAX_DURABLE_SOURCE_BYTES_PER_REVISION +
+MAX_CANVAS_TOOL_PROJECTION_BYTES`. The multiplier is the worst possible JSON
+expansion under `ensure_ascii=False`; the projection cap bounds the closed
+metadata and JSON structure. The 512 KiB source ceiling itself is unchanged and
+is still checked before building a source-bearing JSON payload.
+
+Round-2 RED:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py -k 'markup_shaped_and_unsafe_control or predispatch_title_boundary or worst_case_json_escaping or over_source_limit'
+5 failed, 7 passed, 83 deselected, 1 warning in 0.61s
+```
+
+The four unsafe-title cases returned successful staged results and populated
+the coordinator spy. The exact-limit NUL source returned `operation_failed`,
+demonstrating that the old aggregate cap—not the shared source ceiling—rejected
+the valid read.
+
+Round-2 isolated GREEN:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py -k 'markup_shaped_and_unsafe_control or predispatch_title_boundary or worst_case_json_escaping or over_source_limit'
+12 passed, 83 deselected, 1 warning in 0.49s
+```
+
+Round-2 final focused GREEN:
+
+```text
+$ pytest -q Tests/Agents/test_canvas_tool_provider.py
+95 passed, 1 warning in 1.03s
+
+$ pytest -q Tests/Agents/test_agent_runtime_review_hook.py Tests/Agents/test_agent_service_review_state_scope.py
+24 passed, 1 warning in 1.12s
+
+$ pytest -q Tests/Agents/test_agent_service.py
+117 passed, 1 warning in 8.34s
+
+$ pytest -q Tests/Chat/test_console_chat_controller.py -k review_hook
+11 passed, 247 deselected, 1 warning in 0.82s
+```
+
+Round-2 static verification:
+
+```text
+$ ruff check tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+All checks passed!
+$ ruff format --check tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+2 files already formatted
+$ python -m py_compile tldw_chatbook/Agents/canvas_tool_provider.py Tests/Agents/test_canvas_tool_provider.py
+$ git diff --check
+```
+
+Round-2 self-review:
+
+- Traced title handling from closed input validation through coordinator dispatch
+  to immediate result serialization and confirmed one shared content policy is
+  used on both sides of the mutation boundary.
+- Verified unsafe titles produce no coordinator call and a bounded response;
+  accepted byte/control boundary titles stage and serialize successfully.
+- Verified an exact 512 KiB source made solely of worst-case JSON escapes
+  round-trips exactly with matching digest and byte count inside the new cap.
+- Verified a 512 KiB + 1 source still fails the shared source check before any
+  payload containing `html` is passed to JSON serialization.
+- Rechecked the change does not alter approval ownership, projection retention,
+  Canvas lifecycle/finalization, or transcript-card scope.
+
 The warning in pytest output is the environment's existing
 `RequestsDependencyWarning` for its urllib3/chardet/charset-normalizer versions.
 
