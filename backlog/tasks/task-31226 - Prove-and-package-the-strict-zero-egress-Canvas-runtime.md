@@ -127,7 +127,7 @@ value, focus, and selection. The invalid-last patch/bridge cases still prove
 zero live DOM, CSS, asset, request, or bridge effects.
 
 Independent security rereview approved the boundary with no new findings. The
-reviewed delivery commits are `4b10d447ce`, `92975b5ae7`, and `29bfb438a4`.
+reviewed delivery commits are `6815f78175`, `0cb93e5b9a`, and `755786818e`.
 The final focused gate reported `97 passed, 3 skipped, 1 warning`; the rapid-
 form Chromium regression also passed five additional consecutive rereview
 runs. Firefox and WebKit remain an explicit portability caveat because their
