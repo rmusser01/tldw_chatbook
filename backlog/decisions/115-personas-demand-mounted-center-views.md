@@ -31,7 +31,8 @@ Existing public widget IDs remain on the heavy widget roots. The new slot IDs ar
 internal layout anchors. Existing workflow code may continue querying a heavy
 widget only after its owning async entry point has crossed the first-use boundary.
 The mount boundary applies view-specific retained state, such as the current
-persona runtime source, before returning the widget to the caller.
+persona runtime source and character TTS presentation, before returning the widget
+to the caller.
 
 Restore and handoff inputs remain screen-owned while a view is absent. The owning
 workflow first validates that its requested body is mounted and still belongs to

@@ -1,10 +1,10 @@
 ---
 id: TASK-31215
 title: Personas mount heavy center views on first use
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-04 00:23'
-updated_date: '2026-09-04 00:49'
+updated_date: '2026-09-04 01:56'
 labels:
   - roleplay
   - performance
@@ -29,11 +29,11 @@ Remove the remaining Roleplay navigation stall by keeping the four heavy inactiv
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening Personas reaches a usable initial Characters surface without mounting any inactive heavy center view.
-- [ ] #2 First use mounts only the requested heavy view and revisiting reuses the same widget state.
-- [ ] #3 Restore and deep-link intents replay after the required view is ready without applying stale state to another view.
-- [ ] #4 Transient mount failures remain retryable and leaving the screen prevents stale callbacks from mutating detached UI.
-- [ ] #5 Targeted Personas lifecycle and four-mode workflow tests pass, and a production-CSS responsiveness regression stays under the 250 ms event-loop-stall threshold.
+- [x] #1 Opening Personas reaches a usable initial Characters surface without mounting any inactive heavy center view.
+- [x] #2 First use mounts only the requested heavy view and revisiting reuses the same widget state.
+- [x] #3 Restore and deep-link intents replay after the required view is ready without applying stale state to another view.
+- [x] #4 Transient mount failures remain retryable and leaving the screen prevents stale callbacks from mutating detached UI.
+- [x] #5 Targeted Personas lifecycle and four-mode workflow tests pass, and a production-CSS responsiveness regression stays under the 250 ms event-loop-stall threshold.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,3 +49,9 @@ ADR required: yes
 ADR path: backlog/decisions/115-personas-demand-mounted-center-views.md
 Reason: the change defines the long-lived lifecycle and restore/admission contract shared by the Personas screen and its four authoring widgets.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented screen-owned, first-use mounting for the character editor, persona editor, dictionary manager, and lore manager. Stable lightweight slots preserve document order while per-view locks, cached instances, retryable mount failures, and lifecycle-generation checks protect concurrent activation and teardown. Character/persona creation and editing, actor packs, dictionary/lore workflows, restore intents, runtime-source hydration, and character TTS presentation now cross the exact view admission boundary before mutating widget state. A natural-height slot replaced the planned auto-height wrapper after real pointer testing exposed painted but non-hit-testable controls. Verification: 378 Personas Workbench tests, 246 other affected Personas tests, and 6 architecture checks passed (630 targeted tests total); the production-CSS heartbeat regression enforces a sub-250 ms event-loop stall; compileall, Ruff lint/format checks, and git diff whitespace checks passed. The full repository suite was not run, per the repository targeted-test policy.
+<!-- SECTION:NOTES:END -->

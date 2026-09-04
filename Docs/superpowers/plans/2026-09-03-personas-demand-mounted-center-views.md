@@ -132,7 +132,10 @@
   }
   ```
 
-  Compose each slot as a `Vertical` with `display = False`, `height = "auto"`, and `width = "100%"`. Implement the factory as a total key match and implement:
+  Compose each slot as a `Vertical` with `display = False`, natural container
+  height, and `width = "100%"`. Do not force `height = "auto"`: the editor roots
+  own `height = "100%"`, and the wrapper must preserve their full-height layout and
+  hit-testing. Implement the factory as a total key match and implement:
 
   ```python
   async def _ensure_center_view(self, view_key: str) -> Widget | None:
