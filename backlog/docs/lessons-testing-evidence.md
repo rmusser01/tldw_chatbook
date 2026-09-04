@@ -11023,3 +11023,36 @@ the invariant. A newly red old test may be revealing missing state in its
 oracle, not a compatibility regression. Then run a cross-file gate that covers
 both the new invariant and the existing projection tests; the isolated new
 tests alone cannot expose disagreements with older test models.
+
+---
+
+## A bundle-only render harness misses the per-screen sheets since the agentic split
+
+**TASK-31254, 2026-09-04.** A painted-frame test for the Settings theme editor
+loaded `tldw_cli_modular.tcss` on a bare harness (the `test_checkbox_height_render.py`
+pattern) and every colour `Input` rendered as a clipped tall border, so the
+swatch-text assertion could not pass even after the fix. The bundle no longer
+carries `.settings-compact-input` / `.settings-input-row`: TASK-25812 split the
+Settings-owned rules out of `components/_agentic_terminal.tcss` into
+`css/screen_agentic_settings.tcss`, a per-screen sheet the app loads alongside the
+bundle. An earlier deterministic sweep of the bundle had reported those classes as
+"no rule", which was true of the bundle and false of the app.
+
+**What to do.** A harness that claims production CSS must register the bundle
+AND the owning screen's split sheet (`screen_agentic_console|library|settings.tcss`),
+in the app's order. When a bundle grep says a Settings/Console/Library class has no
+rule, grep the split sheets before concluding the state is unstyled.
+
+---
+
+## Textual's `Color.hsl` hue is 0-1, not degrees
+
+**TASK-31253, 2026-09-04.** "Generate from Primary" produced a red secondary and a
+cyan accent for every primary colour (live: `#9966FF` -> `#e83735` / `#65fdff`).
+`textual.color.Color.hsl` returns `HSL(h, s, l)` with `h` in the 0-1 range; the
+generator fed it to a helper working in degrees, so hue was always in `[0, 1)`.
+The unit test that caught it asserts hue *distance* between generated colours and
+the primary, which is the assertion a palette generator needs.
+
+**What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
+generated palettes by hue distance for several primaries, not by eyeballing one.
