@@ -129,7 +129,14 @@ search** (Library search and RAG keyword retrieval both skip them) until
 restored.
 There is no permanent-delete or empty-trash action here yet — restoring is
 the only operation, and nothing is ever removed from the Trash except by
-restoring it.
+restoring it. Whichever Trash action you take, "‹ Media" returns you to a
+current list: the app refreshes the page it fenced for its own write, so it
+never asks you to press "Retry" for a change you just made here.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
+and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
+235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
+2" range, no stale banner and no "Retry").*
 
 ### Media list
 
