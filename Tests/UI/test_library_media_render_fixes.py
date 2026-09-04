@@ -22,6 +22,7 @@ import pytest
 from textual.widgets import Button, Input, OptionList
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 
 from Tests.UI.test_library_media_side_by_side import (
     _build_media_test_app,
@@ -349,3 +350,54 @@ async def test_find_toggles_the_bar_closed_when_it_is_open():
         await pilot.pause()
         assert not screen.query("#library-media-content-search-controls")
         assert screen._library_media_find_open is False
+
+
+# ---------------------------------------------------------------------------
+# task-31270 (critique #4 P1): receipts paint Undo and Dismiss at pane width.
+# ---------------------------------------------------------------------------
+
+
+def _items_pane_width(screen) -> int:
+    return screen.query_one("#library-media-canvas").region.width
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
+    """task-31270 (critique #4 P1): the receipt's Undo was clipped to `Und`
+    in the ~38-col Items pane (live cap_99). Painted text on purpose: a
+    region assertion cannot see a label cut by its parent's width."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "✓ deleted · 1 item · in Trash" in painted, painted
+        assert "Undo" in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
+    """task-31270: the set-dismiss receipt clipped to `… Un` (live cap_83)."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._review_dismiss_receipt_name = lambda: "2 selected items"
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-review-dismiss-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "✓ dismissed · 2 selected items" in painted, painted
+        assert "Undo" in painted, painted
+        assert "Dismiss" in painted, painted

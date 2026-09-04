@@ -3333,6 +3333,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: 100%;
 }
 
+/* task-31270 (critique #4 P1): the delete / dismiss receipts are two rows
+   (copy, then Undo · Dismiss) at full width. A single content-width
+   Horizontal clipped Undo to "Und" at the Items pane's real width (live
+   2026-09-04) -- the one recovery control was unreadable exactly where it
+   renders. Same multi-row grammar as the toolbars (task-30043). */
+#library-media-canvas .library-media-receipt {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-actions {
+    width: 100%;
+    height: auto;
+}
+
 /* task-30043 (critique 2026-09-03 P1) supersedes task-28025's 1fr squeeze:
    sharing the row width chopped every label to fragments (``t so E Tr R
    Se``) and collapsed disabled bulk actions to bare "○" markers at the

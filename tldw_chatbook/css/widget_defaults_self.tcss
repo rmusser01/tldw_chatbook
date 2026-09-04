@@ -2344,6 +2344,11 @@
      * rendered at any width). Share the row instead. */
 
 
+    /* task-31270: receipts are two rows, full width; the copy wraps and the
+     * action row keeps content-width buttons so Undo/Dismiss always paint. */
+
+
+
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
