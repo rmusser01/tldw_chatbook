@@ -216,7 +216,7 @@ def _ensure_launch_runtime(app: Any) -> Any:
         store_factory=lambda: store,
         provider_gateway_factory=lambda: gateway,
         skills_service=getattr(app, "skills_scope_service", None),
-        native_tools_enabled_factory=lambda: (lambda: _gate("native_tool_calls")),
+        native_tools_enabled_factory=lambda: lambda: _gate("native_tool_calls"),
     )
     if bridge is None:
         return None
@@ -328,8 +328,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
         if not wake.has_pending(conversation_id):
             continue  # marked, but nothing owed: a delivered-but-unseen badge
         if any(
-            conversation_id
-            in (session.persisted_conversation_id, session.id)
+            conversation_id in (session.persisted_conversation_id, session.id)
             for session in store.sessions()
         ):
             continue  # already open (a re-entrant call); the coordinator has it

@@ -34,6 +34,7 @@ Under test here:
    the coordinator-issued token, and OFF (``[agents] autowake_enabled``)
    silences the wake at both fire points without losing anything.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -298,6 +299,7 @@ def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
 
         def wake(self, conversation_id: str, run_id: str, *, active: bool) -> None:
             if active:
+
                 def dispose() -> None:
                     self.coordinator.dispose()
                     dispose_finished.set()
@@ -312,9 +314,7 @@ def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
     coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace(_buddy_sink=sink))
     sink.coordinator = coordinator
 
-    coordinator.on_fleet_drained(
-        _drain("conversation-1", _survivor("run-reentrant"))
-    )
+    coordinator.on_fleet_drained(_drain("conversation-1", _survivor("run-reentrant")))
 
     assert dispose_finished.wait(1)
     assert callback_thread_blocked == [False]
@@ -466,9 +466,7 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
         _join_fleet_threads()
 
         woke = await _settle(lambda: wake_gateway.payloads)
-        assert woke, (
-            "the survivor settled and NO wake turn ever reached the provider"
-        )
+        assert woke, "the survivor settled and NO wake turn ever reached the provider"
         assert len(wake_gateway.payloads) == 1
 
         # The model payload: the notice is the TRAILING user-role entry,
@@ -483,9 +481,7 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
         # The transcript: NO new USER row; one SYSTEM row, machine-origin,
         # BEFORE the wake's own assistant reply.
         messages = store.messages_for_session(session.id)
-        user_rows_after = [
-            m for m in messages if m.role is ConsoleMessageRole.USER
-        ]
+        user_rows_after = [m for m in messages if m.role is ConsoleMessageRole.USER]
         assert len(user_rows_after) == user_rows_before, (
             "a wake must never write a USER transcript row"
         )
@@ -531,8 +527,8 @@ async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
     Task 3 M10 lesson): the same live coordinator then receives a REAL
     after-turn drain and does fire -- so the no-op was a decision, not a
     dead consumer."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -572,8 +568,8 @@ async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_one_wake_bundles_every_undelivered_completion(tmp_path):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         parent_id, run_a = _terminal_subagent_run(
@@ -607,8 +603,8 @@ async def test_one_wake_bundles_every_undelivered_completion(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_redelivered_drain_cannot_double_deliver(tmp_path):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -629,8 +625,8 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
     """Refusal direction of exactly-once: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry
     delivers, and only THEN does the mark clear."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -679,8 +675,8 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
     the wake turn streams joins the NEXT wake, and the mark -- re-written
     by the attention consumer for that new settle -- survives the FIRST
     wake's delivery commit (clear-only-when-nothing-undelivered)."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         parent_id, run_a = _terminal_subagent_run(
@@ -706,9 +702,7 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
                 # The second survivor settles while wake #1 streams: the
                 # attention consumer would re-write the mark on its thread;
                 # mirror both halves here.
-                marks.set_mark(
-                    session.id, ConversationLocalMarksService.FLEET_UNSEEN
-                )
+                marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
                 wake.on_fleet_drained(
                     _drain(session.id, _survivor(run_b, session_id=session.id))
                 )
@@ -756,8 +750,8 @@ async def test_children_settling_during_a_wake_turn_ride_the_next_wake(tmp_path)
 async def test_a_busy_session_defers_the_wake_until_its_terminal_transition(
     tmp_path,
 ):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -791,8 +785,8 @@ async def test_a_busy_session_defers_the_wake_until_its_terminal_transition(
 async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path):
     """max_parallel_runs applies to a wake exactly as to a manual send
     (spec: a wake turn is a normal turn under every cap)."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -825,15 +819,15 @@ async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_queue_owned_session_defers_the_wake(tmp_path):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         # Instance-attr replacement of the real coordinator's gate: queued
         # work owns the next generation for this session.
-        controller.prompt_queue_coordinator.controls_generation = (
-            lambda sid: sid == session.id
+        controller.prompt_queue_coordinator.controls_generation = lambda sid: (
+            sid == session.id
         )
         wake = controller.fleet_wake
         wake.on_fleet_drained(
@@ -863,8 +857,8 @@ async def test_user_wins_ties_a_composer_draft_defers_the_wake(tmp_path):
     dispatch gap, since the composer clears only on ACCEPTED sends), a due
     wake defers; a RAISING probe defers too (user wins on uncertainty);
     the claim ending plus any retry trigger delivers."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -906,8 +900,8 @@ async def test_user_wins_ties_a_composer_draft_defers_the_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         foreign_conversation = "conv-not-open-anywhere"
@@ -934,8 +928,8 @@ async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path):
 async def test_wake_delivery_is_serialized_one_conversation_at_a_time(tmp_path):
     """Two conversations owed wakes deliver sequentially: while wake #1
     streams, conversation #2 waits; #1 finishing chains #2."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         second = store.create_session(title="Second")
@@ -951,9 +945,7 @@ async def test_wake_delivery_is_serialized_one_conversation_at_a_time(tmp_path):
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_a, session_id=session.id))
         )
-        wake.on_fleet_drained(
-            _drain(second.id, _survivor(run_b, session_id=second.id))
-        )
+        wake.on_fleet_drained(_drain(second.id, _survivor(run_b, session_id=second.id)))
         assert await _settle(lambda: len(gateway.payloads) == 1)
         assert await _quiet(lambda: len(gateway.payloads) > 1, seconds=0.3), (
             "the second conversation's wake must wait for the first"
@@ -974,8 +966,8 @@ async def test_wake_delivery_is_serialized_one_conversation_at_a_time(tmp_path):
 async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path):
     """A woken turn is a normal turn under the caps: while it streams, the
     session refuses a manual send exactly as any in-flight run does."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -1009,8 +1001,8 @@ async def test_one_conversations_failed_delivery_does_not_strand_anothers(
     no terminal run-state transition -- the session sticks at VALIDATING
     -- so nothing else would ever re-attempt the OTHER conversation that
     deferred behind the serialization gate."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         second = store.create_session(title="Second")
@@ -1033,16 +1025,14 @@ async def test_one_conversations_failed_delivery_does_not_strand_anothers(
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_a, session_id=session.id))
         )
-        wake.on_fleet_drained(
-            _drain(second.id, _survivor(run_b, session_id=second.id))
-        )
+        wake.on_fleet_drained(_drain(second.id, _survivor(run_b, session_id=second.id)))
         assert await _settle(lambda: gateway.payloads), (
             "the surviving conversation's wake never fired after the "
             "other's delivery raised"
         )
-        assert any(
-            "beta" in p[-1]["content"] for p in gateway.payloads
-        ), "the delivered wake must be the SECOND conversation's"
+        assert any("beta" in p[-1]["content"] for p in gateway.payloads), (
+            "the delivered wake must be the SECOND conversation's"
+        )
         # The failed conversation keeps its pending bit for a later retry.
         assert wake.has_pending(session.id)
     finally:
@@ -1063,8 +1053,8 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
     and the durable per-run ``wake_delivered_at`` ledger defines what is
     still owed. Within-turn children and survivors an earlier wake
     already stamped stay excluded."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         conversation_id = session.id
@@ -1119,8 +1109,10 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
             "a ledger-stamped survivor was already carried by an earlier wake"
         )
         assert await _settle(
-            lambda: not app.conversation_local_marks_service.has_mark(
-                conversation_id, ConversationLocalMarksService.FLEET_UNSEEN
+            lambda: (
+                not app.conversation_local_marks_service.has_mark(
+                    conversation_id, ConversationLocalMarksService.FLEET_UNSEEN
+                )
             )
         ), "the claimed mark must clear after delivery"
     finally:
@@ -1135,8 +1127,8 @@ async def test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounc
     run some earlier wake already stamped in the durable ledger. Compose
     drops it -- from the notice AND from the registry -- instead of
     announcing the same result twice."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         parent_id, delivered_id = _terminal_subagent_run(
@@ -1179,8 +1171,8 @@ async def test_a_pending_run_the_ledger_shows_delivered_is_dropped_not_reannounc
 async def test_agent_wake_origin_is_unreachable_without_the_coordinator_token(
     tmp_path,
 ):
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         with pytest.raises(PermissionError):
@@ -1223,16 +1215,14 @@ def test_wake_authority_key_is_module_private():
 
 
 @pytest.mark.asyncio
-async def test_autowake_off_records_everything_and_fires_nothing(
-    tmp_path, monkeypatch
-):
+async def test_autowake_off_records_everything_and_fires_nothing(tmp_path, monkeypatch):
     """OFF must not lose completions (the brief's own wording): the mark
     and the pending record still land; the wake simply never fires -- at
     the drain AND at the mount-claim -- and flipping the switch back on
     delivers what was recorded, breaking any wake chain only while OFF."""
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -1394,6 +1384,4 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     healthy = _RecordingLoop()
     wake._loop = healthy
     wake._attempt("conv-1")
-    assert healthy.tasks, (
-        "the pending wake was lost after the failed attempt"
-    )
+    assert healthy.tasks, "the pending wake was lost after the failed attempt"

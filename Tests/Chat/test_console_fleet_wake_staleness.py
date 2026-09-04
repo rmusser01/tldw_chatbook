@@ -52,13 +52,11 @@ async def test_deferred_wake_notice_reports_done_despite_a_pinned_snapshot(
     draft and later delivers. The notice must say ``done`` and carry the
     result -- against unfixed production it says ``running`` with no
     result, exactly the live finding."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
-        parent_id = runs_db.create_run(
-            conversation_id=session.id, agent_kind="primary"
-        )
+        parent_id = runs_db.create_run(conversation_id=session.id, agent_kind="primary")
         runs_db.set_status(parent_id, "done", "turn final")
         child_id = runs_db.create_run(
             conversation_id=session.id,
@@ -145,10 +143,11 @@ async def test_rows_for_never_reports_running_without_a_fresh_read_seam(
     child ``running`` must still yield the settle-recorded terminal word
     -- the registry's status was taken strictly after the terminal write,
     so 'running' is never an honest thing to announce for a pending run."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
+
         class _StaleOnlyRunsDB:
             """get_run serves a stale non-terminal row; no fresh seam."""
 

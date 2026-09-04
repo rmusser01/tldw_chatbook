@@ -186,9 +186,7 @@ def set_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
     return True
 
 
-def fleet_completion_toast_copy(
-    title: str, statuses: list[str]
-) -> tuple[str, str]:
+def fleet_completion_toast_copy(title: str, statuses: list[str]) -> tuple[str, str]:
     """Compose the one coalesced toast for a drain's survivor settles.
 
     Honest by construction: ``error``/``cancelled`` outcomes are named,
