@@ -11233,3 +11233,24 @@ writes in the widget's `prevent(...Changed)` context. A synchronous rendering
 flag alone does not suppress a message delivered later. Prove the boundary with
 a mounted test that applies state, performs one user edit, and asserts exactly one
 semantic generation advance.
+
+## Closing a thread-local database on the fixture thread does not close worker-owned handles
+
+**TASK-31268 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
+reported 237 additional file descriptors. File-level bisection isolated the
+growth to mounted Textual tests; `lsof`, GC inspection, and live connection
+registries then showed one `_QuiescentSQLiteConnection` per app instance. The
+real on-mount FTS backfill opened each handle on a worker thread, while fixture
+teardown invoked `close()` only from the main pytest thread. That closed the
+main thread-local handle but could not reach the worker thread's handle. Two
+mounted cases retained 2 SQLite/9 regular descriptors after teardown even
+after GC. Draining the database's process-local quiescence registry reduced
+that to 0 SQLite/3 regular descriptors, and repeated mounts stopped growing
+linearly.
+
+**What to do.** When a database owns thread-local connections and tests run
+real worker-backed startup work, teardown must use the database's all-handle
+quiescence/registry boundary rather than a single-thread `close()`. Diagnose a
+session FD warning by splitting test files, classifying descriptors with
+`lsof`, and inspecting live owners after finalizers; GC or a higher threshold
+cannot establish ownership or fix a registered worker handle.

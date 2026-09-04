@@ -5,6 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
+updated_date: '2026-09-04 10:21'
 labels:
   - vllm
   - lab
@@ -35,6 +36,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Add production-stylesheet compositor coverage for the exact 8-state × 3-size matrix below, including every visible focusable's containment in its owning pane and complete state-specific Tab walks.
 2. Remove provider-child bracket/digit bindings and derive `vllm-wide`, `vllm-medium`, or `vllm-compact` from the mounted vLLM body width.
 3. Re-compose setup groups at medium/compact widths, collapse the catalog through the existing Lab rail store at compact width, preserve the reopen control, and keep readiness plus the next action in the first viewport with a conditional fold cue.
@@ -62,8 +64,19 @@ ADR path: `backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md`
 
 Reason: TASK-31268 directly implements ADR-117's already accepted responsive composition, keyboard ownership, focus, and live-evidence contract; it introduces no new runtime, persistence, security, or cross-module boundary.
 
+Task 6 Fix Round 2:
+1. Reproduce the primary-suite FD-growth warning, bisect/group the owning test files, and inventory descriptor types/owners before changing code.
+2. Fix a branch-owned production leak if the evidence identifies one; otherwise add only evidence-backed harness cleanup at the smallest test owner.
+3. Re-run the qualified primary matrix with the FD gate below its hard threshold, then record the measurements and exact owner evidence before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is verification-resource hygiene within ADR-117's existing test/evidence contract, not a runtime architecture change.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented a measured, production-stylesheet vLLM compositor with three body-width
 classes, stable semantic focus styling, lifecycle-specific top actions, compact
 stacking, a painted fold cue, persisted rail collapse/reopen behavior, and literal
@@ -205,10 +218,11 @@ privacy canaries. It also reconciles the feature-owned Console handoff assertion
 with the current upstream structured readiness summary. Exact RED/GREEN and final
 matrix evidence is recorded in the Task 6 report.
 
-No lesson entry was added: this task produced no new generalizable incident beyond
-the production-CSS/layout evidence rules already recorded in
-`backlog/docs/lessons-testing-evidence.md` and the isolated-state rules in
-`backlog/docs/lessons-live-verification.md`.
+The original responsive work produced no new lesson beyond the existing
+production-CSS/layout and isolated-state rules. Task 6 Fix Round 2 did expose a
+generalizable worker-thread database teardown trap; its measured incident and
+registry-drain rule are now recorded in
+`backlog/docs/lessons-testing-evidence.md`.
 
 ## Renumbering provenance
 
@@ -220,3 +234,25 @@ moved to collision-free TASK-31268 as the last member of a monotonic vLLM task
 block, carrying every dependency and documentation
 reference with it. The vLLM record was originally added by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`.
+
+Task 6 Fix Round 2 scientifically isolated the primary FD warning. The original
+220-test primary ended at 249 descriptors from 12 (`+237`, limit 200). Core
+setup/connection/profile tests grew only `12 -> 16`; the UI
+workflow/geometry group grew `12 -> 351`, workflow alone `12 -> 115`, and a
+representative geometry factory group `12 -> 18`. Live `lsof` plus GC owner
+inspection found one non-accumulating KQUEUE/event-loop socket pair, but one
+worker-thread `_QuiescentSQLiteConnection` per test-created app/profile. The
+test factory let the real on-mount FTS backfill create that connection while
+fixture teardown closed only the main thread's handle. This is harness
+ownership: production creates one long-lived app/profile rather than dozens.
+
+The smallest cleanup extends the existing config-singleton teardown to enter
+`ChaChaNotesDB.quiesce_connections`, which drains and closes every registered
+same-file worker handle; simpler DB doubles retain their old `close` fallback.
+Two mounted cases went from 2 live SQLite/9 regular descriptors after final
+teardown to 0 SQLite/3 regular descriptors. Four repeated geometry mounts held
+stable at `12 -> 15` total rather than linear growth. The final qualified
+primary with `TLDW_TEST_FD_GROWTH_LIMIT=200` passed `273` tests in `263.28s`
+with no FD warning. No production lifecycle change or new ADR was warranted;
+ADR-117 already owns the test/evidence contract.
+<!-- SECTION:NOTES:END -->

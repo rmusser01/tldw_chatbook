@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 00:30'
+updated_date: '2026-09-04 10:21'
 labels:
   - vllm
   - lab
@@ -43,6 +43,15 @@ Reason: This task directly implements the accepted runtime and UX boundaries.
 3. Replace the inline pane with VllmSetupView and add mounted workflow tests.
 4. Run the specified focused GREEN suites and incumbent deferred-view checks.
 5. Check acceptance criteria, record evidence and no-ADR rationale, mark the task Done, and commit Task 1 files.
+
+Task 6 Fix Round 2:
+6. Add RED boundary tests covering canonical underscore/equals/abbreviated long options, credential/config options, every structured managed option, negative boolean aliases, and malformed direct `VllmLaunchDraft` construction.
+7. Canonicalize and reject conflicting raw options at the command-construction boundary, then enforce exact enum/type/range validation for every draft field without weakening the existing public CLI contract.
+8. Run each focused RED/GREEN node sequentially, then the complete vLLM setup/core matrix and static/diff gates; append exact evidence before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This review round enforces ADR-117's existing launch-input and privacy boundary without changing ownership or architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -68,6 +77,21 @@ collapsed Advanced assertion went RED then GREEN (`1 passed`); the deterministic
 socket double went RED on `('::1', 8000)` then the setup/URL nodes went GREEN
 (`3 passed`). A macOS real-bind comparison with an IPv4 listener held open observed
 the same result from a direct `::` bind and `is_port_available("::", port)`.
+
+Task 6 Fix Round 2 closes the runtime's direct-caller boundary. Raw long
+options are normalized across underscore/hyphen and `--name=value` spellings,
+then fail closed for config/credential flags, every structured launch owner,
+the negative trust alias, and protected abbreviations. Command construction
+repeats this check, so forged successful preflight state cannot place a
+credential or config path in argv. Preflight and command construction also
+require exact mode/source enums, exact string/bool/integer/float types, a
+finite bounded GPU fraction, supported dtype, and the existing field ranges;
+bool-as-int and malformed non-UI drafts settle without invoking probes,
+resolvers, or sockets. Raw-boundary RED was `24 failed, 6 passed, 29
+deselected`; GREEN was `30 passed, 29 deselected`, plus `3 passed, 79
+deselected` for the final builder canaries. Structured-validation RED was `21
+failed, 59 deselected`; GREEN was `28 passed, 52 deselected`. No new ADR:
+ADR-117 already owns the launch-input boundary.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

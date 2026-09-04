@@ -6,11 +6,13 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
 import portalocker
 import pytest
+from loguru import logger
 
 from tldw_chatbook.UI.LLM_Management import vllm_profiles as profile_storage
 from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
@@ -25,6 +27,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
     default_vllm_profile_path,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_setup import VllmModelSource
+from tldw_chatbook.Utils import atomic_file_ops
 
 PROFILE_KEYS = {
     "profile_id",
@@ -97,6 +100,32 @@ def test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields(
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+def test_profile_atomic_write_success_log_excludes_path_and_profile_values(
+    tmp_path: Path,
+) -> None:
+    path_canary = tmp_path / "PRIVATE_PROFILE_PATH" / "profiles.json"
+    model_canary = "PrivateOrg/PRIVATE_MODEL_VALUE"
+    environment_canary = str(tmp_path / "PRIVATE_ENVIRONMENT_PATH" / "bin/python")
+    captured = StringIO()
+    sink = logger.add(captured, format="{message}")
+    try:
+        VllmProfileRepository(path_canary).save(
+            profile_named(
+                "Privacy canary",
+                model_value=model_canary,
+                python_environment=environment_canary,
+            ),
+            expected_revision=0,
+        )
+    finally:
+        logger.remove(sink)
+
+    rendered = captured.getvalue()
+    assert "atomic_write_succeeded" in rendered
+    for forbidden in (str(path_canary), model_canary, environment_canary):
+        assert forbidden not in rendered
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -167,6 +196,73 @@ def test_load_rejects_unknown_document_or_profile_keys(tmp_path: Path):
         path.chmod(0o600)
         with pytest.raises(VllmProfileCorrupt):
             VllmProfileRepository(path).load()
+
+
+def test_oversized_profile_document_is_bounded_and_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.json"
+    original = b"{" + b" " * (2 * 1024 * 1024)
+    path.write_bytes(original)
+    path.chmod(0o600)
+
+    def unexpected_parse(*args: object, **kwargs: object) -> object:
+        pytest.fail("oversized profile document reached JSON parsing")
+
+    monkeypatch.setattr(profile_storage.json, "loads", unexpected_parse)
+
+    with pytest.raises(VllmProfileCorrupt):
+        VllmProfileRepository(path).save(
+            profile_named("No overwrite"),
+            expected_revision=0,
+        )
+
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        (
+            b'{"version":1,"version":1,"revision":0,'
+            b'"selected_profile_id":"00000000-0000-4000-8000-000000000001",'
+            b'"profiles":[]}'
+        ),
+        (
+            b'{"version":1,"revision":0,'
+            b'"selected_profile_id":"00000000-0000-4000-8000-000000000001",'
+            b'"profiles":[{"profile_id":"00000000-0000-4000-8000-000000000001",'
+            b'"name":"First","name":"Second"}]}'
+        ),
+        (
+            b'{"version":1,"revision":0,'
+            b'"selected_profile_id":"00000000-0000-4000-8000-000000000001",'
+            b'"profiles":[],"extension":{"credential":"one","credential":"two"}}'
+        ),
+    ],
+    ids=("duplicate-version", "duplicate-profile-field", "duplicate-nested-field"),
+)
+def test_duplicate_json_keys_are_rejected_before_schema_decode_at_every_level(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    original: bytes,
+) -> None:
+    path = tmp_path / "profiles.json"
+    path.write_bytes(original)
+    path.chmod(0o600)
+
+    def unexpected_decode(value: object) -> object:
+        pytest.fail("duplicate-key JSON reached schema decoding")
+
+    monkeypatch.setattr(profile_storage, "_decode_document", unexpected_decode)
+    with pytest.raises(VllmProfileCorrupt):
+        VllmProfileRepository(path).save(
+            profile_named("No overwrite"),
+            expected_revision=0,
+        )
+
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize(
@@ -806,6 +902,51 @@ def test_atomic_write_failure_preserves_old_bytes(monkeypatch, tmp_path: Path):
         )
 
     assert path.read_bytes() == original
+
+
+def test_profile_atomic_write_failure_log_excludes_path_exception_and_values(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "PRIVATE_PROFILE_PATH" / "profiles.json"
+    repo = VllmProfileRepository(path)
+    saved = repo.save(
+        profile_named("Existing", model_value="PrivateOrg/PRIVATE_MODEL_VALUE"),
+        expected_revision=0,
+    )
+    original = path.read_bytes()
+    exception_canary = (
+        "PRIVATE_RAW_EXCEPTION --api-key=PRIVATE_CREDENTIAL "
+        "https://private.example.invalid PrivateOrg/PRIVATE_MODEL_VALUE"
+    )
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError(exception_canary)
+
+    monkeypatch.setattr(atomic_file_ops.os, "replace", fail_replace)
+    captured = StringIO()
+    sink = logger.add(captured, format="{message}")
+    try:
+        with pytest.raises(OSError, match="PRIVATE_RAW_EXCEPTION"):
+            repo.save(
+                replace(saved.profile, port=8001),
+                expected_revision=saved.document.revision,
+            )
+    finally:
+        logger.remove(sink)
+
+    assert path.read_bytes() == original
+    rendered = captured.getvalue()
+    assert "atomic_write_failed: OSError" in rendered
+    for forbidden in (
+        str(path),
+        "PRIVATE_RAW_EXCEPTION",
+        "PRIVATE_CREDENTIAL",
+        "--api-key",
+        "https://private.example.invalid",
+        "PrivateOrg/PRIVATE_MODEL_VALUE",
+    ):
+        assert forbidden not in rendered
 
 
 def test_selected_profile_restores_and_delete_last_recreates_default(tmp_path: Path):

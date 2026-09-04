@@ -409,7 +409,6 @@ async def stop_server_process(
         else:
             app.notify(f"{label} is not running.", severity="warning")
         return False
-    pid = getattr(process, "pid", "unknown")
     if process_is_running(process):
         stopped = await asyncio.to_thread(terminate_process_bounded, process)
     else:
@@ -422,7 +421,7 @@ async def stop_server_process(
         app.notify(f"{label} stopped.", severity="information")
     elif not stopped:
         app.notify(
-            f"{label} process {pid} did not stop; retry Stop.",
+            f"{label} did not stop; retry Stop.",
             severity="error",
         )
     sync_current_llm_destination(app, provider)

@@ -202,6 +202,7 @@ def atomic_write_json(
     encoding: str = "utf-8",
     mode: int = 0o644,
     indent: Optional[int] = 2,
+    privacy_safe_log: bool = False,
 ) -> None:
     """
     Write JSON data to a file atomically.
@@ -212,6 +213,7 @@ def atomic_write_json(
         encoding: Text encoding (default: utf-8)
         mode: File permissions (default: 0o644)
         indent: JSON indentation level (default: 2)
+        privacy_safe_log: Emit only stable outcome and exception-class categories.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -223,7 +225,13 @@ def atomic_write_json(
     content = json.dumps(data, indent=indent, ensure_ascii=False)
 
     # Write atomically
-    atomic_write_text(file_path, content, encoding=encoding, mode=mode)
+    atomic_write_text(
+        file_path,
+        content,
+        encoding=encoding,
+        mode=mode,
+        privacy_safe_log=privacy_safe_log,
+    )
 
 
 def atomic_copy(

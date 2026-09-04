@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 05:23'
+updated_date: '2026-09-04 10:21'
 labels:
   - vllm
   - lab
@@ -57,9 +57,14 @@ Fix Round 4:
 14. Normalize ownership-probe failures outside the active exception handler without changing UID validation, descriptor checks, symlink defenses, locking, or CAS behavior.
 15. Run isolated GREEN, the focused Task 4 suites, whole vLLM workflow, and exact static gates; append evidence, restore Done, and commit the narrow fix.
 
+Task 6 Fix Round 2:
+16. Add sequential RED tests for byte-capped profile reads, duplicate keys at every JSON object level, byte preservation, and real success/failure log-sink privacy canaries.
+17. Route profile writes through a privacy-safe atomic wrapper that preserves lock/CAS/no-follow/inode guarantees, and reject oversized or duplicate-key documents before schema construction.
+18. Run focused GREEN, the complete profile/core matrix, and exact static/diff/privacy gates; append evidence before restoring Done.
+
 ADR required: no new ADR
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
-Reason: ADR-117 remains the accepted device-local profile/CAS boundary; this round fixes exception normalization without changing the architecture.
+Reason: ADR-117 remains the accepted device-local profile/CAS boundary; this round enforces bounded strict reads and privacy-safe atomic outcomes without changing the architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -74,6 +79,20 @@ Fix Round 2 makes file ownership validation mandatory: platforms without a valid
 Fix Round 3 moves ownership capability validation ahead of every filesystem access or mutation. Missing, non-callable, raising, and invalid-result effective-UID hooks now become cause-free generic VllmProfileCorrupt errors; no raw exception or sensitive payload reaches callers. One validated UID is reused transaction-locally for document/lock descriptor ownership and both held-lock identity guards. The 8-case absent/existing-directory matrix proves no document, lock, or data directory is created on failure and a pre-existing directory/sentinel remains unchanged. No ADR/schema/database/UI/lifecycle change. Exact evidence: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
 
 Fix Round 4 corrects the exception-object contract within ADR-117’s fail-closed storage boundary. Ownership-probe exceptions are converted to an invalid sentinel inside the handler, then the generic VllmProfileCorrupt is raised after the handler exits, so callers receive neither `__cause__` nor `__context__` and no sensitive probe payload is reachable. The absent/existing-parent matrix now walks the complete exception graph while retaining its zero-filesystem-mutation assertions. Ownership validation, descriptor checks, symlink and lock-swap protections, CAS, schema, UI, and process lifecycle are unchanged. Exact RED/GREEN and static evidence: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
+
+Task 6 Fix Round 2 caps profile documents at 2 MiB before JSON decoding and
+rejects duplicate JSON keys recursively at every object level. Oversized,
+duplicate-version, duplicate-profile-field, and duplicate-nested documents
+fail closed and mutation attempts preserve their exact bytes. Those four tests
+were RED before the reader guard and GREEN as `4 passed, 61 deselected` (the
+three duplicate mutation canaries also pass after final strengthening). Profile
+commits now opt into the shared atomic writer's privacy-safe log mode; real
+Loguru success/failure sinks prove no path, raw exception, credential, raw
+command, URL, or model value is emitted. The privacy tests were RED as `2
+failed, 59 deselected` and GREEN with the preservation control as `3 passed, 58
+deselected`. Atomic replace, restrictive mode, held-lock identity, no-follow,
+inode revalidation, and CAS ordering are unchanged. No new ADR: ADR-117 already
+owns this exact private profile repository boundary.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

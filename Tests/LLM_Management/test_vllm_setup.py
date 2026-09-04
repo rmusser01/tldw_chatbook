@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import os
-from pathlib import Path
 import subprocess
 import time
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
     llm_management_events_vllm as vllm_events,
 )
+from tldw_chatbook.UI.LLM_Management import vllm_setup
 from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmIssue,
     VllmLaunchDraft,
@@ -23,9 +24,8 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     semantic_fingerprint,
     validate_raw_arguments,
 )
-from tldw_chatbook.UI.LLM_Management import vllm_setup
-from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedSelectDirectory
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedSelectDirectory
 
 
 def local_draft(**changes: object) -> VllmLaunchDraft:
@@ -208,13 +208,77 @@ def test_local_command_uses_public_cli_and_one_served_alias(tmp_path):
         ("--port=9000", "--port"),
         ("--model other", "--model"),
         ("--served-model-name other", "--served-model-name"),
+        ("--dtype=float32", "--dtype"),
+        ("--tensor-parallel-size 2", "--tensor-parallel-size"),
+        ("--max-model-len 4096", "--max-model-len"),
+        ("--gpu-memory-utilization=.5", "--gpu-memory-utilization"),
+        ("--trust-remote-code", "--trust-remote-code"),
+        ("--no-trust-remote-code", "--no-trust-remote-code"),
         ("--api-key secret", "--api-key"),
         ("--hf-token secret", "--hf-token"),
+        ("--config /private/credential-bearing-config.yaml", "--config"),
     ],
 )
 def test_raw_arguments_cannot_override_managed_or_secret_flags(raw, flag):
     errors = validate_raw_arguments(raw)
     assert errors == (VllmIssue("arguments_conflict", "raw_arguments", flag),)
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical_flag"),
+    [
+        ("--served_model_name=other", "--served-model-name"),
+        ("--tensor_parallel_size=2", "--tensor-parallel-size"),
+        ("--max_model_len=4096", "--max-model-len"),
+        ("--gpu_memory_utilization=.5", "--gpu-memory-utilization"),
+        ("--trust_remote_code", "--trust-remote-code"),
+        ("--no_trust_remote_code", "--no-trust-remote-code"),
+        ("--api_key=PRIVATE_CREDENTIAL", "--api-key"),
+        ("--hf_token=PRIVATE_CREDENTIAL", "--hf-token"),
+        ("--served=other", "--served"),
+        ("--tensor=2", "--tensor"),
+        ("--max-model=4096", "--max-model"),
+        ("--gpu=.5", "--gpu"),
+        ("--no-trust", "--no-trust"),
+        ("--api=PRIVATE_CREDENTIAL", "--api"),
+        ("--hf=PRIVATE_CREDENTIAL", "--hf"),
+        ("--conf=/private/credential-bearing-config.yaml", "--conf"),
+    ],
+)
+def test_raw_arguments_reject_canonical_equivalents_and_abbreviations(
+    raw: str,
+    canonical_flag: str,
+) -> None:
+    assert validate_raw_arguments(raw) == (
+        VllmIssue("arguments_conflict", "raw_arguments", canonical_flag),
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_arguments", "private_value"),
+    [
+        ("--api_key=PRIVATE_API_CREDENTIAL", "PRIVATE_API_CREDENTIAL"),
+        ("--hf_token=PRIVATE_HF_CREDENTIAL", "PRIVATE_HF_CREDENTIAL"),
+        (
+            "--conf=/private/PRIVATE_CREDENTIAL_CONFIG.yaml",
+            "/private/PRIVATE_CREDENTIAL_CONFIG.yaml",
+        ),
+    ],
+)
+def test_command_builder_revalidates_raw_argument_boundary(
+    tmp_path: Path,
+    raw_arguments: str,
+    private_value: str,
+) -> None:
+    safe = local_draft()
+    successful = passing_preflight(safe, cli_path=tmp_path / "vllm")
+    bypass = local_draft(raw_arguments=raw_arguments)
+    forged = replace(successful, fingerprint=semantic_fingerprint(bypass), issues=())
+
+    with pytest.raises(ValueError, match="raw arguments conflict"):
+        build_vllm_command(bypass, forged)
+
+    assert private_value not in str(forged)
 
 
 @pytest.mark.parametrize("model", ["org/model", "meta-llama/Llama-3.1-8B-Instruct"])
@@ -308,6 +372,111 @@ def test_defaults_are_real_and_safe_values():
 def test_preflight_rejects_out_of_bounds_structured_values(change, tmp_path):
     result = passing_preflight(local_draft(**change), cli_path=tmp_path / "vllm")
     assert result.issues
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_issue"),
+    [
+        ({"mode": "local"}, VllmIssue("invalid_mode", "mode")),
+        (
+            {"python_environment": False},
+            VllmIssue("invalid_python_environment", "python_environment"),
+        ),
+        (
+            {"model_source": "hugging_face"},
+            VllmIssue("invalid_model_source", "model_source"),
+        ),
+        ({"model_value": False}, VllmIssue("invalid_model_value", "model_value")),
+        (
+            {"bind_address": ["127.0.0.1"]},
+            VllmIssue("invalid_bind_address", "bind_address"),
+        ),
+        ({"port": True}, VllmIssue("invalid_port", "port")),
+        (
+            {"existing_server_url": False},
+            VllmIssue("invalid_existing_server_url", "existing_server_url"),
+        ),
+        ({"dtype": "float64"}, VllmIssue("invalid_dtype", "dtype")),
+        ({"dtype": 1}, VllmIssue("invalid_dtype", "dtype")),
+        (
+            {"tensor_parallel_size": True},
+            VllmIssue("invalid_tensor_parallel_size", "tensor_parallel_size"),
+        ),
+        (
+            {"maximum_model_length": True},
+            VllmIssue("invalid_maximum_model_length", "maximum_model_length"),
+        ),
+        (
+            {"gpu_memory_utilization": 1},
+            VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization"),
+        ),
+        (
+            {"gpu_memory_utilization": float("nan")},
+            VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization"),
+        ),
+        (
+            {"gpu_memory_utilization": float("inf")},
+            VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization"),
+        ),
+        (
+            {"trust_remote_code": 1},
+            VllmIssue("invalid_trust_remote_code", "trust_remote_code"),
+        ),
+        (
+            {"raw_arguments": ["--enable-prefix-caching"]},
+            VllmIssue("invalid_arguments", "raw_arguments"),
+        ),
+    ],
+)
+def test_preflight_rejects_malformed_direct_draft_fields_without_using_them(
+    change: dict[str, object],
+    expected_issue: VllmIssue,
+) -> None:
+    draft = local_draft(**change)
+
+    result = run_vllm_preflight(
+        draft,
+        4,
+        run=lambda *_args, **_kwargs: pytest.fail("probe used malformed draft"),
+        which=lambda _name: pytest.fail("resolver used malformed draft"),
+        port_available=lambda _host, _port: pytest.fail("socket used malformed draft"),
+    )
+
+    assert expected_issue in result.issues
+
+
+def test_existing_server_mode_still_validates_every_structured_field() -> None:
+    draft = local_draft(
+        mode=VllmMode.EXISTING,
+        existing_server_url="http://127.0.0.1:8000/v1",
+        trust_remote_code=1,
+    )
+
+    result = run_vllm_preflight(draft, 4)
+
+    assert VllmIssue("invalid_trust_remote_code", "trust_remote_code") in result.issues
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"dtype": "float64"},
+        {"port": True},
+        {"gpu_memory_utilization": 1},
+        {"trust_remote_code": 1},
+    ],
+)
+def test_command_builder_revalidates_structured_draft_boundary(
+    change: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    safe = local_draft()
+    successful = passing_preflight(safe, cli_path=tmp_path / "vllm")
+    malformed = local_draft(**change)
+    forged = replace(successful, fingerprint=successful.fingerprint, issues=())
+
+    with pytest.raises(ValueError, match="valid structured launch draft"):
+        build_vllm_command(malformed, forged)
 
 
 def test_semantic_fingerprint_changes_for_every_launch_field_except_profile_name():

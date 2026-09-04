@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import math
 import os
 import re
 import select
@@ -28,12 +29,27 @@ _HF_REPOSITORY = re.compile(
 )
 _WINDOWS_DRIVE_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _MANAGED_OR_SECRET_FLAGS = frozenset(
-    {"--host", "--port", "--model", "--served-model-name", "--api-key", "--hf-token"}
+    {
+        "--api-key",
+        "--config",
+        "--dtype",
+        "--gpu-memory-utilization",
+        "--hf-token",
+        "--host",
+        "--max-model-len",
+        "--model",
+        "--no-trust-remote-code",
+        "--port",
+        "--served-model-name",
+        "--tensor-parallel-size",
+        "--trust-remote-code",
+    }
 )
 _MAX_PROBE_OUTPUT_BYTES = 256
 _PROBE_TIMEOUT_SECONDS = 5.0
 _PROBE_REAP_TIMEOUT_SECONDS = 0.25
 _VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
+_DTYPE_VALUES = frozenset({"", "auto", "half", "float16", "bfloat16", "float32"})
 
 
 class VllmMode(StrEnum):
@@ -222,6 +238,8 @@ def semantic_fingerprint(draft: VllmLaunchDraft) -> str:
 def validate_raw_arguments(raw_arguments: str) -> tuple[VllmIssue, ...]:
     """Reject malformed shell syntax and managed or credential-bearing flags."""
 
+    if type(raw_arguments) is not str:
+        return (VllmIssue("invalid_arguments", "raw_arguments"),)
     if not raw_arguments.strip():
         return ()
     try:
@@ -229,10 +247,64 @@ def validate_raw_arguments(raw_arguments: str) -> tuple[VllmIssue, ...]:
     except ValueError:
         return (VllmIssue("invalid_arguments", "raw_arguments"),)
     for argument in arguments:
-        flag = argument.split("=", 1)[0]
+        flag = argument.split("=", 1)[0].replace("_", "-")
         if flag in _MANAGED_OR_SECRET_FLAGS:
             return (VllmIssue("arguments_conflict", "raw_arguments", flag),)
+        if flag.startswith("--") and any(
+            protected.startswith(flag) for protected in _MANAGED_OR_SECRET_FLAGS
+        ):
+            return (VllmIssue("arguments_conflict", "raw_arguments", flag),)
     return ()
+
+
+def _validate_draft_structure(draft: VllmLaunchDraft) -> tuple[VllmIssue, ...]:
+    """Validate every launch field before any value reaches an owning subsystem."""
+
+    issues: list[VllmIssue] = []
+    if type(draft.mode) is not VllmMode:
+        issues.append(VllmIssue("invalid_mode", "mode"))
+    if type(draft.python_environment) is not str:
+        issues.append(VllmIssue("invalid_python_environment", "python_environment"))
+    if type(draft.model_source) is not VllmModelSource:
+        issues.append(VllmIssue("invalid_model_source", "model_source"))
+    if type(draft.model_value) is not str:
+        issues.append(VllmIssue("invalid_model_value", "model_value"))
+    if type(draft.bind_address) is not str:
+        issues.append(VllmIssue("invalid_bind_address", "bind_address"))
+    if type(draft.port) is not int or not 1 <= draft.port <= 65535:
+        issues.append(VllmIssue("invalid_port", "port"))
+    if type(draft.existing_server_url) is not str:
+        issues.append(VllmIssue("invalid_existing_server_url", "existing_server_url"))
+    if type(draft.dtype) is not str or draft.dtype not in _DTYPE_VALUES:
+        issues.append(VllmIssue("invalid_dtype", "dtype"))
+    if draft.tensor_parallel_size is not None and (
+        type(draft.tensor_parallel_size) is not int or draft.tensor_parallel_size < 1
+    ):
+        issues.append(VllmIssue("invalid_tensor_parallel_size", "tensor_parallel_size"))
+    if draft.maximum_model_length is not None and (
+        type(draft.maximum_model_length) is not int or draft.maximum_model_length < 1
+    ):
+        issues.append(VllmIssue("invalid_maximum_model_length", "maximum_model_length"))
+    if draft.gpu_memory_utilization is not None and (
+        type(draft.gpu_memory_utilization) is not float
+        or not math.isfinite(draft.gpu_memory_utilization)
+        or not 0 < draft.gpu_memory_utilization <= 1
+    ):
+        issues.append(
+            VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization")
+        )
+    if type(draft.trust_remote_code) is not bool:
+        issues.append(VllmIssue("invalid_trust_remote_code", "trust_remote_code"))
+    if type(draft.raw_arguments) is not str:
+        issues.append(VllmIssue("invalid_arguments", "raw_arguments"))
+    return tuple(issues)
+
+
+def _invalid_draft_fingerprint(issues: tuple[VllmIssue, ...]) -> str:
+    """Return non-sensitive failed-input identity without inspecting invalid values."""
+
+    fields = tuple((issue.code, issue.field) for issue in issues)
+    return hashlib.sha256(repr(fields).encode("utf-8")).hexdigest()
 
 
 def client_api_url(bind_address: str, port: int) -> str:
@@ -450,6 +522,14 @@ def run_vllm_preflight(
     health and model readiness belong to the later connection owner.
     """
 
+    structural_issues = _validate_draft_structure(draft)
+    if structural_issues:
+        return VllmPreflightResult(
+            generation,
+            _invalid_draft_fingerprint(structural_issues),
+            structural_issues,
+        )
+
     issues: list[VllmIssue] = []
     fingerprint = semantic_fingerprint(draft)
     if draft.mode is VllmMode.EXISTING:
@@ -461,9 +541,7 @@ def run_vllm_preflight(
     bind_issue = _validate_bind_address(draft.bind_address)
     if bind_issue is not None:
         issues.append(bind_issue)
-    if not isinstance(draft.port, int) or isinstance(draft.port, bool) or not 1 <= draft.port <= 65535:
-        issues.append(VllmIssue("invalid_port", "port"))
-    elif bind_issue is None and not port_available(draft.bind_address, draft.port):
+    if bind_issue is None and not port_available(draft.bind_address, draft.port):
         issues.append(VllmIssue("port_unavailable", "port"))
     if draft.model_source is VllmModelSource.HUGGING_FACE:
         if not is_valid_hugging_face_repository_id(draft.model_value):
@@ -472,24 +550,6 @@ def run_vllm_preflight(
         issue = _validate_local_model_directory(draft.model_value)
         if issue is not None:
             issues.append(issue)
-    if draft.tensor_parallel_size is not None and (
-        not isinstance(draft.tensor_parallel_size, int)
-        or isinstance(draft.tensor_parallel_size, bool)
-        or draft.tensor_parallel_size < 1
-    ):
-        issues.append(VllmIssue("invalid_tensor_parallel_size", "tensor_parallel_size"))
-    if draft.maximum_model_length is not None and (
-        not isinstance(draft.maximum_model_length, int)
-        or isinstance(draft.maximum_model_length, bool)
-        or draft.maximum_model_length < 1
-    ):
-        issues.append(VllmIssue("invalid_maximum_model_length", "maximum_model_length"))
-    if draft.gpu_memory_utilization is not None and (
-        not isinstance(draft.gpu_memory_utilization, (float, int))
-        or isinstance(draft.gpu_memory_utilization, bool)
-        or not 0 < draft.gpu_memory_utilization <= 1
-    ):
-        issues.append(VllmIssue("invalid_gpu_memory_utilization", "gpu_memory_utilization"))
     issues.extend(validate_raw_arguments(draft.raw_arguments))
 
     python_path: Path | None = None
@@ -534,6 +594,8 @@ def build_vllm_command(
 ) -> tuple[str, ...]:
     """Build the public vLLM command after successful current preflight only."""
 
+    if _validate_draft_structure(draft):
+        raise ValueError("build_vllm_command requires valid structured launch draft")
     if preflight.issues or preflight.cli_path is None:
         raise ValueError("build_vllm_command requires successful current preflight")
     if preflight.fingerprint != semantic_fingerprint(draft):
@@ -542,6 +604,8 @@ def build_vllm_command(
         raise ValueError("build_vllm_command requires current generation")
     if draft.mode is not VllmMode.LOCAL:
         raise ValueError("build_vllm_command is only valid for local mode")
+    if validate_raw_arguments(draft.raw_arguments):
+        raise ValueError("raw arguments conflict with managed launch settings")
     command = [
         str(preflight.cli_path),
         "serve",

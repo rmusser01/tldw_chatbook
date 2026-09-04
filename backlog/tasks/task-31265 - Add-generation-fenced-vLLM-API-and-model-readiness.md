@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 02:15'
+updated_date: '2026-09-04 10:21'
 labels:
   - vllm
   - lab
@@ -42,6 +42,15 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already fixes the connection owner, generation fencing, privacy boundary, lifecycle ownership, and rollback behavior.
+
+Task 6 Fix Round 2:
+5. Add a RED regression proving stop-failure global notification copy remains bounded/actionable while excluding the process ID.
+6. Remove process identity from the global notification at the lifecycle projection seam and run the focused lifecycle/privacy GREEN checks.
+7. Run the complete relevant core matrix plus diagnostic-inventory statement review and static/diff gates; append exact evidence before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is a narrow enforcement of ADR-117's existing process-identity privacy rule.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,6 +72,14 @@ canaries now traverse the real profile notifier, app-scoped owner/claim state, a
 server-resource lifecycle logger; after restoring pytest capture following the
 app's deliberate logging reconfiguration, the node passed (`1 passed`) with no
 credential, path, raw-command, URL, or response canary retained or emitted.
+
+Task 6 Fix Round 2 removes process identity from the global stop-failure
+notification while retaining bounded recovery copy: `llama.cpp did not stop;
+retry Stop.` The regression was RED with the previous `process 4242` copy and
+GREEN as `1 passed`. Exact statement review found no new diagnostic owner or
+sink; `check_persistent_diagnostic_inventory.py --diff` therefore remained
+clean without regenerating the inventory. No new ADR: this directly enforces
+ADR-117's existing process-identity privacy boundary.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

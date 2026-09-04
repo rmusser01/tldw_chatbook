@@ -31,6 +31,7 @@ from .vllm_setup import (
 PROFILE_DOCUMENT_VERSION = 1
 MAX_VLLM_PROFILES = 32
 MAX_PROFILE_NAME_CODEPOINTS = 120
+MAX_PROFILE_DOCUMENT_BYTES = 2 * 1024 * 1024
 DEFAULT_PROFILE_NAME = "Default vLLM"
 _DEFAULT_PROFILE_ID = "00000000-0000-4000-8000-000000000001"
 _DOCUMENT_KEYS = frozenset({"version", "revision", "selected_profile_id", "profiles"})
@@ -75,6 +76,21 @@ class VllmProfileFutureVersion(VllmProfileError):
 
 class VllmProfileConflict(VllmProfileError):
     """The compare-and-swap revision no longer matches storage."""
+
+
+class _DuplicateJsonKey(ValueError):
+    """A JSON object repeated a key and cannot be decoded safely."""
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build one JSON object while rejecting duplicates without echoing keys."""
+
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise _DuplicateJsonKey("profile document contains a duplicate key")
+        value[key] = item
+    return value
 
 
 def default_vllm_profile_path() -> Path:
@@ -555,7 +571,15 @@ class VllmProfileRepository:
             raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
         try:
             with os.fdopen(descriptor, "rb") as stream:
-                value = json.loads(stream.read().decode("utf-8"))
+                if os.fstat(stream.fileno()).st_size > MAX_PROFILE_DOCUMENT_BYTES:
+                    raise VllmProfileValidationError("profile document is too large")
+                encoded = stream.read(MAX_PROFILE_DOCUMENT_BYTES + 1)
+                if len(encoded) > MAX_PROFILE_DOCUMENT_BYTES:
+                    raise VllmProfileValidationError("profile document is too large")
+                value = json.loads(
+                    encoded.decode("utf-8"),
+                    object_pairs_hook=_reject_duplicate_json_keys,
+                )
             return _decode_document(value), True
         except VllmProfileFutureVersion:
             raise
@@ -563,6 +587,7 @@ class VllmProfileRepository:
             OSError,
             UnicodeError,
             json.JSONDecodeError,
+            _DuplicateJsonKey,
             VllmProfileValidationError,
         ) as error:
             raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
@@ -655,7 +680,13 @@ class VllmProfileRepository:
         _decode_document(payload)
         _reject_symlink_leaf(self.path)
         verify_held_lock()
-        atomic_write_json(self.path, payload, mode=0o600, indent=2)
+        atomic_write_json(
+            self.path,
+            payload,
+            mode=0o600,
+            indent=2,
+            privacy_safe_log=True,
+        )
         return VllmProfileMutation(validated_profile, document)
 
     def save(
