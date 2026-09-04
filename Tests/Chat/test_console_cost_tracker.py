@@ -12,7 +12,6 @@ from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRow,
     ConsoleCostRowTotals,
     ConsoleCostSnapshot,
-    PayloadFingerprint,
     build_cost_rows,
     build_cost_rows_totals,
     build_cost_snapshot,
@@ -188,7 +187,25 @@ def test_state_no_pricing_shows_tokens():
         projected_delta_usd=None, ttl_remaining_s=None, pricing_as_of=None,
     )
     assert state.label == "12.3k tok"
+    assert "Spend tokens: 12.3k (price unavailable)" in state.tooltip
     assert "[pricing]" in state.tooltip
+
+
+def test_priced_state_names_spend_separately_from_context_usage():
+    snap = ConsoleCostSnapshot(0.48, 12_345, True, False, 2)
+    state = build_cost_state(
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
+    )
+
+    assert "Spend: $0.48" in state.tooltip
+    assert "Spend tokens: 12.3k" in state.tooltip
+    assert "Total:" not in state.tooltip
+    assert "\nTokens:" not in state.tooltip
 
 
 def test_estimated_entries_marked_in_tooltip_and_label():
@@ -281,7 +298,7 @@ def test_tokens_only_tooltip_narrates_cache_state():
     assert "system prompt changed" in state.tooltip
     assert "[pricing]" in state.tooltip
 
-    tokens_idx = state.tooltip.index("Tokens:")
+    tokens_idx = state.tooltip.index("Spend tokens:")
     cache_idx = state.tooltip.index("system prompt changed")
     pricing_idx = state.tooltip.index("[pricing]")
     assert tokens_idx < cache_idx < pricing_idx

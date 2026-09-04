@@ -178,11 +178,15 @@ async def test_cost_chip_shows_dollar_figure_after_priced_send():
         chip = console.query_one("#console-cost-chip")
         assert chip.display is True
         rendered = str(chip.render())
+        assert "Context" in rendered
         assert "$" in rendered
 
         state = console._last_console_cost_state
         assert state is not None
         assert state.alert is False
+        assert "safe input" in state.tooltip
+        assert "Conversation:" in state.tooltip
+        assert "Open Conversation Inspector" in state.tooltip
 
 
 # --- (b)/(c) editing earlier history alerts a WARM cache, reverting clears --
@@ -522,7 +526,7 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
 
         empty_state = console._build_console_cost_state()
         assert empty_state is not None
-        assert "Tokens: 0" in empty_state.tooltip
+        assert "Spend tokens: 0" in empty_state.tooltip
 
         big_reference = EvidenceReference(
             evidence_id="S1",
@@ -552,9 +556,9 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
         state = console._build_console_cost_state()
 
         assert state is not None
-        assert "Tokens: 0" not in state.tooltip
+        assert "Spend tokens: 0" not in state.tooltip
         assert "includes estimated" in state.tooltip.lower()
-        assert state.label.startswith("~")
+        assert "· ~$" in state.label
 
 
 @pytest.mark.asyncio

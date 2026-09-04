@@ -300,6 +300,12 @@ class ConsoleModelPopover(
             ),
             overrides=initial_draft.context_policy_overrides,
         )
+        self._initial_compaction_mode = (
+            self._context_state.resolved_policy.policy.compaction_mode
+        )
+        self._initial_compaction_override = (
+            initial_draft.context_policy_overrides.compaction_mode
+        )
         self._scope_copy = scope_copy
         self._durability_copy = durability_copy
         self._draft_rebaser = draft_rebaser
@@ -733,11 +739,19 @@ class ConsoleModelPopover(
             settings=replace(self._draft.settings, streaming=self._streaming),
             context_policy_overrides=replace(
                 self._draft.context_policy_overrides,
-                compaction_mode=mode,
+                compaction_mode=self._compaction_override_for(mode),
             ),
         )
         self._draft = remember_model_draft(self._draft)
         return self._draft
+
+    def _compaction_override_for(
+        self, mode: ContextCompactionMode | None
+    ) -> ContextCompactionMode | None:
+        """Keep an untouched effective value sparse instead of freezing it."""
+        if mode == self._initial_compaction_mode:
+            return self._initial_compaction_override
+        return mode
 
     def _rebase_to(
         self,
@@ -1071,11 +1085,13 @@ class ConsoleModelPopover(
             ),
             context_policy_overrides=replace(
                 self._draft.context_policy_overrides,
-                compaction_mode=ContextCompactionMode(
-                    str(
-                        self.query_one(
-                            "#console-popover-compaction-mode", Select
-                        ).value
+                compaction_mode=self._compaction_override_for(
+                    ContextCompactionMode(
+                        str(
+                            self.query_one(
+                                "#console-popover-compaction-mode", Select
+                            ).value
+                        )
                     )
                 ),
             ),

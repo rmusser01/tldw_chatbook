@@ -494,6 +494,7 @@ from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    build_console_context_cost_state,
 )
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
@@ -5091,6 +5092,9 @@ class ChatScreen(BaseAppScreen):
         # when the session's payload has actually changed since the last
         # check, and never while a run is actively streaming.
         self._last_console_cost_state: ConsoleCostState | None = None
+        self._last_console_context_control_state: (
+            ConsoleContextControlState | None
+        ) = None
         self._console_cost_cache_state: ConsoleCacheState = ConsoleCacheState.NONE
         self._console_cost_fp_revisions: dict[str, int] = {}
         self._console_cost_break_reasons: dict[str, str | None] = {}
@@ -5189,6 +5193,7 @@ class ChatScreen(BaseAppScreen):
     #: no pass is open. A CLASS attribute default because the hand-built
     #: `ChatScreen.__new__()` test fixtures never run `__init__`.
     _console_derivation_memo: dict[Any, Any] | None = None
+    _last_console_context_control_state: ConsoleContextControlState | None = None
 
     #: Cross-tick memo for the cost chip's per-row token estimates
     #: (task-15451), lazily created by `_console_cost_estimate_cache_or_new`.
@@ -5874,9 +5879,16 @@ class ChatScreen(BaseAppScreen):
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
         settings, readiness = self._active_console_settings_readiness()
+        estimate = self._active_console_settings_context_estimate()
+        try:
+            self._last_console_context_control_state = (
+                self._active_console_context_control_state(estimate=estimate)
+            )
+        except (KeyError, ValueError):
+            self._last_console_context_control_state = None
         return build_console_settings_summary_state(
             settings,
-            self._active_console_settings_context_estimate(),
+            estimate,
             readiness,
         )
 
@@ -10322,7 +10334,7 @@ class ChatScreen(BaseAppScreen):
                     ) / 1_000_000
                     projected_delta_usd = round(estimated_tokens * rate_delta, 6)
 
-            return build_cost_state(
+            cost_state = build_cost_state(
                 snapshot,
                 cache_state=cache_state,
                 break_reason=break_reason,
@@ -10330,6 +10342,10 @@ class ChatScreen(BaseAppScreen):
                 ttl_remaining_s=ttl_remaining_s,
                 pricing_as_of=pricing_as_of,
             )
+            context_state = self._last_console_context_control_state
+            if context_state is not None:
+                return build_console_context_cost_state(context_state, cost_state)
+            return cost_state
         except Exception:
             logger.opt(exception=True).warning("cost_chip_state_failed")
             return self._last_console_cost_state
@@ -16258,8 +16274,8 @@ class ChatScreen(BaseAppScreen):
             # interleaving during the awaits keep building live.
             with self._workspace.tick_workspace_build_scope():
                 rail_state = self._current_console_rail_state()
-                self._sync_console_control_bar(rail_state)
                 self._sync_console_settings_summary()
+                self._sync_console_control_bar(rail_state)
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.

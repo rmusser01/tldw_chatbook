@@ -13,6 +13,7 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
@@ -53,6 +54,7 @@ from tldw_chatbook.Chat.console_settings_defaults import (
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
+from tldw_chatbook.Widgets.Console import console_context_controls
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
 )
@@ -311,6 +313,95 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
         app.result.submission.draft.context_policy_overrides.compaction_mode
         is ContextCompactionMode.AUTOMATIC
     )
+
+
+@pytest.mark.asyncio
+async def test_quick_apply_preserves_inherited_automatic_compaction() -> None:
+    """Opening and applying quick settings must not turn inheritance explicit."""
+    controls = build_console_context_control_state(
+        settings=_settings(),
+        estimate=ConsoleSettingsContextEstimate(
+            used_tokens=42_000,
+            token_limit=100_000,
+            label="42,000 / 100,000 tokens",
+        ),
+        overrides=ConsoleContextPolicyOverrides(),
+        global_overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.AUTOMATIC
+        ),
+        conversation_tokens=32_000,
+        request_overhead_tokens=10_000,
+        safety_margin_tokens=2_000,
+    )
+    app = _ContextHarness()
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            _popover(context_state=controls),
+            callback=app.capture,
+        )
+        select = app.screen.query_one("#console-popover-compaction-mode", Select)
+        assert select.value == ContextCompactionMode.AUTOMATIC.value
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission.draft.context_policy_overrides.compaction_mode is None
+
+
+def test_context_cost_state_reports_safe_input_fullness_and_spend() -> None:
+    cost = ConsoleCostState(
+        label="$0.48 ●",
+        compact_label="$0.48 ●",
+        tooltip="Spend: $0.48\nSpend tokens: 12.3k\nCache: warm",
+        alert=False,
+        cold=False,
+    )
+
+    state = console_context_controls.build_console_context_cost_state(_state(), cost)
+
+    assert state.label == "Context 45% · $0.48 ●"
+    assert state.compact_label == "Ctx 45% · $0.48 ●"
+    assert "Context: ~42,000 / 94,000 safe input (45% full)" in state.tooltip
+    assert "Conversation: ~32,000 / 84,000 budget" in state.tooltip
+    assert "Compaction: asks at 67,200 conversation tokens." in state.tooltip
+    assert "Spend: $0.48" in state.tooltip
+
+
+def test_context_cost_state_handles_unknown_and_over_capacity_context() -> None:
+    cost = ConsoleCostState(
+        label="12.3k tok",
+        compact_label="12.3k tok",
+        tooltip="Spend: 12.3k tokens (price unavailable)",
+        alert=False,
+        cold=False,
+    )
+    unknown_context = build_console_context_control_state(
+        settings=_settings(),
+        estimate=ConsoleSettingsContextEstimate(
+            used_tokens=None,
+            token_limit=None,
+            label="Context unavailable",
+        ),
+    )
+    over_context = build_console_context_control_state(
+        settings=_settings(),
+        estimate=ConsoleSettingsContextEstimate(
+            used_tokens=120_000,
+            token_limit=100_000,
+            label="120,000 / 100,000 tokens",
+        ),
+        safety_margin_tokens=2_000,
+    )
+
+    unknown = console_context_controls.build_console_context_cost_state(
+        unknown_context, cost
+    )
+    over = console_context_controls.build_console_context_cost_state(over_context, cost)
+
+    assert unknown.label == "Context unknown · 12.3k tok"
+    assert unknown.compact_label == "Ctx unknown · 12.3k tok"
+    assert "model context window is unavailable" in unknown.tooltip
+    assert over.label.startswith("Context 100%+")
 
 
 @pytest.mark.parametrize(

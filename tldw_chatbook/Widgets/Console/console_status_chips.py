@@ -327,8 +327,12 @@ class ConsoleCostChip(ConsoleChip):
     """
 
     BINDINGS = [
-        Binding("enter", "open_cost_breakdown", "Open cost breakdown", show=False),
-        Binding("space", "open_cost_breakdown", "Open cost breakdown", show=False),
+        Binding(
+            "enter", "open_cost_breakdown", "Open conversation inspector", show=False
+        ),
+        Binding(
+            "space", "open_cost_breakdown", "Open conversation inspector", show=False
+        ),
     ]
 
     class ConsoleCostChipPressed(Message):
@@ -843,6 +847,7 @@ class ConsoleStatusChips(Horizontal):
             else state.label
         )
         chip.update(label)
+        chip.refresh(layout=True)
         chip.tooltip = Content(state.tooltip)
         chip.display = True
         chip.set_class(state.alert, "console-chip-alert")

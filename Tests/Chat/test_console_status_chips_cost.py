@@ -76,6 +76,13 @@ class _ChipsApp(App):
         self.captured_pressed.append(event)
 
 
+class _ProductionChipsApp(_ChipsApp):
+    """Status-chip harness using the shipped stylesheet and hierarchy."""
+
+    CSS = ""
+    CSS_PATH = str(BUNDLE)
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_is_composed_last():
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
@@ -271,6 +278,34 @@ async def test_sync_cost_state_uses_full_label_when_wide():
         await pilot.pause()
         rendered = str(chip.render())
         assert "~+$0.13" in rendered
+
+
+@pytest.mark.parametrize(
+    ("width", "expected_prefix"),
+    ((80, "Ctx 45%"), (200, "Context 45%")),
+)
+@pytest.mark.asyncio
+async def test_context_cost_label_fits_shipped_status_strip(
+    width: int, expected_prefix: str
+) -> None:
+    app = _ProductionChipsApp(_control_state(), cost_state=_cost_state())
+    async with app.run_test(size=(width, 6)) as pilot:
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chips.sync_cost_state(
+            _cost_state(
+                label="Context 45% · $0.48 ●",
+                compact_label="Ctx 45% · $0.48 ●",
+            )
+        )
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+
+        rendered = str(chip.render())
+        assert rendered.startswith(expected_prefix)
+        assert chip.region.height == 1
+        assert chip.region.y == scroll.content_region.y
+        assert chip.content_region.width >= len(rendered)
 
 
 @pytest.mark.asyncio

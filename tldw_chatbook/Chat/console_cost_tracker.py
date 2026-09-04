@@ -241,8 +241,8 @@ class ConsoleCostState:
         label: Full chip text, e.g. ``"$0.48 ⚠ ~+$0.13"``.
         compact_label: Narrow-strip fallback -- same as ``label`` but never
             carries the projected-delta suffix.
-        tooltip: Multi-line hover text with the total, token count, cache
-            state, and pricing provenance.
+        tooltip: Multi-line hover text with spend, cumulative spend tokens,
+            cache state, and pricing provenance.
         alert: True when the prompt cache is warm and about to break for a
             known reason -- the only condition under which the chip shows
             the alert glyph and projected delta.
@@ -790,7 +790,10 @@ def build_cost_state(
 
         if not snapshot.pricing_known or snapshot.total_usd is None:
             label = f"{_format_tokens(snapshot.total_tokens)} tok"
-            tooltip_lines = [f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
+            tooltip_lines = [
+                f"Spend tokens: {_format_tokens(snapshot.total_tokens)} "
+                "(price unavailable)"
+            ]
             if snapshot.has_estimated_entries:
                 tooltip_lines.append("Includes estimated (unsent) rows.")
             if snapshot.fleet_tokens:
@@ -830,10 +833,13 @@ def build_cost_state(
         else:
             label = compact_label
 
-        total_line = f"Total: {estimate_prefix}${amount_text}"
+        total_line = f"Spend: {estimate_prefix}${amount_text}"
         if snapshot.has_estimated_entries:
             total_line += " (includes estimated rows)"
-        tooltip_lines = [total_line, f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
+        tooltip_lines = [
+            total_line,
+            f"Spend tokens: {_format_tokens(snapshot.total_tokens)}",
+        ]
         if snapshot.fleet_tokens:
             tooltip_lines.append(
                 f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "

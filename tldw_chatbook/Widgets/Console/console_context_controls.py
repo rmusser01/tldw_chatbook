@@ -7,18 +7,20 @@ store/controller while making the quick and full settings surfaces agree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
     ConsoleContextPolicyDefaults,
     ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
     ResolvedConsoleContextPolicy,
     application_context_policy_defaults,
     merge_context_policy,
     resolve_context_policy,
 )
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -152,8 +154,70 @@ def build_console_context_control_state(
     )
 
 
+def build_console_context_cost_state(
+    context: ConsoleContextControlState,
+    cost: ConsoleCostState,
+) -> ConsoleCostState:
+    """Add current-request context fullness to the existing spend chip."""
+    used = context.request_tokens
+    ceiling = context.safe_input_ceiling_tokens
+    if used is None or ceiling is None or ceiling <= 0:
+        fullness = "unknown"
+        context_line = (
+            "Context: model context window is unavailable; choose a model "
+            "with a known window in Settings."
+        )
+    else:
+        raw_percent = used * 100 / ceiling
+        fullness = "100%+" if raw_percent > 100 else f"{round(raw_percent)}%"
+        context_line = (
+            f"Context: ~{format_context_tokens(used)} / "
+            f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
+        )
+
+    conversation = format_context_tokens(context.conversation_tokens)
+    budget = format_context_tokens(context.conversation_budget_tokens)
+    conversation_prefix = "~" if context.conversation_tokens is not None else ""
+    conversation_line = (
+        f"Conversation: {conversation_prefix}{conversation} / {budget} budget"
+    )
+
+    compaction_mode = context.resolved_policy.policy.compaction_mode
+    trigger = context.compaction_trigger_tokens
+    if compaction_mode is ContextCompactionMode.OFF:
+        compaction_line = "Compaction: off."
+    elif trigger is None:
+        compaction_line = f"Compaction: {compaction_mode.value}; trigger unknown."
+    elif compaction_mode is ContextCompactionMode.AUTOMATIC:
+        compaction_line = (
+            "Compaction: automatic at "
+            f"{format_context_tokens(trigger)} conversation tokens."
+        )
+    else:
+        compaction_line = (
+            f"Compaction: asks at {format_context_tokens(trigger)} conversation tokens."
+        )
+
+    tooltip = "\n".join(
+        (
+            context_line,
+            conversation_line,
+            compaction_line,
+            cost.tooltip,
+            "Open Conversation Inspector for Costs, Exchange, and Next Send.",
+        )
+    )
+    return replace(
+        cost,
+        label=f"Context {fullness} · {cost.label}",
+        compact_label=f"Ctx {fullness} · {cost.compact_label}",
+        tooltip=tooltip,
+    )
+
+
 __all__ = [
     "ConsoleContextControlState",
     "build_console_context_control_state",
+    "build_console_context_cost_state",
     "format_context_tokens",
 ]
