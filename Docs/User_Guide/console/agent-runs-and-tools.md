@@ -168,6 +168,12 @@ Region     Which regions? (pick any)
   question you are on, `Tab` moves between questions, `Enter` submits.
 - You can submit with questions left blank; the agent sees them as
   unanswered and decides what to do.
+- You can also just type your answer and send it. While a question card is
+  up, a plain message answers the questions you have not picked an option
+  for (it becomes their **Other…** text) and is not sent to the agent as a
+  new message. Two exceptions: a `/` command runs as usual, and a message
+  with a staged attachment or staged Library evidence is sent as a normal
+  turn, leaving the question up for you to answer on the card.
 - The card never grabs focus from something you are typing. If you need to
   reach it from the keyboard, the inspector's **Review approval** action
   focuses the question card when no approval is pending.
