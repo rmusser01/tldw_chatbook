@@ -90,13 +90,17 @@ dimensions. SVG animation and link elements are not supported.
 
 Plans and worker transactions use two phases. A complete plan is decoded and
 validated as detached assets, CSS, and DOM before one live commit. A complete
-transaction is applied to a detached shadow tree and every bridge request is
-validated before the live tree is swapped or any request is posted. An invalid
-plan therefore leaves no DOM, stylesheet, or asset attachment; an invalid
-transaction leaves the previously committed inert document unchanged. Either
-failure terminates and discards the worker, reports a bounded failure, and marks
-scripts disabled. Committed passive-asset URLs remain owned by and usable in
-that inert renderer document, then are revoked when it exits.
+transaction is applied to a detached shadow tree, every bridge request is
+validated, and an immutable mutation journal is produced before live commit.
+Only then is that journal replayed synchronously against the stable live node
+maps. An invalid plan therefore leaves no DOM, stylesheet, or asset attachment;
+an invalid transaction leaves the previously committed inert document
+unchanged. A valid transaction preserves native control identity, dirty value,
+focus, selection, and queued-event ordering unless its validated patches
+explicitly change or remove that control. Either failure terminates and
+discards the worker, reports a bounded failure, and marks scripts disabled.
+Committed passive-asset URLs remain owned by and usable in that inert renderer
+document, then are revoked when it exits.
 
 ## Browser containment
 

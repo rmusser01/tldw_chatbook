@@ -186,10 +186,13 @@ bounds timer count, uniqueness, identity, and delay. The renderer likewise uses
 two-phase
 validation: plans remain detached until every DOM/CSS/asset record is valid,
 and transactions mutate a detached shadow tree and validate every bridge before
-one live commit. Nested descendants inside a CSS style rule are unsupported and
-rejected before stylesheet adoption. A rejected transaction leaves the inert
-committed DOM, stylesheet, and passive assets unchanged; those asset URLs remain
-document-owned until renderer exit.
+producing an immutable mutation journal. The validated journal is replayed
+synchronously against stable live node maps, so ordinary event transactions do
+not replace controls or lose their mutable native value/focus/selection state.
+Nested descendants inside a CSS style rule are unsupported and rejected before
+stylesheet adoption. A rejected transaction leaves the inert committed DOM,
+stylesheet, and passive assets unchanged; those asset URLs remain document-
+owned until renderer exit.
 
 Passive-image handling is also fail closed at this boundary. The renderer
 accepts at most 64 static PNG/JPEG/GIF/WebP assets, independently parses their

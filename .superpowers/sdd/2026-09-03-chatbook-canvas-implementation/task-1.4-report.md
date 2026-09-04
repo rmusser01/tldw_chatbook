@@ -58,10 +58,14 @@ explicitly recorded as skips.
    Dynamic `import()` reached through QuickJS `eval()` has no configured module
    loader and produced no request.
 8. QuickJS drains each operation through private host-held controls to a
-   prototype-independent JSON transaction. The renderer validates
-   the exact message shape, operation ordering, every patch, every identifier,
-   every tag/namespace/attribute/style/property, and every bridge value before
-   touching native DOM or the shell port.
+   prototype-independent JSON transaction. The renderer validates the exact
+   message shape, operation ordering, every patch, every identifier, every tag/
+   namespace/attribute/style/property, and every bridge value against detached
+   shadow state. It then synchronously replays an immutable mutation journal
+   against stable live node maps before posting any bridge request. Invalid
+   transactions therefore have no live DOM, CSS, asset, or bridge effect, while
+   valid event transactions retain native form state and node identity unless a
+   validated patch explicitly changes or removes the control.
 9. Native events are delegated by the renderer and processed one at a time
    through a bounded queue. Native anchor, reset, and form defaults are always
    suppressed. Because the iframe deliberately lacks `allow-forms`, submit
@@ -414,7 +418,7 @@ Controller-specified focused command (run with loopback/browser permission):
 Final summary after the completed corpus and security-review fixes:
 
 ```text
-96 passed, 3 skipped, 1 warning in 13.93s
+97 passed, 3 skipped, 1 warning in 14.68s
 ```
 
 Skips were the cache-gated pinned-archive regeneration test (already run and
@@ -573,6 +577,80 @@ real-browser harness, adversarial corpus, V1 compatibility document, ADR-115,
 TASK-31226 notes, and this report. No gateway, persistence, tool, confirmation,
 or UI surface was changed.
 
+### Security-review fix round 2 RED/GREEN
+
+From reviewed head `92975b5ae7c9bc28f92ff998971092944fed46da`, the
+whole-tree transaction commit was first covered with a deterministic real-
+Chromium regression. It retains one native input handle while dispatching three
+rapid input/change/submit bursts and checks identity, connection, focus, dirty
+value, selection, FIFO bridge values, and the independent egress observations.
+The exact RED command was:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_zero_egress.py::test_rapid_form_events_preserve_live_control_state_identity_and_fifo_values -q
+```
+
+```text
+1 failed, 1 warning in 1.38s
+```
+
+After the first burst, the held input still had the exact value and selection,
+but `connected`, `current`, and `focused` were all `False` rather than `True`.
+This isolated the failure to live subtree replacement rather than QuickJS form
+state or event-value capture.
+
+The renderer now applies the complete transaction to detached shadow state and
+validates every bridge before creating a shallow-frozen mutation journal. Only
+a wholly valid journal is replayed synchronously against the stable live node
+maps, and bridges are posted after replay. Browser JavaScript runs each commit
+as one task, so event records remain FIFO and cannot interleave between shadow
+validation and replay. No transaction input can cause a live effect before all
+items are known valid.
+
+The exact paired GREEN command kept the invalid-last zero-effects regression in
+the same run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_zero_egress.py::test_rapid_form_events_preserve_live_control_state_identity_and_fifo_values Tests/Canvas/browser/test_canvas_zero_egress.py::test_renderer_rejects_whole_invalid_transaction_without_partial_effects -q
+```
+
+```text
+2 passed, 1 warning in 2.01s
+```
+
+The first complete permissioned Task 1.4 gate used the controller-specified
+command under **Final GREEN** and reported:
+
+```text
+97 passed, 3 skipped, 1 warning in 13.98s
+```
+
+The final post-documentation permissioned repeat of the same command reported
+`97 passed, 3 skipped, 1 warning in 14.68s`. A preceding sandbox-confined
+attempt could not bind its owned loopback listeners or launch Chromium and was
+discarded as environmental, not product, evidence.
+
+Round-2 integrity/static results were:
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check Tests/Canvas/browser/test_canvas_zero_egress.py
+1 file already formatted
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check Tests/Canvas/browser/test_canvas_zero_egress.py
+All checks passed!
+node --check tldw_chatbook/Canvas/static/canvas_renderer.js
+node --check tldw_chatbook/Canvas/static/canvas_runtime_worker.js
+# both exit 0 with no output
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/vendor_canvas_runtime.py --verify
+Canvas runtime assets verified
+git diff --check
+# exit 0 with no output
+```
+
+Files changed in this round are the renderer, runtime manifest, real-browser
+regression, V1 compatibility document, ADR-115, TASK-31226 notes, and this
+report. No gateway, persistence, product bridge effect, tool, confirmation, or
+UI surface was changed.
+
 ## Browser engines
 
 | Engine | Result |
@@ -648,6 +726,10 @@ the worker boundary rather than skip if either engine is installed later.
   module loader or browser request.
 - Verified poisoned runtimes are discarded by terminating the worker rather than
   invoking unsafe cleanup inside a corrupted VM.
+- Verified rapid input/change/submit transactions retain the same connected,
+  current, focused native control and its dirty value/selection while bridge
+  payloads remain FIFO; paired invalid-last coverage still observes zero live
+  DOM, CSS, asset, request, or bridge effects.
 - Revalidated manifest byte counts/SHA-256 after final JavaScript changes and
   ran the offline verifier.
 - Confirmed the diff does not add gateway routes, persistence, agent tools,
@@ -685,9 +767,10 @@ the worker boundary rather than skip if either engine is installed later.
    bounded before object-URL use, and a decode that completes after its timeout
    is immediately closed; JavaScript cannot synchronously cancel the underlying
    browser decode operation.
-10. Atomic transaction commit replaces the renderer-owned subtree with its
-    validated shadow. V1 does not promise stable native node identity, focus,
-    text selection, or scroll anchoring across a committed event transaction;
-    generated code continues to address stable virtual node IDs.
+10. Valid journal replay preserves native nodes and mutable control state unless
+    generated code explicitly removes, reparents, or writes the affected
+    control. V1 does not attempt focus/selection restoration after such an
+    intentional structural or property mutation, and it does not separately
+    guarantee scroll anchoring.
 11. Product integration must remain disabled until the controller's independent
    security review explicitly accepts this release-blocking boundary.

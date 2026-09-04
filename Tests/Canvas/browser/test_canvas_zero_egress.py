@@ -1435,6 +1435,100 @@ def test_renderer_rejects_whole_invalid_transaction_without_partial_effects(
 
 
 @pytest.mark.loopback_network
+def test_rapid_form_events_preserve_live_control_state_identity_and_fifo_values(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    source = """<!doctype html>
+<html><head><meta charset="utf-8"><title>rapid form events</title></head>
+<body>
+  <form id="rapid-form">
+    <label for="answer">Answer</label>
+    <input id="answer" name="answer" value="seed">
+    <button type="submit">Submit</button>
+  </form>
+  <output id="status">idle</output>
+  <script>
+    const answer = document.getElementById('answer');
+    const form = document.getElementById('rapid-form');
+    const status = document.getElementById('status');
+    const trace = [];
+    answer.addEventListener('input', () => trace.push('input:' + answer.value));
+    answer.addEventListener('change', () => trace.push('change:' + answer.value));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      canvas.submit({answer: answer.value, trace: trace.slice(-2)});
+      status.textContent = answer.value;
+    });
+  </script>
+</body></html>"""
+    values = ["alpha-one", "beta-two", "gamma-three"]
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        assert _load(page, _wire_plan(source), recorder)["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        answer = frame.locator("#answer").element_handle()
+        assert answer is not None
+
+        for index, value in enumerate(values, start=1):
+            answer.evaluate(
+                """(node, nextValue) => {
+                  node.focus();
+                  node.value = nextValue;
+                  node.setSelectionRange(nextValue.length, nextValue.length);
+                  node.dispatchEvent(new Event('input', {bubbles: true}));
+                  node.dispatchEvent(new Event('change', {bubbles: true}));
+                  node.form.querySelector('button').click();
+                }""",
+                value,
+            )
+            page.wait_for_function(
+                "expected => window.__canvasHarness.messages.filter((item) => "
+                "item.type === 'canvas:bridge-request' && item.kind === 'submit').length "
+                "=== expected",
+                arg=index,
+                timeout=2_000,
+            )
+            assert answer.evaluate(
+                """(node) => ({
+                  connected: node.isConnected,
+                  current: document.getElementById('answer') === node,
+                  focused: document.activeElement === node,
+                  value: node.value,
+                  selectionStart: node.selectionStart,
+                  selectionEnd: node.selectionEnd,
+                })"""
+            ) == {
+                "connected": True,
+                "current": True,
+                "focused": True,
+                "value": value,
+                "selectionStart": len(value),
+                "selectionEnd": len(value),
+            }
+
+        submitted = page.evaluate(
+            "window.__canvasHarness.messages.filter((item) => "
+            "item.type === 'canvas:bridge-request' && item.kind === 'submit')"
+            ".map((item) => item.value)"
+        )
+        assert submitted == [
+            {
+                "answer": value,
+                "trace": [f"input:{value}", f"change:{value}"],
+            }
+            for value in values
+        ]
+        assert frame.locator("#status").text_content() == values[-1]
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 @pytest.mark.parametrize(
     ("event_kind", "expected_length"),
     [("input", "8192"), ("keydown", "32")],

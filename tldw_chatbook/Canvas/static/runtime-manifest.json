@@ -29,8 +29,8 @@
       "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
     },
     "canvas_renderer.js": {
-      "bytes": 50347,
-      "sha256": "4dca1ff294061c113751996908ade392f28554a7d5641c2f0fdc8724e3aca682"
+      "bytes": 50579,
+      "sha256": "4da4afaafc87561acecfc27768f5f390e1ecdfcb8d3e7cc25889e1d3f7e5b524"
     },
     "canvas_runtime_worker.js": {
       "bytes": 43428,

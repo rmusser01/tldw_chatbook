@@ -87,7 +87,7 @@ were blocked. Firefox and WebKit were not installed and are explicit skips.
 
 Focused verification:
 `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q`
-reported `96 passed, 3 skipped, 1 pre-existing dependency warning in 13.93s`.
+reported `97 passed, 3 skipped, 1 pre-existing dependency warning in 14.68s`.
 Compatibility and exact budgets are documented in
 `Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md`; architecture and qualification
 results are recorded in ADR-115. Detailed RED/GREEN and request evidence is in
@@ -115,3 +115,13 @@ Real-Chromium regressions cover invalid-last plans and transactions, private
 controls, poison-reset and prototype forgeries, nested CSS, foreign startup
 traffic, and UTF-8 event-field caps. Detailed RED/GREEN output remains in the
 Task 1.4 report. Status remains **In Progress** for controller rereview.
+
+Security-review fix round 2 replaces whole-tree transaction swaps with an
+immutable mutation journal. Every patch is still exercised against detached
+shadow state and every bridge is validated before commit; only a wholly valid
+journal is synchronously replayed against the stable live node maps. A real-
+Chromium regression queues three rapid input/change/submit bursts through the
+same native control and proves FIFO bridge values plus stable identity, dirty
+value, focus, and selection. The invalid-last patch/bridge cases still prove
+zero live DOM, CSS, asset, request, or bridge effects. Status remains **In
+Progress** pending controller rereview.

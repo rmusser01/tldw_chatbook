@@ -1018,15 +1018,23 @@ function prepareBridge(bridge) {
 
 function prepareTransaction(patches, bridges) {
   const state = cloneRendererState();
-  for (const patch of patches) applyPatch(patch, state);
-  const preparedBridges = bridges.map(prepareBridge);
-  return {state, bridges: preparedBridges};
+  const journal = [];
+  for (const patch of patches) {
+    applyPatch(patch, state);
+    journal.push(Object.freeze({...patch}));
+  }
+  const preparedBridges = bridges.map((bridge) => Object.freeze(prepareBridge(bridge)));
+  return Object.freeze({
+    journal: Object.freeze(journal),
+    bridges: Object.freeze(preparedBridges),
+  });
 }
 
 function commitTransaction(transaction) {
-  root.replaceChildren(transaction.state.fragment);
-  nativeById = transaction.state.nativeById;
-  idByNative = transaction.state.idByNative;
+  const liveState = {nativeById, idByNative};
+  for (const patch of transaction.journal) applyPatch(patch, liveState);
+  nativeById = liveState.nativeById;
+  idByNative = liveState.idByNative;
   for (const bridge of transaction.bridges) {
     postTrusted({type: "canvas:bridge-request", ...bridge});
   }
