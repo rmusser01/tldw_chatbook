@@ -33,6 +33,11 @@ class TaskResumeState:
     # (also dropped below, as of TASK-1130) goes through the identical
     # architecture and is no longer an asymmetric exception.
     pending_skill_script: dict[str, Any] | None = None
+    # PRD Feature A: the live ask_user round's card payload. Same
+    # architecture as the two skill-confirm fields above -- fully live
+    # within one screen instance, never repopulated by `from_dict` (the
+    # round is a worker thread blocked on the OLD controller's Event).
+    pending_question: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
     followed_watchlists_operations: tuple[str, ...] = ()
@@ -66,6 +71,10 @@ class TaskResumeState:
         """Return whether a skill-script confirmation should be shown."""
         return bool(self.pending_skill_script)
 
+    def has_pending_question(self) -> bool:
+        """Return whether an ask_user question card should be shown."""
+        return bool(self.pending_question)
+
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable task-resume payload."""
         return {
@@ -74,6 +83,7 @@ class TaskResumeState:
             "pending_approval": self.pending_approval,
             "pending_skill_install": self.pending_skill_install,
             "pending_skill_script": self.pending_skill_script,
+            "pending_question": self.pending_question,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
             "followed_watchlists_operations": list(
@@ -177,6 +187,7 @@ class TaskResumeState:
             # functional one.
             pending_skill_install=None,
             pending_skill_script=None,
+            pending_question=None,
             diff_summary=_text("diff_summary"),
             next_action=_text("next_action"),
             followed_watchlists_operations=followed_ids,

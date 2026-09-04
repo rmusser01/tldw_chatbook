@@ -1709,6 +1709,54 @@
     }
 
 
+/* ===== WIDGET: ChatQuestionCard (Widgets/Chat_Widgets/chat_question_card.py) ===== */
+
+    ChatQuestionCard {
+        height: auto;
+        max-height: 24;
+        border: round $accent;
+        padding: 0 1;
+    }
+    ChatQuestionCard > #question-title {
+        height: 1;
+        text-style: bold;
+    }
+    ChatQuestionCard > #question-deadline {
+        height: auto;
+        color: $text-muted;
+    }
+    ChatQuestionCard > #question-sections {
+        height: auto;
+        max-height: 15;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    ChatQuestionCard .question-section {
+        height: auto;
+        margin-bottom: 1;
+    }
+    ChatQuestionCard .question-header {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+    }
+    ChatQuestionCard .question-text {
+        height: auto;
+    }
+    ChatQuestionCard .question-options {
+        height: auto;
+        border: none;
+        padding: 0;
+    }
+    ChatQuestionCard .question-other {
+        height: 3;
+    }
+    ChatQuestionCard > #question-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+
 /* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
 
     ConsoleActivityOutcomeNotice {
