@@ -37,8 +37,10 @@ Narrow
 Media has three stable roles:
 
 - **Library** — the normal Library navigation rail.
-- **Items** — a local-only list with a **Title/keyword…** filter, type
-  selection, paging, bulk actions, and balanced two-line rows.
+- **Items** — a local-only list with a filter over title, content and
+  keyword (its box is narrow, so it reads "Title/keyword…" and its tooltip
+  spells out "Filter by title, content or keyword"), type selection,
+  paging, bulk actions, and balanced two-line rows.
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
@@ -127,9 +129,12 @@ a status line says "showing X of N" honestly. Entering Trash clears any
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-There is no permanent-delete or empty-trash action here yet — restoring is
-the only operation, and nothing is ever removed from the Trash except by
-restoring it. Whichever Trash action you take, "‹ Media" returns you to a
+A selected row offers two actions and no others: **"Restore"**, and
+**"Delete permanently"**, which arms an inline "Cancel | Delete
+permanently" confirmation and, once confirmed, removes that one item for
+good — there is no undo and no receipt afterwards. There is no
+empty-trash or bulk permanent delete; each item is deleted on its own.
+Whichever Trash action you take, "‹ Media" returns you to a
 current list: the app refreshes the page it fenced for its own write, so it
 never asks you to press "Retry" for a change you just made here.
 

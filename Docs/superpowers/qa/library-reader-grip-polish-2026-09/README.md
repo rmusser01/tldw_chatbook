@@ -24,6 +24,14 @@ Textual's SVG output; it does not install or download anything.
 | 100×30 | Items + Reader | 8, 16 of 25 | 12 | neutral background + accent endcaps | contained |
 | 80×24 | Reader; both grips reachable | 6, 12 of 19 | 9 | neutral background + accent endcaps | contained |
 
+**Superseded 2026-09-04:** task-31276 retired the accent end-caps this
+pass recorded — the grip is as tall as the shell, so `outline-top`
+painted a five-cell rule across the Reader's first row at the pane
+join. Focus is now the arrow glyph's colour and weight alone; the
+capture script measures the (now empty) end-cap set instead of
+asserting it, and the "accent endcaps" column and bullet below
+describe the state at TASK-30020, not today's.
+
 The rendered pass confirms:
 
 - the furthest-left Library grip forms the approved triangle with two arrows at
