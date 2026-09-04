@@ -57,6 +57,11 @@ def _walker_fake(
         ),
         _sync_library_media_viewer_or_recompose=lambda: syncs.append(True),
     )
+    # The screen formats the progress line from the measured seam, so the
+    # fake carries both (task-31271 seam (c)).
+    fake._active_review_progress = MethodType(
+        LibraryScreen._active_review_progress, fake
+    )
     fake._select_calls = calls
     fake._notices = notices
     fake._syncs = syncs
@@ -1296,3 +1301,43 @@ def test_row_press_and_open_by_id_cancel_a_pending_resume():
     open_src = inspect.getsource(LibraryScreen._open_library_item_by_id)
     assert "_cancel_pending_review_set_resume()" in row_src
     assert "_cancel_pending_review_set_resume()" in open_src
+
+
+def test_review_footer_names_the_completion_gesture_on_the_last_item():
+    """task-31271 seam (c): on the last item ] FINISHES the set (B cap_50).
+
+    The final forward press marks the item done in place rather than
+    walking anywhere (``plan_walk``'s completion gesture), so
+    "] next in set" promised a next item that does not exist.
+    """
+    at_last = LibraryScreen._review_footer_entries(
+        "6 of 6 · 5 reviewed", at_last=True
+    )
+    assert at_last[0] == ("]", "finish review")
+    assert ("[", "prev in set") in at_last
+    assert ("", "6 of 6 · 5 reviewed") in at_last
+
+    mid_set = LibraryScreen._review_footer_entries("2 of 6 · 1 reviewed")
+    assert mid_set[0] == ("]", "next in set")
+
+    # A complete set keeps task-31225's shape (no ]/[ at all).
+    complete = LibraryScreen._review_footer_entries("All 6 reviewed", at_last=True)
+    assert [key for key, _label in complete] == ["m", "R", ""]
+
+
+def test_active_review_progress_exposes_the_live_index_and_total(tmp_path):
+    """The footer's ``at_last`` comes from live index/total, not the string."""
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
+    )
+    service.set_cursor(set_id, 2)  # third (0-based) item = the last one
+    fake = _walker_fake(service)
+
+    progress = LibraryScreen._active_review_progress(fake)
+
+    assert (progress.index, progress.total) == (3, 3)
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir()
+    empty = _walker_fake(_service(empty_root))
+    assert LibraryScreen._active_review_progress(empty) is None

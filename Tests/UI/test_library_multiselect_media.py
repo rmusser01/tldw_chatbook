@@ -39,6 +39,10 @@ def _bind_media_mutation_seams(fake):
     controller = SimpleNamespace(
         applied_scope=scope,
         retained_items=(),
+        # task-31271 seam (b): the stale-page guard moved out of
+        # ``check_action`` and into the Space action itself, so every fake
+        # driving that action needs the freshness the screen reads.
+        freshness="fresh",
         mutation_refresh_scope=scope,
         begin_mutation=lambda: events.append(("begin",)) or scope,
         reconcile_committed_mutation=lambda **kwargs: events.append(
@@ -134,6 +138,10 @@ def _media_fake(
     fake._cancel_library_media_bulk_delete = types.MethodType(
         LibraryScreen._cancel_library_media_bulk_delete, fake
     )
+    # task-31271 seam (b): entering select mode lands focus on a row, and
+    # the canvas sync's whole-screen fallback schedules that follow-up.
+    fake._focus_library_media_items_pane = lambda: None
+    fake.call_after_refresh = lambda *_args, **_kwargs: None
     return _bind_media_mutation_seams(fake)
 
 

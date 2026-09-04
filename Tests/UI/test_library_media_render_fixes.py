@@ -23,6 +23,10 @@ from textual.widgets import Button, Input, OptionList
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
+    LibraryMediaReaderShell,
+)
 
 from Tests.UI.test_library_media_side_by_side import (
     _build_media_test_app,
@@ -401,3 +405,141 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "✓ dismissed · 2 selected items" in painted, painted
         assert "Undo" in painted, painted
         assert "Dismiss" in painted, painted
+
+
+# ---------------------------------------------------------------------------
+# task-31271 -- the footer told the truth at four seams
+# ---------------------------------------------------------------------------
+
+
+def _footer_labels(screen) -> list[str]:
+    return [label for _key, label in screen._library_footer_shortcuts_for_current_state()]
+
+
+def _painted_footer(host, screen) -> str:
+    return _painted(host, screen.query_one(AppFooterStatus).region)
+
+
+@pytest.mark.asyncio
+async def test_footer_drops_close_find_after_escape_closes_the_bar():
+    """Seam (a): Escape closes Find, so the esc chip must stop saying so.
+
+    ``_library_media_escape_label`` asked the DOM whether the Find bar was
+    mounted, and the read happened BEFORE the recompose that removes it --
+    so the footer kept promising "esc close find" over a closed bar (A cap
+    08/23, B cap_21) while Escape actually focused the Items pane.
+    """
+    host, service = _analysis_flow_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        screen.query_one("#library-media-reader-find", Button).press()
+        search_input = await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
+        await _wait_for_condition(
+            pilot, lambda: search_input.has_focus, message="Find never focused."
+        )
+        # The chip is genuinely visible at this width before Escape, so its
+        # absence afterwards cannot be footer compaction.
+        assert "close find" in _footer_labels(screen)
+        assert "close find" in _painted_footer(host, screen)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_find_open is False
+        labels = _footer_labels(screen)
+        assert "close find" not in labels, labels
+        painted = _painted_footer(host, screen)
+        assert "close find" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
+    """Seam (b): "s" must land focus on a row, or the Space chip is a lie.
+
+    Entering select mode advertised "space toggle selection" while Space
+    was a no-op until the user hunted for a row (A cap 31->32, B cap_69).
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_select_mode is True
+        assert ("space", "toggle selection") in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+        focused = screen.focused
+        assert focused is not None and focused.has_class(
+            "library-media-row"
+        ), focused
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1
+
+
+@pytest.mark.asyncio
+async def test_space_in_select_mode_never_reaches_the_pane_grip():
+    """Seam (b), second half: Space in select mode belongs to the selection.
+
+    With focus on the Library pane grip (a Button, so its own "space"
+    binding resolves before the screen's) Space COLLAPSED the Library pane
+    while the footer said "toggle selection" -- B cap_69.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        before = shell.effective_layout
+        shell.library_grip.focus()
+        await pilot.pause()
+
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.pause()
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        assert shell.effective_layout.library_open is before.library_open
+        assert screen._library_media_row_selection.count == 0
+
+
+@pytest.mark.asyncio
+async def test_reader_footer_advertises_l_c_t():
+    """Seam (d): l / c / t are real Reader keys and t ARMS DELETE (B cap_97).
+
+    All three shipped ``show=False`` and appeared in no footer set, so the
+    only way to discover the key that moves an item to Trash was to press
+    it.
+    """
+    host, service = _analysis_flow_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        shortcuts = screen._library_footer_shortcuts_for_current_state()
+        keys = [key for key, _label in shortcuts]
+        assert "l" in keys, shortcuts
+        assert "c" in keys, shortcuts
+        assert "t" in keys, shortcuts
+        # Painted, not just computed: the three chips are gated on the
+        # SETTLED session, and the footer registered at open time (while
+        # the detail request was still in flight) advertised none of them.
+        # Live, they only appeared after an unrelated F6.
+        painted = _painted_footer(host, screen)
+        assert "l read later" in painted, painted
+        assert "c use in Console" in painted, painted
+        assert "t trash" in painted, painted

@@ -596,6 +596,7 @@ from .study_scope_models import (
 
 if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
+    from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
@@ -1008,6 +1009,11 @@ class LibraryScreen(BaseAppScreen):
             "library_media_toggle_row_selection",
             "Toggle selection",
             show=False,
+            # task-31271 seam (b): non-priority bindings resolve from the
+            # FOCUSED widget up, so a focused Button's own "space" binding
+            # ran first and the screen never saw the key. check_action
+            # keeps this inert outside select mode.
+            priority=True,
         ),
         # task-28027: Reader action-row accelerators. check_action gates them
         # to a plain media Reader (l/t are local-only, c works for server
@@ -3598,17 +3604,44 @@ class LibraryScreen(BaseAppScreen):
                 # neighbour that way, so the footer stops teaching a key
                 # that no-ops at the list ends.
                 if self._library_media_item_traversal_active():
-                    progress = self._active_review_set_progress()
+                    progress = self._active_review_progress()
                     if progress is not None:
                         # task-28241: in a review set, ] / [ walk the pinned set
                         # (whole thing, not the page), and the footer carries
                         # the progress plus an exit-review key.
-                        shortcuts.extend(self._review_footer_entries(progress))
+                        # Lazy: review sets are one Reader mode.
+                        from tldw_chatbook.Library.review_set_state import (
+                            format_review_progress,
+                        )
+
+                        shortcuts.extend(
+                            self._review_footer_entries(
+                                format_review_progress(progress),
+                                at_last=(
+                                    progress.total > 0
+                                    and progress.index >= progress.total
+                                ),
+                            )
+                        )
                     else:
                         if self._library_media_adjacent_row(1) is not None:
                             shortcuts.append(("]", "next item"))
                         if self._library_media_adjacent_row(-1) is not None:
                             shortcuts.append(("[", "prev item"))
+                # task-31271 seam (d): the Reader action keys shipped
+                # ``show=False`` and appeared in no footer set, so the key
+                # that ARMS DELETE was undiscoverable (critique #4, B
+                # cap_97). Gated through the bindings' own ``check_action``
+                # so the footer can never advertise one the key would
+                # refuse (external/server detail hides l and t). Short
+                # labels: the footer compacts at 100 columns.
+                for key, gated_action, label in (
+                    ("l", "library_media_read_later", "read later"),
+                    ("c", "library_media_use_in_console", "use in Console"),
+                    ("t", "library_media_move_to_trash", "trash"),
+                ):
+                    if self.check_action(gated_action, ()):
+                        shortcuts.append((key, label))
                 shortcuts.append(("esc", self._library_media_escape_label()))
                 return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
@@ -3665,7 +3698,9 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_notes_footer_context()
 
     @staticmethod
-    def _review_footer_entries(progress: str) -> tuple[tuple[str, str], ...]:
+    def _review_footer_entries(
+        progress: str, *, at_last: bool = False
+    ) -> tuple[tuple[str, str], ...]:
         """The Reader footer's review-set segment for one progress line.
 
         task-31225 (re-critique P2): on a COMPLETE set the final ``]`` is an
@@ -3674,8 +3709,15 @@ class LibraryScreen(BaseAppScreen):
         and names ``R`` as the next step. The completion check reads the
         canonical ``format_review_progress`` "All N reviewed" form.
 
+        task-31271 seam (c): on the LAST live item a forward ``]`` marks
+        that item done in place rather than walking anywhere
+        (``plan_walk``'s completion gesture), so "next in set" promised an
+        item that does not exist (critique #4, B cap_50).
+
         Args:
             progress: The formatted live progress line.
+            at_last: Whether the cursor sits on the last live item, so the
+                next ``]`` completes the set instead of advancing.
 
         Returns:
             ``(key, label)`` entries for the footer.
@@ -3687,7 +3729,7 @@ class LibraryScreen(BaseAppScreen):
                 ("", progress),
             )
         return (
-            ("]", "next in set"),
+            ("]", "finish review" if at_last else "next in set"),
             ("[", "prev in set"),
             ("m", "toggle reviewed"),
             ("R", "exit review"),
@@ -19210,6 +19252,13 @@ class LibraryScreen(BaseAppScreen):
             ).is_markdown
             else "raw"
         )
+        # task-31271 seam (d): several Reader chips are gated on the SETTLED
+        # session -- l/c/t are off while a detail request is in flight (the
+        # actions would combine a new id with stale detail), so the footer
+        # registered at open time advertised none of them and nothing
+        # re-derived it once the fetch landed. Live: the three chips only
+        # appeared after an unrelated F6.
+        self._register_footer_shortcuts()
         if (
             entry_generation is not None
             and entry_generation != self._library_snapshot_state_generation
@@ -24142,19 +24191,25 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_media_select_mode:
             self._exit_library_media_select_mode(announce_discard=True)
-        else:
-            cancel_settlement = getattr(
-                self, "_cancel_library_media_selection_settlement", None
-            )
-            if callable(cancel_settlement):
-                cancel_settlement()
-            self._library_media_select_mode = True
-            self._library_media_row_selection.clear()
-            # task-4022: a fresh Select session starts clean -- a receipt
-            # from a previous, unrelated bulk delete shouldn't linger
-            # underneath a new one.
-            self._library_media_delete_receipt_ids = ()
-        _sync_library_canvas(self, "media")
+            _sync_library_canvas(self, "media")
+            return
+        cancel_settlement = getattr(
+            self, "_cancel_library_media_selection_settlement", None
+        )
+        if callable(cancel_settlement):
+            cancel_settlement()
+        self._library_media_select_mode = True
+        self._library_media_row_selection.clear()
+        # task-4022: a fresh Select session starts clean -- a receipt
+        # from a previous, unrelated bulk delete shouldn't linger
+        # underneath a new one.
+        self._library_media_delete_receipt_ids = ()
+        # task-31271 seam (b): the footer starts advertising "space toggle
+        # selection" the instant this flips, so focus has to be ON a row
+        # for that to be true. Live, focus sat on the Library pane grip and
+        # the first Space collapsed the pane instead (critique #4, A cap
+        # 31->32, B cap_69). Entry only -- exit keeps the user's focus.
+        _sync_library_canvas(self, "media", then=self._focus_library_media_items_pane)
 
     def _library_media_select_enter_available(self) -> bool:
         """Whether ENTERING media Select mode is offered (task-28012).
@@ -24180,13 +24235,20 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_toggle_row_selection(self) -> None:
         """Keyboard Space: toggle the focused media row's selection (task-28012).
 
-        A no-op outside select mode, while a bulk-delete confirm is armed
-        (task-2853 AC3), or when focus is not on a media row. Mirrors the
-        select-mode branch of ``handle_library_media_row`` but acts on the
-        focused row rather than a pressed button, so keyboard-only users can
-        build a selection without a mouse.
+        A no-op outside select mode, on a stale page, while a bulk-delete
+        confirm is armed (task-2853 AC3), or when focus is not on a media
+        row. Mirrors the select-mode branch of ``handle_library_media_row``
+        but acts on the focused row rather than a pressed button, so
+        keyboard-only users can build a selection without a mouse.
+        task-31271 seam (b): these guards used to live in ``check_action``,
+        where a False let Space fall through to the focused widget (the
+        pane grip collapsed the Library pane under a footer promising
+        "toggle selection"). They are no-ops here instead, so in select
+        mode Space always means the selection and nothing else.
         """
         if not self._library_media_select_mode:
+            return
+        if self._library_media_browse_controller.freshness == "stale":
             return
         if self._library_media_confirming_bulk_delete:
             return
@@ -27816,22 +27878,17 @@ class LibraryScreen(BaseAppScreen):
                 return True
             return self._library_media_select_enter_available()
         if action == "library_media_toggle_row_selection":
-            # task-28012: only while select mode is active with a media row
-            # focused -- otherwise Space falls through to its default. Qodo
-            # #2309: a stale page (or an armed/in-flight bulk delete) gates
-            # row toggling exactly as it gates the row buttons.
-            if not self._library_media_select_mode:
-                return False
-            if (
-                self._library_media_browse_controller.freshness == "stale"
-                or self._library_media_confirming_bulk_delete
-                or self._library_media_bulk_delete_in_flight
-            ):
-                return False
-            focused = self.focused
-            return bool(
-                focused is not None and focused.has_class("library-media-row")
-            )
+            # task-28012: Space is the selection key. task-31271 seam (b):
+            # it is claimed for the WHOLE of select mode, because the
+            # narrower "only with a row focused" gate let the key fall
+            # through to whatever Button held focus -- on the pane grip
+            # that collapsed the Library pane while the footer said
+            # "toggle selection" (B cap_69). The priority binding wins over
+            # the focused widget; a focused Input still swallows the space
+            # first (Textual filters consumed keys out of the chain), and
+            # the freshness/confirm/in-flight guards stay inside the action
+            # so those states no-op rather than firing something else.
+            return self._library_media_select_mode
         if action in ("library_media_next_item", "library_media_prev_item"):
             # task-28005: active only in the plain Reader with a neighbour in
             # that direction, so the key no-ops (and drops from the footer)
@@ -38882,6 +38939,35 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(f"All {live_count} reviewed.")
         return True
 
+    def _active_review_progress(self) -> ReviewProgress | None:
+        """Return the active set's live progress, or ``None``.
+
+        task-31271 seam (c): the footer needs the live ``index``/``total``
+        (to name the completion gesture on the last item), not just the
+        rendered line, so the measurement and its formatting are separate
+        seams now.
+
+        Returns:
+            The live :class:`ReviewProgress` when a set is active, else
+            ``None``.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return None
+        # Lazy: review sets are one Reader mode.
+        from tldw_chatbook.Library.review_set_state import (
+            review_progress,
+        )
+
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
+        return review_progress(review_set.items, review_set.cursor, is_live)
+
     def _active_review_set_progress(self) -> str | None:
         """Return the active set's Reader progress line, or ``None``.
 
@@ -38892,24 +38978,15 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             The formatted progress string when a set is active, else ``None``.
         """
-        service = self._review_set_service()
-        if service is None:
+        progress = self._active_review_progress()
+        if progress is None:
             return None
-        review_set = service.get_active_review_set()
-        if review_set is None:
-            return None
+        # Lazy: review sets are one Reader mode.
         from tldw_chatbook.Library.review_set_state import (
             format_review_progress,
-            review_progress,
         )
 
-        live_ids = self._review_set_live_ids(
-            item.backing_media_id for item in review_set.items
-        )
-        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
-        return format_review_progress(
-            review_progress(review_set.items, review_set.cursor, is_live)
-        )
+        return format_review_progress(progress)
 
     def _active_review_set_banner(self) -> str | None:
         """Build the Reader's one-line review-set banner (task-30045).
@@ -39791,10 +39868,24 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return "back to list"
-        try:
-            find_controls = self.query_one("#library-media-content-search-controls")
-        except (NoMatches, QueryError):
-            find_controls = None
+        # task-31271 seam (a): the bar's LIVE state, not its DOM presence.
+        # Escape closes Find and then recomposes; the footer re-registers
+        # inside that sync, one refresh BEFORE the bar is actually removed,
+        # so a DOM read still saw it and the chip kept promising "esc close
+        # find" over a closed bar (critique #4, A cap 08/23, B cap_21).
+        # Mirrors the viewer's own render condition
+        # (``find_open or content_query``) so label and bar agree at rest.
+        find_open = bool(
+            self._library_media_find_open or self._library_media_content_query
+        )
+        find_controls = None
+        if find_open:
+            try:
+                find_controls = self.query_one(
+                    "#library-media-content-search-controls"
+                )
+            except (NoMatches, QueryError):
+                find_controls = None
         if (
             find_controls is not None
             and focused is not None
@@ -39812,7 +39903,7 @@ class LibraryScreen(BaseAppScreen):
         # Qodo on #2367: with the Find bar open, a reader-region Escape
         # closes it first (see action_library_media_viewer_back) -- the
         # label says so even when focus has left the bar (F6 to content).
-        if find_controls is not None:
+        if find_open:
             return "close find"
         if shell.effective_layout.items_open:
             return "focus Items"

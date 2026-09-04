@@ -1125,6 +1125,9 @@ def _escape_fake(
         region
     ]
     focused = SimpleNamespace(ancestors=(owner,))
+    # task-31237: the bar is collapsed by default, so the fake mounts it
+    # only when the test's region IS the find bar (or explicitly asked).
+    mounted = (region == "find") if find_mounted is None else find_mounted
     calls = []
     fake = SimpleNamespace(
         focused=focused,
@@ -1132,19 +1135,18 @@ def _escape_fake(
         _library_media_editing=False,
         _library_media_confirming_delete=False,
         _library_media_editing_analysis=False,
-        _library_media_content_query="needle",
-        _library_media_content_match_index=1,
+        # task-31271 seam (a): the escape label reads the bar's STATE, not
+        # its DOM presence (the DOM is one refresh behind). The viewer
+        # mounts the bar for exactly ``find_open or content_query``, so the
+        # fake keeps the two sides consistent -- a mounted bar with an
+        # empty state is a shape production cannot produce.
+        _library_media_find_open=mounted,
+        _library_media_content_query="needle" if mounted else "",
+        _library_media_content_match_index=1 if mounted else 0,
         _library_media_reader_session=LibraryMediaReaderSessionState(
             more_open=more_open
         ),
-        query_one=_escape_fake_query_one(
-            shell,
-            find,
-            # task-31237: the bar is collapsed by default, so the fake
-            # mounts it only when the test's region IS the find bar (or
-            # explicitly requested).
-            mounted=(region == "find") if find_mounted is None else find_mounted,
-        ),
+        query_one=_escape_fake_query_one(shell, find, mounted=mounted),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
