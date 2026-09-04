@@ -132,11 +132,14 @@ class SettingsThemeEditor(Vertical):
             # TASK-31254: the label carries the state in text ("On"/"Off") so
             # colour is never the only carrier.
             yield Checkbox("On", value=True, id="settings-theme-dark-mode")
+        # `theme-editor-action` keys the compact-mode width rule to these
+        # buttons only (the CSS fast-path ratchet forbids a bare `Button`
+        # subject, TASK-31260).
         with Horizontal(classes="settings-action-row"):
-            yield Button("New", id="settings-theme-new", variant="primary")
-            yield Button("Clone", id="settings-theme-clone")
-            yield Button("Delete", id="settings-theme-delete", variant="error")
-            yield Button("Export", id="settings-theme-export")
+            yield Button("New", id="settings-theme-new", variant="primary", classes="theme-editor-action")
+            yield Button("Clone", id="settings-theme-clone", classes="theme-editor-action")
+            yield Button("Delete", id="settings-theme-delete", variant="error", classes="theme-editor-action")
+            yield Button("Export", id="settings-theme-export", classes="theme-editor-action")
         yield Tree("Themes", id="settings-theme-tree")
         # task-1585: the collapsed tree left a large blank region with no
         # explanation of what fills it.
@@ -205,11 +208,20 @@ class SettingsThemeEditor(Vertical):
             classes="settings-help-copy",
         )
         with Horizontal(classes="settings-action-row"):
-            yield Button("Apply", id="settings-theme-apply", variant="primary")
-            yield Button("Save", id="settings-theme-save", variant="success")
-            yield Button("Reset", id="settings-theme-reset", variant="warning")
-            yield Button("Generate from Primary", id="settings-theme-generate", variant="primary")
-            yield Button("Set as launch default", id="settings-theme-set-default")
+            yield Button("Apply", id="settings-theme-apply", variant="primary", classes="theme-editor-action")
+            yield Button("Save", id="settings-theme-save", variant="success", classes="theme-editor-action")
+            yield Button("Reset", id="settings-theme-reset", variant="warning", classes="theme-editor-action")
+            yield Button(
+                "Generate from Primary",
+                id="settings-theme-generate",
+                variant="primary",
+                classes="theme-editor-action",
+            )
+            yield Button(
+                "Set as launch default",
+                id="settings-theme-set-default",
+                classes="theme-editor-action",
+            )
 
     def _compose_preview_section(self) -> ComposeResult:
         yield Static("Live Preview", classes="destination-section")

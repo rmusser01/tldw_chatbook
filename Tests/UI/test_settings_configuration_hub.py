@@ -13007,3 +13007,16 @@ async def test_theme_dirty_flag_clears_when_leaving_the_category():
             await pilot.pause()
         note = screen.query_one("#settings-theme-unsaved-note", Static)
         assert "No" in str(note.renderable)
+
+
+def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
+    """TASK-31260: the inspector's themes directory reads '~/...', not a
+    five-line absolute path; paths outside home are untouched."""
+    import os
+    from pathlib import Path
+
+    from tldw_chatbook.UI.Screens.settings_screen import _display_path
+
+    inside = Path.home() / ".config" / "tldw_cli" / "themes"
+    assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
+    assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")

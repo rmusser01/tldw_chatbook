@@ -90,3 +90,25 @@ async def test_invalid_hex_does_not_paint_a_black_swatch(tmp_path):
         swatch = editor.color_swatches["primary"]
         assert str(swatch.styles.background.hex).upper() != "#000000"
         assert "invalid" in _rendered_text(app).lower()
+
+
+@pytest.mark.asyncio
+async def test_compact_mode_keeps_every_button_inside_the_card(tmp_path):
+    """TASK-31260: below the compact-workbench width the detail pane is ~45
+    cells; four 16-cell buttons overflowed and Delete/Export were clipped."""
+    app = _BundleHarness(
+        tmp_path,
+        container_id="settings-workbench",
+        container_classes="settings-workbench-compact",
+        width="45",
+    )
+    async with app.run_test(size=(110, 36)) as pilot:
+        await pilot.pause()
+        host = app.query_one("#settings-workbench")
+        editor = app.query_one(SettingsThemeEditor)
+        buttons = list(editor.query(Button))
+        assert buttons, "editor exposes no buttons?"
+        for button in buttons:
+            region = button.region
+            assert region.width > 0, button.id
+            assert region.right <= host.region.right, (button.id, region, host.region)

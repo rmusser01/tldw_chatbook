@@ -595,6 +595,17 @@ def _theme_save_target() -> Path:
     return get_user_themes_dir()
 
 
+def _display_path(path: Path) -> str:
+    """Shorten a path for inspector copy: ``~`` for the home directory (TASK-31260).
+
+    The absolute themes directory wrapped over five inspector lines, twice.
+    """
+    try:
+        return "~" + os.sep + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
 def _internal_prompts_save_target() -> Path:
     """Return the active config file for internal prompt overrides."""
     return get_cli_config_path()
@@ -4669,7 +4680,7 @@ class SettingsScreen(BaseAppScreen):
                     "use the editor's Apply/Save/Reset buttons."
                 ),
                 recovery_copy=(
-                    f"Themes are saved to {_theme_save_target()}{os.sep}; reset or delete "
+                    f"Themes are saved to {_display_path(_theme_save_target())}{os.sep}; reset or delete "
                     "files there to recover."
                 ),
             ),
@@ -14048,7 +14059,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Affected config",
-                    f"custom theme files under {_theme_save_target()}{os.sep}",
+                    f"custom theme files under {_display_path(_theme_save_target())}{os.sep}",
                 ),
                 (
                     "Recovery",
@@ -19113,7 +19124,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="destination-section",
             )
             yield Static("Focused field guide", classes="destination-section")
-            yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
+            yield self._detail_row("Save target", f"{_display_path(_theme_save_target())}{os.sep}")
             yield self._detail_row(
                 "Save", "editor-owned - use the editor's Apply/Save/Reset buttons"
             )
