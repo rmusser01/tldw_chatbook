@@ -129,7 +129,7 @@ rules remain unchanged.
 
 ## Amendment (2026-09-03, TASK-31241 — Context Character conversation section)
 
-[ADR-116](116-character-conversation-navigation-and-local-meaning-search.md)
+[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
 makes Character an always-composed conversation-navigation section directly
 after Conversations and before Model. Its presence, identity, disclosure,
 groups, search, empty/recovery copy, and actions do not depend on the existing

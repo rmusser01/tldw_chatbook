@@ -85,7 +85,7 @@ providers, pytest/pytest-asyncio, Ruff, modular TCSS and generated CSS bundles.
 ADR required: yes
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: the programme introduces durable derived indexes, a local identity and
 repair contract, cross-screen activation and draft-veto boundaries, semantic
@@ -93,7 +93,9 @@ consent/lifecycle policy, and long-lived navigation structure. `ADR-116` is the
 current collision-free allocation; Task 1 must re-sweep before creating it and
 renumber the unshipped path plus every reference if an older claimant lands.
 
-Task 1 also amends ADR-004, ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085.
+Task 1 also amends ADR-004
+(`backlog/decisions/004-personas-destination-native-workbench.md`), ADR-030,
+ADR-037, ADR-046, ADR-083, and ADR-085.
 ADR-031 and ADR-033 remain linked, unchanged authorities.
 
 ## File Map
@@ -101,8 +103,10 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 ### Governance
 
 - Create
-  `backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`.
-- Modify the six ADRs named in the programme ADR check.
+  `backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`.
+- Modify `backlog/decisions/004-personas-destination-native-workbench.md`
+  plus ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085 as named in the
+  programme ADR check.
 - Keep the approved spec and this plan linked from every Backlog task.
 
 ### Shared identity, projection, and Keyword search
@@ -176,8 +180,8 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 **Files:**
 
 - Create:
-  `backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
-- Modify: `backlog/decisions/004-settings-storage-defaults-restart-boundary.md`
+  `backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+- Modify: `backlog/decisions/004-personas-destination-native-workbench.md`
 - Modify: `backlog/decisions/030-derived-index-lifecycle-and-atomic-media-migrations.md`
 - Modify:
   `backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md`
@@ -199,7 +203,7 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 ADR required: yes
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: this task creates the programme's architectural authority before code.
 
@@ -217,7 +221,7 @@ Run:
 
 ```bash
 backlog task edit 31241 -s "In Progress"
-backlog task edit 31241 --plan "1. Reconfirm task and ADR allocations.\n2. Create ADR-116 from the approved design.\n3. Amend ADR-004, ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085.\n4. Link preserved ADR-031 and ADR-033.\n5. Run documentation and reference checks."
+backlog task edit 31241 --plan "1. Reconfirm task and ADR allocations.\n2. Create ADR-116 from the approved design.\n3. Amend 004-personas-destination-native-workbench.md, ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085.\n4. Link preserved ADR-031 and ADR-033.\n5. Run documentation and reference checks."
 ```
 
 - [ ] **Step 3: Write ADR-116 before amending its consumers**
@@ -242,7 +246,8 @@ name-based repair, and silent late-result reordering.
 Each amendment links ADR-116 and `TASK-31241` and changes only its owned seam:
 
 ```text
-ADR-004  -> saved semantic preference versus immediate maintenance actions
+ADR-004 (`004-personas-destination-native-workbench.md`)
+         -> Roleplay complete per-character browse versus Library global/archive ownership
 ADR-030  -> derived FTS/vector generations and authoritative invalidation
 ADR-037  -> data_authority_id and typed resolved/unresolved character identity
 ADR-046  -> exact typed activation and aggregate Roleplay draft veto
@@ -256,7 +261,7 @@ Run:
 
 ```bash
 rg -n "ADR-031|031-tui-keybinding|ADR-033|033-settings" \
-  backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md \
+  backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md \
   Docs/superpowers/specs/2026-09-03-character-conversation-navigation-design.md
 git diff --check
 ```
@@ -268,13 +273,13 @@ zero.
 - [ ] **Step 6: Commit only the governance slice**
 
 ```bash
-git add backlog/decisions/004-settings-storage-defaults-restart-boundary.md \
+git add backlog/decisions/004-personas-destination-native-workbench.md \
   backlog/decisions/030-derived-index-lifecycle-and-atomic-media-migrations.md \
   backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md \
   backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md \
   backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md \
   backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md \
-  backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md \
+  backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md \
   "backlog/tasks/task-31241 - Align-character-conversation-navigation-decisions.md"
 git commit -m "docs: align character conversation navigation decisions"
 ```
@@ -400,7 +405,7 @@ class CharacterConversationNavigationService:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: this task directly implements ADR-116's already-decided identity,
 storage, projection, and Keyword boundaries.
@@ -643,7 +648,7 @@ class RoleplayDraftSnapshot:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 3 implements the ADR's previously decided activation, draft-veto,
 repair, and surface-ownership contracts.
@@ -828,7 +833,7 @@ class ConsoleCharacterContextController:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: the Context position, bounds, accordion behavior, and read-only
 ownership are already decided by ADR-116 and amended ADR-083.
@@ -972,7 +977,7 @@ class ConsoleSwitcherCharacterResult:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: the third mode and trust invariants are already owned by ADR-116 and
 amended ADR-085; ADR-031 continues to authorize F3 locally.
@@ -1207,7 +1212,7 @@ class CharacterConversationSemanticIndex:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 6 implements the ADR's derived-index, privacy, generation, and
 direct-query choices. Its additive semantic state follows amended ADR-030.
@@ -1366,7 +1371,7 @@ class CharacterSemanticSettingsDraft:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 7 implements ADR-116's consent/lifecycle UI while preserving
 ADR-033's staged Save/Revert versus immediate reviewed-action model.
@@ -1544,7 +1549,7 @@ class CharacterSwitcherSearchCoordinator:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-meaning-search.md`
+`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 8 integrates the already-approved two-leg presentation and closes
 cross-surface evidence without adding a new architecture boundary.

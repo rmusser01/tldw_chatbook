@@ -14,6 +14,23 @@ re-export shim, and sidebar-era chrome (`ccp_sidebar_widget.py`,
 `ccp_sidebar_handler.py`) are retired; `ccp`, `characters`, and `prompts` legacy
 routes resolve to `personas`.
 
+## Amendment (2026-09-03, TASK-31241 — Roleplay conversation browsing)
+
+[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+extends the destination-native Roleplay workbench with complete, searchable,
+keyset-paginated conversation browsing for one exact resolved local Character
+card. Roleplay owns that per-character browse, read-only preview, and exact
+Console resume path; it does not edit, delete, or otherwise administer
+conversation content. Persona records do not receive a Conversations view.
+
+Library remains the global archive and cross-domain conversation browser and
+retains its existing administrative actions, including the explicitly confirmed
+repair of unresolved character links. This narrows the earlier consequence that
+assigned all full conversation browsing to Library without changing Library's
+global/archive ownership or Roleplay's Character-card mutation ownership. This
+amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 The Personas destination was split across a thin snapshot shell (`personas` route)
