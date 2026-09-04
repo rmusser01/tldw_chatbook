@@ -2628,6 +2628,11 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        # task-31236: (set_id, name, was_active) of the most recently
+        # dismissed review set -- rendered as an in-list undo receipt.
+        self._library_media_review_dismiss_receipt: (
+            tuple[str, str, bool] | None
+        ) = None
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
@@ -15400,6 +15405,7 @@ class LibraryScreen(BaseAppScreen):
                 confirming_bulk_delete=self._library_media_confirming_bulk_delete,
                 delete_receipt_count=len(self._library_media_delete_receipt_ids),
                 type_choices_visible=self._library_media_type_choices_visible,
+                review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
             )
         state = build_library_media_browse_state(
             controller.applied_result,
@@ -15412,6 +15418,7 @@ class LibraryScreen(BaseAppScreen):
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
+            review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15424,6 +15431,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _review_dismiss_receipt_name(self) -> str:
+        """Display name for the pending dismiss-undo receipt, "" when none."""
+        receipt = self._library_media_review_dismiss_receipt
+        return receipt[1] if receipt is not None else ""
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
@@ -39294,6 +39306,10 @@ class LibraryScreen(BaseAppScreen):
                 self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
             )
             return
+        # task-31238: creating a set displaces the active one (one-active
+        # invariant) -- capture it BEFORE the create so an in-progress walk
+        # never just stops being resumable-by-] without a word.
+        displaced = service.get_active_review_set()
         service.create_review_set(name, origin, items)
         if truncated:
             self._notify_review_set(
@@ -39302,6 +39318,36 @@ class LibraryScreen(BaseAppScreen):
             )
         else:
             self._notify_review_set(f"Reviewing {len(items)} items.")
+        if displaced is not None and displaced.completed_at is None:
+            from rich.markup import escape
+
+            from tldw_chatbook.Library.review_set_state import (
+                format_review_progress,
+                review_progress,
+            )
+
+            live = self._review_set_live_ids(
+                item.backing_media_id for item in displaced.items
+            )
+            progress = format_review_progress(
+                review_progress(
+                    displaced.items, displaced.cursor, live.__contains__
+                )
+            )
+            self._notify_review_set(
+                f"Paused '{escape(displaced.name)}' at {progress}. "
+                "Resume from Sets."
+            )
+        # task-31233: a create invoked from Select mode must leave it before
+        # landing -- select mode is otherwise cleared only by Done/bulk-delete,
+        # so the viewer open below never surfaced (blank reader, boxes reset).
+        # The selection was consumed, not discarded: no notice. The canvas
+        # sync mirrors the Done toggle's -- the viewer open below syncs only
+        # the VIEWER in place, leaving the select toolbar stale without it
+        # (live-verified 2026-09-04).
+        if getattr(self, "_library_media_select_mode", False):
+            self._exit_library_media_select_mode(announce_discard=False)
+            _sync_library_canvas(self, "media")
         self._open_library_media_viewer(f"local:media:{items[0][0]}")
 
     _REVIEW_SET_STORAGE_UNAVAILABLE = "Review-set storage is unavailable."
@@ -39367,13 +39413,27 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return
             if action == PICKER_DISMISS:
+                dismissed_row = next(
+                    (row for row in rows if row[0] == set_id), None
+                )
                 await self._run_library_service_call(
                     service.dismiss, set_id, isolate_in_worker=True
                 )
-                self._notify_review_set("Review set dismissed.")
+                # task-31236: the confirmation is an in-list undo receipt,
+                # not a toast -- a one-click dismissal of a mid-walk set
+                # must be recoverable in place (user ruling, critique #3).
+                self._library_media_review_dismiss_receipt = (
+                    set_id,
+                    dismissed_row[1] if dismissed_row else "review set",
+                    bool(dismissed_row[3]) if dismissed_row else False,
+                )
                 # Dismissing the ACTIVE set must drop the Reader's set chrome
                 # -- without this the footer kept advertising "] next in set"
-                # after the set was gone (live-verified 2026-09-02).
+                # after the set was gone (live-verified 2026-09-02). The
+                # canvas sync is separate: the viewer seam updates only the
+                # VIEWER in place, so the receipt row never mounted without
+                # it (live-verified 2026-09-04).
+                _sync_library_canvas(self, "media")
                 self._sync_library_media_viewer_or_recompose()
                 return
             if action != PICKER_OPEN:
@@ -39394,6 +39454,78 @@ class LibraryScreen(BaseAppScreen):
             logger.opt(exception=True).warning("review-set picker failed")
             self._notify_review_set(
                 "Couldn't open review sets.", severity="error"
+            )
+
+    @on(Button.Pressed, "#library-media-review-dismiss-undo")
+    def handle_library_media_review_dismiss_undo(
+        self, event: Button.Pressed
+    ) -> None:
+        """Restore the set named by the dismiss receipt (task-31236).
+
+        Args:
+            event: The receipt row's "Undo" press.
+        """
+        event.stop()
+        receipt = self._library_media_review_dismiss_receipt
+        if receipt is None:
+            return
+        self.run_worker(
+            self._review_dismiss_undo_worker(receipt),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#library-media-review-dismiss-receipt-close")
+    def handle_library_media_review_dismiss_receipt_close(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the dismiss receipt without restoring anything.
+
+        Args:
+            event: The receipt row's "Dismiss" press.
+        """
+        event.stop()
+        self._library_media_review_dismiss_receipt = None
+        _sync_library_canvas(self, "media")
+
+    async def _review_dismiss_undo_worker(
+        self, receipt: tuple[str, str, bool]
+    ) -> None:
+        """Un-tombstone the receipt's set, restoring activation if it had it.
+
+        task-31236 AC#2: cursor and done marks were never touched by the
+        dismiss, so the service-side ``undismiss`` brings the set back
+        exactly as it was; re-activation yields to any set that became
+        active since (the one-active invariant outranks the undo).
+
+        Args:
+            receipt: ``(set_id, name, was_active)`` captured at dismissal.
+        """
+        try:
+            service = self._review_set_service()
+            if service is None:
+                self._notify_review_set(
+                    self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+                )
+                return
+            set_id, _name, was_active = receipt
+            await self._run_library_service_call(
+                partial(service.undismiss, set_id, reactivate=was_active),
+                isolate_in_worker=True,
+            )
+            self._library_media_review_dismiss_receipt = None
+            # Canvas sync clears the receipt row; the viewer seam re-arms
+            # the set chrome when the restored set is active again.
+            _sync_library_canvas(self, "media")
+            self._sync_library_media_viewer_or_recompose()
+        except Exception:
+            # task-30042 (user ruling): failures are never silent.
+            logger.opt(exception=True).warning(
+                "review-set dismiss undo failed"
+            )
+            self._notify_review_set(
+                "Couldn't restore the review set.", severity="error"
             )
 
     async def _review_read_later_pairs(self) -> list[tuple[int, str]]:
@@ -39536,16 +39668,17 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _auto_resume_review_set_worker(self) -> None:
-        """Open the active set's cursor item in the Reader, once per set.
+        """Open the active set's cursor item in the Reader, on every entry.
 
-        AC#1: entering the media area with an active set loads its cursor
-        item without a keypress. Once per set per screen session -- Escape
-        back to the list plus re-entry shows the list, never a yank loop.
-        AC#3: the final still-on-the-media-list + current-screen gates make
-        a cold-start yank abort without opening (and without burning the
-        once-per-set chance). task-30042 (user ruling): failures are NEVER
-        silent -- missing storage warns once per session, and any storage
-        error surfaces; only the ordinary no-active-set case stays quiet.
+        task-31234 (supersedes task-28245's once-per-set gate, user ruling
+        at the critique #3 close): the banner and the visible document must
+        always agree, so every entry with an active set lands at the saved
+        place -- Escape shows the list until the next entry gesture.
+        task-28245 AC#3 still holds: the final still-on-the-media-list +
+        current-screen gates make a cold-start yank abort without opening.
+        task-30042 (user ruling): failures are NEVER silent -- missing
+        storage warns once per session, and any storage error surfaces;
+        only the ordinary no-active-set case stays quiet.
         """
         try:
             if self._review_set_service() is None:
@@ -39565,18 +39698,17 @@ class LibraryScreen(BaseAppScreen):
             )
             if landing is None:
                 return
-            set_id, backing_id = landing
+            _set_id, backing_id = landing
             if (
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
                 or self._library_media_view != "list"
                 or not getattr(self, "is_current", False)
             ):
                 return
-            resumed: set[str] = getattr(self, "_review_set_auto_resumed", set())
-            if set_id in resumed:
-                return
-            resumed.add(set_id)
-            self._review_set_auto_resumed = resumed
+            # task-31234 (supersedes task-28245's once-per-set gate, user
+            # ruling at the critique #3 close): open the cursor item on
+            # EVERY entry. The gate restored the banner but not the item on
+            # re-entry -- the status line pointed at an off-set document.
             self._open_library_media_viewer(f"local:media:{backing_id}")
         except Exception:
             # task-30042: resuming failed on a real error -- surface it; the

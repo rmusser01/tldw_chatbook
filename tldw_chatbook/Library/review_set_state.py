@@ -335,21 +335,36 @@ def build_picker_rows(
         is_live: Liveness predicate covering every backing id in ``sets``.
 
     Returns:
-        ``(set_id, name, progress_label, active)`` per set, where
-        ``progress_label`` is :func:`format_review_progress` over the set's
-        live items.
+        ``(set_id, name, detail_label, active)`` per set, where
+        ``detail_label`` is :func:`format_review_progress` over the set's
+        live items, suffixed with the created DATE (task-31238: auto-names
+        like "2 selected items" otherwise render identical rows for two
+        selection sets — the date makes same-name sets distinguishable).
     """
     return [
         (
             review_set.set_id,
             review_set.name,
-            format_review_progress(
-                review_progress(review_set.items, review_set.cursor, is_live)
+            _with_created_date(
+                format_review_progress(
+                    review_progress(
+                        review_set.items, review_set.cursor, is_live
+                    )
+                ),
+                review_set.created_at,
             ),
             review_set.active,
         )
         for review_set in sets
     ]
+
+
+def _with_created_date(label: str, created_at: str) -> str:
+    """Suffix ``label`` with the ISO date part of ``created_at``, if any."""
+    date_part = (created_at or "")[:10]
+    if len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-":
+        return f"{label} · {date_part}"
+    return label
 
 
 def is_empty(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:
