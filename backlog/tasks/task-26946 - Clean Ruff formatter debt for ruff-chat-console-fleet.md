@@ -21,7 +21,7 @@ priority: medium
 
 <!-- TASK-26000-BATCH: ruff-chat-console-fleet -->
 <!-- TASK-26000-PATHS-SHA256: 42889241af1499332c7ee76af9beac4087f9a7c552364f3dae3229ecdd9b1295 -->
-<!-- TASK-26000-FINAL: true -->
+<!-- TASK-26000-FINAL: false -->
 
 ## Description
 
@@ -81,7 +81,7 @@ Ruff 0.15.22 and Python 3.12.11 formatted exactly these ten paths: `Tests/Chat/t
 
 The seven assigned modules directly exercise fleet wake scheduling/safety/staleness/view marks, headless wake behavior, per-session run state, and runtime lifetime, so no unrelated full-suite sweep was run under repository policy. The exact pre-format command was `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_console_fleet_wake.py Tests/Chat/test_console_fleet_wake_safety.py Tests/Chat/test_console_fleet_wake_staleness.py Tests/Chat/test_console_fleet_wake_view_mark.py Tests/Chat/test_console_headless_wake_invariants.py Tests/Chat/test_console_run_state_per_session.py Tests/Chat/test_console_runtime_lifetime.py` (exit 1: 87 tests, 51 passed, 36 failures). The exact post-format command `LOGURU_LEVEL=ERROR /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=line --disable-warnings --junitxml=/tmp/task26946_post.xml Tests/Chat/test_console_fleet_wake.py Tests/Chat/test_console_fleet_wake_safety.py Tests/Chat/test_console_fleet_wake_staleness.py Tests/Chat/test_console_fleet_wake_view_mark.py Tests/Chat/test_console_headless_wake_invariants.py Tests/Chat/test_console_run_state_per_session.py Tests/Chat/test_console_runtime_lifetime.py` exited 1 with 87 tests, 51 passed, 36 failed, 0 errors, and 0 skipped; failure keys were identical (`added=[]`, `removed=[]`). The untouched baseline cause is the unassigned `tldw_chatbook/Chat/console_chat_controller.py:8169` dereferencing `preparation.capture_mode` for `AGENT_WAKE`, which intentionally has no preparation; this task does not fix it.
 
-Governance verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/CI/test_backlog_task_id_uniqueness.py` returned 3 passed, 1 warning in 1.31s. No full suite was run. Modified paths were the ten assigned Python files, this task record, and the plan/report artifacts under `.superpowers/sdd/2026-09-03-task-26946-ruff-chat-console-fleet/`. ADR required: no; ADR path: N/A; reason unchanged from the plan.
+Governance verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/CI/test_backlog_task_id_uniqueness.py` returned 3 passed, 1 warning in 1.31s. No full suite was run. The tracked branch diff contains exactly the ten assigned Python files, `Docs/superpowers/plans/2026-09-03-task-26946-ruff-chat-console-fleet.md`, and this task record; SDD reports are ignored evidence inputs, not deliverables. ADR required: no; ADR path: N/A; reason unchanged from the plan.
 
 ## Final Summary
 
