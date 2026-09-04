@@ -72,7 +72,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </section>
 
     <section class="preview-stage" aria-label="Canvas preview">
-      <div id="loading-state" class="loading-state">Preparing isolated preview…</div>
+      <div
+        id="loading-state"
+        class="loading-state"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >Preparing isolated preview…</div>
       <iframe
         id="canvas-preview"
         title="Canvas preview"

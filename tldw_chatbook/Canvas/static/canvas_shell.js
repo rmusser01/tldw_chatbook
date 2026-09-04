@@ -97,7 +97,7 @@
     ui.sourcePanel.hidden = true;
     ui.source.setAttribute("aria-expanded", "false");
     for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
-    ui.loading.textContent = "Unavailable on this branch";
+    ui.loading.textContent = "Unavailable on this branch. Return to Chatbook and reopen this Canvas from a reachable transcript card.";
     ui.loading.hidden = false;
     ui.compatibility.hidden = true;
     dismissNotice();
@@ -105,6 +105,7 @@
     for (const control of document.querySelectorAll(".canvas-toolbar button, .canvas-toolbar select, .canvas-toolbar input")) {
       if (control !== ui.close) control.disabled = true;
     }
+    ui.close.focus();
   }
 
   async function mintAction(action) {

@@ -1760,6 +1760,7 @@ class ConsoleRuntime:
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         canvas_gateway = self._canvas_gateway
+        canvas_authority = self._canvas_native_authority
         coordinator, runs_db = (
             self._change_review_coordinator,
             self._agent_runs_db,
@@ -1780,6 +1781,16 @@ class ConsoleRuntime:
             except Exception:  # noqa: BLE001 - app exit must keep progressing
                 logger.opt(exception=True).warning(
                     "Console runtime: Canvas gateway close failed at dispose."
+                )
+        dispose_canvas_authority = getattr(canvas_authority, "dispose", None)
+        if callable(dispose_canvas_authority):
+            try:
+                result = dispose_canvas_authority()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 - app exit must keep progressing
+                logger.opt(exception=True).warning(
+                    "Console runtime: Canvas authority dispose failed at exit."
                 )
         if controller is not None:
             try:

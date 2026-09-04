@@ -154,6 +154,19 @@ class NativeConsoleCanvasAuthority:
         )
         self._events: dict[tuple[str, str], list[CanvasGatewayEvent]] = {}
         self._lock = RLock()
+        self._disposed = False
+
+    def dispose(self) -> None:
+        """Fence publication replay state and release runtime-owned memory."""
+
+        with self._lock:
+            self._disposed = True
+            self._publication_receipts.clear()
+            self._parsed_block_imports.clear()
+            self._browser_targets.clear()
+            self._selection.clear()
+            self._events.clear()
+            self._gateway_invalidator = None
 
     def bind_gateway_invalidator(
         self, invalidator: Callable[[str], None] | None
@@ -207,10 +220,33 @@ class NativeConsoleCanvasAuthority:
                 return
         info = revisions[-1]
         with self._lock:
-            receipt = self._publication_receipts.setdefault(
-                publication_id, _PublicationReceipt()
-            )
-            self._publication_receipts.move_to_end(publication_id)
+            if self._disposed:
+                raise RuntimeError("canvas_publication_authority_disposed")
+            receipt = self._publication_receipts.get(publication_id)
+            if receipt is None:
+                if len(self._publication_receipts) >= _MAX_PUBLICATION_RECEIPTS:
+                    delivered = next(
+                        (
+                            receipt_id
+                            for receipt_id, candidate in (
+                                self._publication_receipts.items()
+                            )
+                            if candidate.state_published
+                            and candidate.auto_opened
+                            and not candidate.auto_open_in_flight
+                        ),
+                        None,
+                    )
+                    if delivered is None:
+                        raise RuntimeError(
+                            "canvas_publication_capacity_exhausted"
+                        )
+                    # The controller marks its listener delivered only after
+                    # this method completes, so fully completed receipts are
+                    # the sole replay-safe eviction candidates.
+                    self._publication_receipts.pop(delivered, None)
+                receipt = _PublicationReceipt()
+                self._publication_receipts[publication_id] = receipt
             if not receipt.state_published:
                 previous = self._selection.get(scope.session_id)
                 self._selection[scope.session_id] = _Selection(
@@ -228,10 +264,9 @@ class NativeConsoleCanvasAuthority:
                     previous = _Selection(revision.canvas_id, revision.revision_id)
                 receipt.state_published = True
             if receipt.auto_opened:
-                self._prune_publication_receipts()
                 return
             if receipt.auto_open_in_flight:
-                raise RuntimeError("Canvas publication is already opening")
+                raise RuntimeError("canvas_publication_already_opening")
             receipt.auto_open_in_flight = True
         try:
             if self._auto_open is not None:
@@ -239,26 +274,10 @@ class NativeConsoleCanvasAuthority:
         except Exception:
             with self._lock:
                 receipt.auto_open_in_flight = False
-                self._prune_publication_receipts()
             raise
         with self._lock:
             receipt.auto_open_in_flight = False
             receipt.auto_opened = True
-            self._prune_publication_receipts()
-
-    def _prune_publication_receipts(self) -> None:
-        while len(self._publication_receipts) > _MAX_PUBLICATION_RECEIPTS:
-            completed = next(
-                (
-                    key
-                    for key, receipt in self._publication_receipts.items()
-                    if receipt.state_published and receipt.auto_opened
-                ),
-                None,
-            )
-            self._publication_receipts.pop(
-                completed or next(iter(self._publication_receipts)), None
-            )
 
     def import_html(
         self,

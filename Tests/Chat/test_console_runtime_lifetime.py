@@ -90,6 +90,25 @@ def test_runtime_forwards_live_session_and_branch_transitions_to_canvas_authorit
     assert observed == [first.id, second.id, first.id, first.id]
 
 
+@pytest.mark.asyncio
+async def test_runtime_disposes_canvas_authority_after_revoking_gateway():
+    order: list[str] = []
+
+    class CanvasGateway:
+        async def aclose(self):
+            order.append("gateway")
+
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
+    runtime._canvas_gateway = CanvasGateway()
+    runtime._canvas_native_authority = SimpleNamespace(
+        dispose=lambda: order.append("authority")
+    )
+
+    await runtime.dispose()
+
+    assert order[:2] == ["gateway", "authority"]
+
+
 @pytest.mark.unit
 def test_trace_rollout_modules_stay_off_the_ui_ready_import_path() -> None:
     """Metrics and write planning load only when a trace actually uses them."""

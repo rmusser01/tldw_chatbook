@@ -424,11 +424,27 @@ async def test_real_branch_transition_clears_unreachable_preview_until_reopened(
         await page.frame_locator("#canvas-preview").get_by_role(
             "heading", name="Left branch preview"
         ).wait_for()
+        await page.get_by_role("button", name="Inspect source").click()
+        await page.locator("#source-panel").wait_for(state="visible")
+        assert await page.evaluate("document.activeElement.id") == (
+            "source-close-button"
+        )
 
         store.create_sibling(
             left.id, role=ConsoleMessageRole.ASSISTANT, content="right"
         )
-        await page.get_by_text("Unavailable on this branch", exact=True).wait_for()
+        recovery = page.locator("#loading-state")
+        await recovery.get_by_text(
+            "Unavailable on this branch. Return to Chatbook and reopen this "
+            "Canvas from a reachable transcript card.",
+            exact=True,
+        ).wait_for()
+        assert await recovery.get_attribute("role") == "status"
+        assert await recovery.get_attribute("aria-live") == "polite"
+        assert await recovery.get_attribute("aria-atomic") == "true"
+        assert await page.locator("#source-panel").is_hidden()
+        assert await page.evaluate("document.activeElement.id") == "close-button"
+        assert await page.get_by_role("button", name="Close").is_enabled()
         assert await page.locator("#canvas-preview").get_attribute("src") in {
             None,
             "about:blank",
@@ -437,9 +453,7 @@ async def test_real_branch_transition_clears_unreachable_preview_until_reopened(
 
         store.set_active_leaf(session.id, left.id)
         await page.wait_for_timeout(500)
-        assert await page.get_by_text(
-            "Unavailable on this branch", exact=True
-        ).is_visible()
+        assert await recovery.is_visible()
 
         reopened_scope = authority.gateway_scope(
             session_id=session.id,

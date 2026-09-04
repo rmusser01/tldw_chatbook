@@ -1,5 +1,7 @@
 """Production native Canvas authority and temporary-promotion coverage."""
 
+import threading
+
 from dataclasses import replace
 
 import pytest
@@ -13,7 +15,10 @@ from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Canvas.service import CanvasService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+from tldw_chatbook.Chat.console_canvas_controller import (
+    CanvasSettlementPublication,
+    ConsoleCanvasController,
+)
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleMessageRole,
@@ -816,6 +821,247 @@ def test_settlement_listener_retry_only_retries_incomplete_auto_open():
     assert attempts == 2
     assert opened == [(session_id, created.revision.revision_id)]
     assert controller.promotion_contribution(session_id).revision_count == 1
+
+
+def test_publication_capacity_never_evicts_incomplete_receipt_or_replays_event():
+    session_id = "temporary-publication-capacity"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    opener_recovered = False
+    attempts: list[str] = []
+    opened: list[str] = []
+
+    def systemic_open(_requested, info):
+        attempts.append(info.revision_id)
+        if not opener_recovered:
+            raise RuntimeError("injected systemic opener failure")
+        opened.append(info.revision_id)
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: _scope(session_id),
+        canvas_controller=controller,
+        auto_open=systemic_open,
+        publication_guard=lambda _publication: True,
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    settlements = []
+    created = []
+    for index in range(257):
+        assistant_id = f"assistant-{index}"
+        scope = _branch_scope(
+            session_id,
+            session_id,
+            (assistant_id,),
+            f"interaction-{index}",
+        )
+        run = controller.register_run(
+            scope, assistant_message_id=assistant_id, temporary=True
+        )
+        mutation = run.create_canvas(
+            scope,
+            tool_call_id=f"create-{index}",
+            title=f"Capacity {index}",
+            html=f"<!doctype html><h1>Capacity {index}</h1>",
+        )
+        settlement = run.finish_assistant_run(
+            assistant_id,
+            actual_run_id=scope.run_id,
+            terminal_status="done",
+        )
+        assert settlement is not None
+        assert controller.confirm_exact_settlement(settlement) is True
+        settlements.append(settlement)
+        created.append(mutation.revision)
+
+    oldest = created[0]
+    newest = created[-1]
+    assert len(authority._publication_receipts) == 256
+    assert len(authority._events[(session_id, oldest.canvas_id)]) == 1
+    assert (session_id, newest.canvas_id) not in authority._events
+    assert controller.run_revision_count("interaction-0") == 1
+    assert len(attempts) == 256
+
+    newest_publication = controller._runs["interaction-256"].publication
+    assert newest_publication is not None
+    with pytest.raises(
+        RuntimeError, match="canvas_publication_capacity_exhausted"
+    ) as capacity_error:
+        authority.on_settlement_publication(newest_publication)
+    assert newest.revision_id not in str(capacity_error.value)
+    assert "Capacity 256" not in str(capacity_error.value)
+
+    opener_recovered = True
+    assert controller.confirm_exact_settlement(settlements[0]) is True
+    assert controller.confirm_exact_settlement(settlements[0]) is True
+    assert len(authority._events[(session_id, oldest.canvas_id)]) == 1
+    assert opened == [oldest.revision_id]
+    assert len(authority._publication_receipts) == 256
+
+    assert controller.confirm_exact_settlement(settlements[-1]) is True
+    assert len(authority._events[(session_id, newest.canvas_id)]) == 1
+    assert opened == [oldest.revision_id, newest.revision_id]
+    assert len(authority._publication_receipts) == 256
+
+
+def test_publication_capacity_churn_evicts_only_controller_delivered_receipts():
+    session_id = "temporary-publication-success-churn"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    opened: list[str] = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: _scope(session_id),
+        canvas_controller=controller,
+        auto_open=lambda _requested, info: opened.append(info.revision_id),
+        publication_guard=lambda _publication: True,
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    first_settlement = None
+    first_revision_id = ""
+    for index in range(257):
+        assistant_id = f"assistant-success-{index}"
+        scope = _branch_scope(
+            session_id,
+            session_id,
+            (assistant_id,),
+            f"interaction-success-{index}",
+        )
+        run = controller.register_run(
+            scope, assistant_message_id=assistant_id, temporary=True
+        )
+        mutation = run.create_canvas(
+            scope,
+            tool_call_id=f"create-success-{index}",
+            title=f"Successful capacity {index}",
+            html=f"<!doctype html><h1>Successful capacity {index}</h1>",
+        )
+        settlement = run.finish_assistant_run(
+            assistant_id,
+            actual_run_id=scope.run_id,
+            terminal_status="done",
+        )
+        assert settlement is not None
+        assert controller.confirm_exact_settlement(settlement) is True
+        if index == 0:
+            first_settlement = settlement
+            first_revision_id = mutation.revision.revision_id
+
+    assert first_settlement is not None
+    assert len(opened) == 257
+    assert len(authority._publication_receipts) == 256
+
+    assert controller.confirm_exact_settlement(first_settlement) is True
+    assert opened.count(first_revision_id) == 1
+
+
+def test_publication_receipt_concurrent_retry_is_source_free_and_exactly_once():
+    session_id = "temporary-publication-concurrency"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    scope = _branch_scope(
+        session_id,
+        session_id,
+        ("assistant-concurrent",),
+        "interaction-concurrent",
+    )
+    created = controller.interactive_create_canvas(
+        scope,
+        origin_message_id="assistant-concurrent",
+        title="Concurrent publication",
+        html="<!doctype html><h1>Concurrent publication</h1>",
+        temporary=True,
+    )
+    publication = CanvasSettlementPublication(
+        publication_id="publication-" + "a" * 64,
+        scope=scope,
+        assistant_message_id="assistant-concurrent",
+        revisions=(created.revision,),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    opened: list[str] = []
+
+    def blocking_open(_requested, info):
+        entered.set()
+        assert release.wait(timeout=5)
+        opened.append(info.revision_id)
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: scope,
+        canvas_controller=controller,
+        auto_open=blocking_open,
+        publication_guard=lambda _publication: True,
+    )
+    worker_errors: list[Exception] = []
+
+    def publish() -> None:
+        try:
+            authority.on_settlement_publication(publication)
+        except Exception as exc:  # pragma: no cover - asserted below
+            worker_errors.append(exc)
+
+    worker = threading.Thread(target=publish)
+    worker.start()
+    assert entered.wait(timeout=5)
+    with pytest.raises(
+        RuntimeError, match="canvas_publication_already_opening"
+    ) as retry_error:
+        authority.on_settlement_publication(publication)
+    assert publication.publication_id not in str(retry_error.value)
+    assert created.revision.revision_id not in str(retry_error.value)
+    release.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert worker_errors == []
+
+    authority.on_settlement_publication(publication)
+    assert len(authority._events[(session_id, created.revision.canvas_id)]) == 1
+    assert opened == [created.revision.revision_id]
+
+
+def test_publication_receipts_are_cleared_and_fenced_on_authority_dispose():
+    session_id = "temporary-publication-dispose"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    scope = _branch_scope(
+        session_id,
+        session_id,
+        ("assistant-dispose",),
+        "interaction-dispose",
+    )
+    created = controller.interactive_create_canvas(
+        scope,
+        origin_message_id="assistant-dispose",
+        title="Dispose publication",
+        html="<!doctype html><h1>Dispose publication</h1>",
+        temporary=True,
+    )
+    publication = CanvasSettlementPublication(
+        publication_id="publication-" + "b" * 64,
+        scope=scope,
+        assistant_message_id="assistant-dispose",
+        revisions=(created.revision,),
+    )
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: scope,
+        canvas_controller=controller,
+        auto_open=lambda _requested, _info: (_ for _ in ()).throw(
+            RuntimeError("injected opener failure")
+        ),
+        publication_guard=lambda _publication: True,
+    )
+
+    with pytest.raises(RuntimeError, match="injected opener failure"):
+        authority.on_settlement_publication(publication)
+    assert len(authority._publication_receipts) == 1
+
+    authority.dispose()
+
+    assert authority._publication_receipts == {}
+    with pytest.raises(
+        RuntimeError, match="canvas_publication_authority_disposed"
+    ) as disposed_error:
+        authority.on_settlement_publication(publication)
+    assert publication.publication_id not in str(disposed_error.value)
 
 
 def test_confirmed_json_submit_reaches_composer_as_valid_json_text():
