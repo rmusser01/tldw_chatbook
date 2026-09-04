@@ -60,9 +60,14 @@ from .agent_models import (
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
+    ToolCall,
+    ToolProjectionAudience,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
     WAIT_AGENTS_TOOL_NAME,
+    default_tool_record_projection,
+    failed_tool_record_projection,
 )
 from .run_context import current_run_id
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
@@ -746,6 +751,18 @@ class ToolProvider(Protocol):
     def load_schema(self, tool_id: str) -> ToolSchema: ...
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
+
+
+@runtime_checkable
+class ToolRecordProjectionProvider(Protocol):
+    """Optional provider hook for audience-specific tool-record redaction."""
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1690,6 +1707,41 @@ class ToolCatalogRegistry:
         if record is None:
             return None
         return record.tool_id, record.provider
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection:
+        """Return the owning provider's safe record view for one audience.
+
+        Existing providers intentionally do not need to implement the hook:
+        their fallback is byte-compatible with the records the runtime wrote
+        before projections existed.  A sensitive provider that cannot project
+        is fail-closed; no exception text, raw arguments, or raw result is
+        retained by the fallback.
+        """
+        record = self._owner_record_for_name(call.name)
+        provider = record.provider if record is not None else None
+        if not isinstance(provider, ToolRecordProjectionProvider):
+            return default_tool_record_projection(call, result)
+        try:
+            projected = provider.project_tool_record(audience, call, result)
+            if not isinstance(projected, ToolRecordProjection):
+                raise TypeError("tool projection returned an invalid value")
+            if (
+                not isinstance(projected.content, str)
+                or not isinstance(projected.error, str)
+                or not isinstance(projected.error_category, str)
+                or projected.ok not in {None, True, False}
+            ):
+                raise TypeError("tool projection contains invalid metadata")
+            json.dumps(dict(projected.arguments), sort_keys=True, allow_nan=False)
+            return projected
+        except Exception as exc:  # noqa: BLE001 -- content boundary fails closed
+            category = type(exc).__name__[:64] or "ProjectionError"
+            return failed_tool_record_projection(call, result, category)
 
     def _coerce_arguments(self, name, tool_id, provider, args: dict) -> dict:
         """Repair JSON-string arguments against the tool's declared schema.

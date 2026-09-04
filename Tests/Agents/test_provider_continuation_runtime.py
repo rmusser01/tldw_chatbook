@@ -15,14 +15,15 @@ from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     FinalContinuation,
     ModelTurn,
+    RunBudget,
     ToolBatchReady,
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
     ToolLoadSelection,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
-    RunBudget,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Chat.provider_continuation import (
@@ -208,6 +209,39 @@ def test_barriers_precede_all_observable_runtime_hooks(turn_kind: str) -> None:
     assert order.index("ToolCallExecuting") < order.index("record:tool_call")
     assert order.index("ToolCallExecuting") < order.index("step:tool_call")
     assert order.index("ToolCallExecuting") < order.index("invoke")
+
+
+def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
+    """A persisted continuation must not retain a Canvas-like argument body."""
+    raw = '<canvas-html-argument>'
+    raw_arguments = json.dumps({"html": raw}, separators=(",", ":"))
+    call = ToolCall("calculator", {"html": raw}, "call-1", raw_arguments)
+    checkpoint = _checkpoint(
+        ContinuationCall("call-1", "calculator", raw_arguments, "pending"),
+    )
+    events = []
+    turn = _native_turn((call,), checkpoint)
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.project_tool_record = lambda audience, _call, result=None: ToolRecordProjection(
+        arguments={"canvas_id": "canvas-1"} if audience == "continuation" else {},
+        content="revision-1",
+        error="safe-error",
+        ok=result.ok if result is not None else None,
+    )
+
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+
+    assert outcome.status == "cancelled"
+    batch = next(event for event in events if isinstance(event, ToolBatchReady))
+    stored = batch.checkpoint.rounds[0]
+    assert raw not in stored.calls[0].arguments
+    assert json.loads(stored.calls[0].arguments) == {"canvas_id": "canvas-1"}
 
 
 def test_executing_failure_emits_no_later_step_record_or_dispatch() -> None:

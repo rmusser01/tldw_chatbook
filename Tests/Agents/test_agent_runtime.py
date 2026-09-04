@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCatalogEntry,
     ToolLoadSelection,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
 )
@@ -100,6 +101,56 @@ def test_fenced_tool_call_then_answer():
     assert calls[0].name == "calculator"
     kinds = [s.kind for s in out.steps]
     assert kinds == ["model", "tool_call", "tool_result", "model"]
+
+
+def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history():
+    """Deleting any display/log/cycle projection call site leaks Canvas-like data."""
+    raw_argument = "<canvas-html-argument>"
+    raw_result = "<canvas-html-result>"
+    seen_messages = []
+    records = []
+    turns = [
+        ModelTurn(text=fence("calculator", {"html": raw_argument + str(index)}))
+        for index in range(3)
+    ]
+
+    def call_model(messages, _schemas):
+        seen_messages.append(list(messages))
+        return turns.pop(0)
+
+    def project(audience, _call, result=None):
+        if audience == "cycle":
+            # Distinct raw payloads become one stable projected key, proving
+            # cycle detection consumes the projection rather than raw args.
+            return ToolRecordProjection(arguments={"digest": "same"})
+        return ToolRecordProjection(
+            arguments={"audience": audience},
+            content=f"{audience}-result",
+            error=f"{audience}-error",
+            ok=result.ok if result is not None else None,
+        )
+
+    deps = make_deps([], invoke=lambda _call: ToolResult(ok=True, content=raw_result))
+    deps.call_model = call_model
+    deps.on_record = lambda kind, payload: records.append((kind, payload)) or None
+    deps.project_tool_record = project
+    out = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        deps,
+    )
+
+    assert out.status == RUN_STUCK
+    assert raw_result in seen_messages[1][-1]["content"]  # volatile model history
+    steps = [step for step in out.steps if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}]
+    assert all(raw_argument not in str(step) and raw_result not in str(step) for step in steps)
+    assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
 
 
 def test_native_tool_calls_take_precedence_over_text():

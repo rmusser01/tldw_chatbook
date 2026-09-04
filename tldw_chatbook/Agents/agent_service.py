@@ -7228,6 +7228,7 @@ class AgentService:
                 else None
             ),
             on_record=on_record,
+            project_tool_record=self.registry.project_tool_record,
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,
                 run_id=run_id,
