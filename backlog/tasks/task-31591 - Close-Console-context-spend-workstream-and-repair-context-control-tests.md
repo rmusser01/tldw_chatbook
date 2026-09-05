@@ -1,11 +1,11 @@
 ---
-id: TASK-31585
+id: TASK-31591
 title: Close Console context spend workstream and repair context control tests
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:40'
-updated_date: '2026-09-05 03:51'
+updated_date: '2026-09-05 05:24'
 labels:
   - console
   - tests
@@ -58,4 +58,6 @@ Published the corrected Current/On next send design and completed implementation
 Validation: 158 focused tests passed across context controls, rail/popover settings, and the real settings-default persistence service, including after rebasing onto dev's interrupt-host change. Scoped Ruff lint/format, diff whitespace checks, and the backlog ID/path guard passed. The subsequent Library follow-up merge changes documentation only; its task-ID collision is reconciled above. The full suite was not run. Pytest emitted a Requests dependency-version warning and temporary-directory cleanup warnings; neither was a test failure.
 
 Cleanup after merge is limited to the Console spend feature/port/baseline/closeout worktrees and topic/backup refs. Preserve the conflicted port and branch history in a verified recovery archive first. The original records in the shared main checkout are tracked on an unrelated branch and remain untouched; the authoritative dev replacements above supersede them.
+
+Renumbering provenance (PR #2404, 2026-09-05): moved this Console closeout from TASK-31585 to TASK-31591 after PR #2403 merged alongside the older Buddy task. Buddy created_date is 03:32; this closeout is 03:40. TASK-19601 gives the older task the ID regardless of Done status. A fresh sweep of 334 refs and 63 worktrees found max TASK-31590. Updated both spend plan/spec links; earlier TASK-31568-to-31585 provenance is retained as history. No implementation or acceptance status changed.
 <!-- SECTION:NOTES:END -->

@@ -8333,6 +8333,11 @@ class ConsoleChatController:
                     else None
                 ),
             )
+            if (
+                not stream_result.accepted
+                and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            ):
+                self._mark_transient_echo_blocked(echoed_user.id)
             result = replace(
                 stream_result,
                 session_id=session.id,
@@ -21478,6 +21483,16 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    def _refuse_project_instruction_setup(
+        self, session_id: str, assistant_message_id: str, visible_copy: str
+    ) -> ConsoleSubmitResult:
+        """Release setup recovery using the existing disable decision contract."""
+        try:
+            self.store.mark_message_failed(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result(session_id=session_id)
+        return self._block(session_id, visible_copy)
+
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
@@ -21584,7 +21599,9 @@ class ConsoleChatController:
                 else:
                     callback = self._select_project_instruction_binding
                     if callback is None:
-                        return ConsoleSubmitResult(False, False, str(exc))
+                        return self._refuse_project_instruction_setup(
+                            session_id, assistant_message_id, str(exc)
+                        )
                     action, binding_id = await callback(session_id, options, str(exc))
                     action, project_selection = (
                         commit_project_instruction_setup_decision(
@@ -21599,14 +21616,16 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
-                        try:
-                            self.store.mark_message_failed(assistant_message_id)
-                        except KeyError:
-                            return self._session_closed_result(session_id=session_id)
-                        return self._block(session_id, "project_instructions_disabled")
+                        return self._refuse_project_instruction_setup(
+                            session_id,
+                            assistant_message_id,
+                            "project_instructions_disabled",
+                        )
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
-                        return ConsoleSubmitResult(False, False, str(exc))
+                        return self._refuse_project_instruction_setup(
+                            session_id, assistant_message_id, str(exc)
+                        )
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:

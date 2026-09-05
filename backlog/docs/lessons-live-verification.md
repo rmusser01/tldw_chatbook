@@ -2003,3 +2003,18 @@ app-tests with a stubbed resolver and generator instead, and the PR body says so
 - Do not kill other sessions' runs to free the semaphores. Either wait for them to finish
   or reboot; until then, substitute app-tests and state the gap in the PR — never report a
   live verification you could not run.
+
+## Playback cleanup does not prove the Buddy received playback state
+
+**PR #2404 / TASK-31585, 2026-09-05.** After rebasing onto dev, trusted
+readback lifecycle tests passed and real Kokoro drained 128,000 PCM bytes, but
+Migu stayed idle throughout. Manual Speak correctly tracked its own presentation
+while only the realtime loop published Buddy voice leases. Connecting the
+existing trusted playback callbacks to a unique request-owned lease produced
+idle → speaking → idle in the real replay; stale-session terminal tests also
+proved that cleanup preserves another voice owner.
+
+**What to do.** Observe the actual Buddy controller and rendered availability
+alongside audio completion. A successful sink and cleared speaking-message ID
+prove audio ownership, not delivery to a separate visual state consumer. Re-run
+from the current PR tree: older live evidence can exercise a superseded host.

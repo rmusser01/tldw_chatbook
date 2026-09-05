@@ -9691,11 +9691,10 @@ class ChatScreen(BaseAppScreen):
     async def _console_read_last_response_back(self) -> None:
         """Speak the last completed assistant reply for "Console, read that back."
 
-        Mirrors `handle_console_message_action`'s "speak" branch (task-559)
-        exactly rather than inventing a second TTS path: post
-        `TTSRequestEvent`, track the message as the one currently driving
-        speech, and resync so the transcript's action row reflects it. Only
-        the completed target selection and the two ack cases are new here.
+        Use Manual Speak's trusted snapshot and playback lifecycle so
+        authority checks and terminal speech cleanup also apply to voice
+        commands. The completed target selection and acknowledgements stay
+        local to this entry point.
         """
         # Own-guard for the microphone/speaker mutual-exclusion invariant.
         # The one caller already reaches here at `idle`, so this is defensive
@@ -9721,15 +9720,7 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("Nothing to read yet.", severity="warning")
             self._speak_status("Nothing to read yet.")
             return
-        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSRequestEvent,
-        )
-
-        self.app_instance.post_message(
-            TTSRequestEvent(text=message.content, message_id=message.id)
-        )
-        self._console_speaking_message_id = message.id
-        await self._sync_native_console_chat_ui()
+        await self._message.request_console_message_speech(message.id)
 
     # ------------------------------------------------------------------
     # V3 pipeline hands-free conversation loop: moved to
@@ -16458,6 +16449,17 @@ class ChatScreen(BaseAppScreen):
         if session_id is None:
             session_id = controller.store.active_session_id or ""
         dispatch_composer = self._console_composer_or_none()
+        dispatch_snapshot = (
+            dispatch_composer.capture_draft_snapshot()
+            if dispatch_composer is not None
+            and self._console_visible_draft_session_id == session_id
+            else None
+        )
+        dispatch_history = (
+            dispatch_composer.export_undo_history()
+            if dispatch_snapshot is not None
+            else None
+        )
         dispatch_draft_revision = (
             (
                 dispatch_composer.edit_serial,
@@ -16535,12 +16537,35 @@ class ChatScreen(BaseAppScreen):
             composer is not None
             and self._console_visible_draft_session_id == session_id
         )
-        stash = self._console_inflight_send_stashes.pop(session_id, None)
-        if not result.accepted and stash is not None and composer_reflects_session:
+        stash = (
+            self._console_inflight_send_stashes.pop(session_id, None) or inflight_stash
+        )
+        if (
+            not result.accepted
+            and stash is not None
+            and composer_reflects_session
+            and composer_visible_for_session
+        ):
             # Controller-level refusal of a keyboard send: the composer was
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
+            if (
+                dispatch_snapshot is not None
+                and composer.edit_serial == dispatch_snapshot.edit_serial
+            ):
+                composer.restore_undo_history(dispatch_history)
             composer.restore_stashed_draft(stash)
+        elif (
+            not result.accepted
+            and composer_visible_for_session
+            and dispatch_snapshot is not None
+            and composer.edit_serial == dispatch_snapshot.edit_serial
+            and not composer.draft_text()
+        ):
+            # Setup may refuse after the accepted hook cleared this draft.
+            # A newer edit or another visible session retains ownership.
+            composer.restore_snapshot(dispatch_snapshot)
+            composer.restore_undo_history(dispatch_history)
         if result.session_closed:
             # Task 4 (D2 fix wave): `_session_closed_result` is `accepted`
             # (see its own docstring) so the restore above never fires, and

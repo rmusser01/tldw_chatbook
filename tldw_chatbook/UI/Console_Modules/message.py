@@ -1134,8 +1134,28 @@ class ConsoleMessageController:
                 return False
             return True
 
+        from tldw_chatbook.Persona_Buddy.console_adapter import BuddyLifecycleEvent
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        buddy_sink = getattr(runtime, "persona_buddy_sink", None)
+        buddy_owner = f"speech:{uuid.uuid4().hex}"
+
         def report_playback(state: str) -> None:
-            if playback_is_current():
+            current = playback_is_current()
+            if buddy_sink is not None and (
+                (current and state == "playing") or state in {"stopped", "failed"}
+            ):
+                # Exact playback ownership outlives the visible session. A stale
+                # stop acknowledgement releases only this request's voice lease.
+                buddy_sink.publish(
+                    BuddyLifecycleEvent(
+                        source="voice",
+                        owner=buddy_owner,
+                        state="speaking" if state == "playing" else "idle",
+                        terminal=state in {"stopped", "failed"},
+                    )
+                )
+            if current:
                 self._settle_console_speech_presentation(
                     message_id,
                     request_generation,
