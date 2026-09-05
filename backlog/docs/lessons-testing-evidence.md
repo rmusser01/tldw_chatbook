@@ -11513,3 +11513,13 @@ Use the production factory for at least one multi-turn and tool-loop integration
 test; fake only inference. Compare native-reader reconstruction before/after a
 later turn, and keep a changed-history negative control. A completed call row or
 a mocked append boundary alone does not prove historical request reconstruction.
+
+Follow-up, TASK-31737: the real production-boundary tool test also exposed that
+response settlement is queued when the next model call begins; requiring a
+terminal `complete` row incorrectly blocked a valid `response_started` chain.
+Independent review then reproduced an old chain being admitted after a newer
+chain dispatched the identical prompt. Surface equality did not prove current
+call ownership. A failing same-surface/new-run test led to an atomic ordered
+call-boundary event and latest-call check. Use durable call order for supersession,
+not surface identity or timestamps, and exercise deferred settlement in the real
+agent path rather than forcing it synchronous in the test.

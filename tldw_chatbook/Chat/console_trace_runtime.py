@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
-from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import TraceCallState, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     DerivedTraceProvenance,
@@ -140,10 +140,14 @@ class ConsoleTraceBoundaryFactory:
             # preceding active user revision still owns the durable turn.
             active_descriptor_index = -2
         active_revision_ids = tuple(
-            _saved_revision_ids(
-                provenance.messages_payload[active_descriptor_index]
-            )
+            _saved_revision_ids(provenance.messages_payload[active_descriptor_index])
         )
+        tool_loop = route_record.route is ConsoleRequestRoute.TOOL_LOOP
+        if tool_loop:
+            # Tool results are provider artifacts, not a new saved user turn.
+            # This candidate must match the durable chain origin below; it is
+            # never sufficient on its own to admit continuation ownership.
+            active_revision_ids = message_revision_ids[-1:]
         if len(active_revision_ids) != 1:
             raise ValueError("trace_turn_unavailable")
         revision_ids = message_revision_ids + tuple(
@@ -179,17 +183,71 @@ class ConsoleTraceBoundaryFactory:
                             batch,
                         ).fetchall()
                     )
-                by_revision = {
-                    str(row[0]): (str(row[1]), str(row[2])) for row in rows
-                }
+                by_revision = {str(row[0]): (str(row[1]), str(row[2])) for row in rows}
                 if any(revision_id not in by_revision for revision_id in revision_ids):
                     raise ValueError("trace_revision_unavailable")
                 current_revision_id = active_revision_ids[0]
                 conversation_id, turn_id = by_revision[current_revision_id]
+                if route_record.chain_id is not None:
+                    call_sequence = self.repository.read_next_call_sequence(
+                        cursor, run_id
+                    )
                 owner = self.repository.get_attached_owner_by_conversation(
                     cursor,
                     conversation_id,
                 )
+                if tool_loop:
+                    origin = self.repository.get_run_origin(cursor, run_id)
+                    if (
+                        origin is None
+                        or owner is None
+                        or origin.route_identity
+                        != ConsoleRequestRoute.AGENT_FIRST.value
+                        or (
+                            origin.owner_id,
+                            origin.segment_id,
+                            origin.turn_id,
+                            origin.policy_id,
+                        )
+                        != (
+                            owner.owner_id,
+                            owner.root_segment_id,
+                            turn_id,
+                            policy.policy_id,
+                        )
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
+                    previous = self.repository.get_call_by_logical_identity(
+                        cursor,
+                        owner_id=owner.owner_id,
+                        segment_id=owner.root_segment_id,
+                        turn_id=turn_id,
+                        run_id=run_id,
+                        call_sequence=call_sequence - 1,
+                    )
+                    tail = self.repository.get_surface_tail(
+                        cursor, owner.root_segment_id
+                    )
+                    latest_call = self.repository.get_latest_call_boundary(
+                        cursor, owner.root_segment_id
+                    )
+                    if (
+                        previous is None
+                        or latest_call is None
+                        or latest_call.call_id != previous.call_id
+                        # Agent response settlement may still be queued when
+                        # its next tool call begins; a response-bearing call
+                        # already provides durable ownership for that chain.
+                        or previous.state
+                        not in {
+                            TraceCallState.RESPONSE_STARTED,
+                            TraceCallState.COMPLETE,
+                        }
+                        or previous.policy_id != policy.policy_id
+                        or tail is None
+                        or previous.surface_node_id != tail.node_id
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
                 if owner is None:
                     segment = self.repository.create_segment(cursor)
                     owner = self.repository.attach_owner(
@@ -201,20 +259,17 @@ class ConsoleTraceBoundaryFactory:
                 continuation_values = tuple(
                     group.checkpoint for group in request.continuation_groups
                 )
-                admission, surface_boundary = self.service.prepare_current_surface_delta(
-                    cursor,
-                    owner_id=owner.owner_id,
-                    segment_id=owner.root_segment_id,
-                    route_identity=route_identity,
-                    preparation_identity=preparation_identity,
-                    provenance=provenance,
-                    values=tuple(request.messages_payload) + continuation_values,
-                )
-                if route_record.chain_id is not None:
-                    call_sequence = self.repository.read_next_call_sequence(
+                admission, surface_boundary = (
+                    self.service.prepare_current_surface_delta(
                         cursor,
-                        run_id,
+                        owner_id=owner.owner_id,
+                        segment_id=owner.root_segment_id,
+                        route_identity=route_identity,
+                        preparation_identity=preparation_identity,
+                        provenance=provenance,
+                        values=tuple(request.messages_payload) + continuation_values,
                     )
+                )
                 reserved = self.repository.reserve_call(
                     cursor,
                     owner_id=owner.owner_id,
@@ -224,6 +279,19 @@ class ConsoleTraceBoundaryFactory:
                     call_sequence=call_sequence,
                     idempotency_key=idempotency_key,
                     policy_id=policy.policy_id,
+                )
+                # Surface identity alone cannot detect a newer run with the
+                # same prompt. Record the reservation in the existing ordered
+                # ledger, atomically with the call, before provider dispatch.
+                event_tail = self.repository.get_event_tail(
+                    cursor, owner.root_segment_id
+                )
+                self.repository.append_event(
+                    cursor,
+                    segment_id=owner.root_segment_id,
+                    sequence=0 if event_tail is None else event_tail.sequence + 1,
+                    event_type="call_boundary",
+                    call_id=reserved.call_id,
                 )
             assert reserved is not None
             return ConsoleTraceCallBoundary(

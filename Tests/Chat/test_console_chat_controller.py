@@ -6880,9 +6880,11 @@ async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("production_boundary", [False, True])
 async def test_durable_capture_on_composes_exact_trace_request_through_real_agent_path(
     tmp_path,
     monkeypatch,
+    production_boundary,
 ):
     """The durable production path owns provenance before the agent bridge."""
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
@@ -6904,6 +6906,9 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
     runs_db = AgentRunsDB(tmp_path / "durable-agent-runs.sqlite", client_id="task12")
     repository = ConsoleTraceRepository()
     service = ConsoleTraceService(repository)
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    production_factory = ConsoleTraceBoundaryFactory(chat_db, repository=repository)
     with chat_db.transaction() as cursor:
         segment = repository.create_segment(cursor)
     owner_holder = []
@@ -6919,6 +6924,16 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
         assert provenance is not None
         assert request.semantic.provenance is not None
         policy = request.semantic.provenance.capture_policy
+        if production_boundary:
+            boundary = production_factory(request, _resolution, route)
+            if not owner_holder:
+                owner_holder.append(
+                    SimpleNamespace(owner_id=boundary.identity.owner_id)
+                )
+            routes.append(route)
+            provenances.append(provenance)
+            policies.append(policy)
+            return boundary
         preparation_identity = new_opaque_id()
         with chat_db.transaction() as cursor:
             if not owner_holder:
