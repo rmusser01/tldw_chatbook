@@ -411,3 +411,64 @@ async def test_catalog_paging_uses_no_http_and_screen_reentry_refreshes(snapshot
         await h.app.pop_screen()
         await pilot.pause(0.2)
         assert len(h.calls) > before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad", [{"keep_count": 0}, {"keep_count": "10"}, {"enabled": "yes"}]
+)
+async def test_malformed_preferences_keep_models_catalog_usable_and_reload_recovers(
+    snapshot_ui, bad
+):
+    from tldw_chatbook import config
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+    from tldw_chatbook.Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
+
+    h = snapshot_ui
+    await h.service.refresh()
+    h.service.start_save(0)
+    await settle_ui_without_pilot(h.service)
+    assert config.apply_settings_mutation_to_cli_config(
+        {"llamacpp_snapshots": bad}
+    ).fully_applied
+    async with h.app.run_test(size=(80, 24)) as pilot:
+        await h.app.push_screen(LLMScreen(h.app))
+        await pilot.pause()
+        manager = h.app.screen.query_one(LlamaCppSnapshotManager)
+        assert manager.query_one("#snapshot-save", Button).disabled
+        assert manager.query_one("#snapshot-restore", Button).disabled
+        assert manager.query_one("#snapshot-apply", Button).disabled
+        assert manager.query_one("#snapshot-keep", Input).disabled
+        assert manager.query_one("#snapshot-keep", Input).value == ""
+        assert "Advanced Config" in str(
+            manager.query_one("#snapshot-disabled-reason").render()
+        )
+        assert not manager.query_one("#snapshot-delete", Button).disabled
+        before = len(h.calls)
+        await h.service.browse_catalog()
+        assert len(h.calls) == before
+        manager.query_one("#snapshot-delete", Button).press()
+        await pilot.pause()
+        h.app.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        assert not h.store.list_records().records
+        await manager._save_preferences(True)  # Still malformed: no defaults accepted.
+        assert manager.query_one("#snapshot-apply", Button).disabled
+        assert preferences.save_snapshot_preferences(
+            preferences.SnapshotPreferences(enabled=True, keep_count=23)
+        )
+        await manager._save_preferences(True)
+        assert manager.query_one("#snapshot-keep", Input).value == "23"
+        assert not manager.query_one("#snapshot-save", Button).disabled
+        assert config.apply_settings_mutation_to_cli_config(
+            {"llamacpp_snapshots": {"keep_count": True}}
+        ).fully_applied
+        await manager._refresh()
+        assert manager.query_one("#snapshot-save", Button).disabled
+        assert manager.query_one("#snapshot-apply", Button).disabled
+
+
+async def settle_ui_without_pilot(service):
+    async with asyncio.timeout(5):
+        while service.view().operation_id is not None:
+            await asyncio.sleep(0.01)

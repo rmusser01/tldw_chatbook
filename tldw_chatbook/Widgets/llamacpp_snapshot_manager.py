@@ -21,6 +21,11 @@ from tldw_chatbook.LLM_Management.snapshot_models import SnapshotError
 from tldw_chatbook.LLM_Management.snapshot_service import LlamaCppSnapshotService
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
+PREFERENCES_UNAVAILABLE = (
+    "Snapshot preferences unavailable. In F9 Advanced Config, correct "
+    "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Reload."
+)
+
 
 def retention_copy(keep_count: int) -> str:
     return f"Keeps the newest {keep_count} across all models"
@@ -47,8 +52,13 @@ class LlamaCppSnapshotManager(Vertical):
         self._elapsed_timer = None
         self._confirming = False
         self._offsets = [0]
-        self._preferences = preferences.load_snapshot_preferences()
-        self._effective_keep = self._preferences.keep_count
+        try:
+            self._preferences = preferences.load_snapshot_preferences()
+        except (ValueError, OSError):
+            self._preferences = None
+        self._effective_keep = (
+            self._preferences.keep_count if self._preferences else None
+        )
 
     def compose(self) -> ComposeResult:
         yield Static("Prompt-cache snapshots", classes="section-title")
@@ -57,7 +67,10 @@ class LlamaCppSnapshotManager(Vertical):
             classes="snapshot-copy",
         )
         yield Static(
-            retention_copy(self._preferences.keep_count), id="snapshot-retention"
+            retention_copy(self._effective_keep)
+            if self._effective_keep is not None
+            else "Retention unavailable",
+            id="snapshot-retention",
         )
         with Horizontal(classes="snapshot-actions"):
             yield Button("Save", id="snapshot-save")
@@ -84,20 +97,26 @@ class LlamaCppSnapshotManager(Vertical):
             )
             yield Checkbox(
                 "Enable snapshots",
-                value=self._preferences.enabled,
+                value=self._preferences.enabled if self._preferences else False,
+                disabled=self._preferences is None,
                 id="snapshot-enabled",
             )
             with Horizontal(classes="snapshot-actions"):
                 yield Static("Keep count", classes="snapshot-keep-label")
                 yield Input(
-                    str(self._preferences.keep_count),
+                    str(self._preferences.keep_count) if self._preferences else "",
+                    disabled=self._preferences is None,
                     id="snapshot-keep",
                     type="integer",
                 )
-                yield Button("Apply", id="snapshot-apply")
+                yield Button(
+                    "Apply", id="snapshot-apply", disabled=self._preferences is None
+                )
                 yield Button("Reload", id="snapshot-reload")
             yield Static(
-                "Enable/disable applies on next launch. A lower count takes effect after the next completed save.",
+                "Enable/disable applies on next launch. A lower count takes effect after the next completed save."
+                if self._preferences
+                else PREFERENCES_UNAVAILABLE,
                 id="snapshot-preferences-result",
             )
         yield Static(
@@ -140,10 +159,33 @@ class LlamaCppSnapshotManager(Vertical):
     async def _refresh(self) -> None:
         attachment = self._attachment
         await self.service.refresh()
-        loaded = await asyncio.to_thread(preferences.load_snapshot_preferences)
+        try:
+            loaded = await asyncio.to_thread(preferences.load_snapshot_preferences)
+        except (ValueError, OSError):
+            loaded = None
         if attachment is self._attachment and self.is_mounted:
-            self._effective_keep = loaded.keep_count
+            if loaded is None or self._preferences is None:
+                self._set_loaded_preferences(loaded)
+            else:
+                self._effective_keep = loaded.keep_count
             self._paint()
+
+    def _set_loaded_preferences(
+        self, value: preferences.SnapshotPreferences | None
+    ) -> None:
+        self._preferences = value
+        self._effective_keep = value.keep_count if value else None
+        self.query_one("#snapshot-enabled", Checkbox).value = (
+            value.enabled if value else False
+        )
+        self.query_one("#snapshot-keep", Input).value = (
+            str(value.keep_count) if value else ""
+        )
+        self.query_one("#snapshot-preferences-result", Static).update(
+            "Preferences loaded. Enable/disable applies on next launch."
+            if value
+            else PREFERENCES_UNAVAILABLE
+        )
 
     def _paint_elapsed(self) -> None:
         if not self.is_mounted or self._attachment is None:
@@ -243,6 +285,8 @@ class LlamaCppSnapshotManager(Vertical):
                     records.move_cursor(row=index)
         self.query_one("#snapshot-retention", Static).update(
             retention_copy(self._effective_keep)
+            if self._effective_keep is not None
+            else "Retention unavailable"
         )
         reason = view.disabled_reason or (
             "No snapshots yet — Save an idle slot to reuse its processed context."
@@ -255,6 +299,7 @@ class LlamaCppSnapshotManager(Vertical):
         )
         ready = (
             view.status == "idle"
+            and self._preferences is not None
             and not view.disabled_reason
             and selected is not None
             and selected.busy is False
@@ -290,6 +335,12 @@ class LlamaCppSnapshotManager(Vertical):
             ready and compatibility.get(self._snapshot_id) == "matching"
         )
         self.query_one("#snapshot-delete", Button).disabled = self._snapshot_id is None
+        for selector in ("#snapshot-enabled", "#snapshot-keep", "#snapshot-apply"):
+            self.query_one(selector).disabled = self._preferences is None
+        if self._preferences is None:
+            self.query_one("#snapshot-disabled-reason", Static).update(
+                PREFERENCES_UNAVAILABLE
+            )
         self.query_one("#snapshot-previous", Button).disabled = len(self._offsets) == 1
         self.query_one("#snapshot-next", Button).disabled = (
             view.catalog.next_offset is None
@@ -370,6 +421,8 @@ class LlamaCppSnapshotManager(Vertical):
         if action == "snapshot-refresh":
             self.request_refresh()
         elif action == "snapshot-save":
+            if self._preferences is None:
+                return
             self._offsets = [0]
             try:
                 self.service.start_save(self._slot_id)
@@ -433,6 +486,8 @@ class LlamaCppSnapshotManager(Vertical):
                 )
                 return
             if restore:
+                if self._preferences is None:
+                    return
                 if current.launch_id != launch_id or self._slot_id != slot_id:
                     self.app.notify(
                         "Destination changed; select it again.", severity="warning"
@@ -464,6 +519,8 @@ class LlamaCppSnapshotManager(Vertical):
             if reload:
                 value = await asyncio.to_thread(preferences.load_snapshot_preferences)
             else:
+                if self._preferences is None:
+                    return
                 value = preferences.SnapshotPreferences(
                     enabled=self.query_one("#snapshot-enabled", Checkbox).value,
                     keep_count=int(self.query_one("#snapshot-keep", Input).value),
@@ -475,10 +532,7 @@ class LlamaCppSnapshotManager(Vertical):
                 ):
                     raise ValueError("save failed")
             if attachment is self._attachment and self.is_mounted:
-                self._preferences = value
-                self._effective_keep = value.keep_count
-                self.query_one("#snapshot-enabled", Checkbox).value = value.enabled
-                self.query_one("#snapshot-keep", Input).value = str(value.keep_count)
+                self._set_loaded_preferences(value)
                 self.query_one("#snapshot-preferences-result", Static).update(
                     "Saved. Enable/disable applies on next launch."
                 )
@@ -490,6 +544,10 @@ class LlamaCppSnapshotManager(Vertical):
                 )
         except (ValueError, OSError):
             if attachment is self._attachment and self.is_mounted:
+                if reload:
+                    self._set_loaded_preferences(None)
+                    self._paint()
+                    return
                 self.query_one("#snapshot-preferences-result", Static).update(
                     "Not saved. Use a keep count from 1 to 1000; check config access."
                 )
