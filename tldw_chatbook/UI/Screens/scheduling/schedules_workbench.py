@@ -1246,11 +1246,19 @@ class SchedulesWorkbench(BaseAppScreen):
                 exc_type=type(exc).__name__,
                 exc=exc,
             )
-            self.app_instance.notify(
-                "Could not refresh tasks (showing the last-loaded queue). "
-                "Check the scheduling service and retry.",
-                severity="error",
-            )
+            # Review round 1 finding 1: "showing the last-loaded queue"
+            # is only true once something HAS loaded -- on the very
+            # first (never-succeeded) load, `_all_rows` is still its
+            # `__init__` empty-list default, and that copy would assert
+            # a last-good display that never existed.
+            if self._all_rows:
+                message = (
+                    "Could not refresh tasks (showing the last-loaded "
+                    "queue). Check the scheduling service and retry."
+                )
+            else:
+                message = "Could not load tasks. Check the scheduling service and retry."
+            self.app_instance.notify(message, severity="error")
             await self._refresh_console_context()
             return
 

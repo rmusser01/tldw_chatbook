@@ -3045,7 +3045,9 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
     first (never-succeeded) load there is no prior state to preserve, so
     the detail pane simply keeps its pre-load compose-time copy (UAT
     Major 5: the fix is to stop DESTROYING good state on a later
-    failure, not to paint a bespoke first-failure copy)."""
+    failure, not to paint a bespoke first-failure copy). Review round 1
+    finding 1: the toast text itself must not claim a "last-loaded
+    queue" that never existed."""
     async with WorkbenchTestAppWithFailingService().run_test() as pilot:
         notify_calls: list[tuple[str, str]] = []
         pilot.app.notify = lambda message, severity="information", **_: (
@@ -3054,7 +3056,12 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        assert any(severity == "error" for severity, _ in notify_calls), notify_calls
+        errors = [message for severity, message in notify_calls if severity == "error"]
+        assert errors, notify_calls
+        assert "last-loaded queue" not in errors[0], (
+            "the first-ever load has no last-good queue to claim it is showing"
+        )
+        assert "Could not load tasks" in errors[0]
         empty_state = pilot.app.screen.query_one(
             "#scheduling-task-detail-empty-state", Static
         )
@@ -3171,7 +3178,11 @@ async def test_load_tasks_service_error_keeps_the_last_good_rows():
         assert table.row_count == 1, "the table must keep the last-good rows"
         assert workbench._tasks == tasks_before
         assert workbench._all_rows == rows_before
-        assert any(severity == "error" for severity, _ in notify_calls), notify_calls
+        errors = [message for severity, message in notify_calls if severity == "error"]
+        assert errors, notify_calls
+        assert "last-loaded queue" in errors[0], (
+            "a failure AFTER a real load must say so -- there IS a last-good queue"
+        )
 
 
 @pytest.mark.asyncio
@@ -3719,6 +3730,48 @@ def test_post_reminder_dispatched_posts_the_message():
     assert len(posted) == 1
     assert isinstance(posted[0], ReminderDispatched)
     assert posted[0].task_id == "task-7"
+
+
+@pytest.mark.asyncio
+async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_pump():
+    """Review round 1 finding 3: the three other fanout tests each pin
+    one hop in isolation via direct calls (the loop's callback fires;
+    `TldwCli.on_reminder_dispatched` called directly against a fake app;
+    `_post_reminder_dispatched` checked to call `post_message`) -- none
+    of them actually run a message through a live Textual pump. This
+    posts a REAL `ReminderDispatched` on a RUNNING app and confirms
+    Textual's naming-convention dispatch (`on_reminder_dispatched`, no
+    `@on` decorator -- `Message.handler_name` resolves it purely by
+    class-name convention) really connects `TldwCli`'s production method
+    to a mounted `SchedulesWorkbench` at runtime, not just in theory."""
+    from tldw_chatbook.app import TldwCli
+
+    class _FanoutTestApp(WorkbenchTestAppWithService):
+        # The REAL production method, unbound onto this lightweight test
+        # app -- if Textual's dispatch did not route by name convention,
+        # this handler would simply never run.
+        on_reminder_dispatched = TldwCli.on_reminder_dispatched
+
+    app = _FanoutTestApp()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        refresh_calls: list[bool] = []
+        workbench._request_tasks_refresh = lambda *, refresh_definitions=True: (
+            refresh_calls.append(refresh_definitions)
+        )
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        # `on_mount` itself calls `_request_tasks_refresh()` (default
+        # True) as part of normal mounting -- irrelevant to this pin.
+        refresh_calls.clear()
+
+        pilot.app.post_message(ReminderDispatched("task-1"))
+        await pilot.pause()
+
+        assert refresh_calls == [False], (
+            "the live message pump must dispatch ReminderDispatched to "
+            "TldwCli.on_reminder_dispatched by naming convention alone"
+        )
 
 
 @pytest.mark.asyncio
