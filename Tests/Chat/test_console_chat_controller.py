@@ -5478,6 +5478,55 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
 
 
 @pytest.mark.asyncio
+async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    enabled = [True]
+    db = CharactersRAGDB(tmp_path / "deferred-canvas.sqlite", "deferred-canvas")
+    runtime = ConsoleRuntime(
+        SimpleNamespace(chachanotes_db=db),
+        canvas_enabled_reader=lambda: enabled[0],
+    )
+    store = runtime.ensure_chat_store()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+        canvas_enabled_reader=runtime.canvas_enabled,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        enabled[0] = False
+        assert runtime.canvas_enabled() is False
+        enabled[0] = True
+        seen["catalog"] = provider.list_catalog()
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_DONE,
+        )
+        return run_id, RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        _arm_session(store)
+        result = await controller.submit_draft("defer the canvas tool")
+
+        assert result.accepted is True
+        assert seen["catalog"] == []
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
         "failed_run_uses_canvas",

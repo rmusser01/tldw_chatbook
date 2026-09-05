@@ -71,6 +71,12 @@ class _NativeFlowAuthority:
             return compile_canvas_document(
                 "<!doctype html><h1>Failure fixture</h1><script>throw new Error('fixture')</script>"
             )
+        if scope.revision_id == "active-script":
+            return compile_canvas_document(
+                "<!doctype html><output id='ticks'>0</output>"
+                "<script>setInterval(() => { const node = document.querySelector('#ticks'); "
+                "node.textContent = String(Number(node.textContent) + 1); }, 10);</script>"
+            )
         return compile_canvas_document(
             "<!doctype html><html><body>"
             f"<h1>{scope.revision_id}</h1><p>Isolated preview</p>"
@@ -176,6 +182,47 @@ def _chromium_executable(browser_type: object) -> str:
     if not executable:
         pytest.fail("real Playwright Chromium is required for the Canvas native flow")
     return executable
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_native_gateway_shutdown_destroys_an_actively_running_preview() -> None:
+    authority = _NativeFlowAuthority()
+    authority.publish("active-script", kind="selection_changed", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("active-script"))
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 1200, "height": 760})
+        page.set_default_timeout(7_000)
+        await page.goto(launch.browser_url)
+        ticks = page.frame_locator("#canvas-preview").locator("#ticks")
+        await expect(ticks).not_to_have_text("0")
+
+        await gateway.aclose()
+
+        await expect(page.locator("#canvas-preview")).to_have_attribute(
+            "src", "about:blank"
+        )
+        await expect(page.get_by_text("Disconnected", exact=True)).to_be_visible()
+        assert await page.locator("#canvas-preview").evaluate(
+            "frame => frame.contentDocument === null || frame.contentDocument.body.textContent === ''"
+        )
+        await page.evaluate(
+            """() => {
+                const probe = document.createElement('button');
+                probe.id = 'disconnect-focus-probe';
+                document.body.append(probe);
+                probe.focus();
+            }"""
+        )
+        await page.wait_for_timeout(800)
+        assert await page.evaluate("document.activeElement.id") == "disconnect-focus-probe"
+        await browser.close()
 
 
 @pytest.mark.loopback_network

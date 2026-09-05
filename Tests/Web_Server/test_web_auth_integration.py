@@ -329,5 +329,6 @@ def test_create_server_resolves_only_dedicated_web_credential(monkeypatch) -> No
     assert server is not None
     policy = server._web_auth.policy
     assert policy.access_credential.reveal() == "web-secret"
+    assert server._canvas_policy.remote_access_status == "insecure_development"
     assert "provider-secret" not in repr(policy)
     assert "legacy-secret" not in repr(policy)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -149,7 +150,8 @@ async def test_native_policy_watcher_revokes_open_preview_after_external_disable
 
 
 def test_native_disabled_startup_does_not_create_canvas_authority_or_gateway() -> None:
-    runtime = ConsoleRuntime(object(), canvas_enabled_reader=lambda: False)
+    enabled = [False]
+    runtime = ConsoleRuntime(object(), canvas_enabled_reader=lambda: enabled[0])
 
     assert runtime.ensure_canvas_gateway(authority=object()) is None
     assert (
@@ -158,3 +160,20 @@ def test_native_disabled_startup_does_not_create_canvas_authority_or_gateway() -
         )
         is None
     )
+    enabled[0] = True
+    assert runtime.canvas_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_native_runtime_observes_disable_before_any_preview_exists() -> None:
+    enabled = [True]
+    runtime = ConsoleRuntime(object(), canvas_enabled_reader=lambda: enabled[0])
+    await asyncio.sleep(0)
+
+    enabled[0] = False
+    assert runtime.canvas_enabled() is False
+    enabled[0] = True
+
+    assert runtime.canvas_enabled() is False
+    assert runtime.ensure_canvas_gateway(authority=object()) is None
+    await runtime.dispose()

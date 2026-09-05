@@ -161,6 +161,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
+    CanvasConfigPolicy,
     RuntimeConfigSnapshot,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
@@ -19711,7 +19712,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 yield Static("Remote browser access", classes="destination-section")
                 yield self._detail_row(
-                    "Effective policy", canvas_policy.remote_access_summary
+                    "Configured served posture", canvas_policy.remote_access_summary
                 )
                 yield Static(
                     "Capability URLs remain short-lived and browser-scoped. Access "
@@ -26441,6 +26442,74 @@ class SettingsScreen(BaseAppScreen):
         self._console_settings()["raw_cli_permitted"] = False
         return False, False
 
+    @staticmethod
+    def _canvas_snapshot_policy(
+        snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[int, CanvasConfigPolicy] | None:
+        """Extract a normalized Canvas policy from one valid generation."""
+
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return None
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            return None
+        if not isinstance(snapshot.values, Mapping):
+            return None
+        return snapshot.generation, build_canvas_config_policy(snapshot.values)
+
+    def _reconcile_canvas_runtime_policy(
+        self,
+        published_snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[CanvasConfigPolicy, bool]:
+        """Publish only the newest stable Canvas preference generation."""
+
+        candidate = published_snapshot
+        for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
+            parsed = self._canvas_snapshot_policy(candidate)
+            if parsed is None:
+                try:
+                    candidate = get_runtime_config_snapshot()
+                except Exception:
+                    logger.exception("Failed to refresh Canvas runtime config snapshot")
+                    break
+                parsed = self._canvas_snapshot_policy(candidate)
+                if parsed is None:
+                    candidate = None
+                    continue
+            generation, policy = parsed
+
+            def _publish_policy() -> bool:
+                app_config = self._app_config_section_target()
+                canvas_section = app_config.setdefault("canvas", {})
+                if not isinstance(canvas_section, dict):
+                    canvas_section = {}
+                    app_config["canvas"] = canvas_section
+                canvas_section.update(
+                    {
+                        "enabled": policy.enabled,
+                        "auto_open_on_create": policy.auto_open_on_create,
+                    }
+                )
+                return True
+
+            try:
+                if run_if_runtime_config_generation_current(
+                    generation, _publish_policy
+                ):
+                    return policy, True
+            except Exception:
+                logger.exception("Failed to guard Canvas config reconciliation")
+            candidate = None
+
+        logger.warning("Canvas runtime config generation did not stabilize; failing closed")
+        policy = build_canvas_config_policy(
+            {"canvas": {"enabled": False, "auto_open_on_create": False}}
+        )
+        self._app_config_section_target()["canvas"] = {
+            "enabled": False,
+            "auto_open_on_create": False,
+        }
+        return policy, False
+
     def _apply_raw_cli_save_result(
         self,
         saved: bool,
@@ -26455,6 +26524,15 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
+        submitted_canvas_enabled = (
+            canvas_values is not None and canvas_values.get("enabled") is True
+        )
+        disable_accepted = canvas_values is not None and not submitted_canvas_enabled
+        canvas_runtime = getattr(self.app_instance, "console_runtime", None)
+        if disable_accepted:
+            latch_disabled = getattr(canvas_runtime, "latch_canvas_disabled", None)
+            if callable(latch_disabled):
+                latch_disabled()
         saved_value, stable = self._reconcile_raw_cli_runtime_authority(
             published_snapshot
         )
@@ -26465,36 +26543,13 @@ class SettingsScreen(BaseAppScreen):
         )
         canvas_enabled: bool | None = None
         if canvas_values is not None:
-            observed_policy = None
-            if isinstance(published_snapshot, RuntimeConfigSnapshot):
-                observed_policy = build_canvas_config_policy(published_snapshot.values)
-            submitted_enabled = canvas_values.get("enabled") is True
+            observed_policy, _canvas_stable = self._reconcile_canvas_runtime_policy(
+                published_snapshot
+            )
+            submitted_enabled = submitted_canvas_enabled
             submitted_auto_open = canvas_values.get("auto_open_on_create") is True
-            canvas_enabled = (
-                observed_policy.enabled
-                if observed_policy is not None
-                else submitted_enabled
-            )
-            canvas_auto_open = (
-                observed_policy.auto_open_on_create
-                if observed_policy is not None
-                else submitted_auto_open
-            )
-            # A disable request always fails closed even if post-save observation
-            # is degraded. Re-enabling remains restart-gated by each live runtime.
-            if not submitted_enabled:
-                canvas_enabled = False
-            app_config = self._app_config_section_target()
-            canvas_section = app_config.setdefault("canvas", {})
-            if not isinstance(canvas_section, dict):
-                canvas_section = {}
-                app_config["canvas"] = canvas_section
-            canvas_section.update(
-                {
-                    "enabled": canvas_enabled,
-                    "auto_open_on_create": canvas_auto_open,
-                }
-            )
+            canvas_enabled = observed_policy.enabled
+            canvas_auto_open = observed_policy.auto_open_on_create
             self._reconcile_privacy_draft_value(
                 key=CANVAS_ENABLED_DRAFT_KEY,
                 saved_value=canvas_enabled,
@@ -26517,9 +26572,8 @@ class SettingsScreen(BaseAppScreen):
         self._sync_canvas_widgets()
         self._sync_raw_cli_widgets()
         self._update_draft_status_widgets(category)
-        if canvas_enabled is False:
-            runtime = getattr(self.app_instance, "console_runtime", None)
-            apply_policy = getattr(runtime, "apply_canvas_policy", None)
+        if disable_accepted:
+            apply_policy = getattr(canvas_runtime, "apply_canvas_policy", None)
             if callable(apply_policy):
                 self.run_worker(
                     apply_policy(),
@@ -26540,12 +26594,12 @@ class SettingsScreen(BaseAppScreen):
         if canvas_values is not None:
             self.app.notify(
                 (
-                    "Canvas disabled; tools and browser delivery were revoked. "
-                    "Stored Canvas data was preserved."
-                    if canvas_enabled is False
+                    "Canvas disabled for this launch; tools and browser delivery "
+                    "were revoked and stored Canvas data was preserved."
+                    if disable_accepted
                     else "Canvas settings saved. Restart Chatbook to re-enable Canvas delivery."
                 ),
-                severity="warning" if canvas_enabled is False else "information",
+                severity="warning" if disable_accepted else "information",
             )
         elif stable and saved_value is value:
             self.app.notify(

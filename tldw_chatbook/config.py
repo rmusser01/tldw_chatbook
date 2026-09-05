@@ -59,6 +59,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
@@ -144,55 +145,107 @@ def _strict_canvas_bool(
     return False
 
 
-def _canvas_remote_access_status(
-    web: Mapping[str, Any], *, environ: Mapping[str, str]
+def _summarize_canvas_web_auth_policy(
+    policy: "WebAuthPolicy",
 ) -> tuple[CanvasRemoteAccessStatus, str]:
-    """Derive credential-free served-mode status from effective settings."""
+    """Return credential-free copy for one already-validated web policy."""
 
-    from tldw_chatbook.Canvas.web_auth import is_loopback_host
-
-    host = str(web.get("host") or "localhost").strip()
-    if is_loopback_host(host):
+    if policy.automatic_local_login:
         return (
             "loopback",
             "Loopback only — browsers on this Chatbook host enter locally.",
         )
-
-    environment_token = environ.get("TLDW_CHATBOOK_WEB_ACCESS_TOKEN", "")
-    configured_token = web.get("access_token")
-    credential_present = bool(
-        (isinstance(environment_token, str) and environment_token)
-        or (isinstance(configured_token, str) and configured_token)
-    )
-    if not credential_present:
-        return (
-            "refused",
-            "Remote access refused — configure the dedicated Chatbook web access token.",
-        )
-
-    public_url = str(web.get("public_url") or "").strip()
-    direct_tls = bool(web.get("tls_certificate")) and bool(web.get("tls_private_key"))
-    allow_insecure = web.get("allow_insecure_remote_http") is True
-    if public_url.lower().startswith("https://") or direct_tls:
-        return (
-            "authenticated_tls",
-            "Authenticated TLS/proxy — dedicated browser admission is configured.",
-        )
-    if allow_insecure:
+    if policy.insecure_remote_http:
         return (
             "insecure_development",
             "Insecure development mode — authenticated remote HTTP can be observed on the network.",
         )
     return (
-        "misconfigured",
-        "Remote access misconfigured — use direct TLS or an exact HTTPS public URL behind a trusted proxy.",
+        "authenticated_tls",
+        "Authenticated TLS/proxy — dedicated browser admission is configured.",
     )
+
+
+def _canvas_remote_access_status(
+    web: Mapping[str, Any],
+    *,
+    environ: Mapping[str, str],
+    keyring_get: Callable[[str, str], str | None] | None,
+    web_auth_policy: "WebAuthPolicy | None",
+) -> tuple[CanvasRemoteAccessStatus, str]:
+    """Validate configured or effective served auth and return redacted copy."""
+
+    from tldw_chatbook.Canvas.web_auth import (
+        BindPolicyError,
+        ResolvedCredential,
+        build_web_auth_policy,
+        is_loopback_host,
+        resolve_web_access_token,
+    )
+
+    if web_auth_policy is not None:
+        return _summarize_canvas_web_auth_policy(web_auth_policy)
+
+    host = str(web.get("host") or "localhost").strip()
+    public_url = str(web.get("public_url") or "").strip() or None
+    port = web.get("port", 8000)
+    if type(port) is not int or not 0 <= port <= 65535:
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+    certificate = web.get("tls_certificate")
+    private_key = web.get("tls_private_key")
+    if bool(certificate) != bool(private_key):
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+
+    remote_candidate = not is_loopback_host(host) or public_url is not None
+    credential = (
+        resolve_web_access_token(
+            web.get("access_token"),
+            environ=environ,
+            keyring_get=keyring_get,
+        )
+        if remote_candidate
+        else ResolvedCredential(None, "not_required")
+    )
+    proxies = web.get("trusted_proxy_addresses", ())
+    if not isinstance(proxies, (list, tuple)):
+        proxies = ("invalid-proxy-configuration",)
+    try:
+        policy = build_web_auth_policy(
+            host=host,
+            port=port,
+            access_token=credential,
+            public_url=public_url,
+            allow_insecure_remote_http=(
+                web.get("allow_insecure_remote_http") is True
+            ),
+            trusted_proxy_addresses=tuple(str(value) for value in proxies),
+            direct_tls=bool(certificate and private_key),
+        )
+    except BindPolicyError as exc:
+        if credential.reveal() is None and "token" in str(exc).lower():
+            return (
+                "refused",
+                "Remote access refused — configure the dedicated Chatbook web access token.",
+            )
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+    return _summarize_canvas_web_auth_policy(policy)
 
 
 def build_canvas_config_policy(
     config: Mapping[str, Any] | None,
     *,
     environ: Mapping[str, str] | None = None,
+    keyring_get: Callable[[str, str], str | None] | None = None,
+    web_auth_policy: "WebAuthPolicy | None" = None,
 ) -> CanvasConfigPolicy:
     """Build the sole normalized Canvas policy from untrusted configuration."""
 
@@ -235,7 +288,10 @@ def build_canvas_config_policy(
     raw_web = values.get("web_server")
     web = raw_web if isinstance(raw_web, Mapping) else {}
     remote_status, remote_summary = _canvas_remote_access_status(
-        web, environ=os.environ if environ is None else environ
+        web,
+        environ=os.environ if environ is None else environ,
+        keyring_get=keyring_get,
+        web_auth_policy=web_auth_policy,
     )
     return CanvasConfigPolicy(
         enabled=enabled,
@@ -247,10 +303,24 @@ def build_canvas_config_policy(
     )
 
 
-def get_canvas_config_policy() -> CanvasConfigPolicy:
+def get_canvas_config_policy(
+    *, web_auth_policy: "WebAuthPolicy | None" = None
+) -> CanvasConfigPolicy:
     """Return the current effective Canvas policy from the shared config cache."""
 
-    return build_canvas_config_policy(load_cli_config_and_ensure_existence())
+    return build_canvas_config_policy(
+        load_cli_config_and_ensure_existence(),
+        web_auth_policy=web_auth_policy,
+    )
+
+
+def get_canvas_execution_enabled() -> bool:
+    """Read only the global execution gate without resolving web credentials."""
+
+    config = load_cli_config_and_ensure_existence()
+    canvas = config.get("canvas") if isinstance(config, Mapping) else None
+    scoped = {"canvas": canvas} if canvas is not None else {}
+    return build_canvas_config_policy(scoped, environ={}).enabled
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"

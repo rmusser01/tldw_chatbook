@@ -118,7 +118,7 @@ def test_create_server_passes_disabled_policy_to_served_owner(monkeypatch) -> No
     monkeypatch.setattr(
         serve,
         "get_canvas_config_policy",
-        lambda: config_module.build_canvas_config_policy(
+        lambda **_kwargs: config_module.build_canvas_config_policy(
             {"canvas": {"enabled": False}}
         ),
         raising=False,

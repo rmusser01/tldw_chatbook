@@ -735,11 +735,11 @@ class ConsoleRuntime:
         self._canvas_gateway_authority: Any | None = None
         self._canvas_native_authority: Any | None = None
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_config_policy
+            from tldw_chatbook.config import get_canvas_execution_enabled
 
-            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+            canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
-        self._canvas_disabled_latched = False
+        self._canvas_disabled_latched = not self._read_canvas_enabled()
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
@@ -769,6 +769,7 @@ class ConsoleRuntime:
         #: it already holds afterwards and builds nothing new -- see
         #: `dispose` for why a rebuild during quit is the hazard.
         self._disposed: bool = False
+        self._start_canvas_policy_watcher()
         self.authority_token = str(uuid4())
         database = getattr(app, "chachanotes_db", None)
         database_path = getattr(database, "db_path", None)
@@ -946,20 +947,33 @@ class ConsoleRuntime:
             )
         return self._canvas_native_authority
 
-    def _canvas_enabled(self) -> bool:
-        """Read the global kill switch and the restart-required runtime latch."""
+    def _read_canvas_enabled(self) -> bool:
+        """Read the shared policy without changing the process-lifetime latch."""
 
-        if self._disposed or self._canvas_disabled_latched:
-            return False
         try:
             return self._canvas_enabled_reader() is True
         except Exception:  # noqa: BLE001 - execution policy fails closed
             return False
 
+    def _canvas_enabled(self) -> bool:
+        """Read the global kill switch and the restart-required runtime latch."""
+
+        if self._disposed or self._canvas_disabled_latched:
+            return False
+        if not self._read_canvas_enabled():
+            self._canvas_disabled_latched = True
+            return False
+        return True
+
     def canvas_enabled(self) -> bool:
         """Expose this app runtime's restart-latched Canvas availability."""
 
         return self._canvas_enabled()
+
+    def latch_canvas_disabled(self) -> None:
+        """Synchronously accept a disable before asynchronous cleanup begins."""
+
+        self._canvas_disabled_latched = True
 
     async def apply_canvas_policy(self) -> None:
         """Idempotently revoke all browser delivery after Canvas is disabled.
@@ -970,7 +984,7 @@ class ConsoleRuntime:
 
         if self._canvas_enabled():
             return
-        self._canvas_disabled_latched = True
+        self.latch_canvas_disabled()
         gateway, self._canvas_gateway = self._canvas_gateway, None
         authority, self._canvas_native_authority = self._canvas_native_authority, None
         self._canvas_gateway_authority = None

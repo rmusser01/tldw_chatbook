@@ -410,9 +410,9 @@ class ConsoleMessageActionService:
         self.available_save_destinations = set(available_save_destinations or ())
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_config_policy
+            from tldw_chatbook.config import get_canvas_execution_enabled
 
-            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+            canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
         self._canvas_disabled_latched = not self._read_canvas_enabled()
 

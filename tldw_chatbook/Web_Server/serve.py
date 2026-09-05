@@ -44,7 +44,12 @@ from ..Canvas.web_auth import (
     build_web_auth_policy,
     resolve_web_access_token,
 )
-from ..config import CanvasConfigPolicy, get_canvas_config_policy, get_cli_setting
+from ..config import (
+    CanvasConfigPolicy,
+    get_canvas_config_policy,
+    get_canvas_execution_enabled,
+    get_cli_setting,
+)
 from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
@@ -795,7 +800,7 @@ class ChatbookWebServerMixin:
         if self._canvas_disabled_latched:
             return False
         try:
-            return get_canvas_config_policy().enabled is True
+            return get_canvas_execution_enabled() is True
         except Exception:  # noqa: BLE001 - server feature gate fails closed
             return False
 
@@ -1367,7 +1372,7 @@ def create_server(
         public_url=public_url,
         web_auth_policy=web_auth_policy,
         web_ssl_context=ssl_context,
-        canvas_policy=get_canvas_config_policy(),
+        canvas_policy=get_canvas_config_policy(web_auth_policy=web_auth_policy),
     )
 
     return server

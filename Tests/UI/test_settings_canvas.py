@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from textual.widgets import Checkbox
 
@@ -38,6 +38,7 @@ async def test_privacy_settings_present_canvas_controls_status_and_read_only_quo
         assert card.query_one("#settings-canvas-auto-open", Checkbox).value is False
         assert "Strict zero-egress runtime" in text
         assert "Loopback only" in text
+        assert "Configured served posture" in text
         assert "Effective hard quotas — read-only" in text
         assert "HTML document" in text and "512 KiB" in text
         assert "Runtime memory" in text and "32 MiB" in text
@@ -61,7 +62,10 @@ async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime
             "console": {"raw_cli_permitted": False},
         }
     )
-    runtime = SimpleNamespace(apply_canvas_policy=AsyncMock())
+    runtime = SimpleNamespace(
+        latch_canvas_disabled=Mock(),
+        apply_canvas_policy=AsyncMock(),
+    )
     app.console_runtime = runtime
     captured: list[tuple[bool, dict[str, bool]]] = []
 
@@ -107,7 +111,69 @@ async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime
             "enabled": False,
             "auto_open_on_create": False,
         }
+        runtime.latch_canvas_disabled.assert_called_once_with()
         runtime.apply_canvas_policy.assert_awaited_once_with()
         assert not screen._category_has_unsaved_changes(
             SettingsCategoryId.PRIVACY_SECURITY
         )
+
+
+async def test_accepted_disable_stays_latched_when_config_is_reenabled_before_callback(
+    monkeypatch,
+) -> None:
+    app = _build_test_app(
+        config_overrides={
+            "canvas": {"enabled": True, "auto_open_on_create": True},
+            "console": {"raw_cli_permitted": False},
+        }
+    )
+    runtime = SimpleNamespace(
+        latch_canvas_disabled=Mock(),
+        apply_canvas_policy=AsyncMock(),
+    )
+    app.console_runtime = runtime
+    stale = RuntimeConfigSnapshot(
+        17,
+        {
+            **app.app_config,
+            "canvas": {"enabled": False, "auto_open_on_create": False},
+        },
+    )
+    current = RuntimeConfigSnapshot(
+        18,
+        {
+            **app.app_config,
+            "canvas": {"enabled": True, "auto_open_on_create": True},
+        },
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.get_runtime_config_snapshot",
+        lambda *args, **kwargs: current,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.run_if_runtime_config_generation_current",
+        lambda generation, action: action() if generation == 18 else False,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        await _click_settings_category(pilot, SettingsCategoryId.PRIVACY_SECURITY.value)
+        screen = _active_destination_screen(pilot.app)
+        screen.query_one("#settings-canvas-enabled", Checkbox).value = False
+        await pilot.pause()
+
+        screen._apply_raw_cli_save_result(
+            True,
+            stale,
+            False,
+            {"enabled": False, "auto_open_on_create": False},
+        )
+        await pilot.pause()
+
+        runtime.latch_canvas_disabled.assert_called_once_with()
+        runtime.apply_canvas_policy.assert_awaited_once_with()
+        assert app.app_config["canvas"] == {
+            "enabled": True,
+            "auto_open_on_create": True,
+        }
+        assert screen.query_one("#settings-canvas-enabled", Checkbox).value is True

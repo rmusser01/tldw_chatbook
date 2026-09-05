@@ -74,18 +74,24 @@ def test_canvas_quota_overrides_cannot_raise_or_lower_hard_limits() -> None:
                 "host": "0.0.0.0",
                 "public_url": "https://chatbook.example",
                 "access_token": "configured-secret",
+                "trusted_proxy_addresses": ["127.0.0.1"],
             },
             {},
             "authenticated_tls",
         ),
         (
-            {"host": "0.0.0.0", "public_url": "https://chatbook.example"},
+            {
+                "host": "0.0.0.0",
+                "public_url": "https://chatbook.example",
+                "trusted_proxy_addresses": ["127.0.0.1"],
+            },
             {},
             "refused",
         ),
         (
             {
                 "host": "0.0.0.0",
+                "public_url": "http://chatbook.example",
                 "allow_insecure_remote_http": True,
                 "access_token": "configured-secret",
             },
@@ -110,6 +116,86 @@ def test_canvas_remote_status_is_derived_without_exposing_credentials(
     rendered = repr(policy) + policy.remote_access_summary
     assert "configured-secret" not in rendered
     assert "environment-secret" not in rendered
+
+
+def test_canvas_remote_status_uses_keyring_and_proxy_exposure_on_loopback() -> None:
+    policy = config_module.build_canvas_config_policy(
+        {
+            "web_server": {
+                "host": "127.0.0.1",
+                "public_url": "https://chatbook.example",
+                "trusted_proxy_addresses": ["127.0.0.1"],
+            }
+        },
+        environ={},
+        keyring_get=lambda _service, _account: "keyring-secret",
+    )
+
+    assert policy.remote_access_status == "authenticated_tls"
+    assert "keyring-secret" not in repr(policy)
+
+
+def test_canvas_remote_status_rejects_an_invalid_https_origin() -> None:
+    policy = config_module.build_canvas_config_policy(
+        {
+            "web_server": {
+                "host": "0.0.0.0",
+                "public_url": "https://chatbook.example/not-an-origin",
+                "trusted_proxy_addresses": ["127.0.0.1"],
+                "access_token": "configured-secret",
+            }
+        },
+        environ={},
+        keyring_get=lambda _service, _account: None,
+    )
+
+    assert policy.remote_access_status == "misconfigured"
+    assert "configured-secret" not in policy.remote_access_summary
+
+
+def test_canvas_remote_status_accepts_validated_effective_server_policy() -> None:
+    from tldw_chatbook.Canvas.web_auth import build_web_auth_policy
+
+    web_policy = build_web_auth_policy(
+        host="0.0.0.0",
+        port=8080,
+        access_token="runtime-secret",
+        public_url="http://chatbook.example",
+        allow_insecure_remote_http=True,
+    )
+
+    policy = config_module.build_canvas_config_policy(
+        {"web_server": {"host": "127.0.0.1"}},
+        environ={},
+        web_auth_policy=web_policy,
+    )
+
+    assert policy.remote_access_status == "insecure_development"
+    assert "runtime-secret" not in repr(policy)
+
+
+def test_execution_kill_switch_reads_do_not_resolve_remote_credentials(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: {
+            "canvas": {"enabled": True, "auto_open_on_create": False},
+            "web_server": {
+                "host": "0.0.0.0",
+                "public_url": "https://chatbook.example",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Canvas.web_auth.resolve_web_access_token",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execution gate must not touch credentials")
+        ),
+    )
+
+    assert config_module.get_canvas_execution_enabled() is True
 
 
 def test_canvas_settings_persist_and_reload_from_disk(monkeypatch, tmp_path) -> None:

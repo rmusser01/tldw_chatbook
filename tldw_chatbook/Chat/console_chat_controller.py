@@ -3087,9 +3087,9 @@ class ConsoleChatController:
         self._staged_evidence_provider = staged_evidence_provider
         self._cancel_raw_cli_session = cancel_raw_cli_session
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_config_policy
+            from tldw_chatbook.config import get_canvas_execution_enabled
 
-            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+            canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
@@ -22239,7 +22239,11 @@ class ConsoleChatController:
                 assistant_message_id=assistant_message_id,
                 temporary=session.ephemeral,
             )
-            canvas_provider = CanvasToolProvider(canvas_run, scope=canvas_scope)
+            canvas_provider = CanvasToolProvider(
+                canvas_run,
+                scope=canvas_scope,
+                enabled_reader=self._canvas_enabled_reader,
+            )
             canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the

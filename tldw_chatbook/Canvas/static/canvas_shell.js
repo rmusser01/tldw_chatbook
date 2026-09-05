@@ -38,6 +38,7 @@
   let currentLoadNonce = "";
   let rendererReady = false;
   let branchUnavailable = false;
+  let previewStopped = false;
   let pendingBridge = null;
   let cancellingBridge = false;
 
@@ -535,7 +536,11 @@
     }
   }
 
-  function showBranchUnavailable() {
+  function stopPreview(message) {
+    if (previewStopped) return;
+    previewStopped = true;
+    closed = true;
+    if (pollTimer) clearTimeout(pollTimer);
     void cancelPendingBridge({notifyServer: false, restoreFocus: false});
     branchUnavailable = true;
     rendererReady = false;
@@ -549,7 +554,7 @@
     ui.sourcePanel.hidden = true;
     ui.source.setAttribute("aria-expanded", "false");
     for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
-    ui.loading.textContent = "Unavailable on this branch. Return to Chatbook and reopen this Canvas from a reachable transcript card.";
+    ui.loading.textContent = message;
     ui.loading.hidden = false;
     ui.compatibility.hidden = true;
     dismissNotice();
@@ -558,6 +563,14 @@
       if (control !== ui.close) control.disabled = true;
     }
     ui.close.focus();
+  }
+
+  function showBranchUnavailable() {
+    stopPreview("Unavailable on this branch. Return to Chatbook and reopen this Canvas from a reachable transcript card.");
+  }
+
+  function showDisconnected() {
+    stopPreview("Canvas disconnected. Reopen it from Chatbook after Canvas is available.");
   }
 
   async function mintAction(action, signal = undefined) {
@@ -641,7 +654,7 @@
         lastEventId = event.event_id;
         if (event.kind === "disconnected") {
           if (event.metadata?.notice === "unavailable_on_branch") showBranchUnavailable();
-          else setConnection("Disconnected", true);
+          else showDisconnected();
           continue;
         }
         if (event.kind === "discarded") {
@@ -659,7 +672,7 @@
       }
       if (!branchUnavailable) setConnection("Connected");
     } catch (_) {
-      setConnection("Disconnected", true);
+      showDisconnected();
     } finally {
       if (!closed) pollTimer = window.setTimeout(pollEvents, 350);
     }
