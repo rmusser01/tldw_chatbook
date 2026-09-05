@@ -592,6 +592,52 @@ rediscover the same red from scratch.
   regression tied to either tree. The other 4 of the 10 branch-unique
   names passed cleanly on the same combined re-run (ordinary xdist
   noise). **Zero real regressions.**
+- Wave-5 Task 1 (ingest state PR)'s own full sequential xdist paired-baseline
+  sweep (branch `12ba4fb13`, 356 failed/3989 passed vs. an ISOLATED-worktree
+  baseline at `9e62dd8f7` -- `git worktree add` + its own venv, not a
+  same-tree `git stash`/path-checkout overlay, after a same-tree overlay was
+  interrupted mid-run by a session usage limit and had to be discarded and
+  redone isolated -- 370 failed/3971 passed; 348 shared, 22 baseline-unique,
+  8 branch-unique) found 8 branch-unique names, all resolved without a
+  single unexplained one: 4 passed cleanly on a combined single-process
+  re-run (`test_audio_cpp_model_library_handoff.py::
+  test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry`,
+  `test_library_media_reader_flow.py::
+  test_edit_metadata_from_read_routes_to_info_form_actions`,
+  `test_library_media_reader_traversal_t22207.py::
+  test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke` --
+  already documented above, wave-2 task 6 -- and `test_screen_navigation.py::
+  test_search_route_round_trips_to_the_library_rag_row`); 2 reproduced
+  identically in TRUE isolation on BOTH the branch and the isolated
+  pristine-baseline worktree (`test_library_media_reader_no_change_sync_
+  t22208.py::test_image_item_traversal_wall_time_probe` -- a new name for
+  this list, a wall-clock timing probe by design -- and its sibling
+  `test_no_change_traversal_builds_no_preview_and_copies_no_content`,
+  already documented above at the wave-2-close entry as a branch-unique name
+  that passed cleanly on rerun THERE; this task's own run instead reproduced
+  it deterministically on both trees, a stronger and consistent escalation
+  of the same "Media reader, load/timing-sensitive" characterization, not a
+  contradiction); 1 more,
+  `Tests/UI/test_screen_navigation.py::test_library_screen_round_trip_
+  returns_to_landing_with_rag_draft`, is the SAME name already documented
+  above (wave-3 task 5) as bidirectional run-to-run flakiness, reconfirmed
+  reproducing identically on both trees here too; the last,
+  `Tests/UI/test_library_shell.py::
+  test_library_media_initial_error_is_unknown_and_retry_is_unique`, failed
+  once in a combined run immediately following the 3-minute wall-time-probe
+  test above but then passed 6 of 7 further isolated re-runs on the branch
+  and 3 of 3 on the baseline -- ordinary load-adjacent flakiness with no
+  causal link to this task's own field-move diff (Media error-retry logic
+  untouched by it). None of the 8 touches Ingest code or this task's own
+  diff. **Zero real regressions.** Forward note on method, not just result:
+  a same-tree `git checkout <base> -- tldw_chatbook Tests` overlay is FRAGILE
+  across a long-running background sweep -- an external restore-to-HEAD
+  (session interruption recovery) mid-sweep silently invalidates whatever
+  that sweep was reading, with no error of its own. A `git worktree add`
+  (its own directory, its own venv) is immune to this class of corruption
+  and should be the DEFAULT method for any baseline comparison expected to
+  run for many minutes, not merely a fallback for when the overlay method is
+  unavailable.
 
 ## 8. Subsystem order (spec, "Order of work")
 
