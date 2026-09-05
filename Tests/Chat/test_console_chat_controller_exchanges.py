@@ -792,10 +792,13 @@ async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
         assert promoted is not None
         assert promoted.attempt_id != original_attempt_id
         assert promoted.execution_context.library_authority.policy.source == "durable"
-        assert promoted.state is ConsoleTurnPreparationState.ACCEPTED
+        assert promoted.state is ConsoleTurnPreparationState.PAUSED
+        assert promoted.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
         assert result.accepted is True
         assert result.provider_started is False
-        assert result.visible_copy == "Accepted turn is retained for recovery."
+        assert result.visible_copy == (
+            "Trace capture could not start. Retry, Send without capture, or Cancel."
+        )
         assert adapter_entries == 0
         rows = chat_db.get_messages_for_conversation(
             session.persisted_conversation_id,
