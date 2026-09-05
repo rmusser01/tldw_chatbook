@@ -42,6 +42,23 @@ the operation's actual completion signal before checking its resulting state;
 entry counts cannot prove completion. Keep malformed-state checks strict rather
 than retrying arbitrary parse failures. Here the existing rendered final-response
 token provides the ordering boundary, so no new polling protocol is needed.
+---
+
+## A prepended script directory cannot override an already imported sibling name
+
+**TASK-31654, 2026-09-05.** The broader test sweep failed Terminal qualification
+probe imports with `cannot import SCHEMA_VERSION from common`. The test loader
+prepended the qualification directory, but Python reused an unrelated cached
+`sys.modules["common"]`. In a clean process the loader instead left its own bare
+`common` alias behind, making test order significant in both directions.
+
+**What to do.** When loading standalone scripts in-process, temporarily bind their
+exact sibling dependency and qualified module aliases in a scoped context. Restore
+the original aliases and import path afterward. Exercise both a foreign module
+sentinel and an initially absent alias; only testing a clean interpreter misses
+the collision.
+
+---
 
 ## CSS ratchet paydown must preserve inherited subjects and specificity
 
