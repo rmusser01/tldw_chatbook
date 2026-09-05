@@ -137,6 +137,14 @@ async def _open_speech_tts(host, pilot):
     return screen
 
 
+async def _click_visible_button(screen, pilot, selector: str) -> None:
+    """Scroll a panel action into the Pilot viewport before clicking it."""
+    button = screen.query_one(selector, Button)
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    await pilot.click(selector)
+
+
 # Small fixed default so every pre-existing test (none of which cares about
 # the default-voice-profile picker) keeps seeing a normal, populated Select
 # instead of the store-unavailable state. Includes the UUID the default-
@@ -336,6 +344,12 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
         config_module,
         "apply_settings_mutation_to_cli_config",
         apply_settings,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if (section, key) == ("splash_screen", "enabled") else default
+        ),
     )
     app = _build_test_app(configured_default="settings")
 
@@ -2287,9 +2301,11 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         screen.query_one("#settings-speech-model-value", Input).value = "draft-model"
-        await pilot.click("#settings-speech-restore-defaults")
+        await _click_visible_button(
+            screen, pilot, "#settings-speech-restore-defaults"
+        )
         await pilot.pause()
-        await pilot.click("#settings-speech-revert")
+        await _click_visible_button(screen, pilot, "#settings-speech-revert")
         await pilot.pause()
 
     assert calls == []
@@ -3476,11 +3492,17 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> 
         panel.revert_to_saved = revert_to_saved
         endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
 
-        endpoint.focus()
+        save = screen.query_one("#settings-speech-save", Button)
+        save.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        endpoint.focus(scroll_visible=False)
         await pilot.click("#settings-speech-save")
         request_save.assert_called_once_with()
 
-        endpoint.focus()
+        revert = screen.query_one("#settings-speech-revert", Button)
+        revert.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        endpoint.focus(scroll_visible=False)
         await pilot.click("#settings-speech-revert")
         await pilot.pause()
         revert_to_saved.assert_awaited_once_with()
