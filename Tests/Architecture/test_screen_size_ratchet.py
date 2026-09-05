@@ -419,7 +419,44 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Reverted to `LibraryScreen`, full-bodied (its `FunctionDef` count is
     # therefore unchanged -- the delegator's own one-liner is simply
     # replaced by the original body, not removed). 40096/1302 -> 40131/1302.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40131, 1302),
+    #
+    # 2026-09-05, wave-5 task 3 (ingest cleanup, series 3/3): the generated
+    # ingest-state shim block deleted wholesale (20 fields' worth of
+    # `_library_ingest_<field>` properties); every remaining screen-side
+    # flat reference (37 attribute accesses across 6 still-screen-resident
+    # excluded methods: `_build_library_ingest_state`, `_set_library_rail_
+    # collapsed`, `check_action`, `handle_library_ingest_backend_switch`,
+    # `_library_ingest_browse_location`, `handle_library_ingest_option_
+    # value_changed`, `_run_debounced_library_ingest_preflight`,
+    # `_on_preflight_retry`, `_do_submit_ingest`, `_apply_library_external_
+    # preparation`, `_enqueue_library_ingest_snapshot`, `_load_library_
+    # ingest_options_from_config`, `_build_ingest_options_snapshot`,
+    # `handle_library_ingest_option_reset`, plus 2 shell/plumbing methods
+    # unrelated to any single subsystem, `on_mount`/`_library_resize_layout_
+    # signature`, and `_library_emergency_return_eligibility`) retargeted to
+    # `self._ingest_state.<field>`; 6 of the 56 moved delegators pruned
+    # (zero external references beyond the controller's own internal calls
+    # -- see `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED` in `Tests/
+    # Architecture/test_library_ingest_wiring.py`): `_adopt_library_ingest_
+    # path`, `_ingest_job_id_from_button` (the cluster's one staticmethod),
+    # `_library_ingest_restage_discards_work`, `_restage_library_ingest_
+    # last_submission`, `_set_library_ingest_panels_collapsed`, `_update_
+    # library_ingest_retry_label` -- 6 `FunctionDef`s out, no replacement
+    # (1302 -> 1296, exactly the pruned-delegator count). 9 dead imports
+    # pruned, each independently confirmed already re-imported and live
+    # inside `library_ingest_controller.py`: `ACTIVE_INGEST_STATES`,
+    # `normalize_active_ingest_source` (`Library.library_ingest_jobs`);
+    # `LibraryIngestFormState`, `build_ingest_forecast`, `format_ingest_
+    # progress_line`, `ingest_progress_action_signature` (`Library.library_
+    # ingest_state`); `build_type_group_title` (`Widgets.Library.library_
+    # ingest_canvas`); `capabilities_for_backend` (`Library.ingest_
+    # capabilities`) -- a 9th candidate, `_ingestible_file_filters`
+    # (`Library_Modules.screen_helpers`), is genuinely unused by the screen
+    # too but stays per the PR-0a re-export contract (`Tests/Architecture/
+    # test_library_support_layer_surface.py`'s `_SURFACE`), the first time
+    # this series' own dead-import prune has collided with that contract.
+    # 40131/1302 -> 40094/1296.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40094, 1296),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

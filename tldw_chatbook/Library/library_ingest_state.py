@@ -1210,8 +1210,10 @@ class LibraryIngestLastSubmission:
 class LibraryIngestFormState:
     """Mutable form echo for the ingest canvas.
 
-    Owned by the screen as a single bundled field (``self._library_ingest_form``)
-    rather than a scatter of scalar attributes, and reset wholesale to
+    Owned by the screen as a single bundled field (``self._ingest_state.form``,
+    a ``LibraryIngestState`` field since the ingest series' own state PR;
+    ``self._library_ingest_form`` before it) rather than a scatter of scalar
+    attributes, and reset wholesale to
     defaults on rail re-entry into Ingest (see
     ``_reset_library_ingest_transient_state``). Every field here is display
     text only -- validated/coerced values (a resolved path, an int chunk

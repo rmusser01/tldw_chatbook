@@ -49,7 +49,7 @@ the method is genuinely covered -- this file does not double-pin it.)
   full-screen coverage via
   ``test_library_shell_ingest_type_group_panel_expand_survives_recompose``
   (toggles a real ``#type-group-generic`` ``Collapsible`` and asserts
-  ``screen._library_ingest_form.expanded_type_groups`` updates and
+  ``screen._ingest_state.form.expanded_type_groups`` updates and
   survives a recompose) -- easy to miss with a literal
   ``grep -rn "OptionPanelToggled"``/handler-name search, since that test
   never names the message class or the handler. The tooling fold has no
@@ -195,7 +195,7 @@ async def test_tooling_fold_toggle_persists_across_recompose(tmp_path) -> None:
         # renders (mirrors test_library_ingest_canvas.py's own
         # _warned_state, inlined here rather than importing a private
         # helper across test files).
-        screen._library_ingest_form.preflight = PreflightResult(
+        screen._ingest_state.form.preflight = PreflightResult(
             type_groups={"generic": [str(source)]},
             warnings=[
                 {
@@ -215,11 +215,11 @@ async def test_tooling_fold_toggle_persists_across_recompose(tmp_path) -> None:
 
         fold = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert fold.collapsed is True, "the detail must start folded away"
-        assert screen._library_ingest_form.tooling_detail_expanded is False
+        assert screen._ingest_state.form.tooling_detail_expanded is False
 
         fold.collapsed = False
         for _ in range(_POLL_ATTEMPTS):
-            if screen._library_ingest_form.tooling_detail_expanded:
+            if screen._ingest_state.form.tooling_detail_expanded:
                 break
             await pilot.pause(_POLL_INTERVAL)
         else:
@@ -458,7 +458,7 @@ async def test_option_reset_button_wipes_the_generic_panel_to_defaults() -> None
         await _wait_for_library_shell(screen, pilot)
         await _open_library_ingest_canvas(screen, pilot)
 
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         form.preflight = PreflightResult(
             type_groups={"generic": ["/tmp/note.txt"]},
             warnings=[],
@@ -487,14 +487,14 @@ async def test_option_reset_button_wipes_the_generic_panel_to_defaults() -> None
         # FORM's own ``type_options["generic"]`` echo by the trailing canvas
         # refresh (``_build_library_ingest_state``), so the form-level dict
         # settles back to the fresh defaults rather than staying empty.
-        assert screen._library_ingest_form.type_options.get("generic") == {
+        assert screen._ingest_state.form.type_options.get("generic") == {
             "analyze": False,
             "chunk": True,
             "chunk_size": "1000",
         }
-        assert screen._library_ingest_form.analyze is False
-        assert screen._library_ingest_form.chunk is True
-        assert screen._library_ingest_form.chunk_size == "1000"
+        assert screen._ingest_state.form.analyze is False
+        assert screen._ingest_state.form.chunk is True
+        assert screen._ingest_state.form.chunk_size == "1000"
         assert saved and saved[0] == {"library.ingest_options.generic": {}}
 
 
@@ -523,7 +523,7 @@ async def test_directory_browse_button_opens_a_real_directory_picker() -> None:
             await _wait_for_library_shell(screen, pilot)
             await _open_library_ingest_canvas(screen, pilot)
 
-            form = screen._library_ingest_form
+            form = screen._ingest_state.form
             form.expanded_type_groups.add("audio_video")
             form.type_options = {
                 "audio_video": {"transcription_provider": "parakeet-onnx"}
@@ -569,7 +569,7 @@ async def test_directory_browse_button_opens_a_real_directory_picker() -> None:
                 monkeypatch_target.push_screen = original_push_screen
 
         assert (
-            screen._library_ingest_form.type_options["audio_video"][
+            screen._ingest_state.form.type_options["audio_video"][
                 "transcription_model_dir"
             ]
             == str(chosen)

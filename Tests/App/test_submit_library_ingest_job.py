@@ -1747,7 +1747,7 @@ class TestIngestJobOptions:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
         wire_bypass_ingest_controller(screen)
-        screen._library_ingest_form = LibraryIngestFormState()
+        screen._ingest_state.form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
 
         assert snapshot["ebook"]["chunk_method"] == "chapters"
@@ -2096,8 +2096,8 @@ class TestIngestJobOptions:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
         wire_bypass_ingest_controller(screen)
-        screen._library_ingest_form = LibraryIngestFormState()
-        screen._library_ingest_form.type_options["audio_video"] = {
+        screen._ingest_state.form = LibraryIngestFormState()
+        screen._ingest_state.form.type_options["audio_video"] = {
             "transcription_provider": "faster-whisper",
         }
         snapshot = screen._build_ingest_options_snapshot()
@@ -2142,7 +2142,7 @@ class TestIngestJobOptions:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
         wire_bypass_ingest_controller(screen)
-        screen._library_ingest_form = LibraryIngestFormState()
+        screen._ingest_state.form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
         submitted_audio_options = snapshot.get("audio_video", {})
 
@@ -2384,7 +2384,7 @@ class TestIngestJobOptionsWiring:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
         wire_bypass_ingest_controller(screen)
-        screen._library_ingest_form = LibraryIngestFormState()
+        screen._ingest_state.form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
 
         app = _minimal_app()
@@ -2402,7 +2402,7 @@ class TestIngestJobOptionsWiring:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
         wire_bypass_ingest_controller(screen)
-        screen._library_ingest_form = LibraryIngestFormState()
+        screen._ingest_state.form = LibraryIngestFormState()
 
         snapshot = screen._build_ingest_options_snapshot()
         defaults = {

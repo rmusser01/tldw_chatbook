@@ -128,38 +128,30 @@ from ...Widgets.Library.library_export_canvas import (
 from ...Chat.Chat_Functions import chat_api_call, extract_response_content
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import (
-    capabilities_for_backend,
     get_capabilities,
     list_type_groups,
 )
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
-    build_type_group_title,
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
-    ACTIVE_INGEST_STATES,
     ActiveIngestConsentScope,
     ActiveIngestSubmissionRefused,
     IngestJobState,
     LibraryIngestJob,
     build_active_ingest_consent_scope,
     count_duplicate_done_jobs,
-    normalize_active_ingest_source,
 )
 from ...Library.library_ingest_state import (
     validate_ingest_option_value,
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
-    LibraryIngestFormState,
     LibraryIngestLastSubmission,
     active_ingest_start_confirm_line,
-    build_ingest_forecast,
     build_library_ingest_state,
     clamp_chunk_size,
-    format_ingest_progress_line,
-    ingest_progress_action_signature,
     library_ingest_retry_available,
     library_ingest_retry_label,
     parse_keywords,
@@ -5348,7 +5340,7 @@ class LibraryScreen(BaseAppScreen):
             or self._skills_state.confirming_delete
             or self._skills_state.more_actions_open
             or self._export_state.running
-            or self._library_ingest_start_consent is not None
+            or self._ingest_state.start_consent is not None
             or self._library_media_confirming_bulk_delete
             or self._library_media_bulk_delete_in_flight
         )
@@ -8579,7 +8571,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_stage,
             self._library_notes_compact,
             self._library_rail_collapsed,
-            self._library_ingest_auto_collapsed_rail,
+            self._ingest_state.auto_collapsed_rail,
             self._library_emergency_stage,
             self._file_notes_active(),
             rail.display,
@@ -9471,7 +9463,7 @@ class LibraryScreen(BaseAppScreen):
                 # freshly composed screen doesn't treat jobs that finished
                 # during a previous Library visit as a brand-new
                 # done-transition and fire a redundant snapshot refresh.
-                self._library_ingest_last_done_count = counts_fn().get("done", 0)
+                self._ingest_state.last_done_count = counts_fn().get("done", 0)
             registry.add_listener(self._handle_library_ingest_registry_changed)
             add_progress_listener = getattr(registry, "add_progress_listener", None)
             if callable(add_progress_listener):
@@ -20322,7 +20314,7 @@ class LibraryScreen(BaseAppScreen):
         )
         # Sync generic top-level form fields into the generic options group so
         # the canvas renders current values for analyze/chunk/chunk_size.
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         generic_options = dict(form.type_options.get("generic", {}))
         generic_options["analyze"] = form.analyze
         generic_options["chunk"] = form.chunk
@@ -20359,7 +20351,7 @@ class LibraryScreen(BaseAppScreen):
             analysis_unready_hint = resolve_ingest_analysis_provider(
                 getattr(self.app_instance, "app_config", None)
             ).hint
-        consent = getattr(self, "_library_ingest_start_consent", None)
+        consent = getattr(self._ingest_state, "start_consent", None)
         start_confirm_line = ""
         if consent is not None and consent.active_job_ids:
             start_confirm_line = (
@@ -20382,9 +20374,9 @@ class LibraryScreen(BaseAppScreen):
             ingest_backend=ingest_backend,
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
-            clear_finished_armed=self._library_ingest_clear_finished_armed,
-            recent_ledger=tuple(self._library_ingest_recent_ledger),
-            expanded_details=self._library_ingest_expanded_details,
+            clear_finished_armed=self._ingest_state.clear_finished_armed,
+            recent_ledger=tuple(self._ingest_state.recent_ledger),
+            expanded_details=self._ingest_state.expanded_details,
             analysis_unready_hint=analysis_unready_hint,
             # (task-3314/3313) ``getattr`` quiet-degrade: several test
             # suites build this screen via ``object.__new__`` and seed only
@@ -20393,10 +20385,10 @@ class LibraryScreen(BaseAppScreen):
             start_confirm_armed=consent is not None,
             start_confirm_line=start_confirm_line,
             last_submission_available=(
-                getattr(self, "_library_ingest_last_submission", None) is not None
+                getattr(self._ingest_state, "last_submission", None) is not None
             ),
             retry_confirm_armed=getattr(
-                self, "_library_ingest_retry_confirm_armed", False
+                self._ingest_state, "retry_confirm_armed", False
             ),
         )
 
@@ -21982,7 +21974,7 @@ class LibraryScreen(BaseAppScreen):
     def _set_library_rail_collapsed(self, collapsed: bool) -> None:
         """Toggle wide Library navigation in place without rebuilding state."""
         self._library_rail_collapsed = collapsed
-        self._library_ingest_auto_collapsed_rail = False
+        self._ingest_state.auto_collapsed_rail = False
         self._apply_library_notes_stage_visibility()
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
@@ -26153,7 +26145,7 @@ class LibraryScreen(BaseAppScreen):
             return library_ingest_retry_available(
                 jobs,
                 last_submission_available=(
-                    getattr(self, "_library_ingest_last_submission", None) is not None
+                    getattr(self._ingest_state, "last_submission", None) is not None
                 ),
             )
         if action == "library_list_focus_rail":
@@ -31740,9 +31732,6 @@ class LibraryScreen(BaseAppScreen):
 
     # ----- Ingest canvas -----------------------------------------------
 
-    def _adopt_library_ingest_path(self, new_path: str) -> str:
-        return self._ingest_controller._adopt_library_ingest_path(new_path)
-
     @on(Input.Changed, "#library-ingest-path")
     async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
         return await self._ingest_controller.handle_library_ingest_path_changed(event)
@@ -31779,16 +31768,16 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_external_submission()
         self._disarm_library_ingest_start_confirm()
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
-        pending_backend = getattr(self, "_library_ingest_backend_target", None)
+        pending_backend = getattr(self._ingest_state, "backend_target", None)
         current = (
             pending_backend
             if pending_backend in {"local", "server"}
             else (resolve_backend() if callable(resolve_backend) else "local")
         )
         target = "local" if current == "server" else "server"
-        generation = getattr(self, "_library_ingest_backend_generation", 0) + 1
-        self._library_ingest_backend_generation = generation
-        self._library_ingest_backend_target = target
+        generation = getattr(self._ingest_state, "backend_generation", 0) + 1
+        self._ingest_state.backend_generation = generation
+        self._ingest_state.backend_target = target
         self._save_library_ingest_backend(target, generation)
         _sync_library_canvas(self, "ingest")
 
@@ -31797,8 +31786,8 @@ class LibraryScreen(BaseAppScreen):
         """Persist one current backend choice and marshal its UI completion."""
 
         try:
-            with self._library_ingest_backend_save_lock:
-                if generation != self._library_ingest_backend_generation:
+            with self._ingest_state.backend_save_lock:
+                if generation != self._ingest_state.backend_generation:
                     return
                 save_setting_to_cli_config("library.ingest", "backend", target)
         except Exception:
@@ -31835,15 +31824,6 @@ class LibraryScreen(BaseAppScreen):
     def _disarm_library_ingest_retry_confirm(self) -> None:
         return self._ingest_controller._disarm_library_ingest_retry_confirm()
 
-    def _library_ingest_restage_discards_work(self) -> bool:
-        return self._ingest_controller._library_ingest_restage_discards_work()
-
-    def _update_library_ingest_retry_label(self) -> None:
-        return self._ingest_controller._update_library_ingest_retry_label()
-
-    def _restage_library_ingest_last_submission(self) -> None:
-        return self._ingest_controller._restage_library_ingest_last_submission()
-
     @on(Button.Pressed, "#ingest-preflight-choose")
     @on(Button.Pressed, "#library-ingest-browse")
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
@@ -31863,7 +31843,7 @@ class LibraryScreen(BaseAppScreen):
         # (task-2130) A typed path fragment names where the user is looking
         # -- opening at home while "/private/tmp" sits in the field made
         # Browse feel disconnected from the form.
-        typed = self._library_ingest_form.path.strip()
+        typed = self._ingest_state.form.path.strip()
         if typed:
             # Centralized validation before any filesystem probe (Qodo
             # round; same validator the submit path uses).
@@ -31955,14 +31935,14 @@ class LibraryScreen(BaseAppScreen):
         # Same for a pending re-stage: the option the user just changed is
         # among the things the re-stage would overwrite.
         self._disarm_library_ingest_retry_confirm()
-        group_options = self._library_ingest_form.type_options.setdefault(
+        group_options = self._ingest_state.form.type_options.setdefault(
             event.group, {}
         )
         group_options[event.name] = event.value
         # Generic group toggles mirror the legacy top-level form fields so
         # existing submit/config-persistence paths keep working.
         if event.group == "generic":
-            form = self._library_ingest_form
+            form = self._ingest_state.form
             if event.name == "analyze":
                 form.analyze = bool(event.value)
             elif event.name == "chunk":
@@ -32023,7 +32003,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._invalidate_library_external_submission()
             self._disarm_library_ingest_start_confirm()
-            self._library_ingest_form.type_options.setdefault(event.group, {})[
+            self._ingest_state.form.type_options.setdefault(event.group, {})[
                 event.name
             ] = str(selected_path)
             if getattr(self, "_is_mounted", False):
@@ -32350,7 +32330,7 @@ class LibraryScreen(BaseAppScreen):
                 severity="error",
             )
             return
-        options = self._library_ingest_form.type_options.setdefault("audio_video", {})
+        options = self._ingest_state.form.type_options.setdefault("audio_video", {})
         options["transcription_provider"] = "parakeet-onnx"
         options["transcription_precision"] = "int8"
         options.pop("transcription_model_dir", None)
@@ -32456,8 +32436,8 @@ class LibraryScreen(BaseAppScreen):
         path the form is no longer showing (the generation stamp guards the
         worker result itself).
         """
-        self._library_ingest_path_debounce_timer = None
-        path = self._library_ingest_form.path.strip()
+        self._ingest_state.path_debounce_timer = None
+        path = self._ingest_state.form.path.strip()
         if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             # (TASK-19556) allow_probe=False: this fire is a typing pause,
             # not a request to contact anything. The URL is classified by
@@ -32602,7 +32582,7 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#ingest-preflight-retry")
     def _on_preflight_retry(self) -> None:
         """Re-run pre-flight analysis for the current ingest path."""
-        self._trigger_preflight(self._library_ingest_form.path)
+        self._trigger_preflight(self._ingest_state.form.path)
 
     def _resolve_ingest_source(self, raw_path: str) -> str | None:
         """Validate and canonicalise a Library ingest source path or URL.
@@ -32671,7 +32651,7 @@ class LibraryScreen(BaseAppScreen):
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         snapshot = self._build_ingest_options_snapshot()
         submit_kwargs = dict(
             source_path=submitted_source,
@@ -32938,9 +32918,9 @@ class LibraryScreen(BaseAppScreen):
                 self._library_external_submit_consent = None
                 self._clear_library_external_vad_progress()
                 self._set_library_external_status("", busy=False)
-                self._library_ingest_start_consent = pending if pending.owed else None
+                self._ingest_state.start_consent = pending if pending.owed else None
                 if pending.owed:
-                    self._library_ingest_start_confirm_armed_at = time.monotonic()
+                    self._ingest_state.start_confirm_armed_at = time.monotonic()
                 self._update_library_ingest_gate(self._build_library_ingest_state())
                 self._sync_library_emergency_guard_presentation()
                 return
@@ -33165,8 +33145,8 @@ class LibraryScreen(BaseAppScreen):
                 authoritative_refusal=True,
                 candidate_changed=refusal.candidate_changed,
             )
-            self._library_ingest_start_consent = pending
-            self._library_ingest_start_confirm_armed_at = time.monotonic()
+            self._ingest_state.start_consent = pending
+            self._ingest_state.start_confirm_armed_at = time.monotonic()
             self._update_library_ingest_gate(self._build_library_ingest_state())
             self._sync_library_emergency_guard_presentation()
             return
@@ -33219,13 +33199,13 @@ class LibraryScreen(BaseAppScreen):
                 option_settings[f"library.ingest_options.{group}"] = persisted
         if option_settings:
             self._save_library_ingest_options(option_settings)
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         # (task-3313) Session-scoped snapshot of what was just submitted,
         # captured BEFORE the form clears, so "Retry this batch" can
         # re-stage the exact same source with its options and metadata.
         # Values are copied (not aliased) so later form edits never mutate
         # the record of what actually ran.
-        self._library_ingest_last_submission = LibraryIngestLastSubmission(
+        self._ingest_state.last_submission = LibraryIngestLastSubmission(
             source=str(submit_kwargs["source_path"]),
             title=form.title,
             author=form.author,
@@ -33287,7 +33267,7 @@ class LibraryScreen(BaseAppScreen):
         user who edits ingest options still sees them on the next visit while
         an unchanged config costs one integer comparison.
         """
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         cached = _library_ingest_options_for(self)
         self._transcribe_cpp_configured = cached["transcribe_cpp_configured"]
         for name, value in cached["generic_form_fields"].items():
@@ -33298,7 +33278,7 @@ class LibraryScreen(BaseAppScreen):
     def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
         """Capture the current per-type ingestion options as a snapshot.
 
-        Returns a shallow copy of ``self._library_ingest_form.type_options``,
+        Returns a shallow copy of ``self._ingest_state.form.type_options``,
         with the top-level generic toggles (analyze, chunk, chunk_size)
         merged into the ``generic`` group so the downstream pipeline has a
         single canonical options map.
@@ -33307,7 +33287,7 @@ class LibraryScreen(BaseAppScreen):
             A group-keyed dict mapping type group ids (``generic``, ``pdf``,
             ``audio_video``, ``ebook``) to their option name/value maps.
         """
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         snapshot: dict[str, dict[str, Any]] = {
             group: dict(opts) for group, opts in form.type_options.items()
         }
@@ -33357,10 +33337,6 @@ class LibraryScreen(BaseAppScreen):
                 "chapters",
             )
         return snapshot
-
-    @staticmethod
-    def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
-        return LibraryIngestController._ingest_job_id_from_button(button_id, prefix)
 
     def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
         """Resolve a job by id from the live registry snapshot, or ``None``.
@@ -33486,11 +33462,6 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_collapse_all(self, event: Button.Pressed) -> None:
         return self._ingest_controller.handle_library_ingest_collapse_all(event)
 
-    def _set_library_ingest_panels_collapsed(
-        self, groups: Sequence[str], collapsed: bool
-    ) -> None:
-        return self._ingest_controller._set_library_ingest_panels_collapsed(groups, collapsed)
-
     @on(Button.Pressed, ".library-ingest-option-reset")
     def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
         """Reset a per-type options panel to its defaults.
@@ -33512,7 +33483,7 @@ class LibraryScreen(BaseAppScreen):
         self._disarm_library_ingest_start_confirm()
         # opt-{group}-reset -> {group}
         group = button_id[4:-6]
-        form = self._library_ingest_form
+        form = self._ingest_state.form
         form.type_options[group] = {}
         if group == "generic":
             cap = get_capabilities("generic")
@@ -40112,20 +40083,12 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # now lives permanently, one layer down, exactly mirroring the collections/
 # search+RAG precedents immediately above.
 
-# --- BEGIN generated ingest-state shims (delete wholesale at cleanup) ---
-# wave-5 task 1: keeps every original `_library_ingest_<field>` name
-# working as a property over `self._ingest_state` (single prefix, no
-# plural variant needed -- see LibraryIngestState's own module docstring).
-for _lis_field in dataclasses.fields(LibraryIngestState):
-    setattr(
-        LibraryScreen,
-        "_library_ingest_" + _lis_field.name,
-        property(
-            lambda self, _n=_lis_field.name: getattr(self._ingest_state, _n),
-            lambda self, value, _n=_lis_field.name: setattr(
-                self._ingest_state, _n, value
-            ),
-        ),
-    )
-del _lis_field
-# --- END generated ingest-state shims ---
+# wave-5 task 3 (ingest cleanup, ingest series 3/3) deleted the generated
+# ingest-state shim block that used to live here (wave-5 task 1): every
+# remaining screen-side `_library_ingest_<field>` reference was retargeted
+# to `self._ingest_state.<field>` and every test attribute path/dynamic-
+# dispatch string was retargeted to match, so nothing on `LibraryScreen`
+# needs the flat property names anymore -- see `LibraryIngestController`'s
+# own generated shim loop (installed by task 2) for where the SAME shape
+# now lives permanently, one layer down, exactly mirroring the collections/
+# search+RAG/skills precedents immediately above.

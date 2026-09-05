@@ -5050,7 +5050,7 @@ async def test_library_emergency_ingest_consent_syncs_return_truth(
         screen._trigger_library_ingest_preflight(str(source))
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_ingest_form.preflight is preflight,
+            lambda: screen._ingest_state.form.preflight is preflight,
             message="warned ingest pre-flight never landed",
         )
         await pilot.pause()
@@ -5064,7 +5064,7 @@ async def test_library_emergency_ingest_consent_syncs_return_truth(
         assert start.disabled is False, screen._build_library_ingest_state()
         start.press()
         await pilot.pause()
-        assert screen._library_ingest_start_consent is not None
+        assert screen._ingest_state.start_consent is not None
         assert bar.disabled is True
         assert (
             dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
@@ -5073,7 +5073,7 @@ async def test_library_emergency_ingest_consent_syncs_return_truth(
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_ingest_start_consent is None
+        assert screen._ingest_state.start_consent is None
         assert bar.disabled is False
         assert (
             dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
@@ -17102,7 +17102,7 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
 
         # Pre-fill the ingest form programmatically, as if the user had
         # already typed into it on a previous Ingest visit.
-        screen._library_ingest_form = LibraryIngestFormState(
+        screen._ingest_state.form = LibraryIngestFormState(
             path="/tmp/stale-upload.txt",
             title="Stale title",
             author="Stale author",
@@ -17122,7 +17122,7 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
 
         # Everything the user could have typed is gone.
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         fresh = LibraryIngestFormState()
         assert dataclasses.replace(form, type_options={}) == fresh
 
@@ -24777,10 +24777,10 @@ async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_me
         screen.query_one("#library-ingest-start", Button).press()
         await pilot.pause()
 
-        assert screen._library_ingest_form.path == ""
-        assert screen._library_ingest_form.title == ""
-        assert screen._library_ingest_form.author == "Jane Doe"
-        assert screen._library_ingest_form.keywords == "ocean, moon"
+        assert screen._ingest_state.form.path == ""
+        assert screen._ingest_state.form.title == ""
+        assert screen._ingest_state.form.author == "Jane Doe"
+        assert screen._ingest_state.form.keywords == "ocean, moon"
         assert screen.query_one("#library-ingest-path", Input).value == ""
         assert screen.query_one("#library-ingest-title", Input).value == ""
         assert screen.query_one("#library-ingest-author", Input).value == "Jane Doe"
@@ -24976,7 +24976,7 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         )
         # (task-2160) Step past the double-click dead zone -- this
         # is a deliberate second press, not the same gesture.
-        screen._library_ingest_clear_finished_armed_at -= 1.0
+        screen._ingest_state.clear_finished_armed_at -= 1.0
         screen.query_one("#library-ingest-clear-finished", Button).press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
             counts = harness.library_ingest_jobs.counts()
@@ -25084,7 +25084,7 @@ async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
         await _open_library_ingest_canvas(screen, pilot)
 
         # Prime a pre-flight result so the generic type-group panel renders.
-        screen._library_ingest_form.preflight = PreflightResult(
+        screen._ingest_state.form.preflight = PreflightResult(
             type_groups={"generic": [str(source)]},
             warnings=[],
             errors=[],
@@ -25102,7 +25102,7 @@ async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
         # Expand the panel.
         panel.collapsed = False
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if "generic" in screen._library_ingest_form.expanded_type_groups:
+            if "generic" in screen._ingest_state.form.expanded_type_groups:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
@@ -25696,7 +25696,7 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
                 f"Label: {getattr(media_button, 'label', None)!r}; "
                 f"jobs={app.library_ingest_jobs.jobs()!r}; "
                 f"source_counts={screen._local_source_counts!r}; "
-                f"last_done={screen._library_ingest_last_done_count!r}"
+                f"last_done={screen._ingest_state.last_done_count!r}"
             )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -28615,10 +28615,10 @@ async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
-        stale_generation = screen._library_ingest_preflight_generation
+        stale_generation = screen._ingest_state.preflight_generation
         # The submit/clear path invalidates any in-flight pre-flight.
         screen._invalidate_library_ingest_preflight()
-        assert screen._library_ingest_form.preflight is None
+        assert screen._ingest_state.form.preflight is None
 
         late_result = PreflightResult(
             type_groups={"generic": ["/tmp/whatever.txt"]},
@@ -28631,15 +28631,15 @@ async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
         # The worker thread delivers its result with the generation it was
         # started under -- one bump ago.
         screen._apply_library_ingest_preflight_result(late_result, stale_generation)
-        assert screen._library_ingest_form.preflight is None, (
+        assert screen._ingest_state.form.preflight is None, (
             "stale pre-flight result must be dropped, not applied"
         )
 
         # A result carrying the CURRENT generation still applies.
         screen._apply_library_ingest_preflight_result(
-            late_result, screen._library_ingest_preflight_generation
+            late_result, screen._ingest_state.preflight_generation
         )
-        assert screen._library_ingest_form.preflight is late_result
+        assert screen._ingest_state.form.preflight is late_result
 
 
 @pytest.mark.asyncio
@@ -28667,7 +28667,7 @@ async def test_library_ingest_job_tick_recompose_preserves_typing_focus():
         path_input.value = "/tmp"
         path_input.cursor_position = 4
         await pilot.pause()
-        assert screen._library_ingest_form.path == "/tmp"
+        assert screen._ingest_state.form.path == "/tmp"
 
         # A background job transition fires the registry listener.
         screen._handle_library_ingest_registry_changed()
@@ -28723,7 +28723,7 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
 
         # Stage a generic-group pre-flight with the panel expanded, exactly
         # as a real .txt pre-flight followed by an expand leaves the form.
-        screen._library_ingest_form.preflight = PreflightResult(
+        screen._ingest_state.form.preflight = PreflightResult(
             type_groups={"generic": ["/tmp/report.txt"]},
             warnings=[],
             errors=[],
@@ -28731,7 +28731,7 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
             truncated=False,
             total_files=1,
         )
-        screen._library_ingest_form.expanded_type_groups = {"generic"}
+        screen._ingest_state.form.expanded_type_groups = {"generic"}
         screen.refresh(recompose=True)
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#opt-generic-chunk_size")
@@ -28775,18 +28775,18 @@ async def test_library_ingest_typing_debounce_runs_preflight_and_keeps_focus(
         path_input.value = "/nope/definitely-missing.txt"
         await pilot.pause()
 
-        assert screen._library_ingest_path_debounce_timer is not None
+        assert screen._ingest_state.path_debounce_timer is not None
 
         # Deterministic fire instead of sleeping out the real 0.8s delay.
         screen._run_debounced_library_ingest_preflight()
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if screen._library_ingest_form.preflight is not None:
+            if screen._ingest_state.form.preflight is not None:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError("Debounced pre-flight never applied.")
 
-        assert screen._library_ingest_form.preflight.errors
+        assert screen._ingest_state.form.preflight.errors
         await pilot.pause()
         remounted = screen.query_one("#library-ingest-path", Input)
         assert screen.app.focused is remounted, (
@@ -28882,7 +28882,7 @@ async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
 
         # (task-2160) Step past the double-click dead zone -- this
         # is a deliberate second press, not the same gesture.
-        screen._library_ingest_clear_finished_armed_at -= 1.0
+        screen._ingest_state.clear_finished_armed_at -= 1.0
         screen.query_one("#library-ingest-clear-finished", Button).press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
             if harness.library_ingest_jobs.counts()["done"] == 0:
@@ -29337,7 +29337,7 @@ async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path)
         await pilot.pause()
         path_input.value = "/tmp/a.txt"
         await pilot.pause()
-        stale_generation = screen._library_ingest_preflight_generation
+        stale_generation = screen._ingest_state.preflight_generation
 
         path_input.value = "/tmp/b.txt"
         await pilot.pause()
@@ -29353,7 +29353,7 @@ async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path)
         screen._apply_library_ingest_preflight_result(
             late_result_for_a, stale_generation
         )
-        assert screen._library_ingest_form.preflight is None, (
+        assert screen._ingest_state.form.preflight is None, (
             "a worker for the previous path applied during the debounce window"
         )
 
@@ -29376,7 +29376,7 @@ async def test_clearing_path_clears_lingering_preflight_state(tmp_path):
         await pilot.pause()
         path_input.value = "/nope/missing.txt"
         await pilot.pause()
-        screen._library_ingest_form.preflight = PreflightResult(
+        screen._ingest_state.form.preflight = PreflightResult(
             type_groups={},
             warnings=[],
             errors=["Path not found: /nope/missing.txt"],
@@ -29388,7 +29388,7 @@ async def test_clearing_path_clears_lingering_preflight_state(tmp_path):
 
         screen.query_one("#library-ingest-path", Input).value = ""
         await pilot.pause()
-        assert screen._library_ingest_form.preflight is None, (
+        assert screen._ingest_state.form.preflight is None, (
             "stale pre-flight errors lingered after the field was cleared"
         )
 
@@ -29410,10 +29410,10 @@ async def test_recompose_mount_echo_does_not_rearm_debounce(tmp_path):
 
         screen.query_one("#library-ingest-path", Input).value = "/tmp/a.txt"
         await pilot.pause()
-        timer = screen._library_ingest_path_debounce_timer
+        timer = screen._ingest_state.path_debounce_timer
         if timer is not None:
             timer.stop()
-        screen._library_ingest_path_debounce_timer = None
+        screen._ingest_state.path_debounce_timer = None
 
         # A registry tick recomposes the canvas; the remounted Input echoes
         # its value= back as Input.Changed.
@@ -29422,7 +29422,7 @@ async def test_recompose_mount_echo_does_not_rearm_debounce(tmp_path):
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
         await pilot.pause()
 
-        assert screen._library_ingest_path_debounce_timer is None, (
+        assert screen._ingest_state.path_debounce_timer is None, (
             "the mount echo re-armed the debounce -- perpetual pre-flight loop"
         )
 
@@ -29510,7 +29510,7 @@ async def test_clear_path_button_empties_the_widget_for_real(tmp_path):
 
         widget = screen.query_one("#library-ingest-path", Input)
         assert widget.value == "", f"Clear left the widget holding {widget.value!r}"
-        assert screen._library_ingest_form.path == ""
+        assert screen._ingest_state.form.path == ""
 
         # Refocus + one more recompose: the emptiness must survive both.
         widget.focus()
@@ -29586,7 +29586,7 @@ async def test_preflight_apply_preserves_form_widget_identity(tmp_path):
         start_before = screen.query_one("#library-ingest-start", Button)
         path_before = screen.query_one("#library-ingest-path", Input)
 
-        screen._library_ingest_form.path = "/tmp/report.txt"
+        screen._ingest_state.form.path = "/tmp/report.txt"
         result = PreflightResult(
             type_groups={"generic": ["/tmp/report.txt"]},
             warnings=[],
@@ -29596,7 +29596,7 @@ async def test_preflight_apply_preserves_form_widget_identity(tmp_path):
             total_files=1,
         )
         screen._apply_library_ingest_preflight_result(
-            result, screen._library_ingest_preflight_generation
+            result, screen._ingest_state.preflight_generation
         )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#ingest-type-breakdown")
@@ -29659,7 +29659,7 @@ async def test_group_set_change_still_rebuilds_panels(tmp_path):
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
-        screen._library_ingest_form.path = "/tmp/a.pdf"
+        screen._ingest_state.form.path = "/tmp/a.pdf"
         result = PreflightResult(
             type_groups={"pdf": ["/tmp/a.pdf"]},
             warnings=[],
@@ -29669,7 +29669,7 @@ async def test_group_set_change_still_rebuilds_panels(tmp_path):
             total_files=1,
         )
         screen._apply_library_ingest_preflight_result(
-            result, screen._library_ingest_preflight_generation
+            result, screen._ingest_state.preflight_generation
         )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#type-group-pdf")
@@ -29692,7 +29692,7 @@ async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
         start_before = screen.query_one("#library-ingest-start", Button)
-        screen._library_ingest_form.path = "/tmp/report.txt"
+        screen._ingest_state.form.path = "/tmp/report.txt"
         result = PreflightResult(
             type_groups={"generic": ["/tmp/report.txt"]},
             warnings=[],
@@ -29702,7 +29702,7 @@ async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
             total_files=1,
         )
         screen._apply_library_ingest_preflight_result(
-            result, screen._library_ingest_preflight_generation
+            result, screen._ingest_state.preflight_generation
         )
         await pilot.pause()
 
@@ -29740,8 +29740,8 @@ async def test_rail_switch_preserves_staged_ingest_form(tmp_path):
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
-        assert screen._library_ingest_form.path == "/tmp/staged-batch.txt"
-        assert screen._library_ingest_form.author == "Dana"
+        assert screen._ingest_state.form.path == "/tmp/staged-batch.txt"
+        assert screen._ingest_state.form.author == "Dana"
         assert (
             screen.query_one("#library-ingest-path", Input).value
             == "/tmp/staged-batch.txt"
@@ -29819,10 +29819,10 @@ async def test_preflight_forecasts_already_ingested_text_files(tmp_path):
 
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
-        screen._library_ingest_form.path = str(twin)
+        screen._ingest_state.form.path = str(twin)
         screen._trigger_library_ingest_preflight(str(twin))
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            preflight = screen._library_ingest_form.preflight
+            preflight = screen._ingest_state.form.preflight
             if preflight is not None:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
@@ -29866,13 +29866,13 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
         import unittest.mock as _mock
 
         with _mock.patch.object(screen_module, "get_cli_setting", _two_shape_stub):
-            screen._library_ingest_form = LibraryIngestFormState()
+            screen._ingest_state.form = LibraryIngestFormState()
             screen._load_library_ingest_options_from_config()
 
         assert recorded, "loader made no config reads"
         missing = [c for c in recorded if c[2] == "NO-DEFAULT-PASSED"]
         assert not missing, f"loader reads without explicit default: {missing}"
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         assert form.analyze is False
         assert form.chunk is True
         assert form.type_options.get("generic") in (None, {})
@@ -30176,17 +30176,17 @@ async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
         chunk_input.value = "10009999"
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_ingest_form.chunk_size == "10009999"
+        assert screen._ingest_state.form.chunk_size == "10009999"
 
         screen.query_one("#opt-generic-reset", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_ingest_form.chunk_size == "1000"
+        assert screen._ingest_state.form.chunk_size == "1000"
         # The state builder re-injects the generic mirror on every build (by
         # design) -- post-reset it must re-inject the DEFAULTS, not the old
         # values.
-        generic = screen._library_ingest_form.type_options.get("generic", {})
+        generic = screen._ingest_state.form.type_options.get("generic", {})
         assert generic.get("chunk_size") in (None, "1000", 1000)
         fresh_input = screen.query_one("#opt-generic-chunk_size", Input)
         assert fresh_input.value == "1000", (
@@ -30238,7 +30238,7 @@ async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
 
         # (task-2160) Step past the double-click dead zone -- deliberate
         # second press, not the same gesture.
-        screen._library_ingest_clear_finished_armed_at -= 1.0
+        screen._ingest_state.clear_finished_armed_at -= 1.0
         armed.press()
         await pilot.pause()
         await pilot.pause()
@@ -30278,7 +30278,7 @@ async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
         path_input.value = str(staged)
         for _ in range(100):
             await pilot.pause(0.05)
-            if screen._library_ingest_form.preflight is not None:
+            if screen._ingest_state.form.preflight is not None:
                 break
         else:
             raise AssertionError("preflight never completed")
@@ -30429,7 +30429,7 @@ async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_pa
         )
 
         # Past the dead zone the second press clears.
-        screen._library_ingest_clear_finished_armed_at -= 1.0
+        screen._ingest_state.clear_finished_armed_at -= 1.0
         after.press()
         await pilot.pause()
         await pilot.pause()
@@ -33919,7 +33919,7 @@ async def test_commit_line_stays_visible_and_synced_while_a_gate_blocks(
         path_input.value = str(staged)
         for _ in range(100):
             await pilot.pause(0.05)
-            if screen._library_ingest_form.preflight is not None:
+            if screen._ingest_state.form.preflight is not None:
                 break
         else:
             raise AssertionError("preflight never completed")

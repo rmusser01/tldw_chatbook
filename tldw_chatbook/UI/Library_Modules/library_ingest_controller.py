@@ -11,9 +11,13 @@ per-type option panels (fold state, group receipts, tooling-detail fold),
 the job queue's row actions (open/retry/dismiss/view-on-server/choose-gguf/
 retry-faster-whisper/cancel/force-stop -- job-id parsing only; see
 exclusions below for the ones excluded), Clear-finished/expand-all/
-collapse-all, and rail-width auto-collapse. ``LibraryScreen`` keeps
+collapse-all, and rail-width auto-collapse. ``LibraryScreen`` kept
 one-line delegators under every one of these 56 original names (55 plain
-delegators + 1 class-forwarding staticmethod delegator).
+delegators + 1 class-forwarding staticmethod delegator) until wave-5 task 3
+(ingest cleanup, ingest series 3/3) pruned 6 of them (5 plain + the 1
+staticmethod) for zero external references; 50 remain -- see
+``Tests/Architecture/test_library_ingest_wiring.py``'s own
+``_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED`` for the exact names.
 
 **Cluster derivation.** Wave-5 task 1's own census: an ``ast`` scan of
 ``LibraryScreen`` for method names containing ``"ingest"`` (case-insensitive)
@@ -267,15 +271,32 @@ examples):
    (``from .canvas_sync import _sync_library_canvas``, the same shape
    every sibling controller already uses for its own ``kind=`` call). The
    census found every ``library_screen``-scoped patch target for this name
-   across ``Tests/`` (7 files, ~20 sites, both the direct-attribute and the
+   across ``Tests/`` (10 files, 38 sites, both the direct-attribute and the
    ``monkeypatch.setattr(module, "name", ...)``/fully-qualified-string
-   patch shapes) and confirmed NONE is ingest-related -- all 7 files
-   (``test_library_file_notes_workspace.py``, ``test_library_entry_
-   compose_once.py``, ``test_library_note_import_flow.py``, ``test_
-   library_review_round_t21116.py``, ``test_library_media_trash.py``,
-   ``test_library_notes_folder_navigator.py``, ``Tests/Skills/test_
-   skills_import.py``) patch it for notes/media/skills canvas syncs, zero
-   for Ingest. **Verdict: KEEP as a mover.** Unlike ``_resolve_ingest_
+   patch shapes -- **corrected by wave-5 task 3**: the original 7-file/~20-
+   site count missed 3 files whose patch sites used a variable name other
+   than ``library_screen``/``library_screen_module`` --
+   ``test_library_canvas_scoped_sync.py`` (``library_screen_module`` inside
+   a multi-line ``patch.object(...)`` call the first grep's single-line
+   pattern did not span), ``test_library_notes_reader.py`` (``library_
+   screen_module``, patched via ``monkeypatch.context()``'s own ``patcher.
+   setattr(...)`` rather than a bare ``monkeypatch.setattr(...)``), and
+   ``test_review_set_walker.py`` (imports the module under the alias
+   ``screen_module``, not ``library_screen_module``)) and confirmed NONE is
+   an ACTIVE collision -- all 10 files (``test_library_file_notes_
+   workspace.py``, ``test_library_entry_compose_once.py``, ``test_library_
+   note_import_flow.py``, ``test_library_review_round_t21116.py``, ``test_
+   library_media_trash.py``, ``test_library_notes_folder_navigator.py``,
+   ``Tests/Skills/test_skills_import.py``, ``test_library_canvas_scoped_
+   sync.py``, ``test_library_notes_reader.py``, ``test_review_set_
+   walker.py``) patch it for notes/media/skills/prompts canvas syncs or
+   (one test in ``test_library_canvas_scoped_sync.py``) an EXCLUDED,
+   never-moved Ingest handler (``handle_library_ingest_option_value_
+   changed``, whose own bare ``_sync_library_canvas`` call still resolves
+   through ``library_screen.py``'s own globals since that method never
+   left the module) -- zero reach ``_apply_library_ingest_backend_save``'s
+   own call path, the only mover that reads this name. **Verdict: KEEP as
+   a mover, unchanged.** Unlike ``_resolve_ingest_
    source`` above, there is no ACTIVE test whose assertions this coupling
    silently defeats -- excluding a whole method to guard against a
    theoretical, currently-unexercised collision would be over-conservative
@@ -425,9 +446,10 @@ class LibraryIngestController:
     ``LibraryIngestState`` (via the injected accessor) and the shared
     shell/framework bindings below. ``LibraryScreen`` constructs exactly one
     of these, in ``__init__`` right after ``self._skills_controller``, and
-    keeps one-line delegators for every original name this cluster moved
+    kept one-line delegators for every original name this cluster moved
     (56 -- see the module docstring for the full derivation and the 22
-    exclusions).
+    exclusions) until wave-5 task 3 pruned 6 of them for zero external
+    references; 50 remain.
     """
 
     # Genuinely dead on `LibraryScreen` once their sole consumer moved here
@@ -487,7 +509,7 @@ class LibraryIngestController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 63 method bodies below is a byte-for-byte copy of
+        Every one of the 56 method bodies below is a byte-for-byte copy of
         the pre-extraction ``LibraryScreen`` method: no internal line was
         edited to retarget a call or an attribute. That is possible because
         this constructor binds every name those bodies reference that is

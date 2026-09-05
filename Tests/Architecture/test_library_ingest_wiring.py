@@ -1,20 +1,23 @@
 """Ingest extraction series: state object and controller are screen-wired.
 
-Wave-5 Task 1 (state PR -- ingest series 1/3) and Task 2 (controller PR --
-ingest series 2/3; recipe: backlog/docs/library-decomposition-recipe.md;
-skills/export/collections/search+RAG series precedent: Tests/Architecture/
-test_library_skills_wiring.py / test_library_export_wiring.py / etc.).
+Wave-5 Task 1 (state PR -- ingest series 1/3), Task 2 (controller PR --
+ingest series 2/3), and Task 3 (cleanup PR -- ingest series 3/3; recipe:
+backlog/docs/library-decomposition-recipe.md; skills/export/collections/
+search+RAG series precedent: Tests/Architecture/test_library_skills_wiring.py
+/ test_library_export_wiring.py / etc.).
 
 Task 1's ``test_state_object_fields_match_the_shim_surface`` (every
 ``LibraryIngestState`` field <-> a matching generated property shim on
-``LibraryScreen``) stays as-is until this subsystem's own cleanup task
-(ingest series 3/3) deletes the screen's generated shim block wholesale --
-that has not happened yet in this task, unlike the skills/export/
-collections/search+RAG series' own Task-3/4-shaped cleanup precedent.
-``test_ingest_controller_exposes_every_state_field`` below covers the
-equivalent job on the controller side.
+``LibraryScreen``) is GONE as of Task 3: the screen's generated shim block
+was deleted wholesale in cleanup (``self._ingest_state`` is a real
+``LibraryIngestState`` instance now, not a shimmed screen attribute), so
+there is nothing left on ``LibraryScreen`` for that assertion to check --
+the skills/export/collections/search+RAG series' own Task-3/4-shaped
+cleanup precedent. ``test_ingest_controller_exposes_every_state_field``
+below already covers the equivalent job on the controller side and needed
+no change.
 
-Task 2 adds the full-cluster ownership/same-name-delegator-forwarding
+Task 2 added the full-cluster ownership/same-name-delegator-forwarding
 checks (``_INGEST_CLUSTER_METHOD_NAMES``, 56 names). See
 ``library_ingest_controller.py``'s own module docstring for the full
 78-candidate derivation and the 22 exclusions (4 ``@work`` framework-
@@ -27,6 +30,15 @@ simple``/``validate_url``, found by the coordinator-mandated mechanical
 module-globals census, not the original battery -- see ``library_ingest_
 controller.py``'s own module docstring for the full incident, including
 the existing-file probe that confirmed it).
+
+Task 3 adds the ``_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED`` skip/absence-
+assertion pair to ``test_screen_delegates_ingest_handlers`` (6 names, incl.
+the cluster's one staticmethod -- see that frozenset's own docstring for
+the repo-wide zero-external-reference census) and the equivalent absence
+assertion for the now-pruned staticmethod delegator in
+``test_ingest_cluster_staticmethods_forward_to_the_controller_class``,
+mirroring ``_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` in the skills wiring
+test.
 """
 from __future__ import annotations
 
@@ -39,21 +51,6 @@ import pytest
 from tldw_chatbook.UI.Library_Modules.library_ingest_state import (
     LibraryIngestState,
 )
-
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibraryIngestState)}
-    assert field_names, "state object is empty"
-    assert len(field_names) == 20, f"expected 20 ingest fields, got {len(field_names)}"
-    missing = []
-    for name in field_names:
-        shim = getattr(LibraryScreen, "_library_ingest_" + name, None)
-        if not isinstance(shim, property):
-            missing.append("_library_ingest_" + name)
-    assert not missing, f"no screen shim property found for: {missing!r}"
 
 
 #: Every method Task 2 moved into `LibraryIngestController`, under its
@@ -142,6 +139,29 @@ _INGEST_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+#: Task 3's own repo-wide zero-external-reference census (`tldw_chatbook/`
+#: + every `Tests/` root, excluding `library_ingest_controller.py` itself
+#: and each name's own one-line screen delegator body): of the 56 moved
+#: names, 25 `@on` handlers + 2 `action_*` methods KEEP unconditionally
+#: per the recipe's own transform whitelist (`@on`/`action_*` dispatch is
+#: never visible to a grep-based census); of the remaining 29 (28 plain +
+#: 1 staticmethod), 23 were kept for a genuine external caller (an
+#: excluded, still-screen-resident method calling `self.<name>()`, or a
+#: test calling/patching the screen delegator directly) and 6 had none --
+#: this 6-of-29 (~21%) prune fraction sits within the export/skills/
+#: search+RAG/collections/conversations series' own recorded range
+#: (~5%-~30%).
+_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_adopt_library_ingest_path",
+        "_ingest_job_id_from_button",
+        "_library_ingest_restage_discards_work",
+        "_restage_library_ingest_last_submission",
+        "_set_library_ingest_panels_collapsed",
+        "_update_library_ingest_retry_label",
+    }
+)
+
 
 @pytest.mark.unit
 def test_ingest_cluster_method_names_are_genuinely_ingest_named() -> None:
@@ -160,7 +180,7 @@ def test_ingest_cluster_method_names_are_genuinely_ingest_named() -> None:
 
 @pytest.mark.unit
 def test_ingest_controller_owns_its_cluster() -> None:
-    """Every one of the 63 moved names is a callable on the controller.
+    """Every one of the 56 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     `test_skills_controller_owns_its_cluster`.
@@ -179,19 +199,30 @@ def test_ingest_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_ingest_handlers() -> None:
-    """Every one of the 63 moved names is a one-line screen delegator that
+    """Every one of the 56 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 1
-    staticmethod, to the module-level controller CLASS).
+    staticmethod, to the module-level controller CLASS) -- unless Task 3
+    pruned it.
 
     Mirrors `test_screen_delegates_skills_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
-    check. No names are pruned yet -- that is this subsystem's own cleanup
-    task (ingest series 3/3), not this controller-move task.
+    check. Skips `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 3 deleted
+    those 6 screen delegators as dead weight -- zero external references)
+    and instead asserts each such name is genuinely ABSENT from
+    `LibraryScreen`, so a future accidental re-add would fail loudly here
+    rather than silently reintroducing dead code.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _INGEST_CLUSTER_METHOD_NAMES:
+        if name in _INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 3) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")
@@ -207,11 +238,21 @@ def test_screen_delegates_ingest_handlers() -> None:
 
 @pytest.mark.unit
 def test_ingest_cluster_staticmethods_forward_to_the_controller_class() -> None:
-    """The 1 staticmethod name in the cluster forwards to the CLASS, not an instance."""
+    """The 1 staticmethod name in the cluster forwarded to the CLASS.
+
+    Task 3 pruned it (`_ingest_job_id_from_button` had zero external
+    references -- see `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED`), so this
+    now asserts its genuine absence instead of a class-forwarding shape.
+    """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_class_forwarding = []
     for name in _INGEST_CLUSTER_STATICMETHOD_NAMES:
+        if name in _INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 3) but is back"
+            )
+            continue
         src = inspect.getsource(getattr(LibraryScreen, name))
         if not re.search(rf"LibraryIngestController\.{re.escape(name)}\(", src):
             not_class_forwarding.append(name)

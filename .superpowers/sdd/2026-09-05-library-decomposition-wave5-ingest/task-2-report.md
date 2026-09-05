@@ -599,6 +599,18 @@ audit of all six is recorded as a follow-up (recipe's new §3 entry
 names it explicitly), NOT fixed retroactively here, per the review's own
 scope instruction.
 
+**Correction, filed by task 3 (ingest cleanup):** this 7-file/~20-site
+count itself undercounted -- 3 more files (`test_library_canvas_scoped_
+sync.py`, `test_library_notes_reader.py`, `test_review_set_walker.py`)
+patch the same name via a variable name other than `library_screen`/
+`library_screen_module` (`screen_module`, or the same name reached through
+`monkeypatch.context()`'s own `patcher.setattr(...)` inside a multi-line
+call my grep did not span), bringing the true count to 10 files/38 sites.
+Re-read, all 10 remain confirmed LATENT with respect to this mover's own
+call path (see `library_ingest_controller.py`'s own module docstring and
+the recipe's §3 for the corrected, final listing) -- the verdict (KEEP as
+a mover) is unchanged; only the recorded evidence was wrong.
+
 ### IMPORTANT — recipe gains the mechanical module-globals census (new numbered shape)
 
 Added to `backlog/docs/library-decomposition-recipe.md` §3: the "eighth

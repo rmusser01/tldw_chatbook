@@ -7,11 +7,18 @@ State PR of the Ingest extraction series (wave-5 task 1,
 closely, since Ingest also needed no plural-prefix split and no entangled
 reader-preferences trio). Every field here was moved verbatim out of
 ``LibraryScreen.__init__`` in ``tldw_chatbook/UI/Screens/library_screen.py``
--- same default, same type. ``library_screen.py`` keeps every original
-``_library_ingest_<field>`` attribute name alive as a generated getter/
-setter ``@property`` shim pointing at ``self._ingest_state.<field>`` (a
-sentinel-wrapped block right after the ``LibraryScreen`` class body); a
-later controller PR in this series moves the subsystem's methods here too.
+-- same default, same type. ``library_screen.py`` originally kept every
+original ``_library_ingest_<field>`` attribute name alive as a generated
+getter/setter ``@property`` shim pointing at ``self._ingest_state.<field>``
+(a sentinel-wrapped block right after the ``LibraryScreen`` class body).
+The ingest cleanup PR (task 3) deleted that screen-side shim block
+entirely once the subsystem's methods had all moved to
+``LibraryIngestController`` (task 2) and the screen's own remaining
+references were retargeted to ``self._ingest_state.<field>`` directly. The
+controller that took over the subsystem's methods carries its OWN
+generated shim block in its place -- reading/writing through an injected
+``ingest_state_accessor`` rather than a direct ``self._ingest_state``
+attribute, since the controller does not hold the state object itself.
 
 Every field uses the SAME ``_library_ingest_`` prefix -- the recipe §2
 ownership script (run against the ``_library_ingest`` prefix family) found

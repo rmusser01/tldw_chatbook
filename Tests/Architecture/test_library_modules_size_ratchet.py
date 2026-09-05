@@ -157,7 +157,23 @@ _BUDGETS: dict[str, int] = {
     # dependencies), a clean +1 matching the one new dependency. Dead
     # imports removed (`logger`, `validate_path_simple`, `validate_url` --
     # all now unused in this file). 2510 -> 2536 lines.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2536,
+    #
+    # 2026-09-05, wave-5 task 3 (ingest cleanup, series 3/3): comment-only
+    # growth, no method body touched (56 movers unchanged -- cleanup prunes
+    # the SCREEN's delegators, not the controller's own methods, per the
+    # collections/search+RAG/skills precedent). Four moved-docstring-
+    # adjacent module/constructor docstring corrections: two stray "63"
+    # counts (should be 56 -- an arithmetic slip inherited from an earlier
+    # draft, never 78-22 or any other real derivation), the "LibraryScreen
+    # keeps one-line delegators under every one of these 56 original names"
+    # claim (now false for 6 of the 56, this task's own screen-side prune),
+    # and the `_apply_library_ingest_backend_save`/`_sync_library_canvas`
+    # module-globals census evidence (corrected from 7 files/~20 sites to
+    # the true 10 files/38 sites -- 3 files missed by task 2's own grep
+    # because their patch sites used a variable name other than
+    # `library_screen`/`library_screen_module`; see the recipe's §3 for the
+    # full correction) -- all fixed in this task, +22 lines. 2536 -> 2558.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2558,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

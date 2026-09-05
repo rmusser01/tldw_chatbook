@@ -1067,7 +1067,7 @@ async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scro
         assert start_region.height > 0
         assert "Start import" in painted_start
 
-        screen._library_ingest_start_consent = _LibraryIngestStartConsent(
+        screen._ingest_state.start_consent = _LibraryIngestStartConsent(
             fingerprint="active-test",
             admission_scope=build_active_ingest_consent_scope(
                 [str(tmp_path / "active.txt")],
@@ -1665,7 +1665,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     screen._ingest_state = LibraryIngestState()
     wire_bypass_ingest_controller(screen)
     screen.app_instance = MagicMock()
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -1673,7 +1673,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
             }
         }
     )
-    prior = deepcopy(screen._library_ingest_form.type_options)
+    prior = deepcopy(screen._ingest_state.form.type_options)
     event = SimpleNamespace(
         group="audio_video",
         name="transcription_model_dir",
@@ -1690,7 +1690,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     selected.mkdir()
     await callback(selected)
 
-    assert screen._library_ingest_form.type_options == {
+    assert screen._ingest_state.form.type_options == {
         **prior,
         "audio_video": {
             **prior["audio_video"],
@@ -1738,10 +1738,10 @@ async def test_idle_external_fence_preserves_focused_form_input(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_ingest_form.title == "Atlas notes"
-        assert screen._library_ingest_form.type_options["pdf"]["ocr_language"] == "fr"
+        assert screen._ingest_state.form.title == "Atlas notes"
+        assert screen._ingest_state.form.type_options["pdf"]["ocr_language"] == "fr"
         assert (
-            screen._library_ingest_form.type_options["generic"]["chunk_size"]
+            screen._ingest_state.form.type_options["generic"]["chunk_size"]
             == "2048"
         )
         assert screen.query_one("#library-ingest-title", Input) is title
@@ -1764,8 +1764,8 @@ async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1806,14 +1806,14 @@ def _backend_switch_screen(app, backend: dict[str, str]) -> LibraryScreen:
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
         (),
-        form=screen._library_ingest_form,
+        form=screen._ingest_state.form,
         ingest_backend=backend["value"],
         runtime_source="server",
         server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
     return screen
 
 
@@ -1861,7 +1861,7 @@ async def test_backend_switch_repaints_after_delayed_persistence_success(
             for _ in range(200):
                 if (
                     backend["value"] == "local"
-                    and screen._library_ingest_backend_target is None
+                    and screen._ingest_state.backend_target is None
                     and len(screen.query("#opt-generic-keep_original_file")) == 0
                 ):
                     break
@@ -1926,7 +1926,7 @@ async def test_backend_switch_failure_restores_persisted_server_controls(
             for _ in range(200):
                 controls = screen.query("#opt-generic-keep_original_file")
                 if (
-                    screen._library_ingest_backend_target is None
+                    screen._ingest_state.backend_target is None
                     and len(controls) == 1
                     and controls.first() is not persisted_control
                 ):
@@ -2004,7 +2004,7 @@ async def test_rapid_backend_switch_keeps_latest_server_selection(
                 controls = screen.query("#opt-generic-keep_original_file")
                 if (
                     backend["value"] == "server"
-                    and screen._library_ingest_backend_target is None
+                    and screen._ingest_state.backend_target is None
                     and len(controls) == 1
                     and controls.first() is not latest_pending_control
                 ):
@@ -2036,10 +2036,10 @@ async def test_library_screen_ingest_layout_contains_metadata_and_start_for_loca
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
-    screen._library_ingest_form.path = "/tmp/notes.txt"
-    screen._library_ingest_form.analyze = True
-    screen._library_ingest_form.expanded_type_groups.add("generic")
-    screen._library_ingest_form.type_options = {
+    screen._ingest_state.form.path = "/tmp/notes.txt"
+    screen._ingest_state.form.analyze = True
+    screen._ingest_state.form.expanded_type_groups.add("generic")
+    screen._ingest_state.form.type_options = {
         "generic": {"custom_prompt": "Keep headings.\nPreserve citations."}
     }
     host = LibraryHarness(app, screen=screen)
@@ -2078,7 +2078,7 @@ def test_external_override_defers_submit_until_preparation_finishes() -> None:
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: source_service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -2194,7 +2194,7 @@ def test_external_prepare_retains_before_enqueue(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
     screen._library_external_submit_generation = 1
     screen._library_external_submit_scope_id = "library-external-scope"
     screen._library_external_submit_worker = None
@@ -2253,8 +2253,8 @@ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 4
     screen._library_external_submit_scope_id = "library-external-vad"
     screen._library_external_submit_worker = None
@@ -2276,7 +2276,7 @@ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
     assert {entry.ref for entry in modal.report.entries} == {report.root}
     callback(False)
     service.release_scope.assert_called_once_with("library-external-vad")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     submit.assert_not_called()
 
 
@@ -2371,8 +2371,8 @@ def test_external_validation_failure_releases_and_preserves_form(
         _ensure_parakeet_source_service=lambda: service,
         notify=MagicMock(),
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 3
     screen._library_external_submit_scope_id = "library-external-failed"
     screen._library_external_submit_worker = MagicMock()
@@ -2390,7 +2390,7 @@ def test_external_validation_failure_releases_and_preserves_form(
     )
 
     service.release_scope.assert_called_once_with("library-external-failed")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status.startswith(
         "Directory verification failed."
@@ -2415,8 +2415,8 @@ def test_external_submit_exception_releases_before_any_registry_job(
         _ensure_parakeet_source_service=lambda: service,
         notify=MagicMock(),
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
-    prior = deepcopy(screen._library_ingest_form)
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_ingest_registry = lambda: registry
     screen._library_external_submit_generation = 5
     screen._library_external_submit_scope_id = "library-external-submit-error"
@@ -2436,7 +2436,7 @@ def test_external_submit_exception_releases_before_any_registry_job(
 
     service.release_scope.assert_called_once_with("library-external-submit-error")
     assert registry.jobs.call_count == 2
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status.startswith("Queueing failed.")
 
@@ -2452,7 +2452,7 @@ def test_external_override_is_not_prepared_for_server_backend() -> None:
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: "server",
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -2488,7 +2488,7 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: backend["value"],
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -2500,7 +2500,7 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._library_external_submit_generation = 0
     screen._library_external_submit_scope_id = None
     screen._library_external_submit_worker = None
-    screen._library_ingest_start_consent = None
+    screen._ingest_state.start_consent = None
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()
@@ -2556,7 +2556,7 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
         _ensure_parakeet_source_service=lambda: service,
         _resolve_ingest_backend=lambda: "local",
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -2601,8 +2601,8 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
         None,
     )
 
-    assert screen._library_ingest_form.path == "/tmp/speech.wav"
-    assert screen._library_ingest_form.type_options["audio_video"] == {}
+    assert screen._ingest_state.form.path == "/tmp/speech.wav"
+    assert screen._ingest_state.form.type_options["audio_video"] == {}
     submit.assert_not_called()
     service.release_scope.assert_any_call(scope_id)
 
@@ -2676,7 +2676,7 @@ def test_vad_install_failure_has_exact_zero_job_copy_and_recovery() -> None:
         _ensure_parakeet_source_service=lambda: service,
         notify=notify,
     )
-    screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+    screen._ingest_state.form = LibraryIngestFormState(path="/tmp/speech.wav")
     screen._library_external_submit_generation = 2
     screen._library_external_submit_scope_id = "library-external-vad-failed"
     screen._library_external_submit_worker = MagicMock()
@@ -2747,7 +2747,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     screen.app_instance = SimpleNamespace(
         _ensure_parakeet_source_service=lambda: service,
     )
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state.form = LibraryIngestFormState(
         path="/tmp/speech.wav",
         type_options={
             "audio_video": {
@@ -2756,7 +2756,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
             }
         },
     )
-    prior = deepcopy(screen._library_ingest_form)
+    prior = deepcopy(screen._ingest_state.form)
     screen._library_external_submit_generation = 1
     screen._library_external_submit_scope_id = "library-external-cancel"
     screen._library_external_submit_worker = worker
@@ -2769,7 +2769,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     event.stop.assert_called_once_with()
     worker.cancel.assert_called_once_with()
     service.release_scope.assert_called_once_with("library-external-cancel")
-    assert screen._library_ingest_form == prior
+    assert screen._ingest_state.form == prior
     assert screen._library_external_submit_busy is False
     assert screen._library_external_submit_status == (
         "External preparation cancelled; no import was queued."
