@@ -311,3 +311,16 @@ def test_recorder_surface_forwards_to_mic(tmp_path):
     assert cap.is_available() is True
     assert cap.sample_rate == 16000 and cap.channels == 1
     assert 0.0 <= cap.get_audio_level() <= 1.0
+
+
+def test_partial_chunks_are_carried_not_dropped(tmp_path):
+    cap, recorders, _, _ = _capture(tmp_path, silence=5.0, preroll=0)
+    got: list[bytes] = []
+    cap.start_recording(callback=got.append)
+    mic = recorders[0].callback
+    loud = b"\x00\x20" * 350          # 700 bytes: one slice + 60-byte remainder
+    mic(loud)
+    assert b"".join(got) == loud[:640]
+    mic(b"\x00\x20" * 290)             # 580 bytes: remainder 60 + 580 = 640 -> one more slice
+    assert b"".join(got) == loud[:640] + (b"\x00\x20" * 320)
+    assert cap.last_speech_position_s == pytest.approx(0.04)

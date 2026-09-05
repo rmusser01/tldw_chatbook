@@ -186,6 +186,7 @@ class MeetingCapture:
         self._levels = (0.0, 0.0)
         self.last_speech_position_s = 0.0
         self.fault: Exception | None = None
+        self._gate_carry = bytearray()
 
     # ---- recorder surface -------------------------------------------------
     def start_recording(self, callback=None, save_to_file=None) -> bool:
@@ -304,10 +305,17 @@ class MeetingCapture:
                 logger.error("Meeting capture fault: {}", exc)
 
     def _gate(self, mixed: bytes, start_pos: float) -> bytes:
+        # Carry any trailing partial slice from the previous call forward
+        # instead of dropping it (spec §3.2 exactness: no audio is discarded
+        # from the dictation stream just because a chunk crosses a 640-byte
+        # boundary).
+        data = bytes(self._gate_carry) + mixed
+        data_start_pos = start_pos - len(self._gate_carry) / BYTES_PER_S
         out = bytearray()
-        for i in range(0, len(mixed) - FRAME_BYTES + 1, FRAME_BYTES):
-            frame = bytes(mixed[i : i + FRAME_BYTES])
-            frame_pos = start_pos + (i // FRAME_BYTES) * FRAME_S
+        complete_end = (len(data) // FRAME_BYTES) * FRAME_BYTES
+        for i in range(0, complete_end, FRAME_BYTES):
+            frame = data[i : i + FRAME_BYTES]
+            frame_pos = data_start_pos + (i // FRAME_BYTES) * FRAME_S
             is_speech = True if self._vad is None else bool(
                 self._vad.is_speech(frame, self.sample_rate)
             )
@@ -327,6 +335,7 @@ class MeetingCapture:
                     >= self._silence_threshold_s
                 ):
                     self._close_open_run()
+        self._gate_carry = bytearray(data[complete_end:])
         return bytes(out)
 
     def _close_open_run(self) -> None:
