@@ -39,4 +39,6 @@ recorded as a post-implementation ruling in
 - [ ] #2 A section that is currently collapsed or entirely hidden (no rows projected) is skipped rather than trapping focus
 - [ ] #3 Boundary navigation over the pre-existing rail sections is unchanged — proven by a test that would fail if their order or reachability moved
 - [ ] #4 The spec's §Interactions deferral note is replaced with what actually shipped
+- [ ] #90 (critique 2026-09-05 evidence) From an Environment row, `n` currently EVICTS the panel (jumps to Run, scrolls Environment/Tasks/Agents off the top) and `p` cannot return to them — the fix must make both directions reach the three sections
+- [ ] #91 The footer's "n/p Sections" hint is suppressed (or accurate) while focus is inside a section the ring cannot reach
 <!-- AC:END -->

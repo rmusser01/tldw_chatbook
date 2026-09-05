@@ -2,7 +2,7 @@
 id: TASK-31450
 title: >-
   Console Inspect rail Environment redesign: git/PR/CI/tasks/agents panel
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-04 20:30'
