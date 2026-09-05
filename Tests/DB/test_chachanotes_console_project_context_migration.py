@@ -65,6 +65,7 @@ def _minimal_v41_partial_database(
     )
     db = object.__new__(CharactersRAGDB)
     db.db_path_str = ":memory:"
+    db._db_diagnostic_ref = "memory"
     return db, connection
 
 
