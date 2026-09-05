@@ -9021,9 +9021,36 @@ class LibraryScreen(BaseAppScreen):
         layout: bool = False,
         recompose: bool = False,
     ) -> "LibraryScreen":
-        """Capture one coordinator-safe seam around every screen recompose."""
+        """Capture one coordinator-safe seam around every screen recompose.
+
+        task-31567 (Qodo round): the Media focus restore rides here too.
+        The canvas-scoped seam covers ``_sync_library_canvas``'s ``kind ==
+        "media"`` branch and the viewer's own recompose, but a WHOLE-screen
+        ``refresh(recompose=True)`` -- what the screen's background workers
+        end in, and what ``_sync_library_canvas`` falls back to after
+        CLEARING the follow-up it had queued -- bypassed both and left
+        ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
+        This is the narrowest hook the screen already owns, so every such
+        call site is covered at once.
+
+        Gated on ``recompose`` (a plain repaint is the hot path and must
+        not capture, restore or queue anything) and on Media being the
+        active destination, so the other canvases are untouched. The
+        restore is queued with ``call_after_refresh`` -- correct for a
+        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
+        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
+        recompose has no such ordering and keeps riding
+        ``queue_after_recompose`` instead. Explicit targets still win
+        exactly as ``_restore_library_media_focus`` already decides.
+        """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
+        media_focus = (
+            self._capture_library_media_focus_identity()
+            if recompose
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            else None
+        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -9045,6 +9072,8 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
+        if media_focus is not None:
+            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
 
     async def action_library_notes_new(self) -> None:
@@ -40016,13 +40045,14 @@ class LibraryScreen(BaseAppScreen):
           has already focused a real widget by the time this runs, which
           the "focus is not a grip" check below detects generically.
 
-        Not a whole-screen guarantee: this runs from the two media
-        recompose choke points (the ``kind == "media"`` branch of
-        ``_sync_library_canvas`` and ``_sync_library_media_viewer_state``,
-        plus that seam's screen-level fallback). A bare background
-        ``refresh(recompose=True)`` elsewhere still drops focus to ``None``
-        -- covering that means ``BaseAppScreen.refresh``/``compose_content``
-        and every Library destination, which is its own task.
+        Three choke points reach here, covering every media recompose: the
+        ``kind == "media"`` branch of ``_sync_library_canvas`` and
+        ``_sync_library_media_viewer_state`` (both canvas-scoped, via
+        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
+        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
+        Qodo round: background workers and ``_sync_library_canvas``'s own
+        failure fallback both take that bare path -- the fallback after
+        CLEARING the follow-up it had queued -- and left focus at ``None``.
 
         Args:
             previous: Identity captured by
@@ -40058,7 +40088,15 @@ class LibraryScreen(BaseAppScreen):
             # come back unfocusable (review I1).
             self._focus_library_list_entry()
             return
-        self.set_focus(target)
+        # ``scroll_visible=False``: this seam restores FOCUS, never scroll
+        # position -- Media owns that separately (the stored viewer-return
+        # restore, and the wheel gesture that CANCELS it). Once the screen-
+        # level hook made this run after every whole-screen recompose, the
+        # default ``scroll_visible=True`` re-scrolled the focused row back
+        # into view and reinstated exactly the restore the user's wheel had
+        # just cancelled (``test_compact_media_viewer_back_wheel_scroll_
+        # cancels_stored_restore``, scroll_y 45 where the pin wants 0).
+        self.set_focus(target, scroll_visible=False)
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.
@@ -40101,16 +40139,12 @@ class LibraryScreen(BaseAppScreen):
         self._register_footer_shortcuts()
         # task-31567: the viewer-scoped branch queues its own restore from
         # inside ``_sync_library_media_viewer_state`` (it alone knows whether
-        # a recompose actually happens). The whole-screen fallback is ordered
-        # the classic way -- ``Screen._on_timer_update`` runs the recompose
-        # before ``_invoke_and_clear_callbacks``.
-        previous_focus = self._capture_library_media_focus_identity()
+        # a recompose actually happens). The whole-screen fallback needs
+        # nothing here -- ``LibraryScreen.refresh`` captures and restores
+        # around every screen recompose (Qodo round).
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
-            self.call_after_refresh(
-                self._restore_library_media_focus, previous_focus
-            )
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""

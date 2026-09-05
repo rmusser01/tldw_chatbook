@@ -69,6 +69,9 @@ class PostRecomposeCallback:
         best-effort follow-up (rather than an intentional supersession) has
         to ask first or it silently evicts the owner's -- task-31567 lost a
         bulk-delete receipt's "land on Undo" intent that way.
+
+        Returns:
+            ``True`` while a callback is queued for the next recompose.
         """
         return self._post_recompose_callback is not None
 
