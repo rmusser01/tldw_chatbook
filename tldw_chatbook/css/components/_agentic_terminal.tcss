@@ -3998,6 +3998,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-wrap: nowrap;
 }
 
+#console-cost-chip {
+    max-width: 100%;
+}
+
 /* The policy label has two independent axes (or an explicit unavailable
    state), so it needs more room than ordinary metadata chips. */
 #console-library-chip {

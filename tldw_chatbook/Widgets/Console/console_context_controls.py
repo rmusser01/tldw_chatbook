@@ -7,7 +7,7 @@ store/controller while making the quick and full settings surfaces agree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
     ConsoleContextPolicyDefaults,
     ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
     ResolvedConsoleContextPolicy,
     application_context_policy_defaults,
     merge_context_policy,
@@ -34,6 +35,8 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
 )
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
+from tldw_chatbook.Chat.cost_display import format_cost_amount
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -133,6 +136,61 @@ class ConsoleContextControlState:
         return f"{estimate_prefix}{used} / {budget} max tokens"
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleNextSendSpendState:
+    """Presentation state for incremental input cost on the next send."""
+
+    label: str
+    tooltip: str
+
+
+def build_console_next_send_spend_state(
+    *,
+    request_tokens: int | None,
+    input_per_mtok: float | None,
+    sendable_text: bool,
+    has_media: bool,
+) -> ConsoleNextSendSpendState:
+    """Build an honest uncached-input forecast for the next request."""
+    detail = (
+        f"Estimated text input: ~{format_context_tokens(request_tokens)} tokens."
+        if request_tokens is not None
+        else None
+    )
+    if has_media:
+        lines = ["On next send: unavailable", "Media cost is not estimated."]
+        if detail is not None:
+            lines.append(detail)
+        return ConsoleNextSendSpendState("unavailable", "\n".join(lines))
+    if request_tokens is None:
+        return ConsoleNextSendSpendState(
+            "unavailable",
+            "On next send: unavailable\n"
+            "The next-request text token estimate is unavailable.",
+        )
+    if input_per_mtok is None:
+        return ConsoleNextSendSpendState(
+            "unavailable",
+            "On next send: unavailable\n"
+            "Selected-model input pricing is unavailable.\n"
+            f"{detail}",
+        )
+    if not sendable_text:
+        return ConsoleNextSendSpendState(
+            "—",
+            "On next send: —\nType a message to estimate the next-send input spend.",
+        )
+    amount = round(request_tokens * input_per_mtok / 1_000_000, 6)
+    label = f"~+${format_cost_amount(amount)}"
+    return ConsoleNextSendSpendState(
+        label,
+        f"On next send: {label} uncached input baseline\n"
+        f"{detail}\n"
+        "Response/output spend is added after completion.\n"
+        "Cache reads may lower it; cache writes may raise it.",
+    )
+
+
 @dataclass(frozen=True)
 class ContextBreakdownRow:
     """One named slice of the request window (TASK-26019)."""
@@ -157,9 +215,7 @@ def build_context_breakdown(
     attachments = accounting.attachment_tokens
     conversation = max(
         0,
-        accounting.compactable_tokens
-        + accounting.active_request_tokens
-        - attachments,
+        accounting.compactable_tokens + accounting.active_request_tokens - attachments,
     )
     rows: list[ContextBreakdownRow] = [
         ContextBreakdownRow("System prompt", accounting.system_tokens),
@@ -323,9 +379,82 @@ def build_console_context_control_state(
     )
 
 
+def build_console_context_cost_state(
+    context: ConsoleContextControlState,
+    cost: ConsoleCostState,
+    next_send: ConsoleNextSendSpendState | None = None,
+) -> ConsoleCostState:
+    """Combine context fullness with current and next-send spend states."""
+    next_send = next_send or ConsoleNextSendSpendState(
+        "unavailable",
+        "On next send: unavailable\nA next-send spend estimate has not been provided.",
+    )
+    used = context.request_tokens
+    ceiling = context.safe_input_ceiling_tokens
+    if used is None or ceiling is None or ceiling <= 0:
+        fullness = "unknown"
+        context_line = (
+            "Context: model context window is unavailable; choose a model "
+            "with a known window in Settings."
+        )
+    else:
+        raw_percent = used * 100 / ceiling
+        fullness = "100%+" if raw_percent > 100 else f"{round(raw_percent)}%"
+        context_line = (
+            f"Context: ~{format_context_tokens(used)} / "
+            f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
+        )
+    conversation = format_context_tokens(context.conversation_tokens)
+    budget = format_context_tokens(context.conversation_budget_tokens)
+    prefix = "~" if context.conversation_tokens is not None else ""
+    compaction_mode = context.resolved_policy.policy.compaction_mode
+    trigger = context.compaction_trigger_tokens
+    if compaction_mode is ContextCompactionMode.OFF:
+        compaction_line = "Compaction: off."
+    elif trigger is None:
+        compaction_line = f"Compaction: {compaction_mode.value}; trigger unknown."
+    elif compaction_mode is ContextCompactionMode.AUTOMATIC:
+        compaction_line = (
+            f"Compaction: automatic at {format_context_tokens(trigger)} "
+            "conversation tokens."
+        )
+    else:
+        compaction_line = (
+            f"Compaction: asks at {format_context_tokens(trigger)} conversation tokens."
+        )
+    current_label = cost.compact_label
+    for suffix in (" ⚠", " ○", " ●"):
+        if current_label.endswith(suffix):
+            current_label = current_label.removesuffix(suffix)
+            break
+    return replace(
+        cost,
+        label=(
+            f"Context {fullness} · Current {current_label} "
+            f"· On next send {next_send.label}"
+        ),
+        compact_label=(
+            f"Ctx {fullness} · Now {current_label} · Next {next_send.label}"
+        ),
+        tooltip="\n".join(
+            (
+                context_line,
+                f"Conversation: {prefix}{conversation} / {budget} budget",
+                compaction_line,
+                cost.tooltip,
+                next_send.tooltip,
+                "Open Conversation Inspector for Costs, Exchange, and Next Send.",
+            )
+        ),
+    )
+
+
 __all__ = [
     "ConsoleContextControlState",
+    "ConsoleNextSendSpendState",
     "ThinkingHistoryControlState",
     "build_console_context_control_state",
+    "build_console_context_cost_state",
+    "build_console_next_send_spend_state",
     "format_context_tokens",
 ]

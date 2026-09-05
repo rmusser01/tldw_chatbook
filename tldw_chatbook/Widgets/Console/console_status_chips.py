@@ -177,12 +177,8 @@ class ConsoleLibraryChip(ConsoleChip):
     """Two-axis Library policy chip that opens conversation access controls."""
 
     BINDINGS = [
-        Binding(
-            "enter", "open_library_access", "Open Library access", show=False
-        ),
-        Binding(
-            "space", "open_library_access", "Open Library access", show=False
-        ),
+        Binding("enter", "open_library_access", "Open Library access", show=False),
+        Binding("space", "open_library_access", "Open Library access", show=False),
     ]
 
     class OpenRequested(Message):
@@ -549,12 +545,12 @@ class ConsoleStatusChips(Horizontal):
     def set_collapsed(self, collapsed: bool) -> None:
         """Toggle the mounted status presentations without touching chip state."""
         self._collapsed = bool(collapsed)
-        self.query_one("#console-status-expanded", Horizontal).display = (
-            not self._collapsed
-        )
-        self.query_one("#console-status-collapsed", Horizontal).display = (
-            self._collapsed
-        )
+        self.query_one(
+            "#console-status-expanded", Horizontal
+        ).display = not self._collapsed
+        self.query_one(
+            "#console-status-collapsed", Horizontal
+        ).display = self._collapsed
 
     def _run_chip(self) -> ConsoleRunChip:
         label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)
@@ -804,7 +800,7 @@ class ConsoleStatusChips(Horizontal):
         Returns:
             ``label``: chip text (the full ``state.label``; the strip
             hasn't been laid out yet at compose time, so the width-aware
-            compact form only applies from ``sync_cost_state``).
+            compact form applies on the first resize or ``sync_cost_state``).
             ``tooltip``: hover/focus text. ``hidden``: ``True`` when
             ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
             ``state.cold``.
@@ -836,19 +832,29 @@ class ConsoleStatusChips(Horizontal):
         if state is None:
             chip.display = False
             return
-        # Narrow strips fall back to the delta-free compact label; pre-
-        # layout (``size.width`` still zero) falls back to the full label.
-        label = (
-            state.compact_label
-            if self.size.width and self.size.width < 120
-            else state.label
-        )
-        chip.update(label)
+        self._apply_cost_chip_label(chip)
         chip.tooltip = Content(state.tooltip)
         chip.display = True
         chip.set_class(state.alert, "console-chip-alert")
         chip.set_class(state.cold, "console-chip-cold")
         chip.set_class(not state.alert and not state.cold, "console-chip-dim")
+
+    def _apply_cost_chip_label(self, chip: ConsoleCostChip) -> None:
+        """Apply the current cost state's full or compact width-aware label."""
+        state = self._cost_state
+        if state is None:
+            return
+        label = state.compact_label if self.screen.size.width < 120 else state.label
+        chip.update(label)
+        chip.refresh(layout=True)
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Reapply width-aware cost copy without requiring a state change."""
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        self._apply_cost_chip_label(chip)
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh pill labels and counter emphasis from a new snapshot."""
