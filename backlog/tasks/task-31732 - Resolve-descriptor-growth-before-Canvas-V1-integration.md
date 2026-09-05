@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 19:46'
-updated_date: '2026-09-05 19:47'
+updated_date: '2026-09-05 19:59'
 labels:
   - canvas
   - testing
@@ -30,10 +30,10 @@ Investigate the descriptor-growth signal reported by the Canvas acceptance runs 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR for diagnosis or direct lifetime repair; existing ADR-115 applies if Canvas ownership is involved. ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md. Reason: investigate and restore existing cleanup guarantees without new resource, storage or security policy; revisit before any architectural change.
-1. Reproduce the recorded 207-descriptor growth in the exact ten-module selection under existing pre-import test isolation, collecting bounded per-test/module counts and source-free resource categories.
-2. Compare normal collection and TLDW_TEST_GC_EVERY=1; distinguish live retained owners, cycles, SQLite descriptor reuse and sentinel timing. Narrow to the responsible real lifetime before choosing a fix.
-3. Add a discriminating regression for any confirmed leak; preserve native and served shutdown, temporary history, threaded DB ownership and default sentinel thresholds. Update this plan with the exact correction before product edits.
-4. Root runs targeted RED/GREEN and the affected selection; an independent static reviewer checks the scoped correction. Record commands, warnings, limitations and any generalizable lesson; close only after all ACs are met.
-5. Integration authorization is tracked in the Canvas implementation plan: fetch/rebase latest dev, preflight and affected verification, create or update the PR against dev, address Qodo feedback, wait for checks, merge without bypassing protections, then begin V2 design.
+ADR required: no new ADR. ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md (renumber during integration). Reason: restore deterministic ownership of existing operation-local SQLite handles, no new storage or security policy.
+1. Reproduce the ten-module signal with a source-free per-test diagnostic. Completed: 970 passed; regular descriptors +224; GC=1 thinking-only control still +83.
+2. Add real SQLite regressions for ChatbookCreator._collect_conversations and ChatbookImporter._import_conversations: repeated success, post-construction service setup failure, malformed import and cancellation where applicable. Capture exact operation handles, verify they are closed at return, and preserve a separately owned same-file observer connection. Root must observe RED before production edits.
+3. Give each operation-local CharactersRAGDB deterministic try/finally close_connection ownership across all work after construction. Do not change database-wide quiescence, connection policy, GC fixtures or sentinel limits.
+4. Root runs GREEN and the original ten-module selection; compare aggregate lifetime results and narrow any remaining confirmed leak. Independent static review checks correction and retained limitations before closing ACs.
+5. Record evidence and lessons, then use the authorized integration sequence in the Canvas plan: unique ADR number, recoverable ref, latest-dev rebase, targeted/preflight checks, PR, Qodo issues and checks, merge without bypass, then V2 design.
 <!-- SECTION:PLAN:END -->

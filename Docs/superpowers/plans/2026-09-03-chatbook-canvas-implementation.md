@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - ADR required: yes
-- ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - Reason: Canvas establishes new storage, runtime, authentication, process, archive, and long-lived UX boundaries.
 - Execute against a fresh branch based on current `origin/dev`. At plan-writing time, `origin/dev` is schema version 65 while this planning branch is version 42. Re-read `_CURRENT_SCHEMA_VERSION` immediately before creating the migration and allocate exactly the next version; do not assume that v66 will still be available.
 - Start each Backlog task by changing it to In Progress and adding its task-specific Implementation Plan. Finish it only after its acceptance criteria, Implementation Notes, targeted checks, documentation, self-review, and ADR links satisfy `AGENTS.md`.
@@ -126,7 +126,7 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_runtime_assets.py`
 - Modify: `pyproject.toml`
 
-- [x] Record an ADR-115 addendum choosing or rejecting the candidate only after reviewing its license, published integrity, maintenance posture, browser support, and disclosure that the package is not itself a security audit. The current candidate is `quickjs-emscripten`/`quickjs-emscripten-core`/`@jitl/quickjs-singlefile-browser-release-sync` 0.32.0; reverify those facts at execution time.
+- [x] Record an ADR-121 addendum choosing or rejecting the candidate only after reviewing its license, published integrity, maintenance posture, browser support, and disclosure that the package is not itself a security audit. The current candidate is `quickjs-emscripten`/`quickjs-emscripten-core`/`@jitl/quickjs-singlefile-browser-release-sync` 0.32.0; reverify those facts at execution time.
 - [x] Write a failing manifest test that requires exact package names, versions, source URLs, SHA-512 tarball integrity, extracted-file SHA-256 values, licenses, build tool version, runtime profile, and reproducible command.
 - [x] Implement a vendoring script that downloads only pinned HTTPS package URLs, verifies SRI before extraction, rejects traversal/symlinks, extracts an allowlist into a temporary directory, builds the trusted bundle with an exact build-tool version, and atomically replaces only the declared generated assets. The generated JS/WASM and notices are committed; application startup never invokes Node or the network.
 - [x] Add `runtime_assets.py` to load assets via `importlib.resources`, compare them to the committed manifest, and disable Canvas with a bounded diagnostic on any digest mismatch.
@@ -223,7 +223,7 @@ The implementation may place tests beside an existing narrower suite when that b
 
 ### Delivery 2 checkpoint
 
-- [x] Update TASK-31227 and ADR-115 with the actual migration number, tables, constraints, quotas, and rollback evidence.
+- [x] Update TASK-31227 and ADR-121 with the actual migration number, tables, constraints, quotas, and rollback evidence.
 - [x] Review repository queries with `EXPLAIN QUERY PLAN` for active-path list/read and record the result in task notes.
 
 ---
@@ -421,7 +421,7 @@ The implementation may place tests beside an existing narrower suite when that b
 
 ### Delivery 5 checkpoint
 
-- [x] Update TASK-31230 and ADR-115 with the actual textual-serve extension seam, protocol version, authentication flow, proxy policy, and isolation evidence.
+- [x] Update TASK-31230 and ADR-121 with the actual textual-serve extension seam, protocol version, authentication flow, proxy policy, and isolation evidence.
 - [x] Perform one real authenticated remote/proxy flow and one two-browser isolation flow through the user-visible server, not only handler tests.
 
 ---
@@ -546,7 +546,7 @@ quotas alone do not remove the scheduling requirement.
 - Modify: relevant user documentation under `Docs/`
 - Modify: `tldw_chatbook/Web_Server/README.md` (remote-auth and privilege guidance)
 - Modify: Console model/tool guidance
-- Modify: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- Modify: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - Modify: TASK-31003 only if the implemented local archive boundary changes its assumptions
 
 - [x] Document creation/update, multiple names, Temporary state, save/promotion, active branches, exact revisions, Undo/View previous, source copy/download, confirmed submit/download, compatibility errors, and scripts-disabled recovery.
@@ -564,12 +564,12 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `Tests/Canvas/browser/test_canvas_served_flow.py`
 - Modify: `Tests/Canvas/browser/test_canvas_zero_egress.py`
 - Create as needed: focused live-harness helpers/fixtures under `Tests/Canvas/browser/`
-- Modify as needed: `tldw_chatbook/Canvas/gateway.py`, `tldw_chatbook/Canvas/static/canvas_shell.js`, `tldw_chatbook/Web_Server/serve.py`, and focused gateway/served-state/browser tests to repair the reproduced served exact-card selection delivery gap and redundant parent synchronization. Preserve exact-selection capability revocation, historical pinning, shell ownership and stale-response fences; do not reload a consumed bootstrap or weaken authentication. Passive synchronization of an already-applied scope must remain distinct from explicit same-revision selection intent. ADR-115 already governs this behavior; no new architecture is authorized.
+- Modify as needed: `tldw_chatbook/Canvas/gateway.py`, `tldw_chatbook/Canvas/static/canvas_shell.js`, `tldw_chatbook/Web_Server/serve.py`, and focused gateway/served-state/browser tests to repair the reproduced served exact-card selection delivery gap and redundant parent synchronization. Preserve exact-selection capability revocation, historical pinning, shell ownership and stale-response fences; do not reload a consumed bootstrap or weaken authentication. Passive synchronization of an already-applied scope must remain distinct from explicit same-revision selection intent. ADR-121 already governs this behavior; no new architecture is authorized.
 - Modify as needed: `Tests/Chatbooks/test_chatbook_canvas_round_trip.py`
 - Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the reviewed Canvas schema 67 migration; preserve the genuine v64 upgrade fixture and compaction assertions)
 - Modify: `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Docs/Development/console-semantic-mutation-inventory.md` (synchronize exact census totals and owner documentation for the two already-classified Canvas routes; retain the bidirectional structural checks)
 - Modify: TASK-31232 with final evidence and notes
-- Modify: `tldw_chatbook/Canvas/control_protocol.py`, `tldw_chatbook/Canvas/capabilities.py`, the already scoped gateway/served-parent/shell, and focused protocol/capability/gateway/browser tests to fence a queued navigation against its original selection intent before child mutation. Preserve a child-owned opaque generation through scope/capability/bootstrap round trips and validate the browser's issued selection epoch; explicit same-revision pin changes intent, passive snapshots do not. Missing served expectations fail closed. See ADR-115's selection-intent amendment; do not add a legacy served bypass.
+- Modify: `tldw_chatbook/Canvas/control_protocol.py`, `tldw_chatbook/Canvas/capabilities.py`, the already scoped gateway/served-parent/shell, and focused protocol/capability/gateway/browser tests to fence a queued navigation against its original selection intent before child mutation. Preserve a child-owned opaque generation through scope/capability/bootstrap round trips and validate the browser's issued selection epoch; explicit same-revision pin changes intent, passive snapshots do not. Missing served expectations fail closed. See ADR-121's selection-intent amendment; do not add a legacy served bypass.
 - Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
 
 - [x] Native live flow: create, automatic browser open, interact, update/hot reload, submit to unsent draft, passive download, exact revision reopen, historical branch update, temporary promotion, and unsaved destruction.
@@ -586,8 +586,8 @@ quotas alone do not remove the scheduling requirement.
 
 ## Final whole-branch correction wave (2026-09-05)
 
-ADR required: no new ADR; existing ADR-115 applies.
-ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: no new ADR; existing ADR-121 applies.
+ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: these corrections enforce the approved resource, runtime, disabled-mode,
 scheduling and historical-selection contracts; they do not introduce a new
 storage, permission, provider or runtime boundary.
@@ -626,8 +626,8 @@ The user explicitly approved one additional pass after the residual I1/I2/I4
 handoff. This supersedes the preceding pause, not the product contracts or
 the exclusion of unrelated baseline fixes/full-suite work.
 
-ADR required: no new ADR; existing ADR-115 applies.
-ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: no new ADR; existing ADR-121 applies.
+ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: enforce the existing temporary resource, virtual DOM and stale-effect
 contracts without changing storage, permissions or runtime boundaries.
 
@@ -658,8 +658,8 @@ The user explicitly approved one DOM-only correction and scoped rereview after
 the two remaining I2 cases. No quota/repair reopening, baseline repairs, broad
 review, full sweep, merge or cleanup is authorized.
 
-ADR required: no new ADR; existing ADR-115 applies.
-ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: no new ADR; existing ADR-121 applies.
+ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: correct supported DOM reconstruction under the existing bounded runtime.
 
 - [x] Restore explicit select values after their options exist, including a
@@ -690,7 +690,7 @@ affected regression coverage. It does not authorize a full suite or integration.
 ADR required: no new ADR; existing contracts apply.
 ADR paths: `backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md`,
 `backlog/decisions/079-console-library-conversation-authority.md`,
-`backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`, and ADR-115.
+`backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`, and ADR-121.
 Reason: repair existing behavior or stale fixtures, without introducing storage,
 permission, provider or runtime boundaries. The later ADR-097 accepted spec and
 TASK-23113.2 AC8 explicitly require retained semantic bytes on soft deletion;
@@ -722,8 +722,8 @@ The user approved addressing the two remaining failed-assistant retry cases.
 This covers their shared cause and directly affected regressions, not unrelated
 repairs, a full repository sweep, integration or permission changes.
 
-ADR required: no new ADR; existing ADR-115 applies.
-ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: no new ADR; existing ADR-121 applies.
+ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: restore or correctly verify existing exact-run settlement, atomic message/
 artifact commit, retry and staged-history cleanup contracts without new boundaries.
 
@@ -755,7 +755,7 @@ posted, merging the reviewed PR, and then starting V2. This supersedes earlier
 integration exclusions, not the sandbox, isolation or targeted-test policy.
 
 ADR required: no new ADR for integration or direct cleanup repairs.
-ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: preserve the approved V1 boundary; V2 library/runtime decisions require
 their own design and ADR check before implementation.
 

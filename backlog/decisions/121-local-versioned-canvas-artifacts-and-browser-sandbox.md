@@ -1,7 +1,10 @@
-# ADR-115: Local versioned Canvas artifacts and browser sandbox
+# ADR-121: Local versioned Canvas artifacts and browser sandbox
 
 Status: Accepted
 Date: 2026-09-03
+Integration note (2026-09-05): Renumbered from ADR-115 to ADR-121 to avoid the
+existing Personas decision's identifier. Historical execution reports may retain
+the original number; this is the same Canvas decision, with no policy change.
 Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
 Related: TASK-31003, ADR-069, ADR-032
 

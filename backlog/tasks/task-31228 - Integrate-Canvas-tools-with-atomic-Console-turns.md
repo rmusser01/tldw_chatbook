@@ -38,8 +38,8 @@ Expose explicit conversation-scoped Canvas tools to Console assistants and make 
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
-Reason: this task implements ADR-115’s agent projection, scoped tool authority, approval classification, and assistant-turn transaction boundaries; no new ADR is needed unless implementation changes those accepted security or ownership contracts.
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this task implements ADR-121’s agent projection, scoped tool authority, approval classification, and assistant-turn transaction boundaries; no new ADR is needed unless implementation changes those accepted security or ownership contracts.
 
 1. Inventory every raw tool argument/result consumer and add a generic audience-specific projection seam whose default preserves all existing providers while failures redact closed.
 2. Register the four Canvas tools behind enabled Console session scope, inject all authority fields, enforce shared limits/full-document optimistic contracts, and narrowly pre-authorize only reversible Canvas mutations.
@@ -51,7 +51,7 @@ Reason: this task implements ADR-115’s agent projection, scoped tool authority
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented audience-specific tool projections, exact scoped Canvas tools, reversible Canvas-only approval classification, and run-owned staging integrated with production Console composition. Assistant text, Canvas card metadata, revisions, and checkpoint settlement now share the existing transaction for both initial and retried assistant anchors; explicit empty metadata clears stale retry cards, while true database failures retain READY stages. Temporary sessions use incarnation/run/promotion leases, branch-authorized reads, atomic promotion with durable origin remapping, and exact teardown. Independent review completed three correction rounds and approved the final result with no Critical, Important, or Minor findings. Verification: 767 targeted tests passed; Python compilation, changed-file fatal Ruff excluding the reproduced pre-existing FallbackRuntime F821, and git diff checks passed. No full suite was run under repository policy. ADR required: yes; implemented existing ADR-115 without a new ADR.
+Implemented audience-specific tool projections, exact scoped Canvas tools, reversible Canvas-only approval classification, and run-owned staging integrated with production Console composition. Assistant text, Canvas card metadata, revisions, and checkpoint settlement now share the existing transaction for both initial and retried assistant anchors; explicit empty metadata clears stale retry cards, while true database failures retain READY stages. Temporary sessions use incarnation/run/promotion leases, branch-authorized reads, atomic promotion with durable origin remapping, and exact teardown. Independent review completed three correction rounds and approved the final result with no Critical, Important, or Minor findings. Verification: 767 targeted tests passed; Python compilation, changed-file fatal Ruff excluding the reproduced pre-existing FallbackRuntime F821, and git diff checks passed. No full suite was run under repository policy. ADR required: yes; implemented existing ADR-121 without a new ADR.
 <!-- SECTION:NOTES:END -->
 
 ## Delivery 3 checkpoint (Task 3.3)
@@ -61,5 +61,5 @@ Implemented audience-specific tool projections, exact scoped Canvas tools, rever
 - Cancellation and lifecycle: provider error, cancellation, stuck runs, run-ID mismatch, session close, state replacement, and runtime shutdown fail closed and discard exact run-owned source once. Duplicate terminal callbacks reuse the frozen settlement, and duplicate `(run_id, tool_call_id)` calls reuse the staged revision.
 - Concurrency and resume: sequential same-Canvas calls must name the preceding staged revision; a second same-parent call receives bounded `ambiguous_ancestry` without mutation. Continuation/re-entry returns the existing frozen settlement and does not duplicate revisions.
 - Sentinel evidence: `test_every_non_model_projection_omits_canvas_source`, the adversarial projection tests, and the real Agent review-batch persistence test prove the source sentinel is absent from display/log/cycle/continuation projections and serialized Agent rows. `test_metadata_serialization_never_contains_source` and `test_transcript_restores_metadata_only_canvas_card` prove the turn settlement, restored transcript card, and plain-text transcript remain source-free.
-- ADR required: no new ADR. This delivery directly implements the accepted ownership, privacy, and transaction boundaries in ADR-115.
+- ADR required: no new ADR. This delivery directly implements the accepted ownership, privacy, and transaction boundaries in ADR-121.
 - Review status: independent review covered transaction ordering, production composition, exact session/run/promotion fencing, retry ownership, canonical repository enforcement, branch authority, approval-bypass scope, and source leakage. Three correction rounds resolved all reported findings; final review approved the delivery with no Critical, Important, or Minor issues.

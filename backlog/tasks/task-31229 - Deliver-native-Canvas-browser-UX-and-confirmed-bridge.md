@@ -39,8 +39,8 @@ Give terminal users a trusted loopback Canvas shell that opens in their system b
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
-Reason: this delivery implements ADR-115's trusted loopback gateway, capability-token, browser-shell, and confirmed bridge boundaries; no new ADR is needed unless implementation changes those accepted boundaries.
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this delivery implements ADR-121's trusted loopback gateway, capability-token, browser-shell, and confirmed bridge boundaries; no new ADR is needed unless implementation changes those accepted boundaries.
 
 1. Add the core aiohttp dependency and implement a lazily started loopback-only gateway with one app-owned lifecycle, typed same-scope routes, hardened headers, and hashed short-lived single-use capabilities delivered outside URLs.
 2. Build the packaged preview-first shell and native transcript/message actions for auto-open, following versus pinned revisions, branch-safe hot reload, title/source controls, accessibility, and HTML-code-block import.
@@ -52,7 +52,7 @@ Reason: this delivery implements ADR-115's trusted loopback gateway, capability-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the native Canvas browser workflow described by ADR-115. One app-owned `aiohttp` gateway starts lazily on an OS-assigned loopback port and the Console retains conversation/branch authority. The trusted shell provides named Canvas selection, revisioned rename, follow/pin/previous navigation, provenance, source controls, compatibility and scripts-disabled recovery, transcript-card reopen, and parsed HTML-block import. Tool creation automatically uses Textual's browser-open seam; failure leaves a copyable loopback URL in the terminal.
+Implemented the native Canvas browser workflow described by ADR-121. One app-owned `aiohttp` gateway starts lazily on an OS-assigned loopback port and the Console retains conversation/branch authority. The trusted shell provides named Canvas selection, revisioned rename, follow/pin/previous navigation, provenance, source controls, compatibility and scripts-disabled recovery, transcript-card reopen, and parsed HTML-block import. Tool creation automatically uses Textual's browser-open seam; failure leaves a copyable loopback URL in the terminal.
 
 The confirmed bridge keeps generated code inside the zero-egress runtime. `canvas.submit()` and allowlisted passive `canvas.download()` requests cross into trusted shell code only after an exact, complete, five-minute confirmation. Submit replaces only an unchanged, exact-session composer draft and never sends it. Download validates decoded raster signatures or bounded literal passive text; runnable source HTML is a separate warned action outside Canvas protections.
 

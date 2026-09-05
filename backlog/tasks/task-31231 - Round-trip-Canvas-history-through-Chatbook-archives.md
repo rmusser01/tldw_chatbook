@@ -38,8 +38,8 @@ Make durable Canvas documents and immutable revision graphs portable through loc
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
-Reason: archive schema/versioning, graph identity remapping, atomic restore behavior, inert-source handling, and the local-only synchronization boundary are architectural decisions already accepted by ADR-115; this delivery implements and records the concrete format without creating a duplicate ADR.
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: archive schema/versioning, graph identity remapping, atomic restore behavior, inert-source handling, and the local-only synchronization boundary are architectural decisions already accepted by ADR-121; this delivery implements and records the concrete format without creating a duplicate ADR.
 
 1. Characterize the current Chatbook V1/V2 models, creator/importer transaction boundaries, limits, and compatibility fixtures before defining format 3.0.
 2. Add typed Canvas archive records and inert deterministic paths, select V3 only when Canvas content is present, and document every field, limit, remapping rule, and unsupported-runtime behavior.
@@ -47,7 +47,7 @@ Reason: archive schema/versioning, graph identity remapping, atomic restore beha
 4. Export the complete bounded Canvas/revision/hint graph without compiling or rendering source, recomputing source byte counts and digests while streaming.
 5. Validate the entire compressed archive and remapped graph before mutation, then implement digest-idempotent same-identity restore and import-as-new in one transaction.
 6. Add failure-injection, decompression-bomb, property, graph, backward-compatibility, and synchronization-exclusion tests; run only targeted archive/repository suites.
-7. Request independent code/security review, inspect a produced archive manually, update ADR-115 and this task with the final format/evidence, and mark Done only after every acceptance criterion passes.
+7. Request independent code/security review, inspect a produced archive manually, update ADR-121 and this task with the final format/evidence, and mark Done only after every acceptance criterion passes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -60,5 +60,5 @@ Reason: archive schema/versioning, graph identity remapping, atomic restore beha
 - Security review fixes covered deleted historical origins, shared-descriptor validation/extraction, physical-size and replacement TOCTOU, locked idempotence, export snapshot consistency, revision-order comparison, duplicate Canvas-owner ambiguity, path depth/size/prefix collisions, and special ZIP members. Final rereview concluded SHIP with no Critical or Important findings.
 - Final targeted evidence: 157 format/compatibility tests, 290 Chatbook creator/importer/service/transaction tests, 38 repository/migration tests, and the whole-graph fixture passed. Ruff, Python compilation, and diff checks were clean; only the existing dependency and combined-session file-descriptor warnings appeared.
 - Manual inspection of a produced archive showed two Canvas documents and four deterministic `.html.txt` revisions, including a sibling branch, title change, soft deletion, deleted historical origin, reopen hint, and inert `canvas-v9` profile. Manifest IDs, parents, origins, sizes, and digests were understandable without executing content, and no runnable `.html` member existed. The disposable archive/database were removed after inspection.
-- ADR check: existing ADR-115 was updated with format 3.0 fields and limits, container defenses, atomic identity semantics, schema 67, inert unsupported-profile behavior, sync exclusion, and manual checkpoint evidence. No new ADR was needed.
+- ADR check: existing ADR-121 was updated with format 3.0 fields and limits, container defenses, atomic identity semantics, schema 67, inert unsupported-profile behavior, sync exclusion, and manual checkpoint evidence. No new ADR was needed.
 <!-- SECTION:NOTES:END -->

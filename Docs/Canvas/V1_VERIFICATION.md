@@ -1,7 +1,7 @@
 # Canvas V1 verification record
 
 Date: 2026-09-05. Isolated branch: `codex/canvas-v1`.
-Architecture: [ADR-115](../../backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md).
+Architecture: [ADR-121](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md).
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
@@ -55,7 +55,7 @@ Implementation: `5bba89d3a` (two Python paths). The static-only worker used
 installed `pre-commit` hook. No hook pass is claimed.
 
 The subsequent user approval covers the two retry cases and directly affected
-regressions. Planning commit `61a27e887` precedes the correction; ADR-115 applies.
+regressions. Planning commit `61a27e887` precedes the correction; ADR-121 applies.
 Fresh exact-two RED: **2 failed, 1 warning, 1.17 s**.
 
 Source-free test observations established that attempt 1 is discarded correctly
@@ -143,7 +143,7 @@ were not rerun wholesale after this six-line scope correction.
 | Agents and packaging | Prior 380-test Agents and two-test packaging gates retained; Canvas provider/composition covered again by the final affected run. Runtime asset and vendor checks remain recorded below. |
 | Native/served/browser/archive | Prior outer-path and zero-egress gates, scoped selection fixes and final DOM/assets corrections retained with their recorded optional skips and cleanup limitations. This correction changes no browser/runtime/archive code. |
 
-The final self-review confirms existing ADR-115 still governs all boundaries:
+The final self-review confirms existing ADR-121 still governs all boundaries:
 closed virtual runtime, local branch-aware immutable history, atomic staged
 turns/promotion, same-origin authenticated served routing, confirmed unsent-draft
 bridge, and inert archives. No scope expansion or new ADR was needed. Sync
@@ -245,7 +245,7 @@ is authorized by the scoped review.
 
 ## DOM-only correction evidence (`981b1f8c1`)
 
-Under existing ADR-115, reconstruction now skips already-present descendants
+Under existing ADR-121, reconstruction now skips already-present descendants
 while attaching them to rebuilt parents. Explicit option selection is restored
 after subtree structure, followed by explicit select value. No facade API,
 permission, runtime fallback or quota was added or relaxed.
@@ -347,7 +347,7 @@ bytes), I5 (pin-preserving publication), M1 (helper limits) and M2 (Close/Hide)
 are addressed. I1, I2 and I4 remain open:
 
 - The production temporary owner still uses the durable 50 MiB aggregate
-  ceiling, not ADR-115's additional **8 MiB temporary-session cap**. Count,
+  ceiling, not ADR-121's additional **8 MiB temporary-session cap**. Count,
   revision and durable/concurrent admission fixes do not cover that default.
 - Detached-node setters still emit native patches before reconstruction, so
   detach, edit while detached, then reinsert can reject the transaction.
@@ -493,7 +493,7 @@ selection. Fresh affected-path coverage is recorded separately below.
 
 Before the successful fix runs, deterministic delayed-command
 tests additionally reproduced an unfenced child navigation after an explicit
-different-revision or same-revision pin (2 failed, 1 warning, 2.01s). ADR-115's
+different-revision or same-revision pin (2 failed, 1 warning, 2.01s). ADR-121's
 selection-intent amendment records the accepted pre-mutation generation/epoch
 fence, implemented in `0724726a0c`. This code-proven race has not
 been established as the cause of every intermittent live-card failure; initial

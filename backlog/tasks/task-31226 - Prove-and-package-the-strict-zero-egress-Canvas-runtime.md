@@ -16,7 +16,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Establish the trusted compiler and virtual JavaScript execution foundation that lets Canvas render interactive self-contained documents without giving generated code a native browser or network capability. This implements the release-blocking runtime boundary in ADR-115 before any Canvas tool or UI is exposed.
+Establish the trusted compiler and virtual JavaScript execution foundation that lets Canvas render interactive self-contained documents without giving generated code a native browser or network capability. This implements the release-blocking runtime boundary in ADR-121 before any Canvas tool or UI is exposed.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -36,8 +36,8 @@ Establish the trusted compiler and virtual JavaScript execution foundation that 
 
 <!-- SECTION:PLAN:BEGIN -->
 - ADR required: yes
-- ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
-- Reason: this task implements and records the runtime/dependency boundary already accepted by ADR-115; the chosen engine and packaging details will be added as an ADR addendum.
+- ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- Reason: this task implements and records the runtime/dependency boundary already accepted by ADR-121; the chosen engine and packaging details will be added as an ADR addendum.
 
 1. Define the versioned render-plan and bridge wire models plus shared hard-limit validators through strict red/green TDD.
 2. Parse complete HTML/CSS into a closed allowlisted render plan and reject every native execution, navigation, and resource-fetch surface with bounded diagnostics.
@@ -64,7 +64,7 @@ jobs, 64 timers, 100 timer firings/second, 500 listeners, a 100-event queue,
 per operation / 32 per second. The trusted renderer owns
 DOM/CSSOM construction, passive-image object URLs, typed bridge forwarding, and
 worker termination. It runs in an opaque `sandbox="allow-scripts"` iframe with
-the ADR-115 CSP and no native-JavaScript fallback.
+the ADR-121 CSP and no native-JavaScript fallback.
 
 Passive images are limited to 64 static PNG/JPEG/GIF/WebP assets, 1 MiB each / 4
 MiB aggregate encoded bytes, 4,096 per dimension, 4,194,304 pixels each /
@@ -92,7 +92,7 @@ Focused verification:
 reported `97 passed, 3 skipped, 1 pre-existing dependency warning in 14.68s`.
 Compatibility and exact budgets are documented in
 `Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md`; architecture and qualification
-results are recorded in ADR-115. Detailed RED/GREEN and request evidence is in
+results are recorded in ADR-121. Detailed RED/GREEN and request evidence is in
 `.superpowers/sdd/2026-09-03-chatbook-canvas-implementation/task-1.4-report.md`.
 
 No Canvas product tool, gateway, persistence, confirmation effect, or UI was
@@ -133,12 +133,12 @@ form Chromium regression also passed five additional consecutive rereview
 runs. Firefox and WebKit remain an explicit portability caveat because their
 Playwright engines were not installed on the qualification host. The governing
 architecture decision remains
-`backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
-(ADR-115).
+`backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+(ADR-121).
 <!-- SECTION:NOTES:END -->
 
 ## Related Design
 
 - `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
 - `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
