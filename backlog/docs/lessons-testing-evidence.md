@@ -11665,6 +11665,15 @@ and establish owned config/data before application imports: an in-memory subject
 does not make its module's bootstrap side-effect-free. Do not delete ambient
 state afterward or suppress the deviation from the verification record.
 
+Follow-up incident (TASK-31232 six-baseline repair, 2026-09-05): the same mistake
+recurred while counting public Library descriptors with a direct Python import,
+despite an explicit isolated-pytest-only instruction. The import again reached
+ambient config and directory bootstrap. Static inspection would have answered the
+question. Executable worker probes were stopped; the coordinator took ownership
+of all subsequent pytest execution while the worker was limited to static edits.
+When a procedural warning demonstrably fails, narrow the execution workflow
+instead of repeating the warning and treating intent as isolation evidence.
+
 ## Parameter IDs can accidentally activate keyword-based test gates
 
 Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium

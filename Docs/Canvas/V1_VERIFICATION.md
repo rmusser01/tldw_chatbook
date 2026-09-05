@@ -7,8 +7,10 @@ Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-im
 This is targeted evidence, **not full-suite, release, or integration approval**.
 Latest scoped rereview (`648530ac6..03cd979df`) closes both remaining I2 DOM
 cases with spec and quality gates passing and no new Critical/Important
-fix-diff issue identified. All final-review implementation findings are now
-closed. TASK-31232 remains In Progress with AC9 open and AC10 checked.
+fix-diff issue identified. Those final-review implementation findings are
+closed. TASK-31232 remains In Progress with AC9 open and AC10 checked: the
+subsequent six-baseline repair resolves its original six failures but identifies
+two additional pre-existing Canvas retry check failures, detailed below.
 Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
@@ -16,6 +18,20 @@ The user authorized one DOM-only correction and scoped rereview of those two
 I2 cases. Implementation `981b1f8c1` and targeted evidence are recorded below;
 the scoped verdict passed. This does not waive AC9's six characterized
 baseline failures or authorize a full sweep.
+The user subsequently approved repair of those six baseline failures. Diagnosis
+reproduced all six in one isolated pytest run (6 failed, 1 warning, 5.94 s).
+The original six repaired cases now pass; independent review is pending and
+two additional failures keep AC9 open. The scope is
+those causes and directly affected regressions, not a full repository sweep.
+
+During that diagnosis, a direct Library descriptor import outside pytest
+repeated the earlier isolation mistake: it loaded the ambient config and logged
+ensuring the same chat-dictionaries directory. The command printed public tool
+names and config section names, not config values or credentials. No pre-command
+snapshot establishes whether the directory was created. Worker executable probes
+were stopped, no ambient cleanup occurred, and the user was informed. Further
+worker work is static inspection/edits only; the coordinator runs all tests through
+the repository's pre-import isolated config/data fixtures.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
 create-triggered native opening, exact card/replacement-session coverage and
@@ -29,6 +45,84 @@ corrections recorded below; the clean task gate does not close these new gaps.
 TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
+
+## User-authorized six-baseline repair evidence
+
+Implementation commit: `11ea68221`. The worker used `--no-verify` to honor its
+post-incident no-interpreter restriction. Root subsequently checked the configured
+hooks directory and found no `pre-commit` hook installed. The validation evidence
+below and independent scoped review are explicit; no hook pass is claimed.
+
+The scoped repairs preserve existing contracts rather than restoring obsolete
+fixtures: direct mutation guards remain intact, the later ADR-097 soft-delete
+envelope retention supersedes ADR-090's older clearing expectation, MCP filtering
+is still source-scoped, the strict promotion fake accepts its explicit trace
+boundary, and Settings waits on actual destination readiness without bypassing
+its save/navigation vetoes. Two product corrections use already-frozen privacy
+values for an attachment-only send with no preparation, and omit `_thinking`
+from an exported tombstone that the importer would otherwise reject. Stored
+semantic bytes, graph identity and separately governed `_private` remain intact.
+
+The obsolete `test_durable_soft_delete_clears_thinking_from_tombstone` is replaced
+by `test_soft_deleted_thinking_owner_round_trips_as_an_importable_tombstone`.
+Its genuine product RED was **1 failed, 1 warning, 0.73 s**, at the exported
+tombstone `_thinking` assertion after retention/history controls passed.
+An intermediate six-case run had **1 failed, 5 passed, 1 warning, 12.78 s**:
+the corruption fixture supplied a cursor instead of `cursor.connection` to the
+authorization helper. Correcting the fixture left the production guard intact.
+The final exact six-case run passed **6 tests, 1 warning, 11.83 s**, including
+the complete Settings save/handoff/dirty-navigation behavior (9.32 s call).
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no \
+  Tests/Chatbooks/test_chatbook_thinking_round_trip.py::test_chatbook_export_blocks_opaque_future_thinking_with_upgrade_copy \
+  Tests/Chatbooks/test_chatbook_thinking_round_trip.py::test_soft_deleted_thinking_owner_round_trips_as_an_importable_tombstone \
+  Tests/Chat/test_console_chat_controller.py::test_image_only_draft_is_sendable \
+  Tests/Chat/test_console_chat_controller.py::test_compose_mcp_provider_excludes_console_shadowed_builtin_names \
+  Tests/Chat/test_console_chat_store.py::test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path \
+  Tests/UI/test_settings_raw_cli.py::test_pending_raw_cli_save_vetoes_real_navigation_until_arrival
+```
+
+The final directly affected six-module check was **737 passed, 2 failed,
+2 warnings, 140.19 s**. All six repaired cases passed in this broader run.
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no \
+  Tests/Chatbooks/test_chatbook_thinking_round_trip.py \
+  Tests/Chat/test_console_chat_controller.py \
+  Tests/Chat/test_console_chat_store.py \
+  Tests/UI/test_settings_raw_cli.py \
+  Tests/Chat/test_console_trace_privacy_owners.py \
+  Tests/Chat/test_console_semantic_writer_routing.py
+```
+
+Both failures are parameter cases of
+`Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry`:
+`[False-True-False-False]` and `[True-True-False-False]`. Each expects a committed
+settlement but receives `None`. An exact two-ID rerun on the repaired tree gave
+**2 failed, 1 warning, 1.11 s**. The same two IDs on a clean, isolated checkout
+of pre-repair `c8a1211e5768d1ce099b5168271ec1cc750ed21f` gave **2 failed,
+2 warnings, 2.28 s** at the same assertion. These are pre-existing relative to
+the six-baseline repair, not claimed to predate the entire Canvas branch.
+No additional repair is made or cause beyond that failing assertion claimed.
+
+The baseline used `/private/tmp/canvas-six-baseline.h0zDgq` with the same venv
+Python by absolute path and repository pytest isolation. Root verified its
+exact HEAD and clean status, then removed only that owned comparison worktree
+with ordinary `git worktree remove`. Its source remains recoverable from the
+commit; the implementation worktree and evidence were not removed.
+
+Warnings: the known Requests dependency mismatch; broader-run descriptor growth
+of 204 (start 12, end 216, limit 200), not causally attributed; and a cold-import
+SyntaxWarning in the baseline's unchanged `Tools/patch_tool_impls.py`. The broad
+run is not a full repository sweep or a clean selected-suite claim.
+
+Final static checks: root compared Ruff `(path, code, message)` Counters across
+the six changed Python files against `c8a1211e5`: **269/269, zero added/removed**.
+No formatter diff overlaps changed ranges after normalizing the new constructor;
+four files retain pre-existing whole-file format debt. `compileall` for all six
+and `git diff --check` returned zero. No application imports were used for these
+static checks. AC9 remains unchecked pending the newly identified retry failures.
 
 ## DOM-only correction evidence (`981b1f8c1`)
 
