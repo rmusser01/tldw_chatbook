@@ -745,6 +745,21 @@ shredding test obtained by changing journal mode is not sufficient evidence.
 
 ---
 
+## An empty WAL reader can invalidate a content-free negative cache forever
+
+**TASK-31504, 2026-09-05.** Personal Context's first absent-status cache compared
+all DB/WAL/SHM metadata. A real WAL-mode regression closed the last SQLite reader
+between sends: opening recreated an empty WAL and SHM, and closing retired them.
+Every send therefore invalidated the cache even though no profile had been set up.
+Normalizing empty WAL/journal artifacts and excluding SHM coordination metadata
+from the change token fixed the regression while retaining sidecar owner/privacy
+checks. A second test pinned a reader while another service created the profile;
+the main DB mtime stayed unchanged and the WAL change correctly invalidated absence.
+
+**What to do.** Test negative caches with both last-reader cleanup and committed
+WAL-only writes. Coordination-file churn is not a committed-data change, but
+database-only metadata misses real committed state.
+
 ## An outer SQLite rollback cannot undo a write committed by another database
 
 **TASK-19900.1 fix review, 2026-08-22.** Console temporary promotion wrapped
