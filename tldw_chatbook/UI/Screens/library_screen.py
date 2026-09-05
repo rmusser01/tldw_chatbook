@@ -20190,6 +20190,36 @@ class LibraryScreen(BaseAppScreen):
                 return str(record.get("title", "") or "")
         return None
 
+        def patch_placement(item: Any) -> Any:
+            if not isinstance(item, NotePlacementRecord):
+                return item
+            if self._source_record_id(item.note) != baseline.note_id:
+                return item
+            return dataclasses.replace(
+                item,
+                note={
+                    **item.note,
+                    "title": persisted_title,
+                    "last_modified": baseline.modified_at,
+                },
+            )
+
+        self._library_notes_tree_branches = {
+            key: dataclasses.replace(
+                state,
+                items=tuple(patch_placement(item) for item in state.items),
+            )
+            for key, state in self._library_notes_tree_branches.items()
+        }
+        filter_state = self._library_notes_tree_filter_state
+        if filter_state is not None:
+            self._library_notes_tree_filter_state = dataclasses.replace(
+                filter_state,
+                placements=tuple(
+                    patch_placement(item) for item in filter_state.placements
+                ),
+            )
+
     def _focus_library_note_validation_field(self, field: str) -> None:
         return self._notes_controller._focus_library_note_validation_field(field)
 

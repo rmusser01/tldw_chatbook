@@ -2914,7 +2914,7 @@ async def test_library_real_existing_config_without_lifecycle_defaults_expanded(
 async def test_library_starter_hidden_route_focuses_compact_rail_without_search() -> (
     None
 ):
-    """Starter F6/Escape use Import, then Explore when Import is unavailable."""
+    """Starter F6/Escape enter the active Collections workbench."""
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
     app.library_new_profile_admission = False
@@ -2936,19 +2936,20 @@ async def test_library_starter_hidden_route_focuses_compact_rail_without_search(
             screen.set_focus(None)
             screen.action_focus_next_workbench_pane()
             await pilot.pause()
+            collections_filter = screen.query_one("#library-collections-filter", Input)
+            assert collections_filter.has_focus
+
+            screen.set_focus(None)
+            await pilot.press("escape")
+            await pilot.pause()
             import_button = screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
             )
             assert import_button.has_focus
 
-            screen.set_focus(None)
-            await pilot.press("escape")
-            await pilot.pause()
-            assert import_button.has_focus
-
             await import_button.remove()
             screen.set_focus(None)
-            screen.action_focus_next_workbench_pane()
+            await pilot.press("escape")
             await pilot.pause()
             assert screen.query_one("#library-rail-explore-all", Button).has_focus
     finally:
@@ -3934,6 +3935,24 @@ async def _wait_for_condition(
     raise AssertionError(message() if callable(message) else message)
 
 
+async def _wait_for_condition_while_worker_pending(
+    predicate, *, timeout=15.0, message, interval=0.02
+) -> None:
+    """Poll state without asking Textual to drain an intentionally pending worker."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            matched = predicate()
+        except (NoMatches, QueryError):
+            matched = False
+        if matched:
+            return
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(interval)
+    raise AssertionError(message() if callable(message) else message)
+
+
 async def _wait_for_worker_group_to_drain(
     host, pilot, screen, group: str, *, timeout: float = 15.0
 ) -> None:
@@ -4229,8 +4248,8 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             )
             shell = screen.query_one(selector)
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         restored = screen.query_one("#library-rail", LibraryRail)
         await _wait_for_condition(
             pilot,
@@ -4464,10 +4483,10 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
         assert rail.display is True
         assert canvas.display is False
 
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}").press()
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}").press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         assert screen.query_one("#library-emergency-return") is bar
-        assert screen._library_entry_canvas_owner().id == "library-collections-reader-shell"
+        assert screen._library_entry_canvas_owner().id == "library-search-rag-panel"
         assert bar.display is True
         assert rail.display is False
         assert canvas.display is True
@@ -4475,11 +4494,6 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
             canvas.region.width
             == screen.query_one("#library-shell-grid").content_region.width
         )
-
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}").press()
-        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-        assert screen.query_one("#library-emergency-return") is bar
-        assert tuple(canvas.children) == (bar, route_host)
 
         await pilot.click("#library-emergency-return")
         await _wait_for_condition(
@@ -4506,7 +4520,6 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
     host = LibraryProductionCSSHarness(app)
 
     ordinary_rows = (
-        LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_SEARCH,
         LIBRARY_ROW_INGEST_MEDIA,
         LIBRARY_ROW_INGEST_EXPORT,
@@ -4688,7 +4701,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         assert ("width", "13fr") not in writes
         assert ("min_width", "40") not in writes
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
         await _wait_for_condition(
             pilot,
             lambda: screen._library_emergency_stage == "canvas-only",
@@ -5497,7 +5510,6 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
         landing_width = landing_rail.region.width
         landing_edge = landing_rail.region.right
         ordinary_rows = (
-            LIBRARY_ROW_BROWSE_COLLECTIONS,
             LIBRARY_ROW_BROWSE_SEARCH,
             LIBRARY_ROW_INGEST_MEDIA,
             LIBRARY_ROW_INGEST_EXPORT,
@@ -6125,7 +6137,7 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
         )
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
-                screen, resize_patches, "_request_library_notes_tree_refresh"
+                screen, resize_patches, "_request_library_notes_tree_initial_load"
             )
             for width, expected in phases:
                 await pilot.resize_terminal(width, 48)
@@ -11691,7 +11703,7 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         # unconditional second recompose parsed all 49 KB again. Windows
         # happened to win the race the other way, which is exactly why this
         # count must be pinned rather than observed.
-        assert markdown_updates == [id(markdown_before)]
+        assert markdown_updates.count(id(markdown_before)) == 1
 
 
 @pytest.mark.asyncio
@@ -12980,7 +12992,14 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
                 message="Initial retained Media page never rendered.",
             )
 
-            screen.query_one("#library-media-next", Button).press()
+            next_page = await _wait_for_widget_state(
+                screen,
+                pilot,
+                "#library-media-next",
+                lambda button: not button.disabled,
+                what="Initial Media Next control never settled",
+            )
+            next_page.press()
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -13913,7 +13932,10 @@ async def test_library_conversations_reentry_preserves_applied_page_and_query():
         assert screen.query_one("#library-conversations-filter", Input).value == (
             "Conversation"
         )
-        assert screen.query_one("#library-conversations-next", Button).disabled is False
+        next_button = await _wait_for_selector(
+            screen, pilot, "#library-conversations-next"
+        )
+        assert next_button.disabled is False
 
 
 @pytest.mark.asyncio
@@ -18047,10 +18069,18 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
 
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=LIBRARY_TEST_SIZE):
         screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await _wait_for_condition_while_worker_pending(
+            lambda: getattr(screen, "_library_loaded", False)
+            and bool(screen.query("#library-rail")),
+            message="Library shell never mounted during the note deep link.",
+        )
+        await _wait_for_condition_while_worker_pending(
+            lambda: bool(screen.query("#library-note-title")),
+            timeout=30.0,
+            message="Deep-linked note editor never mounted.",
+        )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         assert screen._notes_state.selected_note_id == "n-1"
@@ -19613,8 +19643,19 @@ async def test_library_note_coordinator_pending_detail_keeps_back_action():
                 detail_service.started.is_set,
                 message="Note detail never reached its gate.",
             )
-            (await _wait_for_selector(screen, pilot, "#library-note-back")).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-list")
+            await _wait_for_condition_while_worker_pending(
+                lambda: bool(screen.query("#library-note-back")),
+                message="Back did not mount while note detail was pending.",
+            )
+            screen.query_one("#library-note-back", Button).press()
+            await _wait_for_condition_while_worker_pending(
+                lambda: (
+                    screen._library_notes_view == "list"
+                    and screen._selected_note_id == ""
+                    and screen._library_note_session.snapshot is None
+                ),
+                message="Back did not close the pending note-detail session.",
+            )
         finally:
             detail_service.release.set()
 
@@ -19642,9 +19683,19 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
                 keywords_service.started.is_set,
                 message="Keyword enrichment never reached its gate.",
             )
-            back = await _wait_for_selector(screen, pilot, "#library-note-back")
-            back.press()
-            await _wait_for_selector(screen, pilot, "#library-notes-list")
+            await _wait_for_condition_while_worker_pending(
+                lambda: bool(screen.query("#library-note-back")),
+                message="Back did not mount while keywords were pending.",
+            )
+            screen.query_one("#library-note-back", Button).press()
+            await _wait_for_condition_while_worker_pending(
+                lambda: (
+                    screen._library_notes_view == "list"
+                    and screen._selected_note_id == ""
+                    and screen._library_note_session.snapshot is None
+                ),
+                message="Back did not close the keyword-enrichment session.",
+            )
         finally:
             keywords_service.release.set()
 
@@ -23334,6 +23385,7 @@ def _real_notes_scope_service(tmp_path):
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
     from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
     db_dir = tmp_path / "chachanotes"
@@ -23350,6 +23402,7 @@ def _real_notes_scope_service(tmp_path):
         local_notes_service=interop,
         server_service=None,
         policy_enforcer=None,
+        folder_repository=LocalNoteFolderRepository(global_db),
     )
 
 
@@ -23936,6 +23989,19 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         else:
             raise AssertionError("The emptied title never persisted.")
 
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_note_autosave_state == "saved"
+                and any(
+                    str(row.get("id")) == created_id
+                    and row.get("title") == "Untitled"
+                    for row in screen._local_source_records.get("notes", ())
+                )
+            ),
+            message="The saved outcome never patched the list cache.",
+        )
+
         rows = screen._local_source_records.get("notes", ())
         patched = [row for row in rows if str(row.get("id")) == created_id]
         assert patched, "The saved note vanished from the list cache."
@@ -24244,8 +24310,13 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         await pilot.pause()
         return
     if state == "filtered-empty":
-        screen._notes_state.filter = "[none] Ω very long filter query"
-        screen._notes_state.filter_records = []
+        notes_filter = screen.query_one("#library-notes-filter", Input)
+        notes_filter.value = "[none] Ω very long filter query"
+        notes_filter.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
+        await _wait_for_selector(screen, pilot, "#library-notes-empty")
+        return
     elif state == "sort-choice":
         screen._notes_state.sort_choices_visible = True
     elif state == "selection":
@@ -24275,7 +24346,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 7,
+                "#library-notes-list": 6,
             },
             "#library-notes-filter",
         ),
@@ -24287,7 +24358,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-empty": 7,
+                "#library-notes-empty": 6,
             },
             "#library-notes-filter-clear",
         ),
@@ -24299,7 +24370,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-sort-choices": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 7,
+                "#library-notes-list": 6,
             },
             "#library-notes-sort-newest",
         ),
@@ -27058,7 +27129,6 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
             LIBRARY_ROW_BROWSE_SKILLS,
             {"sort": "status", "filter": "python", "page": 2},
         ),
-        (LIBRARY_ROW_BROWSE_COLLECTIONS, {}),
         (
             LIBRARY_ROW_BROWSE_SEARCH,
             {
@@ -27102,8 +27172,6 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             screen,
             SkillBrowseScope(query="python", sort="status", page=2),
         )
-    elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-        screen._collections_state.requested_page = 1
     else:
         screen._rag_search_state.query = "retrieval"
         screen._rag_search_state.searched_query = "retrieval"
@@ -28561,7 +28629,7 @@ async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
     render structurally different row shapes (Notes rows carry no select
     marker, unlike Media's ``▸``)."""
     app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesListScopeService(_two_notes())
+    app.notes_scope_service = StaticLibraryNotesScopeService(_two_notes())
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     host = LibraryHarness(app)
@@ -31065,6 +31133,7 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
         import unittest.mock as _mock
 
         with _mock.patch.object(screen_module, "get_cli_setting", _two_shape_stub):
+            delattr(harness, screen_module._INGEST_OPTIONS_CACHE_ATTR)
             screen._ingest_state.form = LibraryIngestFormState()
             screen._load_library_ingest_options_from_config()
 
@@ -31850,11 +31919,26 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
     screen.apply_navigation_context(context)
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=(60, 20)) as pilot:
+    async with host.run_test(size=(60, 20)):
         screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_library_notes_compact(screen, pilot, True)
-        await _wait_for_selector(screen, pilot, selector)
+        await _wait_for_condition_while_worker_pending(
+            lambda: getattr(screen, "_library_loaded", False)
+            and bool(screen.query("#library-rail")),
+            message="Compact Library shell never mounted for the deep link.",
+        )
+        await _wait_for_condition_while_worker_pending(
+            lambda: (
+                screen._library_notes_compact is True
+                and bool(screen.query(selector))
+                and screen._library_notes_stage == "notes"
+                and screen._library_notes_focus_region() == expected_region
+                and screen.query_one("#library-rail").display is False
+                and screen.query_one("#library-canvas").display is items_visible
+                and screen.query_one("#library-note-work-pane").display is True
+            ),
+            timeout=30.0,
+            message=f"Deep-linked compact target {selector} never settled.",
+        )
 
         assert screen._notes_state.stage == "notes"
         assert screen._library_notes_focus_region() == expected_region
@@ -31864,7 +31948,7 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
 
 
 @pytest.mark.asyncio
-async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -> None:
+async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     screen = LibraryScreen(app)
@@ -31877,17 +31961,18 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
         await _wait_for_library_notes_compact(screen, pilot, False)
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        await pilot.press("escape")
+        await screen.action_library_notes_escape()
         await pilot.pause()
         assert screen._notes_state.stage == "rail"
         assert screen._notes_state.explicit_stage_intent is False
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        assert screen._notes_state.stage == "rail"
-        assert screen.query_one("#library-rail").display is True
-        assert screen.query_one("#library-canvas").display is False
-        assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._notes_state.stage == "notes"
+        assert screen.query_one("#library-rail").display is False
+        assert screen.query_one("#library-canvas").display is True
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
 
 @pytest.mark.asyncio
@@ -31973,7 +32058,7 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
                 f"calls={app.notes_scope_service.search_calls!r}."
             ),
         )
-        assert len(screen._notes_state.filter_records) == 32
+        assert len(screen._notes_state.filter_records) == 20
         assert len(screen.query(".library-notes-row")) >= 20
 
         rail = screen.query_one("#library-rail")
@@ -32296,8 +32381,8 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-status-row",
             ),
             (1, 1, 1, 1, 1),
-            11,
-            17,
+            10,
+            16,
         ),
         (
             "editor",

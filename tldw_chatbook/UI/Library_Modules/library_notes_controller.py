@@ -5644,6 +5644,12 @@ class LibraryNotesController:
 
             if restored_record is not None:
                 self._append_library_note_source_record(restored_record)
+                await self._screen._reconcile_library_notes_tree_mutation(
+                    "note_create",
+                    {"note_id": receipt.note_id},
+                    before=None,
+                    result=restored_record,
+                )
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None
                 # task-32144: the row has left the tombstones, so the
