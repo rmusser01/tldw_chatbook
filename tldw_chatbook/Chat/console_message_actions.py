@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
 from markdown_it import MarkdownIt
 
-from tldw_chatbook.Canvas.compiler import CanvasCompileError
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.compiler import CanvasCompileError
 
 ConsoleActionStatus = Literal[
     "completed",

@@ -145,6 +145,36 @@ def _strict_canvas_bool(
     return False
 
 
+def _normalize_canvas_execution(
+    config: Mapping[str, Any] | None,
+    *,
+    diagnostics: list[str],
+) -> tuple[Mapping[str, Any], bool, bool]:
+    """Return the Canvas section, strict execution gate, and table validity."""
+
+    values = config if isinstance(config, Mapping) else {}
+    raw_canvas = values.get("canvas")
+    if raw_canvas is None:
+        canvas: Mapping[str, Any] = {}
+        valid_table = True
+    elif isinstance(raw_canvas, Mapping):
+        canvas = raw_canvas
+        valid_table = True
+    else:
+        canvas = {}
+        valid_table = False
+        diagnostics.append("canvas must be a table; Canvas is disabled")
+
+    enabled = _strict_canvas_bool(
+        canvas,
+        "enabled",
+        default=True,
+        invalid_diagnostic="canvas.enabled must be a boolean; Canvas is disabled",
+        diagnostics=diagnostics,
+    )
+    return canvas, enabled if valid_table else False, valid_table
+
+
 def _summarize_canvas_web_auth_policy(
     policy: "WebAuthPolicy",
 ) -> tuple[CanvasRemoteAccessStatus, str]:
@@ -250,25 +280,11 @@ def build_canvas_config_policy(
     """Build the sole normalized Canvas policy from untrusted configuration."""
 
     values = config if isinstance(config, Mapping) else {}
-    raw_canvas = values.get("canvas")
     diagnostics: list[str] = []
-    if raw_canvas is None:
-        canvas: Mapping[str, Any] = {}
-    elif isinstance(raw_canvas, Mapping):
-        canvas = raw_canvas
-    else:
-        canvas = {}
-        diagnostics.append("canvas must be a table; Canvas is disabled")
-
-    enabled = _strict_canvas_bool(
-        canvas,
-        "enabled",
-        default=True,
-        invalid_diagnostic="canvas.enabled must be a boolean; Canvas is disabled",
+    canvas, enabled, valid_canvas_table = _normalize_canvas_execution(
+        values,
         diagnostics=diagnostics,
     )
-    if raw_canvas is not None and not isinstance(raw_canvas, Mapping):
-        enabled = False
     auto_open = _strict_canvas_bool(
         canvas,
         "auto_open_on_create",
@@ -278,7 +294,7 @@ def build_canvas_config_policy(
         ),
         diagnostics=diagnostics,
     )
-    if raw_canvas is not None and not isinstance(raw_canvas, Mapping):
+    if not valid_canvas_table:
         auto_open = False
     if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
         diagnostics.append(
@@ -318,9 +334,11 @@ def get_canvas_execution_enabled() -> bool:
     """Read only the global execution gate without resolving web credentials."""
 
     config = load_cli_config_and_ensure_existence()
-    canvas = config.get("canvas") if isinstance(config, Mapping) else None
-    scoped = {"canvas": canvas} if canvas is not None else {}
-    return build_canvas_config_policy(scoped, environ={}).enabled
+    _canvas, enabled, _valid_table = _normalize_canvas_execution(
+        config,
+        diagnostics=[],
+    )
+    return enabled
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"

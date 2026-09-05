@@ -117,7 +117,6 @@ from rich.markup import escape as escape_markup
 from textual.widgets import Button
 
 from ...Chat.console_chat_controller import ConsoleChatController
-from ...Canvas.compiler import CanvasCompileError
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -1529,6 +1528,8 @@ class ConsoleMessageController:
                     "That HTML block is no longer available.", severity="warning"
                 )
                 return True
+            from ...Canvas.compiler import CanvasCompileError
+
             try:
                 opened = self._open_canvas_block_fn(reference, block.html)
                 if inspect.isawaitable(opened):

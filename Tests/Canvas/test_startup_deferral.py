@@ -27,6 +27,28 @@ CONTROL_ENV = {
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _isolated_environment(tmp_path: Path) -> dict[str, str]:
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    config_home = tmp_path / "config"
+    for path in (home, data_home, config_home):
+        path.mkdir(parents=True, exist_ok=True)
+    environment = {
+        **os.environ,
+        "HOME": str(home),
+        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+        "TLDW_CONFIG_PATH": str(config_home / "config.toml"),
+        "TLDW_SCREEN_PREIMPORT": "0",
+        "TLDW_TEST_MODE": "1",
+        "USERPROFILE": str(home),
+        "XDG_CONFIG_HOME": str(config_home),
+        "XDG_DATA_HOME": str(data_home),
+    }
+    environment.pop("PYTEST_CURRENT_TEST", None)
+    return environment
+
+
 @pytest.mark.parametrize(
     ("environment", "expects_handler", "expects_client"),
     [
@@ -56,23 +78,7 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
 
 
 def test_native_app_does_not_import_served_control_transport(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    data_home = tmp_path / "data"
-    config_home = tmp_path / "config"
-    for path in (home, data_home, config_home):
-        path.mkdir(parents=True, exist_ok=True)
-    environment = {
-        **os.environ,
-        "HOME": str(home),
-        "PYTHONPATH": str(REPO_ROOT),
-        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-        "TLDW_CONFIG_PATH": str(config_home / "config.toml"),
-        "TLDW_TEST_MODE": "1",
-        "USERPROFILE": str(home),
-        "XDG_CONFIG_HOME": str(config_home),
-        "XDG_DATA_HOME": str(data_home),
-    }
-    environment.pop("PYTEST_CURRENT_TEST", None)
+    environment = _isolated_environment(tmp_path)
     for key in CONTROL_ENV:
         environment.pop(key, None)
     result = subprocess.run(
@@ -95,6 +101,87 @@ def test_native_app_does_not_import_served_control_transport(tmp_path: Path) -> 
         ],
         cwd=REPO_ROOT,
         env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_execution_only_config_read_does_not_import_web_auth(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import sys
+
+                from tldw_chatbook import config
+
+                config.load_cli_config_and_ensure_existence = lambda: {
+                    "canvas": {"enabled": True, "auto_open_on_create": False},
+                    "web_server": {
+                        "host": "0.0.0.0",
+                        "public_url": "https://chatbook.example",
+                    },
+                }
+                assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
+                assert config.get_canvas_execution_enabled() is True
+                assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
+
+                policy = config.build_canvas_config_policy(
+                    {"web_server": {"host": "127.0.0.1"}}, environ={}
+                )
+                assert policy.remote_access_status == "loopback"
+                assert "tldw_chatbook.Canvas.web_auth" in sys.modules
+                """
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=_isolated_environment(tmp_path),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_console_owners_do_not_import_compiler_until_first_compile(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import sys
+
+                import tldw_chatbook.Canvas.service as service
+                import tldw_chatbook.Chat.console_canvas_controller as controller
+                import tldw_chatbook.Chat.console_message_actions
+                import tldw_chatbook.UI.Console_Modules.message
+
+                compiler_name = "tldw_chatbook.Canvas.compiler"
+                assert compiler_name not in sys.modules
+                assert callable(service.compile_canvas_document)
+                assert callable(controller.compile_canvas_document)
+
+                plan = controller.compile_canvas_document(
+                    "<!doctype html><title>Synthetic</title><p>ready</p>"
+                )
+                assert plan.runtime_profile == "canvas-v1"
+                assert compiler_name in sys.modules
+                """
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=_isolated_environment(tmp_path),
         text=True,
         capture_output=True,
         check=False,

@@ -7,8 +7,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Canvas.limits import CanvasLimits
 
 
 def test_canvas_defaults_are_enabled_and_shared_by_both_config_templates() -> None:
@@ -196,6 +196,34 @@ def test_execution_kill_switch_reads_do_not_resolve_remote_credentials(
     )
 
     assert config_module.get_canvas_execution_enabled() is True
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (None, True),
+        ({}, True),
+        ({"canvas": None}, True),
+        ({"canvas": {}}, True),
+        ({"canvas": {"enabled": True}}, True),
+        ({"canvas": {"enabled": False}}, False),
+        ({"canvas": "enabled"}, False),
+        ({"canvas": {"enabled": None}}, False),
+        ({"canvas": {"enabled": 1}}, False),
+    ],
+)
+def test_execution_kill_switch_uses_full_policy_strict_boolean_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    stored: object,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: stored,
+    )
+
+    assert config_module.get_canvas_execution_enabled() is expected
 
 
 def test_canvas_settings_persist_and_reload_from_disk(monkeypatch, tmp_path) -> None:

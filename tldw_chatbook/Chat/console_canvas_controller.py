@@ -14,10 +14,10 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Canvas.compilation import CanvasCompilation
-from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.limits import (
     MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     CanvasLimitError,
+    CanvasLimits,
     CanvasRepositoryLimits,
     sha256_utf8,
 )
@@ -47,6 +47,16 @@ from tldw_chatbook.Chat.message_metadata import (
 )
 
 _MAX_RETAINED_CLOSED_RUNS = 256
+
+
+def compile_canvas_document(
+    source: str, *, limits: CanvasLimits | None = None
+) -> CanvasRenderPlan:
+    """Compile on first use while preserving this module's patch seam."""
+
+    from tldw_chatbook.Canvas.compiler import compile_canvas_document as compile_source
+
+    return compile_source(source, limits=limits)
 
 
 class CanvasRunState(str, Enum):

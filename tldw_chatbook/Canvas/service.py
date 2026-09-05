@@ -9,10 +9,10 @@ from uuid import UUID
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
-from .compiler import CanvasCompileError, compile_canvas_document
 from .limits import (
     MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
     CanvasLimitError,
+    CanvasLimits,
     validate_opaque_identifier,
 )
 from .models import (
@@ -37,6 +37,16 @@ from .repository import (
     CanvasRevisionMetadata,
     CanvasValidationError,
 )
+
+
+def compile_canvas_document(
+    source: str, *, limits: CanvasLimits | None = None
+) -> CanvasRenderPlan:
+    """Compile on first use while preserving this module's injection seam."""
+
+    from .compiler import compile_canvas_document as compile_source
+
+    return compile_source(source, limits=limits)
 
 
 class CanvasServiceError(Exception):
@@ -575,6 +585,8 @@ class CanvasService:
     def _compile(
         self, source: str, prepared_plan: CanvasRenderPlan | None = None
     ) -> CanvasRenderPlan:
+        from .compiler import CanvasCompileError
+
         failure_issues: tuple[CanvasCompatibilityIssue, ...] | None = None
         try:
             plan = self._compiler(source) if prepared_plan is None else prepared_plan
