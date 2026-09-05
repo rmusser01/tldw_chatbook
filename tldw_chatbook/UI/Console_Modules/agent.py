@@ -194,6 +194,14 @@ def console_agent_status_state(status_line: str) -> str:
 
     Only the statuses in ``_AGENT_STATUS_GLYPHS`` are colour-worthy; "idle",
     "unavailable", and anything unrecognised return "".
+
+    Args:
+        status_line: The rendered Agent-section status text, e.g.
+            ``"Agent: running · step 3"`` or ``"Sub-agent · done"``.
+
+    Returns:
+        The status word (``"running"``, ``"done"``, ``"stuck"``, ``"error"``,
+        ``"cancelled"``) when it should be coloured, otherwise ``""``.
     """
     match = _AGENT_STATUS_LINE_RE.match(status_line or "")
     status = match.group(1) if match else ""
@@ -205,6 +213,13 @@ def apply_console_agent_status_state(widget: Any, status_line: str) -> None:
 
     Exactly one state class (or none) is present after the call; the base
     classes are left alone.
+
+    Args:
+        widget: The status-line widget (any object exposing Textual's
+            ``set_class(bool, name)``), normally the
+            ``#console-agent-section-status`` Static.
+        status_line: The rendered status text the widget shows; see
+            :func:`console_agent_status_state` for the accepted shapes.
     """
     state = console_agent_status_state(status_line)
     for status in _AGENT_STATUS_GLYPHS:

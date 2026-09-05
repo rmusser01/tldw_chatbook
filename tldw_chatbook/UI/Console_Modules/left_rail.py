@@ -99,7 +99,11 @@ from ...Workspaces.conversation_browser_state import (
     console_rail_section_height_budget,
 )
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
-from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
+from .agent import (
+    CONSOLE_AGENT_CANCEL_ALL_ID,
+    CONSOLE_AGENT_FLEET_SECTION_ID,
+    apply_console_agent_status_state,
+)
 from .frame import frame_console_region
 from .rail_section_layout import (
     ContextSectionDemand,
@@ -2228,6 +2232,11 @@ class ConsoleLeftRail(Vertical):
                 classes="console-agent-section-line",
                 markup=False,
             )
+            # TASK-31429 (Qodo review on PR #2393): a recomposed rail builds a
+            # fresh Static, and the screen-side sync skips an unchanged
+            # payload -- so the run-status colour class must be seeded here
+            # from the line this rail was constructed with.
+            apply_console_agent_status_state(agent_status, self._agent_status_line)
             agent_steps = Static(
                 self._agent_steps_text,
                 id="console-agent-section-steps",

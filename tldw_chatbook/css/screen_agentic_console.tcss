@@ -1226,7 +1226,12 @@ ConsoleTerminalWorkspace#console-main-column {
     text-style: bold underline;
 }
 
-.console-workspace-conversation-row Button:focus {
+/* TASK-31429 (Qodo review on PR #2393): the conversation row IS the Button
+   (`_conversation_button`), so the former descendant form
+   `.console-workspace-conversation-row Button:focus` matched nothing. Target
+   the row itself; class+pseudo specificity outranks the `-selected` and
+   run-marker hue rules, so focus stays its own visible signal on top. */
+.console-workspace-conversation-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

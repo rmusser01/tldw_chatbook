@@ -346,3 +346,133 @@ async def test_rail_grammar_resolves_to_the_active_theme_colors() -> None:
         # $ds-active-fg -> $text-primary
         assert workspace.styles.color.hex == Color.parse(theme["text-primary"]).hex
         assert workspace.styles.color.hex != value.styles.color.hex
+
+
+# --- review follow-ups (Qodo, PR #2393) -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_focused_selected_row_still_paints_the_focus_contract() -> None:
+    """Selection is now a foreground hue; keyboard focus must remain its own
+    visible signal on the SAME row. The row is itself a Button, so the focus
+    rule has to target `.console-workspace-conversation-row:focus` -- the
+    former descendant form (`… Button:focus`) matched nothing."""
+    from dataclasses import replace
+
+    from textual.color import Color
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_workspace_context_rail import (
+        ConsoleHarness,
+        _base_grouped_workspace_state,
+        _browser_row,
+        _build_test_app,
+        _grouped_browser_state,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        browser = _grouped_browser_state(
+            rows=(
+                _browser_row(
+                    "conv-a",
+                    "Selected chat",
+                    scope_type="global",
+                    workspace_id=None,
+                    workspace_label="Chats",
+                    selected=True,
+                ),
+            )
+        )
+        tray.sync_state(
+            replace(_base_grouped_workspace_state(), conversation_browser=browser)
+        )
+        selected: Button | None = None
+        for _ in range(200):
+            rows = [
+                b
+                for b in console.query(Button)
+                if b.has_class("console-workspace-conversation-row-selected")
+            ]
+            if rows:
+                selected = rows[0]
+                break
+            await pilot.pause(0.01)
+        assert selected is not None, "no selected conversation row rendered"
+
+        theme = host.get_css_variables()
+        resting_bg = selected.styles.background
+        selected.focus()
+        await pilot.pause()
+        assert selected.has_focus
+        focus_tint = Color.parse(theme["block-cursor-blurred-background"])
+        assert selected.styles.background.hex == focus_tint.hex, (
+            f"focused row bg {selected.styles.background.hex} != $ds-focus-bg"
+        )
+        assert selected.styles.background != resting_bg
+        assert "underline" in str(selected.styles.text_style)
+
+
+@pytest.mark.asyncio
+async def test_fresh_rail_compose_applies_the_agent_status_class() -> None:
+    """A recomposed rail builds a NEW status Static; the screen-side sync
+    skips unchanged payloads, so the colour class must be applied at compose
+    time from the status line the rail is constructed with."""
+    from textual.app import App, ComposeResult
+
+    from Tests.UI.test_console_rail_reconciliation import (
+        _all_open_rail_state,
+        _workspace_state,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+    from tldw_chatbook.Widgets.Console.console_inspector_section import (
+        ConsoleInspectorSectionState,
+    )
+
+    class _RailApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleLeftRail(
+                rail_state=_all_open_rail_state(),
+                workspace_context_state=_workspace_state(),
+                workspace_tree_expanded_ids=None,
+                workspace_tree_expansion_preferences_changed=None,
+                settings_summary_state=ConsoleSettingsSummaryState(
+                    model_row="Model: test",
+                    context_row="Context: 0",
+                    sampling_row="T 0.7 · max_tokens 100",
+                    identity_row="Identity: character",
+                ),
+                system_line_text="System: none",
+                system_line_dim=True,
+                fleet_line="",
+                agent_status_line="Agent: done",
+                agent_steps_text="",
+                agent_fleet_section_state=ConsoleInspectorSectionState(
+                    rows=(), summary=""
+                ),
+                agent_drilldown_active=False,
+                agent_full_log_available=False,
+                show_character_section=False,
+                character_avatar_widget_builder=(
+                    lambda _box=None, **_kwargs: Static("avatar")
+                ),
+                character_avatar_name="Samira",
+            )
+
+    app = _RailApp()
+    async with app.run_test(size=(60, 50)) as pilot:
+        await pilot.pause()
+        status = app.query_one("#console-agent-section-status", Static)
+        assert status.has_class("console-agent-section-status-done")
+        assert status.has_class("console-agent-section-line")

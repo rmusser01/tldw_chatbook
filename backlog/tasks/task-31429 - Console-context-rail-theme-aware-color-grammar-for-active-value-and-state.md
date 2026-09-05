@@ -62,6 +62,8 @@ Give the rail a small semantic color grammar that rides the existing theme infra
 **Files.** `tldw_chatbook/css/core/_variables.tcss`, `css/components/_agentic_terminal.tcss`, generated `css/tldw_cli_modular.tcss` + `css/screen_agentic_{console,library,settings}.tcss`, `css/Themes/themes.py`, `UI/Console_Modules/agent.py`, `UI/Screens/chat_screen.py`, `Widgets/Console/console_workspace_context.py`, `Tests/UI/test_console_rail_color_grammar.py` (new), `Tests/UI/test_theme_contrast.py`, `Docs/User_Guide/console.md`, `backlog/docs/lessons-live-verification.md`.
 
 **Out of scope (by design):** section headers (shared `DestinationRailSectionHeader` with Library/Home), Inspector-rail parity (can adopt the same two tokens), the collapsed Details "not configured" rows.
+
+**Review follow-up (Qodo on PR #2393, 4 findings, all addressed):** Google-style `Args:`/`Returns:` added to the two new agent.py helpers; the rail row focus rule corrected from the never-matching descendant form `.console-workspace-conversation-row Button:focus` to `.console-workspace-conversation-row:focus` (focus was in fact already painted by `ConsoleTerminalWorkspace Button:focus`, proven by the new mounted probe before the change; the fix makes the row-level contract rule real and `test_console_keyboard_trust.py` pins it); and `ConsoleLeftRail.compose` now seeds the status colour class from its `agent_status_line`, so a recomposed rail is coloured even when the screen-side payload memo skips the sync (`test_fresh_rail_compose_applies_the_agent_status_class`).
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Plan
