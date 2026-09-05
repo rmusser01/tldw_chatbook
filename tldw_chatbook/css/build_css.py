@@ -997,6 +997,29 @@ def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     )
 
 
+def _remove_stale_split_sheets(css_dir: Path, stage: Path) -> None:
+    """Delete generated split sheets whose source module left this build.
+
+    Qodo #2409 finding 3: a split legitimately skips when its SOURCE module
+    is absent (partial/scratch trees, vendored subsets) -- but a previously
+    generated sheet then lingers in ``css_dir``, and the app's route map
+    would happily load rules whose module is no longer a build input.
+    Removes the stale destination for exactly that case; a sheet whose
+    module IS present but failed to stage never reaches the publish loop
+    at all (the builders raise and the publish aborts first).
+
+    Args:
+        css_dir: The live generated-sheet directory.
+        stage: The staging directory the just-finished build wrote into.
+    """
+    for split in SCREEN_OWNED_SPLITS:
+        if (css_dir / split.module).is_file():
+            continue
+        for filename in split.sheets.values():
+            if not (stage / filename).is_file():
+                (css_dir / filename).unlink(missing_ok=True)
+
+
 def main():
     """Main entry point."""
     # Get the CSS directory (where this script is located)
@@ -1054,8 +1077,9 @@ def main():
         ]
         for name in publish_order:
             staged = stage / name
-            if staged.is_file():  # the agentic split may legitimately skip
+            if staged.is_file():
                 os.replace(staged, css_dir / name)
+        _remove_stale_split_sheets(css_dir, stage)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     # Qodo finding on PR #1831 (build race): the sheets above were built

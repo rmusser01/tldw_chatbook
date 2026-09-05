@@ -12015,8 +12015,8 @@ class TldwCli(
     #: this seam and keep their TASK-25812 wiring (console on the boot
     #: path; library/settings via their screens' ``CSS_PATH``).
     _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
-        "schedules": ("screen_feature_scheduling.tcss",),
-        "evals": ("screen_feature_evals.tcss",),
+        TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
+        TAB_EVALS: ("screen_feature_evals.tcss",),
     }
 
     def _ensure_screen_owned_css(self, canonical_route: str) -> None:
@@ -15580,6 +15580,7 @@ class TldwCli(
                 if cause is not None:
                     message += f": {type(cause).__name__}: {cause}"
                 raise RuntimeError(message) from cause
+
 
         # TASK-24459: an initial tab of schedules/evals needs its split-off
         # feature CSS exactly like an in-app navigation does.

@@ -1051,3 +1051,86 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
             "arriving at Schedules must load the split sheet, or the moved "
             "rules never style the real app"
         )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A configured `default_tab = schedules` boots with the sheet loaded.
+
+    Qodo #2409 finding 2: the in-app navigation test above never exercises
+    `_push_initial_screen`'s loading call -- deleting that call would leave
+    a schedules-default user unstyled on every boot and no test would go
+    red. This one boots through the real initial-push boundary.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\n"
+        "enabled = false\n\n[general]\ndefault_tab = \"schedules\"\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert type(app.screen).__name__ == "SchedulesWorkbench", (
+            f"configured default tab did not land: {type(app.screen).__name__}"
+        )
+        assert app.stylesheet.has_source(sheet, ""), (
+            "booting INTO Schedules must load the split sheet through "
+            "_push_initial_screen, or a schedules-default user is unstyled"
+        )
+
+
+def test_stale_split_sheets_are_removed_when_their_module_leaves(
+    tmp_path: Path,
+) -> None:
+    """A partial build must not leave a dead module's generated sheet behind.
+
+    Qodo #2409 finding 3: `_build_one_split` skips absent modules, so a
+    previously generated sheet would linger in css_dir for the app's route
+    map to load -- rules whose module is no longer a build input.
+    """
+    css_dir = tmp_path / "css"
+    stage = tmp_path / "stage"
+    css_dir.mkdir()
+    stage.mkdir()
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-ghost { color: red; }\n", encoding="utf-8"
+    )
+    # No features/_evals.tcss in this tree, nothing staged -> stale, removed.
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert not (css_dir / "screen_feature_evals.tcss").exists()
+
+    # Present module keeps its sheet even when this build staged nothing
+    # new for it (the builders would have raised before publish otherwise).
+    (css_dir / "features").mkdir()
+    (css_dir / "features" / "_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert (css_dir / "screen_feature_evals.tcss").exists()
