@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_CHECKS_FIX,
     ENV_ROW_COMMIT_PUSH,
     ENV_ROW_PENDING,
+    ENV_ROW_PR,
     ENV_ROW_PR_ADD,
     ENV_ROW_PR_OPEN,
     ENV_ROW_UNBOUND,
@@ -372,6 +373,188 @@ async def test_expansion_from_an_unfocused_row_does_not_steal_focus():
         screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
         await pilot.pause()
         await pilot.pause()
+        assert screen.focused is focused_before
+
+
+# ---------------------------------------------------------------------------
+# TASK-31661: poll-driven sync must not steal rail focus
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_that_adds_a_row_keeps_focus_on_the_same_row_id():
+    """TASK-31661 AC#1: a background sync that ADDS a row must not move focus.
+
+    The 10s Environment poll calls `_land_console_environment` with
+    whatever the controller last gathered -- an external file change can
+    grow the Environment section's row set (a new `env-file-N` row)
+    while the rail still has focus parked on a row further down (the
+    live defect's own example: "Review in Change Review"). The row set
+    changing is a STRUCTURAL change (`ConsoleInspectorSection.
+    _structural_key`), so `sync_state` recomposes, and Textual's own
+    focus reset would otherwise land the caret on a widget above the
+    section header with no visible focus indication.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        one_file = _snapshot(
+            files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),)
+        )
+        screen._console_environment.snapshot = one_file
+        screen._land_console_environment(one_file)
+        await pilot.pause()
+
+        # Expand "Changes" so "Review in Change Review" mounts.
+        screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert "env-changes-review" in _row_ids(section)
+
+        def _review_row():
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == "env-changes-review"
+            )
+
+        _review_row().focus()
+        await pilot.pause()
+        assert screen.focused is _review_row()
+
+        # A poll lands a snapshot with an ADDED file -- structural change.
+        two_files = _snapshot(
+            files=(
+                ChangedFile(path="a.py", status="M", adds=3, dels=1),
+                ChangedFile(path="b.py", status="A", adds=7, dels=0),
+            )
+        )
+        screen._console_environment.snapshot = two_files
+        screen._land_console_environment(two_files)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "env-file-1" in _row_ids(section)
+        focused = screen.focused
+        assert isinstance(focused, ConsoleInspectorSectionRow)
+        assert focused.row_id == "env-changes-review"
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_that_removes_the_focused_row_lands_on_the_nearest_survivor():
+    """TASK-31661 AC#1/#2: removing the focused row falls back to its neighbor.
+
+    Focus is parked on "Open in browser" (``env-pr-open``, clickable/
+    focusable) inside the expanded PR row. A poll lands a snapshot where
+    the PR has disappeared entirely (closed/merged and no longer
+    reported) -- the whole PR sub-tree (``env-pr``, ``env-pr-title``,
+    ``env-pr-open``, ``env-pr-add``) is gone, so the exact row_id cannot
+    be restored. The candidate ladder (same index, then index-1, then the
+    first row) all overshoot the now-3-row list, so this exercises the
+    final "first row" rung -- the restore must still land on a row with
+    a real focus indicator, never on whatever Textual's unmount-triggered
+    reset happened to pick.
+
+    File rows (``env-file-N``) are deliberately NOT used for this
+    scenario: they are not ``clickable``, so they can never actually hold
+    focus in the first place (`InspectorSectionRow.clickable` defaults to
+    `False`, and only `clickable or cancellable` rows get `can_focus`).
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        with_pr = _snapshot(
+            pr=PrEnvState(
+                availability=EnvSourceAvailability.OK,
+                number=7,
+                title="Add feature",
+                state="OPEN",
+                url="https://x/pull/7",
+            )
+        )
+        screen._console_environment.snapshot = with_pr
+        screen._land_console_environment(with_pr)
+        await pilot.pause()
+        screen._handle_console_environment_row("environment", ENV_ROW_PR)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert ENV_ROW_PR_OPEN in _row_ids(section)
+
+        def _row(row_id):
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == row_id
+            )
+
+        _row(ENV_ROW_PR_OPEN).focus()
+        await pilot.pause()
+        assert screen.focused is _row(ENV_ROW_PR_OPEN)
+
+        # A poll lands a snapshot where the PR is gone entirely -- the
+        # whole PR sub-tree, including the focused row_id, disappears.
+        without_pr = _snapshot()
+        screen._console_environment.snapshot = without_pr
+        screen._land_console_environment(without_pr)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert ENV_ROW_PR_OPEN not in _row_ids(section)
+        focused = screen.focused
+        assert isinstance(focused, ConsoleInspectorSectionRow)
+        assert focused.section_id == "environment"
+        # Neighborhood ladder overshoots (previous index 5, new list has 3
+        # rows) -- falls all the way back to the first row.
+        assert focused.row_id == ENV_ROW_CHANGES
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_never_hijacks_focus_outside_the_rail():
+    """TASK-31661 negative control: focus outside the rail is untouched.
+
+    Zero overhead is part of the spec: when focus was never inside the
+    Environment/Tasks sections, `_land_console_environment` must not
+    fight the user by dragging focus back into the rail.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        one_file = _snapshot(
+            files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),)
+        )
+        screen._console_environment.snapshot = one_file
+        screen._land_console_environment(one_file)
+        await pilot.pause()
+        screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert "env-changes-review" in _row_ids(section)
+
+        screen._focus_console_workbench_target("console-native-composer")
+        await pilot.pause()
+        focused_before = screen.focused
+        assert focused_before is not None
+
+        two_files = _snapshot(
+            files=(
+                ChangedFile(path="a.py", status="M", adds=3, dels=1),
+                ChangedFile(path="b.py", status="A", adds=7, dels=0),
+            )
+        )
+        screen._console_environment.snapshot = two_files
+        screen._land_console_environment(two_files)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "env-file-1" in _row_ids(section)
         assert screen.focused is focused_before
 
 

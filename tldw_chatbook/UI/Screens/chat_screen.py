@@ -8076,9 +8076,34 @@ class ChatScreen(BaseAppScreen):
         """Repaint the Environment/Tasks sections from a landed snapshot.
 
         Runs on the UI thread (the controller marshals every landing through
-        ``app.call_from_thread``). Both sections are resolved BEFORE either is
-        written, so a rail that is mid-recompose or not mounted at all leaves
-        the pair consistent rather than half-applied.
+        ``app.call_from_thread``), on the 10s poll's own schedule -- never in
+        response to a user gesture. Both sections are resolved BEFORE either
+        is written, so a rail that is mid-recompose or not mounted at all
+        leaves the pair consistent rather than half-applied.
+
+        TASK-31661: an external change (a new commit, a PR closing) can
+        change either section's row SET between polls while focus is
+        parked on one of that section's rows -- e.g. "Review in Change
+        Review" while an agent commits in the background. That is a
+        structural change (``ConsoleInspectorSection._structural_key``),
+        so ``sync_state`` recomposes and unmounts the focused row; Textual's
+        own focus-reset then lands the caret on the nearest ancestor with no
+        visible indication (the rail's outer body), two Tabs from recovery.
+        Each section's currently-focused row_id (if any) is therefore read
+        synchronously BEFORE ``sync_state`` mutates anything -- the same
+        capture-before-mutate discipline ``_console_environment_row_is_
+        focused``/``_handle_console_environment_row`` use for the
+        activation path, which is what keeps this safe from a mid-flight
+        user click: nothing between the capture below and the
+        ``call_next`` restore it schedules yields to the event loop, so
+        there is no window for a click to land and then get overridden.
+        Restoring is skipped entirely when focus was never inside a given
+        section (the common case) -- zero extra work, and the composer (or
+        any other widget) is never fought for focus it legitimately holds.
+
+        The Agent fleet section is NOT covered here: it syncs through
+        ``_sync_console_agent_section`` on its own tick, a separate path
+        out of this task's scope.
 
         Args:
             snapshot: The controller's newly landed environment snapshot.
@@ -8099,12 +8124,59 @@ class ChatScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return  # rail not mounted (or mid-recompose): nothing to paint
-        for section, state in (
-            (environment_section, environment_state),
-            (tasks_section, tasks_state),
-        ):
+
+        sections = (
+            (ENVIRONMENT_SECTION_ID, environment_section, environment_state),
+            (TASKS_SECTION_ID, tasks_section, tasks_state),
+        )
+        # Capture -- synchronously, before any `sync_state` call below can
+        # unmount anything -- which section (if any) currently owns focus.
+        pending_focus_restores: list[
+            tuple[ConsoleInspectorSection, str, tuple[str, ...]]
+        ] = []
+        for section_id, section, _state in sections:
+            row_id = self._console_environment_focused_row_in_section(section_id)
+            if row_id is not None:
+                pending_focus_restores.append(
+                    (section, row_id, tuple(row.row_id for row in section.rows))
+                )
+
+        for _section_id, section, state in sections:
             section.sync_state(state)
             section.styles.display = "block" if state.rows else "none"
+
+        for section, row_id, previous_row_ids in pending_focus_restores:
+            section.call_next(
+                self._focus_console_environment_row_after_sync,
+                section,
+                row_id,
+                previous_row_ids,
+            )
+
+    def _console_environment_focused_row_in_section(
+        self, section_id: str
+    ) -> str | None:
+        """Return the row_id focused inside Environment/Tasks section ``section_id``.
+
+        Read synchronously at the call site (see `_land_console_environment`'s
+        docstring for why that matters): a flag set around `focus()` would
+        already be stale by the time anything reads it, because Textual
+        delivers `DescendantFocus` asynchronously.
+
+        Args:
+            section_id: ``"environment"`` or ``"tasks"``.
+
+        Returns:
+            The focused row's row_id, or ``None`` when focus is not
+            currently inside that section at all.
+        """
+        focused = self.focused
+        if (
+            isinstance(focused, ConsoleInspectorSectionRow)
+            and focused.section_id == section_id
+        ):
+            return focused.row_id
+        return None
 
     def _console_environment_row_is_focused(self, row_id: str) -> bool:
         """Whether the focused widget IS the Environment/Tasks row ``row_id``.
@@ -8178,10 +8250,77 @@ class ChatScreen(BaseAppScreen):
         """
         if not section.is_mounted:
             return
+        self._focus_console_environment_row_by_id(section, row_id)
+
+    @staticmethod
+    def _focus_console_environment_row_by_id(
+        section: ConsoleInspectorSection, row_id: str
+    ) -> bool:
+        """Focus the mounted row carrying ``row_id``, if any.
+
+        Shared lookup behind both `_focus_console_environment_row` (the
+        activation path, which only ever needs an exact match) and
+        `_focus_console_environment_row_after_sync` (the poll/sync path
+        below, which tries an exact match first and only then falls back).
+
+        Args:
+            section: The section whose body holds the row.
+            row_id: The stable row id to focus.
+
+        Returns:
+            ``True`` when a matching, focusable row was found and focused.
+        """
         for widget in section.query(ConsoleInspectorSectionRow):
             if widget.row_id == row_id and widget.can_focus:
                 widget.focus()
-                return
+                return True
+        return False
+
+    def _focus_console_environment_row_after_sync(
+        self,
+        section: ConsoleInspectorSection,
+        row_id: str,
+        previous_row_ids: tuple[str, ...],
+    ) -> None:
+        """Restore focus after a poll-driven `_land_console_environment` sync.
+
+        TASK-31661. Scheduled via the section's own ``call_next`` from
+        `_land_console_environment`, which guarantees this runs after any
+        recompose `sync_state` queued (same ordering argument as
+        `_request_console_environment_row_focus`'s docstring, which this
+        mirrors).
+
+        ``row_id`` is tried first -- when the row survived the sync (an
+        in-place patch, or a recompose that happened to keep it), this is
+        the whole job, identical to the activation path. When the row is
+        genuinely gone (the section's row SET changed shape and dropped
+        it), AC #2 still requires landing on a row with a real focus
+        indicator rather than wherever Textual's unmount reset happened to
+        fall: the nearest surviving row is tried next, preferring the same
+        index the removed row held, then one before it, then the section's
+        first row -- deliberately just those three candidates, not a
+        widening search, to keep the fallback simple and predictable.
+
+        Args:
+            section: The section whose body held the focused row.
+            row_id: The row_id that was focused before the sync.
+            previous_row_ids: That section's row_id order *before* the
+                sync, used only to locate ``row_id``'s old position.
+        """
+        if not section.is_mounted:
+            return
+        if self._focus_console_environment_row_by_id(section, row_id):
+            return
+        current_row_ids = [row.row_id for row in section.rows]
+        try:
+            previous_index = previous_row_ids.index(row_id)
+        except ValueError:
+            previous_index = 0
+        for candidate_index in (previous_index, previous_index - 1, 0):
+            if 0 <= candidate_index < len(current_row_ids):
+                candidate_id = current_row_ids[candidate_index]
+                if self._focus_console_environment_row_by_id(section, candidate_id):
+                    return
 
     def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
         """Run one Environment/Tasks row's action.
