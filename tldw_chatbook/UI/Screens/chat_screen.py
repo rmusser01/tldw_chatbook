@@ -142,6 +142,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.submission import _ConsolePendingSend
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -1509,15 +1510,6 @@ def _active_lineage_rows(db, conversation_id: str, rows: list[dict]) -> list[dic
     return lineage if len(lineage) == len(seen) else lineage
 
 
-@dataclass(frozen=True, slots=True)
-class _ConsolePendingSend:
-    """One keyboard capture claimable only by its scheduled callback."""
-
-    session_id: str
-    stash: ConsoleDraftStash | None
-    token: object
-
-
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -1592,6 +1584,13 @@ class ChatScreen(BaseAppScreen):
     )
     _console_cost_break_reasons = _ControllerState(
         "_context_cost", "_console_cost_break_reasons"
+    )
+
+    _console_pending_send = _ControllerState(
+        "_submission", "_console_pending_send"
+    )
+    _console_unknown_send_armed = _ControllerState(
+        "_submission", "_console_unknown_send_armed"
     )
 
     _imagegen_inflight_sessions = _ControllerState(
@@ -5284,7 +5283,6 @@ class ChatScreen(BaseAppScreen):
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
-        self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
         # kept only until the next thing happens (a new send, new staging, or
@@ -5334,11 +5332,6 @@ class ChatScreen(BaseAppScreen):
         ) = None
         self._console_identity_refresh_generation = 0
         self._console_appearance_refresh_generation = 0
-        # Keyboard-send draft capture bridges the keypress to its queued
-        # Button.Pressed handler only; runtime custody owns the turn after that.
-        # The opaque token prevents an unrelated mouse/Workbench send from
-        # consuming the keyboard capture before its scheduled callback.
-        self._console_pending_send: _ConsolePendingSend | None = None
         # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
         # "install:<request_id>" / "script:<request_id>") this screen has
         # already fired a park toast for -- see `_park_console_approval`'s
@@ -5429,7 +5422,6 @@ class ChatScreen(BaseAppScreen):
         # `_console_provider_gateway`/`_console_chat_controller`: properties
         # over the app-owned runtime, no `__init__` slot -- see the note at
         # `_console_chat_store`'s old slot.
-        self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
         self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
@@ -15235,87 +15227,13 @@ class ChatScreen(BaseAppScreen):
     # -- PR3a-2 Task 4 (task-15664): the survivor tick ---------------------
 
     def _console_pending_image_attachment(self):
-        """Return a staged image attachment, if any staged item qualifies.
-
-        Scans the whole staged list (not just the first item) so a
-        multi-attachment session still gates vision-capability/blocked-send
-        checks correctly when the qualifying image isn't staged first.
-        """
-        store = self._console_chat_store
-        if store is None or store.active_session_id is None:
-            return None
-        try:
-            pendings = store.pending_attachments(store.active_session_id)
-        except KeyError:
-            return None
-        for pending in pendings:
-            if (
-                pending is not None
-                and pending.insert_mode == "attachment"
-                and pending.file_type == "image"
-                and pending.data is not None
-            ):
-                return pending
-        return None
+        return self._submission._console_pending_image_attachment()
 
     def _console_attachment_blocked_reason(self) -> str:
-        """Return blocked-send copy when a staged image can't reach the model."""
-        from tldw_chatbook.Chat.attachment_core import vision_block_reason
-
-        if self._console_pending_image_attachment() is None:
-            return ""
-        effective_settings, _readiness = self._active_console_settings_readiness()
-        return (
-            vision_block_reason(effective_settings.provider, effective_settings.model)
-            or ""
-        )
+        return self._submission._console_attachment_blocked_reason()
 
     def _console_send_blocked_reason(self) -> str:
-        """Return a user-facing reason if Console send cannot safely run."""
-        conversation_id = self._current_console_conversation_id()
-        if conversation_id in getattr(
-            self.app_instance, "_conversation_archive_inflight", ()
-        ):
-            return "Archive change in progress. Your draft is preserved."
-        # A cached archive flag may predate a restore by another writer.
-        # The awaited submit boundary checks durable state before any send.
-        pending_launch = self._consume_pending_console_launch()
-        if pending_launch is not None and _source_mentions_rag(pending_launch.source):
-            evidence_state = build_console_evidence_display_state(pending_launch)
-            if evidence_state is None or evidence_state.available_count == 0:
-                return (
-                    "Console send blocked: Library search has no available evidence. "
-                    "Review source authority before sending."
-                )
-        _readiness_settings, readiness = self._active_console_settings_readiness()
-        if (
-            readiness.operability == "not_ready"
-            and readiness.recovery_action != "wait_for_active_run"
-        ):
-            # Active-run admission belongs to the prompt queue. It refuses
-            # while the turn is preparing and admits Queue after acceptance;
-            # only actual provider setup gaps belong in this gate.
-            if readiness.recovery_action == "configure_credential":
-                provider = readiness.provider_display_name or "this provider"
-                return (
-                    f"Console send blocked: Add an API key for {provider} before "
-                    "sending."
-                )
-            if readiness.recovery_action == "select_model":
-                return "Console send blocked: Select a model before sending."
-            if readiness.recovery_action == "save_endpoint":
-                return (
-                    "Console send blocked: Save the provider endpoint before sending."
-                )
-            if readiness.recovery_action == "configure_endpoint":
-                return "Console send blocked: Enter a valid provider endpoint before sending."
-            if readiness.recovery_action == "retry_connection":
-                return "Console send blocked: Retry the provider connection before sending."
-            return "Console send blocked: Finish provider setup before sending."
-        attachment_reason = self._console_attachment_blocked_reason()
-        if attachment_reason:
-            return attachment_reason
-        return ""
+        return self._submission._console_send_blocked_reason()
 
     async def handle_console_send_message(self, event: Button.Pressed) -> bool:
         """Route the Console composer send action through the native controller.
@@ -15337,14 +15255,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_visible_send_session_id(self) -> str | None:
-        """Return the exact session represented by the mounted composer."""
-
-        session_id = self._console_visible_draft_session_id
-        if session_id is not None:
-            return session_id
-        self._session._ensure_active_console_session_settings()
-        self._session._sync_console_session_draft()
-        return self._console_visible_draft_session_id
+        return self._submission._console_visible_send_session_id()
 
     async def _send_console_message_from_visible_action(
         self,
@@ -15352,167 +15263,8 @@ class ChatScreen(BaseAppScreen):
         session_id: str | None = None,
         pending_send_token: object | None = None,
     ) -> bool:
-        """Observe the visible action before command parsing and send gating."""
-        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
-
-        async with send_diagnostic_scope(
-            "ui_action", self._ui_responsiveness_monitor()
-        ) as diagnostic:
-            sent = await self._send_console_message_from_visible_action_observed(
-                session_id=session_id, pending_send_token=pending_send_token
-            )
-            diagnostic.outcome = "dispatched" if sent else "not_dispatched"
-            return sent
-
-    async def _send_console_message_from_visible_action_observed(
-        self,
-        *,
-        session_id: str | None = None,
-        pending_send_token: object | None = None,
-    ) -> bool:
-        """Route the visible Console send action through the native controller.
-
-        Returns:
-            True once the draft has been queued as a user turn; False on every
-            refusal -- an empty draft with no attachment, a `/`-command or
-            unknown-command dispatch (which never sends by design), and every
-            gate inside `_dispatch_console_draft_send`. Each refusal has
-            already shown its own toast or system row.
-        """
-        # A scheduled Enter callback may consume only its own capture.
-        # Mouse/Workbench sends have no token and always read the live draft.
-        stash = None
-        if pending_send_token is not None:
-            pending_send = self._console_pending_send
-            if pending_send is None or pending_send.token is not pending_send_token:
-                return False
-            self._console_pending_send = None
-            session_id = pending_send.session_id
-            stash = pending_send.stash
-        if session_id is None:
-            session_id = self._console_visible_send_session_id()
-        if (
-            pending_send_token is None
-            and self._console_pending_send is not None
-            and self._console_pending_send.session_id == session_id
-        ):
-            return False
-        if session_id is None or self._console_visible_draft_session_id != session_id:
-            self.app_instance.notify(
-                "Console chat changed before send; the draft was kept in its original chat.",
-                severity="warning",
-            )
-            return False
-        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
-            stash, self._console_composer_or_none, self._raw_cli.start_user_command
-        )
-        if raw_cli_handled:
-            return False
-        if pending_send_token is None and composer is not None:
-            stash = composer.capture_draft_for_send()
-            draft = stash.text if stash is not None else draft
-        if not draft.strip() and self._console_pending_image_attachment() is None:
-            self._focus_console_composer_if_needed(force=True)
-            return False
-        self._dismiss_console_guidance()
-
-        # Command parsing runs before any readiness/blocked gating: a
-        # recognized command dispatch (or an unknown-command hint) never
-        # sends, so it must work even while Send is blocked. Draft text
-        # carrying any real paste-originated segment (regardless of its
-        # current collapse/confirm/expanded display state) is never treated
-        # as command input -- Task 9's grammar module deliberately leaves
-        # that gating to the caller, since only the composer knows the real
-        # segment state.
-        has_paste = (
-            stash.has_paste
-            if stash is not None
-            else (composer is not None and composer.has_paste_segments())
-        )
-        if composer is not None and not has_paste:
-            parse = self._console_command_registry.parse(draft)
-        else:
-            parse = CommandParse(kind=KIND_NOT_COMMAND)
-
-        argument_free_rewind = (
-            parse.kind == KIND_COMMAND
-            and parse.name == REWIND_COMMAND_NAME
-            and parse.args == ""
-        )
-        if argument_free_rewind:
-            self._console_unknown_send_armed = None
-            opening_composer = composer if pending_send_token is None else None
-            opening_revision = None
-            if opening_composer is not None:
-                opening_revision = (
-                    opening_composer.edit_serial,
-                    opening_composer.capture_draft_snapshot().generation,
-                    draft,
-                )
-            opened = await self._console_command_rewind(parse)
-            if opened and opening_composer is not None and opening_revision is not None:
-                current = self._console_composer_or_none()
-                current_snapshot = (
-                    current.capture_draft_snapshot()
-                    if current is opening_composer
-                    else None
-                )
-                if (
-                    current is opening_composer
-                    and current.edit_serial == opening_revision[0]
-                    and current_snapshot is not None
-                    and current_snapshot.generation == opening_revision[1]
-                    and current.draft_text() == opening_revision[2]
-                ):
-                    self._clear_console_composer_draft()
-            return False
-
-        if parse.kind == KIND_COMMAND:
-            # Captured drafts remain in the composer until runtime custody.
-            self._console_unknown_send_armed = None
-            await self._dispatch_console_command(parse)
-            return False
-
-        if parse.kind == KIND_UNKNOWN:
-            # Fold-in (Task 9 fix-wave review; hard removal Task 4 -- there
-            # is no fallback resolver at all anymore, so EVERY unmatched
-            # `/word` reaches here as KIND_UNKNOWN): a typed `/name` that
-            # matches ONLY needs-review (trust-blocked) skills would
-            # otherwise fall through to the generic "Unknown command" hint
-            # just like any other unrecognized word. Checking against a
-            # FRESH context surfaces the same needs-review response instead,
-            # before the unknown-command arm/hint logic ever runs. This
-            # never arms the unknown-command escape: a blocked match is a
-            # known-but-blocked command, not an unrecognized one, so a
-            # repeated Enter shows the same response again rather than
-            # silently falling through to a literal send.
-            context = await self._skill._fetch_console_skill_context()
-            blocked_summaries = self._skill._console_skill_blocked_summaries(context)
-            if await self._skill._console_skill_blocked_match_response(
-                parse.name, blocked_summaries
-            ):
-                return False
-            if self._console_unknown_send_armed == draft:
-                # Second consecutive Enter on the *same* unmodified draft:
-                # disarm and fall through to a normal send below.
-                self._console_unknown_send_armed = None
-            else:
-                self._console_unknown_send_armed = draft
-                await self._append_native_console_system_message(
-                    self._commands._console_unknown_command_hint(parse.name)
-                )
-                return False
-
-        if self._answer_pending_question_with_draft(draft):
-            return False
-        if self._console_visible_draft_session_id != session_id:
-            self.app_instance.notify(
-                "Console chat changed before send; the draft was kept in its original chat.",
-                severity="warning",
-            )
-            return False
-        return await self._dispatch_console_draft_send(
-            draft, stash=stash, session_id=session_id
+        return await self._submission._send_console_message_from_visible_action(
+            session_id=session_id, pending_send_token=pending_send_token
         )
 
     async def _dispatch_console_draft_send(
@@ -15522,20 +15274,9 @@ class ChatScreen(BaseAppScreen):
         *,
         session_id: str | None = None,
     ) -> bool:
-        """Compatibility delegate for the one typed queue-aware dispatcher."""
-
-        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
-
-        async with send_diagnostic_scope(
-            "ui_dispatch", self._ui_responsiveness_monitor()
-        ) as diagnostic:
-            if session_id is None:
-                session_id = self._console_visible_send_session_id()
-            result = await self._prompt_queue.dispatch(
-                draft, session_id=session_id, stash=stash
-            )
-            diagnostic.outcome = result.status.value
-            return result.status is not ConsolePromptDispatchStatus.REFUSED
+        return await self._submission._dispatch_console_draft_send(
+            draft, stash, session_id=session_id
+        )
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -18166,7 +17907,7 @@ class ChatScreen(BaseAppScreen):
             # owns accepted work.
             self.app.call_later(
                 partial(
-                    self._send_console_message_from_visible_action,
+                    self._submission._send_console_message_from_visible_action,
                     pending_send_token=pending_send.token,
                 )
             )
@@ -18971,7 +18712,7 @@ class ChatScreen(BaseAppScreen):
             self._console_attach_reconciled = False
             self._console_attach_sync_complete = False
             self._console_attach_runtime_reconciled = False
-        self._release_claimed_conversation_settings_return()
+        self._settings_navigation._release_claimed_conversation_settings_return()
         # The debounced sidebar write is async and its read-modify-write of
         # ui_state.toml is unlocked, so consecutive suspends must SERIALIZE
         # (Qodo #2420 finding 6: a rapid leave/return/leave could let the
