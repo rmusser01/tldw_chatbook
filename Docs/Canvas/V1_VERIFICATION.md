@@ -10,9 +10,10 @@ open for select-value restoration order and mixed-presence subtree identities.
 TASK-31232 remains In Progress with AC9 and AC10 open. Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
-The user has now authorized one DOM-only correction and scoped rereview of
-those two I2 cases. Implementation and review evidence are pending; this does
-not waive AC9's six characterized baseline failures or authorize a full sweep.
+The user authorized one DOM-only correction and scoped rereview of those two
+I2 cases. Implementation `981b1f8c1` and targeted evidence are recorded below;
+the scoped verdict is pending. This does not waive AC9's six characterized
+baseline failures or authorize a full sweep.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
 create-triggered native opening, exact card/replacement-session coverage and
@@ -26,6 +27,60 @@ corrections recorded below; the clean task gate does not close these new gaps.
 TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
+
+## DOM-only correction evidence (`981b1f8c1`)
+
+Under existing ADR-115, reconstruction now skips already-present descendants
+while attaching them to rebuilt parents. Explicit option selection is restored
+after subtree structure, followed by explicit select value. No facade API,
+permission, runtime fallback or quota was added or relaxed.
+
+Definitive actual-Chromium RED before production changes: **4 failed, 1 warning,
+14.23 s**. Non-first and empty/no-match select values were independently
+parameterized and both reopened as `first`; new-issued and existing-live child
+cases failed reattachment. An earlier `live` parameter was skipped by repository
+policy; another run's first assertion masked the empty case. Neither is used
+in place of the definitive four-case RED. The matching GREEN was **4 passed,
+1 warning, 4.08 s**.
+
+Final browser command (owned wrapper `/tmp/canvas_dom_final_browser_probe.zsh`):
+
+```text
+../../.venv/bin/python -m pytest -q \
+  Tests/Canvas/browser/test_canvas_zero_egress.py::test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds \
+  Tests/Canvas/browser/test_canvas_zero_egress.py::test_detached_select_reconstruction_restores_explicit_and_default_state \
+  Tests/Canvas/browser/test_canvas_zero_egress.py::test_detached_subtree_reconstruction_reuses_present_descendants
+```
+
+Result: **5 passed, 1 warning, 7.51 s**. The latter two nodes are the definitive
+RED/GREEN command. Assertions cover actual value/selected state, a same-select
+compatible option/value override, untouched defaults, exact native identity of
+the moved existing child, new-child uniqueness, prior twenty detach/reinsert
+cycles, listeners, cycle refusal, patch-limit refusal and generated-egress
+observations. This is not a new conflicting-override chronology contract or
+another broad adversarial qualification.
+
+The wrapper captured live pytest `99035`, driver `99116`, Chromium
+`99142/99146/99147/99155`, and the existing owned profile
+`/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/playwright_chromiumdev_profile-zfXGdx`.
+All captured PIDs and that profile were absent after completion. Only owned
+descendants were inspected; no ambient cleanup occurred. Earlier incomplete
+cleanup captures remain qualified in their historical entries.
+
+`../../.venv/bin/python -m pytest -q Tests/Canvas/test_runtime_assets.py`:
+**20 passed, 1 skipped, 1 warning, 0.81 s**. The skip requires
+`TLDW_CANVAS_RUNTIME_ARCHIVE_DIR`; no archive download was attempted. The worker
+is 55,488 bytes, SHA-256
+`23ed3fc4fdf9109a4207d6aeebf6de26c198261c1ae980f7df7a6d6f4d9aae3c`.
+Worker syntax and vendor-manifest verification passed. The single changed
+Python test file passes whole-file Ruff lint and format checks; root repeated
+these checks plus syntax, manifest and committed-range whitespace inspection.
+This does not replace earlier inherited lint-debt qualifications elsewhere.
+
+The pass touches only the runtime worker, its integrity manifest and the browser
+test file. The review package starts at the actual previous-reviewed HEAD
+`648530ac6`. AC10 stays open until that scoped review; AC9 independently remains
+open for the six baseline failures. No baseline suites or full sweep rerun.
 
 ## Whole-branch review (`facd1e0fb0`): needs fixes
 
