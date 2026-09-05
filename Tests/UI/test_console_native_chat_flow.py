@@ -12271,6 +12271,11 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     screen.app_instance = SimpleNamespace(
         notify=lambda *a, **k: None, chachanotes_db=None
     )
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+    )
+
+    build_console_settings_controllers(screen)
     stub_image_controller(
         screen,
         context="test_console_native_chat_flow._bare_console_screen",
