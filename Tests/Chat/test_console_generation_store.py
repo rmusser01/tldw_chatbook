@@ -494,7 +494,7 @@ def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadat
         )
         screen = ChatScreen(_build_test_app())
         screen.app_instance.chachanotes_db = db
-        all_nodes = screen._console_messages_from_conversation_tree(tree)
+        all_nodes = screen._message._console_messages_from_conversation_tree(tree)
         active_leaf_id = db.get_conversation_active_leaf(conversation_id)
 
         fresh_persistence = ChatPersistenceService(db)

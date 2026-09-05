@@ -32,8 +32,8 @@ def _screen_with_service(service: object) -> tuple[ChatScreen, list[str], list[b
     async def append_message(message: str) -> None:
         messages.append(message)
 
-    screen._append_native_console_system_message = append_message
-    screen._clear_console_composer_draft = lambda: clears.append(True)
+    screen._message._append_native_console_system_message = append_message
+    screen._commands._clear_console_composer_draft = lambda: clears.append(True)
     build_console_commands_controller(screen)
     return screen, messages, clears
 

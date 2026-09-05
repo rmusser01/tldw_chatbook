@@ -294,7 +294,7 @@ def _resume_store(
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    nodes = screen._console_messages_from_conversation_tree(tree)
+    nodes = screen._message._console_messages_from_conversation_tree(tree)
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.restore_persisted_session(
         title="Thinking integration",

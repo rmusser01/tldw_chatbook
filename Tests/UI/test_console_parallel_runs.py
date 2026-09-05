@@ -275,7 +275,7 @@ async def test_background_run_never_mutates_viewed_transcript() -> None:
         # via the real gated seam (not the illustrative
         # `_apply_console_stream_delta` name from the brief -- there is no
         # such method; this IS the method the audit found and fixed).
-        await console._append_native_console_system_message(
+        await console._message._append_native_console_system_message(
             "SHOULD-NOT-APPEAR", session_id=background
         )
         await pilot.pause(0.2)
@@ -325,15 +325,15 @@ async def test_background_run_sensitivity_reverting_the_gate_fails() -> None:
             )
             await console._sync_native_console_chat_ui()
 
-        console._append_native_console_system_message = leaky_append
+        console._message._append_native_console_system_message = leaky_append
         try:
-            await console._append_native_console_system_message(
+            await console._message._append_native_console_system_message(
                 "SHOULD-LEAK", session_id=background
             )
             await pilot.pause(0.2)
             assert "SHOULD-LEAK" in _transcript_text(console)
         finally:
-            del console._append_native_console_system_message
+            del console._message._append_native_console_system_message
 
 
 @pytest.mark.asyncio

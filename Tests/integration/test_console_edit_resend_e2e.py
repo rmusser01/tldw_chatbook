@@ -78,7 +78,7 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    all_nodes = screen._message._console_messages_from_conversation_tree(tree)
     active_leaf_id = db.get_conversation_active_leaf(conversation_id)
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.restore_persisted_session(

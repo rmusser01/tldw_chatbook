@@ -710,7 +710,7 @@ async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -
             "No active provider or model is configured."
         )
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         configure = modal.query_one("#console-prompts-configure-provider")

@@ -5,6 +5,16 @@ AST methods. The repair measures 16,873 lines and 559 methods, below the
 unchanged 16,966 / 563 ceilings. Shared ratchet reconciliation remains owned
 by the coordinating repair task.
 
+TASK-31750 continuation: the approved 64 private forwarding methods have been
+removed, and real callers and fault-injection receivers target their existing
+controllers. No new owner boundary was introduced. The measured pre-second-rebase
+screen is 16,818 lines / 505 methods; the ratchet now uses those tighter counts.
+Public/framework actions, agent-bridge injection and the transcript ephemeral
+probe remain on the screen. Two new callback tests preserve delayed lookup and
+replacement-owner behavior. The 145-test architecture/import/inventory selection
+passed. The affected-file run is incomplete (1,749 passed, seven failures before
+interruption); see the main checkpoint report. This is not final closeout evidence.
+
 This implements DESIGN.md §7 and the approved screen-decomposition design.
 No new ADR is required: ADR-033's application-session ownership remains intact.
 

@@ -241,3 +241,57 @@ pre-dispatch failure classification are active work. One newly observed Skills
 trust journey also reproduced in the pre-assembly baseline. Notes compact paint,
 the previously recorded Library baseline cases, MCP/fork-census/guarded-delete
 families, and remaining unexecuted review selections are not yet resolved.
+
+## Additional continuation checkpoint
+
+- TASK-31754: **162 passed** across dispatch/recovery selections. A failed
+  pre-dispatch callback now retains the accepted owner for retry instead of
+  being classified as a completed provider failure. Aggregate descriptor warnings
+  remain separately qualified.
+- TASK-31748 and TASK-31751: **53 passed** in the complete Skills state/trust
+  selection, plus **7** exact browse-controller and **37** Library architecture
+  checks. Items refresh independently of the live Work editor. Reserved-name
+  coverage retains the fixed four-source guard. Library is 41,301 lines.
+- TASK-31756: **67 passed** for MCP stdio and Library tools. Manifest fixtures
+  reflect the 21 current tools; the legacy connection fixture explicitly accepts
+  the current server-request dispatcher contract.
+- Fifth partial non-UI sweep: **2,284 passed, 38 failed, 68 skipped**, stopped at
+  its failure limit. Evidence: `/private/tmp/tldw-review-nonui-remaining-wave5-20260905.xml`.
+  Some Console receiver failures occurred while the migration was in progress;
+  this is neither a final failure count nor a green result. Additional observed
+  families include exchange capture/persistence fixtures, private SQLite ownership
+  inventory, provider API-key forwarding, estimate-cache ownership, Watchlists
+  off-loop evidence, promotion transaction counting, and briefing-script history.
+- TASK-31750: **145 passed** in source-size, private-owner, callback,
+  diagnostic-inventory and cold-import gates. Actual Console size is **16,818
+  physical lines / 505 methods**, with the ratchet tightened to those values.
+  AST review found only the approved 64 forwarding removals, receiver changes,
+  obsolete imports, and the deliberately late-bound submission callback. Existing
+  behavioral assertions are preserved. The question/composer group is **121 passed**.
+- The 84-file affected Console run was interrupted before the next rebase after
+  **1,749 passed and 7 failed** (986 seconds); its unexecuted remainder is still
+  required. Evidence: `/private/tmp/tldw-31750-affected-pass3.xml`. Two failures
+  were remaining owner-fixture migrations. Other observed cases cover collapsed
+  paste confirmation, empty-panel geometry, staged source details, left-rail
+  ownership and a Watchlists handoff click outside the visible region. These are
+  not waived or claimed to be baseline without further reproduction.
+
+A fresh fetch found 152 newer dev commits at `4e904f54db`; integration and
+post-rebase qualification are pending this checkpoint. No resource/security
+guard has been weakened and no complete-suite pass is claimed.
+
+TASK-31753 / TASK-31757: **203 passed** across the complete rewind integration and
+Chat settings files plus the corrected readiness receiver regression. Modernizing
+the rewind gateway exposed a runtime defect: checkpoint-persisted live messages
+have unset cached parent fields. Snapshotting through the store's existing
+`durable_parent_for_message` resolver restores the real ordered durable chain.
+The end-to-end journey now verifies current branch-memory storage, exact summary
+span, separate prepared preamble, transcript preservation, new native IDs on
+restart, and no later-memory leakage after restoring before the selection anchor.
+The parent-fence fault test mutates the authoritative native tree rather than an
+unused cached field. The initial native-versus-persisted-ID hypothesis was corrected
+by the exact snapshot probe; no lineage authorization check was relaxed.
+
+The final complete rewind/summary-fence/parent-persistence selection is **78
+passed** (31.45 seconds). Its preexisting aggregate descriptor-growth warning
+(209) remains open; this is behavioral evidence, not resource-leak closure.

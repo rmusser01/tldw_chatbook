@@ -148,7 +148,7 @@ async def test_console_custody_snapshots_draft_before_late_keystrokes(monkeypatc
 
         monkeypatch.setattr(console._prompt_queue, "_launch_chain", record_launch)
         stash = composer.capture_draft_for_send()
-        assert await console._dispatch_console_draft_send(stash.text, stash=stash)
+        assert await console._submission._dispatch_console_draft_send(stash.text, stash=stash)
         # Keystrokes arriving before the Button.Pressed message is processed:
         composer.insert_text("line two")
 
@@ -259,7 +259,7 @@ async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
 
         monkeypatch.setattr(console._prompt_queue, "_launch_chain", record_launch)
         stash = composer.capture_draft_for_send()
-        assert await console._dispatch_console_draft_send(stash.text, stash=stash)
+        assert await console._submission._dispatch_console_draft_send(stash.text, stash=stash)
         composer.insert_text("!")
         with pytest.raises(RuntimeError, match="refused before durable"):
             await console._console_runtime().wait_for_turn(turn_ids[0])
@@ -400,7 +400,7 @@ async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody
 
         stash = composer.capture_draft_for_send()
         assert stash is not None
-        assert await console._dispatch_console_draft_send(stash.text, stash=stash)
+        assert await console._submission._dispatch_console_draft_send(stash.text, stash=stash)
         assert turn_ids
         with pytest.raises(RuntimeError, match="refused before durable"):
             await console._console_runtime().wait_for_turn(turn_ids[0])
@@ -654,7 +654,7 @@ async def test_console_active_run_queues_without_a_screen_worker(monkeypatch):
             session_id=session.id,
         )
 
-        result = await console._dispatch_console_draft_send("hello")
+        result = await console._submission._dispatch_console_draft_send("hello")
 
         assert result is True
         snapshot = controller.prompt_queue_registry.snapshot(session.id)
@@ -689,7 +689,7 @@ async def test_console_synchronous_custody_refusal_notifies_and_keeps_draft(
             (str(message), kwargs.get("severity", ""))
         )
 
-        sent = await console._dispatch_console_draft_send("keep me", stash=stash)
+        sent = await console._submission._dispatch_console_draft_send("keep me", stash=stash)
 
         assert sent is False
         assert notices == [("Console session is closed.", "warning")]
@@ -733,7 +733,7 @@ async def test_console_deleted_owner_refuses_and_keeps_captured_inputs(monkeypat
             (str(message), kwargs.get("severity", ""))
         )
 
-        sent = await console._dispatch_console_draft_send(
+        sent = await console._submission._dispatch_console_draft_send(
             stash.text, stash=stash, session_id=session.id
         )
 
@@ -786,7 +786,7 @@ async def test_console_valid_owner_internal_key_error_is_not_a_custody_refusal(
         )
 
         with pytest.raises(KeyError, match="internal settings lookup"):
-            await console._dispatch_console_draft_send(
+            await console._submission._dispatch_console_draft_send(
                 stash.text, stash=stash, session_id=session.id
             )
 
@@ -1145,7 +1145,7 @@ async def test_console_session_switch_during_admission_does_not_commit_into_new_
 
         monkeypatch.setattr(console._prompt_queue, "_launch_chain", admit_then_switch)
 
-        assert await console._dispatch_console_draft_send(
+        assert await console._submission._dispatch_console_draft_send(
             stash.text, stash=stash, session_id=session_a.id
         )
 
@@ -1232,7 +1232,7 @@ async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch,
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._submission._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
         else:
             assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
         runtime, turn_id = await _finish_test_custody(console)
@@ -1276,7 +1276,7 @@ async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(m
             return ConsoleSubmitResult(False, False, "Setup cancelled")
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
-        assert await console._dispatch_console_draft_send("A private draft", stash=stash, session_id=session.id)
+        assert await console._submission._dispatch_console_draft_send("A private draft", stash=stash, session_id=session.id)
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == "B private draft"
         runtime.restore_turn_recovery(turn_id)
@@ -1315,7 +1315,7 @@ async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(mon
         monkeypatch.setattr(controller, "submit_draft", refuse)
         monkeypatch.setattr(controller, "run_prompt_chain", run_chain)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._submission._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
         else:
             assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
         runtime, turn_id = await _finish_test_custody(console)

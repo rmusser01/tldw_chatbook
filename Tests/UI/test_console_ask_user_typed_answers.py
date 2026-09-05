@@ -45,9 +45,9 @@ def _screen(card, *, image=None, launch=None, controller=None):
     return SimpleNamespace(
         _console_chat_controller=controller if controller is not None else _controller(),
         query=lambda selector: [card] if card is not None else [],
-        _console_pending_image_attachment=lambda: image,
+        _submission=SimpleNamespace(_console_pending_image_attachment=lambda: image),
         _retrieval=SimpleNamespace(_pending_launch=lambda: launch),
-        _clear_console_composer_draft=lambda: cleared.append(True),
+        _commands=SimpleNamespace(_clear_console_composer_draft=lambda: cleared.append(True)),
         _cleared=cleared,
     )
 
@@ -140,8 +140,11 @@ async def test_visible_send_resolves_the_question_and_does_not_dispatch():
         lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
     )
     build_console_submission_controller(screen)
+    screen._submission._console_pending_image_attachment = screen._console_pending_image_attachment
+    screen._submission._dispatch_console_draft_send = screen._dispatch_console_draft_send
+    screen._commands = SimpleNamespace(_clear_console_composer_draft=lambda: composer.clear_draft())
     screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+    assert await screen._submission._send_console_message_from_visible_action() is False
     assert dispatched == []
     controller.resolve_pending_question.assert_called_once()
     (answers,), _ = controller.resolve_pending_question.call_args
@@ -187,8 +190,11 @@ async def test_visible_send_without_a_card_dispatches_as_before():
         lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
     )
     build_console_submission_controller(screen)
+    screen._submission._console_pending_image_attachment = screen._console_pending_image_attachment
+    screen._submission._dispatch_console_draft_send = screen._dispatch_console_draft_send
+    screen._commands = SimpleNamespace(_clear_console_composer_draft=lambda: composer.clear_draft())
     screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    assert await screen._submission._send_console_message_from_visible_action() is True
     assert dispatched == ["hello"]
     controller.resolve_pending_question.assert_not_called()
 
@@ -308,8 +314,11 @@ async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_comp
                 lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
             )
             build_console_submission_controller(screen)
+            screen._submission._console_pending_image_attachment = screen._console_pending_image_attachment
+            screen._submission._dispatch_console_draft_send = screen._dispatch_console_draft_send
+            screen._commands = SimpleNamespace(_clear_console_composer_draft=lambda: composer.clear_draft())
             screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-            assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+            assert await screen._submission._send_console_message_from_visible_action() is False
             assert dispatched == [], "the draft was an answer, not a turn"
             # The worker's teardown marshals its card re-derive through
             # `call_from_thread`, which needs THIS loop: wait asynchronously.

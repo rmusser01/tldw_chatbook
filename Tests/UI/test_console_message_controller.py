@@ -208,7 +208,7 @@ def test_console_message_select_variant_moves_active_leaf():
     )
     assert store.active_leaf(session.id) == second.id
 
-    target = screen._select_console_message_variant(
+    target = screen._message._select_console_message_variant(
         second.id, direction="variant-previous"
     )
 

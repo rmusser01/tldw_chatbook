@@ -2840,7 +2840,6 @@ async def test_provider_payload_uses_handoff_identity_then_next_turn_uses_new_id
 
 
 def test_screen_selection_builder_targets_session_without_switching_view():
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     store = ConsoleChatStore()
     first = store.create_session(
@@ -2900,7 +2899,7 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     fake_screen._console_config_snapshot_is_disk_loaded = lambda _config: False
     build_console_provider_selection_controller(fake_screen)
 
-    selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
+    selection = fake_screen._provider_selection._build_console_provider_selection(first.id)
 
     assert selection.provider == "openai"
     assert selection.explicit_model == "model-a"
