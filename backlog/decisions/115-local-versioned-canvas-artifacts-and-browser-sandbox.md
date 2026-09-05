@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-03
-Related Tasks: TASK-31226, TASK-31227, TASK-31003
+Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
 Related: TASK-31003, ADR-069, ADR-032
 
 ## Decision
@@ -264,6 +264,64 @@ Authentication is not encryption: non-loopback plain HTTP fails closed unless
 the user explicitly enables an insecure-network override; TLS or a trusted
 reverse proxy is the supported recommendation. Per-browser Canvas
 capabilities cannot list or open another browser session's conversations.
+
+### Served-mode implementation record
+
+TASK-31230 implements this boundary against pinned `textual-serve` 1.1.3.
+Chatbook extends the child-spawn environment only through
+`AppService._build_environment(width, height)` and owns the WebSocket
+`AppService` factory in its `Server.handle_websocket` override. The child
+command is unchanged, and no new mutation of textual-serve's minified client
+bundle is used. A Chatbook-owned responsive HTML/CSS/JavaScript shell embeds
+the terminal and Canvas as sibling regions on the authenticated origin.
+
+The private child-control protocol is version 1. Frames use a four-byte
+big-endian length followed by strict JSON. The ceiling is derived from the
+10 MiB generated-download limit plus bounded base64 and envelope overhead.
+Only typed scope-snapshot, list/read, selection, authoritative event,
+bridge-preparation/decision, health, shutdown, cancellation, authentication,
+and bounded error messages are admitted. The broker allows at most 32 pending
+requests and 64 queued events per child. Request IDs, deadlines, cancellation,
+late-response tombstones, backpressure, and response-type ordering fail
+closed. Each AppService receives a random one-use launch secret through the
+supported spawn environment, connects only to the parent's numeric-loopback
+listener, and loses that capability on disconnect, stop, or restart.
+
+Browser admission uses only the dedicated Chatbook web credential, resolved
+in the order `TLDW_CHATBOOK_WEB_ACCESS_TOKEN`, `[web_server].access_token`,
+then OS keyring service `tldw_chatbook_web` / account `access_token`. Remote
+binds fail without it. Remote plaintext fails unless the warned
+`allow_insecure_remote_http` development override is explicit. Direct TLS or
+an exact `public_url` behind a TLS-terminating proxy is required; forwarded
+scheme, authority, and client data are honored only from literal addresses in
+`trusted_proxy_addresses`. Browser login exchanges either the configured
+credential or a one-time 60-second bootstrap nonce for a host-only opaque
+session cookie with `HttpOnly`, `SameSite=Strict`, and `Secure` on HTTPS.
+Host/Origin, CSRF, and WebSocket-subprotocol checks cover every
+authority-bearing route. Sessions expire after 30 minutes idle or eight hours
+absolute by default, revoke live channels, and live in bounded in-memory
+stores (512 sessions, 64 bootstraps, and bounded per-subject login attempts).
+
+The parent maps one authenticated browser session to one AppService child and
+accepts only that child's authority-issued Canvas scope. Mounted shell,
+event, source, renderer, submit, and download routes return the same not-found
+shape for foreign, copied, or guessed capabilities. Bridge effects use an
+exact-load reservation plus a per-preparation nonce and idempotent child
+receipt: parent admission must still be current before the child may insert a
+draft or authorize a download. A dropped control channel clears only that
+browser's Canvas region and never substitutes another conversation; the
+terminal WebSocket remains alive.
+
+The release checkpoint exercised the production server behind an allowlisted
+numeric-loopback TLS reverse proxy with an ephemeral dedicated credential,
+two independent Chromium profiles, two real AppService child processes, and
+terminal-driven `canvas_create` tool calls. It observed one-time bootstrap
+replay rejection, secure cookies and WSS, distinct rendered documents,
+indistinguishable denial of copied/guessed shell and event/source/action
+capabilities, a confirmed canonical-JSON unsent draft, an exact passive
+download, zero browser egress, and continued terminal input/output after one
+Canvas child channel was revoked. All credentials, profiles, certificates,
+downloads, processes, and disposable data were removed after the run.
 
 Durable Canvas records live only on the Chatbook host and are included in
 conversation/Chatbook export-import. A Canvas-bearing archive uses Chatbook

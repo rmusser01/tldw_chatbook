@@ -374,13 +374,13 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_control_protocol.py`
 - Modify: focused `Tests/Web_Server/` tests
 
-- [ ] Inspect the installed/pinned textual-serve `Server`/`AppService` process-spawn API and capture a compatibility test before choosing the override point. Do not patch a shell command string or minified JavaScript.
-- [ ] Define a versioned length-bounded protocol with explicit message types for scope snapshot, list/read render metadata, selection, events, bridge request/decision, health, and shutdown. Reject unknown versions, types, fields, oversized frames, and out-of-order replies.
-- [ ] Give each AppService child a random secret through the supported spawn environment and listen only on a parent-owned loopback endpoint. Authenticate before transmitting any conversation metadata; rotate/revoke on child restart.
-- [ ] Implement request IDs, deadlines, backpressure, cancellation, and bounded errors. The parent is a transport/UI host; the child remains the only conversation and Canvas authority.
-- [ ] Prove two child processes cannot authenticate as or receive events for one another.
-- [ ] Run protocol and focused textual-serve lifecycle tests.
-- [ ] Commit: `feat(canvas): connect served parent and child securely`
+- [x] Inspect the installed/pinned textual-serve `Server`/`AppService` process-spawn API and capture a compatibility test before choosing the override point. Do not patch a shell command string or minified JavaScript.
+- [x] Define a versioned length-bounded protocol with explicit message types for scope snapshot, list/read render metadata, selection, events, bridge request/decision, health, and shutdown. Reject unknown versions, types, fields, oversized frames, and out-of-order replies.
+- [x] Give each AppService child a random secret through the supported spawn environment and listen only on a parent-owned loopback endpoint. Authenticate before transmitting any conversation metadata; rotate/revoke on child restart.
+- [x] Implement request IDs, deadlines, backpressure, cancellation, and bounded errors. The parent is a transport/UI host; the child remains the only conversation and Canvas authority.
+- [x] Prove two child processes cannot authenticate as or receive events for one another.
+- [x] Run protocol and focused textual-serve lifecycle tests.
+- [x] Commit: `feat(canvas): connect served parent and child securely`
 
 ### Task 5.2: Protect the complete remote origin
 
@@ -393,14 +393,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_web_auth.py`
 - Modify: focused Web Server tests
 
-- [ ] Add table-driven tests for IPv4/IPv6 loopback, wildcard/private/public binds, missing token, environment/config/keyring precedence, plaintext remote bind, trusted proxy allowlist, malformed forwarded headers, Host/Origin mismatch, CSRF, websocket upgrade, expiry, revocation, and rate limits.
-- [ ] Add a dedicated Chatbook web access token setting. Never reuse provider API keys, MCP credentials, or legacy server tokens; never log the configured value.
-- [ ] Refuse non-loopback bind without the token. Refuse non-loopback plaintext HTTP by default; permit only an explicit warned insecure-development override. Document direct TLS and trusted reverse-proxy deployment.
-- [ ] Implement one-time login bootstrap, opaque in-memory sessions, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF tokens, Host/Origin validation, websocket checks, idle/absolute expiry, revocation, constant-time secret comparison, and bounded rate limiting.
-- [ ] Apply middleware to every authority-bearing route on the origin, including `/`, `/ws`, Canvas APIs/events, downloads, and static boot data. Static immutable assets may be public only if they contain no runtime state.
-- [ ] Trust forwarded scheme/host/client data only from explicitly configured proxy addresses.
-- [ ] Run web-auth and existing served-mode tests.
-- [ ] Commit: `feat(server): authenticate remote Chatbook sessions`
+- [x] Add table-driven tests for IPv4/IPv6 loopback, wildcard/private/public binds, missing token, environment/config/keyring precedence, plaintext remote bind, trusted proxy allowlist, malformed forwarded headers, Host/Origin mismatch, CSRF, websocket upgrade, expiry, revocation, and rate limits.
+- [x] Add a dedicated Chatbook web access token setting. Never reuse provider API keys, MCP credentials, or legacy server tokens; never log the configured value.
+- [x] Refuse non-loopback bind without the token. Refuse non-loopback plaintext HTTP by default; permit only an explicit warned insecure-development override. Document direct TLS and trusted reverse-proxy deployment.
+- [x] Implement one-time login bootstrap, opaque in-memory sessions, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF tokens, Host/Origin validation, websocket checks, idle/absolute expiry, revocation, constant-time secret comparison, and bounded rate limiting.
+- [x] Apply middleware to every authority-bearing route on the origin, including `/`, `/ws`, Canvas APIs/events, downloads, and static boot data. Static immutable assets may be public only if they contain no runtime state.
+- [x] Trust forwarded scheme/host/client data only from explicitly configured proxy addresses.
+- [x] Run web-auth and existing served-mode tests.
+- [x] Commit: `feat(server): authenticate remote Chatbook sessions`
 
 ### Task 5.3: Mount the same-origin split-pane shell
 
@@ -411,18 +411,18 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Canvas/gateway.py` to share route handlers
 - Create: `Tests/Canvas/browser/test_canvas_served_flow.py`
 
-- [ ] Add Playwright tests at narrow and wide viewports for terminal-only state, split view, close/reopen, hot reload, active branch switch, exact transcript reopen, connection loss, and terminal survival.
-- [ ] Serve terminal and Canvas as sibling regions from an owned responsive template on the same origin. Reuse trusted Canvas handlers; do not duplicate compiler/runtime or embed a second localhost URL.
-- [ ] Route each browser session only to its authenticated AppService child and child-issued Canvas scope. A URL or ID from another browser must return indistinguishable not-found/unauthorized behavior.
-- [ ] On control-channel loss, disable Canvas and show reconnection state while the Textual websocket remains usable. Never fall back to a global or most-recent conversation.
-- [ ] Test two browser profiles, two AppService children, guessed IDs, copied exact URLs, event streams, submits, and downloads for cross-session isolation.
-- [ ] Run served Playwright, control protocol, authentication, and existing textual-serve compatibility suites.
-- [ ] Commit: `feat(canvas): add the authenticated served split view`
+- [x] Add Playwright tests at narrow and wide viewports for terminal-only state, split view, close/reopen, hot reload, active branch switch, exact transcript reopen, connection loss, and terminal survival.
+- [x] Serve terminal and Canvas as sibling regions from an owned responsive template on the same origin. Reuse trusted Canvas handlers; do not duplicate compiler/runtime or embed a second localhost URL.
+- [x] Route each browser session only to its authenticated AppService child and child-issued Canvas scope. A URL or ID from another browser must return indistinguishable not-found/unauthorized behavior.
+- [x] On control-channel loss, disable Canvas and show reconnection state while the Textual websocket remains usable. Never fall back to a global or most-recent conversation.
+- [x] Test two browser profiles, two AppService children, guessed IDs, copied exact URLs, event streams, submits, and downloads for cross-session isolation.
+- [x] Run served Playwright, control protocol, authentication, and existing textual-serve compatibility suites.
+- [x] Commit: `feat(canvas): add the authenticated served split view`
 
 ### Delivery 5 checkpoint
 
-- [ ] Update TASK-31230 and ADR-115 with the actual textual-serve extension seam, protocol version, authentication flow, proxy policy, and isolation evidence.
-- [ ] Perform one real authenticated remote/proxy flow and one two-browser isolation flow through the user-visible server, not only handler tests.
+- [x] Update TASK-31230 and ADR-115 with the actual textual-serve extension seam, protocol version, authentication flow, proxy policy, and isolation evidence.
+- [x] Perform one real authenticated remote/proxy flow and one two-browser isolation flow through the user-visible server, not only handler tests.
 
 ---
 
