@@ -489,7 +489,7 @@ class PhysicalTraceCompactor:
 
     def _open_maintenance_connection(self) -> sqlite3.Connection:
         connection = connect_private_sqlite(
-            "db.chachanotes.primary",
+            "chat.trace_maintenance",
             self.db.db_path_str,
             must_exist=True,
             check_same_thread=False,

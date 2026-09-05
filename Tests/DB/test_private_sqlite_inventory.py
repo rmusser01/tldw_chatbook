@@ -590,10 +590,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # Personal Context repository's private local database. C53 is the
         # encrypted local-only Personal Context interview draft database.
         # C54 is the dedicated profile-local Chunking Lab recovery owner.
+        # C55 is the existing private-file trace maintenance connection.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 55)
+        for number in range(1, 56)
         if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [

@@ -156,6 +156,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "ChaChaNotes owns private file and in-memory primary databases.",
     ),
+    "chat.trace_maintenance": SQLiteOwnerPolicy(
+        "tldw_chatbook/Chat/console_trace_maintenance",
+        _PRIVATE_FILE,
+        "Physical trace maintenance reopens the existing private conversation "
+        "database under its compaction lease; no separate backup authority.",
+    ),
     "db.evals": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Evals_DB",
         _PRIVATE_OR_MEMORY,

@@ -399,3 +399,38 @@ TASK-18801's whole-file acceptance criterion is reopened for this current tree.
 No pins were changed; the upstream owner/sink delta needs governed review before
 reconciliation. These five are recorded remaining failures, not regressions
 silently excluded from the successful repair selections.
+
+## Diagnostic reconciliation and trace-maintenance owner repair
+
+The preceding five diagnostic failures are now repaired: both complete files
+pass **327 tests in 409.28 seconds**. Independent review verified all 584 prior
+owner rows unchanged, exactly five upstream Meetings owners and the snapshot
+storage sink additions. Checked and freshly rebuilt inventories agree. Only the
+two stale boundary hashes and the missing zero summary field changed; all
+negative controls remain intact. The upstream Meetings exception diagnostics
+retain their classification, not a new metadata-only privacy certification.
+See `diagnostic-rebase-reconciliation-2026-09-05.md` and
+`/private/tmp/tldw-rebased-diagnostic-repaired.xml`. TASK-18801 remains In Progress
+solely for its clean-origin/dev integration criterion.
+
+TASK-31778 registers physical trace maintenance under its actual SQLite owner,
+fixing the module-owner guard without widening target kinds or backup authority.
+The five complete private-SQLite, core-owner, inventory and compaction/admission
+files report **383 passed / 2 failed / 2 Windows-only skips in 57.10 seconds**
+(`/private/tmp/tldw-trace-owner-final.xml`). The two failures remain explicit:
+
+- `LegacyCollectionsRecovery._read_transaction` still opens a raw read-only
+  connection outside the registered seam. Its source-mode preservation contract
+  needs review before migrating it; no blanket exception was added.
+- `_QuiescentSQLiteConnection.backup` delegates to `super().backup`, so the
+  direct-call inventory detects it. The wrapper reserves quiescence, not a new
+  destination; any inventory reconciliation must preserve that behavior and
+  reject genuinely new unregistered calls.
+
+Scoped Ruff, changed-range formatting and diff checks pass. The compactor and
+architecture test file retain unrelated existing whole-file formatting drift.
+Independent bounded review is clear after correcting the new inventory table
+row. Dependency/source warnings remain recorded. These are selected behavioral
+results, not full-suite, warning-free, resource-closure or merge qualification.
+All other previously recorded failure families and the two pending task-ID
+renumbering decisions remain open.
