@@ -211,7 +211,7 @@ class DetailValueRow(Vertical):
         assert self._value_static is not None, "update_value called before mount"
         if self._editor is not None:
             return
-        self._value_static.update(_literal(value))
+        self._value_static.update(_literal(value), layout=False)
 
     def show_error(self, msg: str) -> None:
         """Reveal the hidden error-line slot with ``msg``, rendered literally."""

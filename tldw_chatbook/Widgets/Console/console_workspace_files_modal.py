@@ -392,7 +392,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         # Console sync tick in that window.
         if self.is_attached:
             self.query_one("#console-workspace-files-attention", Static).update(
-                attention.status_copy
+                attention.status_copy, layout=False
             )
         return True
 
