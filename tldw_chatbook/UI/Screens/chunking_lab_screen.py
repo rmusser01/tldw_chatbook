@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
 from collections import deque
 from functools import partial
 from typing import ClassVar
@@ -1079,9 +1081,26 @@ class ChunkingLabScreen(BaseAppScreen):
 
             def read():
                 path = validate_path_simple(selected, require_exists=True)
+                if not path.is_file():
+                    raise ValueError("Choose a regular template JSON file")
                 limit = 8 * 1024 * 1024
-                with path.open("rb") as stream:
-                    payload = stream.read(limit + 1)
+                # A regular path can become a FIFO after admission. Open without
+                # waiting for a writer, then verify the actual descriptor before
+                # reading. Imported files keep their existing permissions.
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_NONBLOCK", 0)
+                    | getattr(os, "O_NOCTTY", 0)
+                    | getattr(os, "O_BINARY", 0)
+                )
+                descriptor = os.open(path, flags)
+                try:
+                    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                        raise ValueError("Choose a regular template JSON file")
+                    with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                        payload = stream.read(limit + 1)
+                finally:
+                    os.close(descriptor)
                 if len(payload) > limit:
                     raise ValueError("Import exceeds the supported file limit")
                 return payload

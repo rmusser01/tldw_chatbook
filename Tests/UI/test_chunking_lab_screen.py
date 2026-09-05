@@ -231,7 +231,10 @@ async def test_template_export_retains_tags_and_recovery_transfer(lab_app, tmp_p
         await screen.file_operation(
             "export-template", {"path": selected, "overwrite": True}
         )
+        (tmp_path / "template.json").chmod(0o644)
+        original_mode = (tmp_path / "template.json").stat().st_mode
         await screen.file_operation("import-template", {"path": selected})
+        assert (tmp_path / "template.json").stat().st_mode == original_mode
         draft = screen.coordinator.session.candidates[screen._b_id()]["draft"]
         assert draft["record_fields"]["tags"] == ["one", "two"]
         assert draft["expected_record"] is None
@@ -289,6 +292,68 @@ def lab_app(tmp_path, monkeypatch):
     # This fixture mounts its own initial Lab screen during each test.
     app._initial_screen_pushed = True
     return app
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
+@pytest.mark.asyncio
+async def test_template_import_refuses_fifo_without_changing_session(
+    lab_app, tmp_path, monkeypatch
+):
+    selected = tmp_path / "template.json"
+    os.mkfifo(selected)
+    original_open = Path.open
+
+    def guard_blocking_open(path, *args, **kwargs):
+        # Fail before the old blocking open: a regression must not hang teardown.
+        if path == selected:
+            pytest.fail("Template import attempted a blocking FIFO open")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guard_blocking_open)
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        await screen.drain_edits()
+        before = screen.coordinator.session
+        with pytest.raises(ValueError, match="regular"):
+            await screen.file_operation("import-template", {"path": str(selected)})
+        assert screen.coordinator.session == before
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
+@pytest.mark.asyncio
+async def test_template_import_refuses_file_replaced_by_fifo_at_open(
+    lab_app, tmp_path, monkeypatch
+):
+    selected = tmp_path / "template.json"
+    selected.write_text('{"chunking":{"method":"words"}}')
+    original_open = os.open
+    replaced = False
+
+    def replace_at_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if Path(path) == selected:
+            selected.unlink()
+            os.mkfifo(selected)
+            replaced = True
+            # Bound the failure even if the nonblocking guard regresses.
+            assert flags & os.O_NONBLOCK, "Template FIFO open could block"
+        return original_open(path, flags, *args, **kwargs)
+
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        await screen.drain_edits()
+        before = screen.coordinator.session
+        monkeypatch.setattr(os, "open", replace_at_open)
+        with pytest.raises(ValueError, match="regular"):
+            await screen.file_operation("import-template", {"path": str(selected)})
+        assert replaced
+        assert screen.coordinator.session == before
 
 
 @pytest.mark.asyncio

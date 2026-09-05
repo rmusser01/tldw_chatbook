@@ -20,7 +20,7 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import (
     Button,
@@ -129,12 +129,8 @@ async def test_chunking_template_save_invalidates_mounted_picker_cache():
 class _QueuePanelHost(ConsolidatedCSSApp):
     """Mount only the real queue panel with the shipped app stylesheet."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    # Queue rules live in the lazy Library sheet, not the boot bundle alone.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, state: LibraryIngestCanvasState) -> None:
         super().__init__()

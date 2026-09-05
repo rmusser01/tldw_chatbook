@@ -140,9 +140,30 @@ def _recipe(recipe):
         raise ValueError("Captured recipe digest mismatch")
 
 
+def _bounded_blob(value, kind):
+    """Admit raw payload sizes before model copies or integrity calculations."""
+    sample = (
+        value
+        if kind == "sample"
+        else (value["request"] if kind == "result" else value)["sample"]
+    )
+    if len(sample["text"].encode("utf-8")) > MAX_SAMPLE_BYTES:
+        raise ValueError("Sample exceeds the 2 MiB limit")
+    if (
+        kind == "result"
+        and value["report"]
+        and len(value["report"]["chunks"]) > MAX_CHUNKS
+    ):
+        raise ValueError("Result exceeds the 10,000 chunk limit")
+    encoded = canonical_json(value).encode("utf-8")
+    if kind == "result" and len(encoded) > MAX_RESULT_BYTES:
+        raise ValueError("Result exceeds the 32 MiB limit")
+    return encoded
+
+
 def _measure(value, kind):
     depth = _depth(value)
-    encoded = canonical_json(value).encode("utf-8")
+    encoded = _bounded_blob(value, kind)
     samples = []
     if kind == "sample":
         samples.append(value)
@@ -158,20 +179,13 @@ def _measure(value, kind):
         samples.append(request["sample"])
         _recipe(request["recipe"])
     for sample in samples:
-        if len(sample["text"].encode("utf-8")) > MAX_SAMPLE_BYTES:
-            raise ValueError("Sample exceeds the 2 MiB limit")
         if (
             hashlib.sha256(sample["text"].encode("utf-8")).hexdigest()
             != sample["sample_hash"]
         ):
             raise ValueError("Sample digest mismatch")
-    if kind == "result":
-        if type(value["elapsed_ms"]) not in (int, float):
-            raise ValueError("Elapsed time must be numeric")
-        if len(encoded) > MAX_RESULT_BYTES:
-            raise ValueError("Result exceeds the 32 MiB limit")
-        if value["report"] and len(value["report"]["chunks"]) > MAX_CHUNKS:
-            raise ValueError("Result exceeds the 10,000 chunk limit")
+    if kind == "result" and type(value["elapsed_ms"]) not in (int, float):
+        raise ValueError("Elapsed time must be numeric")
     return (
         value,
         len(encoded),
@@ -179,6 +193,30 @@ def _measure(value, kind):
         hashlib.sha256(encoded).hexdigest(),
         tuple(sample["sample_hash"] for sample in samples),
     )
+
+
+def _bounded_checkpoint(document):
+    """Measure the small graph without copying sample, result, or request blobs."""
+    small = {
+        **document,
+        "samples": {key: None for key in document["samples"]},
+        "results": {key: None for key in document["results"]},
+    }
+    if document["batch"]:
+        small["batch"] = {
+            **document["batch"],
+            "requests": {key: None for key in document["batch"]["requests"]},
+        }
+    for candidate in document["candidates"].values():
+        if (
+            candidate.get("draft")
+            and len(candidate["draft"]["raw_json"].encode("utf-8")) > MAX_DRAFT_BYTES
+        ):
+            raise ValueError("Raw draft exceeds the 2 MiB limit")
+    _depth({"session": small})
+    if len(canonical_json(small).encode("utf-8")) > MAX_CHECKPOINT_BYTES:
+        raise ValueError("Recovery checkpoint exceeds the 8 MiB limit")
+    return small
 
 
 def validate_active(session: LabSession, *, reuse: bool = False) -> dict:
@@ -190,28 +228,10 @@ def validate_active(session: LabSession, *, reuse: bool = False) -> dict:
     """
     validate_view(session.view)
     active = prune_session(session, include_undo=False)
-    document = _document(active)
-    small = {
-        **document,
-        "samples": {key: None for key in active.samples},
-        "results": {key: None for key in active.results},
-    }
-    if active.batch:
-        small["batch"] = {
-            **active.batch,
-            "requests": {key: None for key in active.batch["requests"]},
-        }
+    small = _bounded_checkpoint(_document(active))
     for candidate in active.candidates.values():
-        if (
-            candidate.get("draft")
-            and len(candidate["draft"]["raw_json"].encode("utf-8")) > MAX_DRAFT_BYTES
-        ):
-            raise ValueError("Raw draft exceeds the 2 MiB limit")
         if candidate.get("pinned_recipe"):
             _recipe(candidate["pinned_recipe"])
-    _depth({"session": small})
-    if len(canonical_json(small).encode("utf-8")) > MAX_CHECKPOINT_BYTES:
-        raise ValueError("Recovery checkpoint exceeds the 8 MiB limit")
     prior = getattr(session, "_recovery_measurements", {}) if reuse else {}
     measured, sample_ids, digests = (
         {},
@@ -336,6 +356,38 @@ def rebase_recovery(session: LabSession, profile_key: str, epoch: str) -> LabSes
     )
 
 
+def _admit_document(document):
+    """Bound untrusted containers before full model and reference validation."""
+    if any(
+        not isinstance(document[field], dict)
+        for field in ("candidates", "samples", "results")
+    ):
+        raise ValueError("Recovery collections must be objects")
+    if not 1 <= len(document["candidates"]) <= 2:
+        raise ValueError("Lab v1 supports at most two candidates")
+    if len(document["samples"]) + len(document["results"]) > MAX_BLOBS:
+        raise ValueError("Recovery exceeds 16 referenced sample/result blobs")
+    requests = {}
+    if document["batch"] is not None:
+        requests = document["batch"]["requests"]
+        if not isinstance(requests, dict) or not 1 <= len(requests) <= 2:
+            raise ValueError("Illegal batch candidate membership")
+    _bounded_checkpoint(document)
+    sample_ids = set(document["samples"])
+    for kind, values in (
+        ("sample", document["samples"]),
+        ("result", document["results"]),
+        ("request", requests),
+    ):
+        for value in values.values():
+            _bounded_blob(value, kind)
+            if kind != "sample":
+                request = value["request"] if kind == "result" else value
+                sample_ids.add(request["sample"]["sample_hash"])
+    if len(sample_ids) + len(document["results"]) > MAX_BLOBS:
+        raise ValueError("Recovery exceeds 16 referenced sample/result blobs")
+
+
 def parse_recovery(payload: bytes) -> LabSession:
     """Inspect a bounded envelope without executing recipes or reading source paths."""
     try:
@@ -362,19 +414,16 @@ def parse_recovery(payload: bytes) -> LabSession:
             or not isinstance(document["epoch"], str)
         ):
             raise ValueError("Invalid session identity")
-        # Check byte/count limits before Pydantic reconstructs nested blobs.
-        raw = LabSession.model_construct(**document, undo=())
-        if not isinstance(raw.candidates, dict) or not 1 <= len(raw.candidates) <= 2:
-            raise ValueError("Lab v1 supports at most two candidates")
-        active = prune_session(raw, include_undo=False)
+        _admit_document(document)
+        session = LabSession.model_validate({**document, "undo": []})
+        active = prune_session(session, include_undo=False)
         if (
-            active.samples.keys() != raw.samples.keys()
-            or active.results.keys() != raw.results.keys()
+            active.samples.keys() != session.samples.keys()
+            or active.results.keys() != session.results.keys()
         ):
             raise ValueError("Recovery contains unreferenced blobs")
-        if validate_active(raw) != envelope["digests"]:
+        if validate_active(session) != envelope["digests"]:
             raise ValueError("Recovery reference digest mismatch")
-        session = LabSession.model_validate({**document, "undo": []})
         _membership(session)
         session = interrupt_unfinished(session)
         validate_active(session)

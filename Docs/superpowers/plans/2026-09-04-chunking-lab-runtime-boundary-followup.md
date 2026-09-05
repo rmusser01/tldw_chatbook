@@ -1,9 +1,34 @@
 # Chunking Lab Runtime Boundary Follow-up Implementation Plan
 
-Status: Both tasks implemented and independently reviewed; final combined gate
+Status of original follow-up: Both tasks implemented and independently reviewed; final combined gate
 473 passed, 2 known warnings in106.29s. TASK-31645 AC15 is complete. Checklists
 below retain planning history; current evidence and limits are in
-[verification](../../Chunking_Lab_Verification.md). No merge or push performed.
+[verification](../../Chunking_Lab_Verification.md). No merge or push performed at that checkpoint.
+
+## PR integration addendum (2026-09-05)
+
+User authorization now includes rebase, all actionable PR 2416 feedback, and merge
+after current-head review and required checks. TASK-31645 AC16 tracks completion.
+ADR required: no new ADR; existing ADR-078 and ADR-118 apply to direct review
+corrections without new runtime, storage, privacy, or route ownership.
+
+1. Preserve the original checkout and pre-rebase head; rebase the feature worktree
+   onto current dev, retain both sides of additive docs, and review/regenerate
+   the integrated diagnostic inventory.
+2. Correct Qodo's recovery-validation ordering and FIFO import findings with
+   observed failing/passing regressions; complete API docs/types and share named
+   preview ceilings without changing policy.
+3. Verify affected integration checks and independently review the combined diff.
+   Run scoped lint, formatting, targeted tests, and preflight before every push.
+4. Publish using the exact previous remote SHA as a force-with-lease, reply to
+   review threads with evidence, and resolve only addressed findings.
+5. Merge only the reviewed current head with latest dev ancestry and required CI
+   passing. Do not bypass protection, upgrade dependencies, or run a full sweep.
+
+Local outcome: 635 targeted tests passed; independent review found no issues.
+The local ingest test host now loads the existing Library stylesheet collection;
+production styling is unchanged. Detailed evidence and historical qualifications
+remain in the verification record. Remote checks/review remain pending.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 

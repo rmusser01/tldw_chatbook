@@ -11363,3 +11363,11 @@ Rules, each half of the incident:
   of the eight failures on the branch arm, five were pre-existing, three
   were real — and the real three were invisible without the pristine-base
   arm run in the same mode.
+
+Recurrence, PR2416 (2026-09-05): the rebased Chunking Lab route/ingest selection
+passed146 tests but failed both progress-detail color assertions. `_QueuePanelHost`
+still named only `tldw_cli_modular.tcss`, so Library-owned progress and row colors
+both resolved to white. Switching this local host to the existing
+`APP_STYLESHEETS` authority made the exact two compositor assertions pass in4.53s;
+the combined targeted gate then passed635. No production styling changed. Extending
+the shared authority does not repair local hosts that continue to bypass it.

@@ -87,6 +87,56 @@ def test_oversized_raw_draft_is_rejected_on_import():
         parse_recovery(json.dumps(envelope).encode())
 
 
+@pytest.mark.parametrize("change", ["draft", "sample", "result", "reference"])
+def test_malformed_session_is_validated_before_pruning(monkeypatch, change):
+    from tldw_chatbook.Chunking import lab_recovery
+
+    envelope = json.loads(export_recovery(completed_session()))
+    document = envelope["session"]
+    candidate = next(iter(document["candidates"].values()))
+    if change == "draft":
+        candidate["draft"]["record_fields"]["name"] = []
+    elif change == "sample":
+        next(iter(document["samples"].values()))["source"] = []
+    elif change == "result":
+        next(iter(document["results"].values()))["report"]["chunks"][0]["text"] = []
+    else:
+        candidate["current_run_id"] = "missing"
+
+    def no_unvalidated_pruning(*args, **kwargs):
+        pytest.fail("Malformed import reached session pruning before validation")
+
+    monkeypatch.setattr(lab_recovery, "prune_session", no_unvalidated_pruning)
+    with pytest.raises(RecoveryImportError):
+        parse_recovery(json.dumps(envelope).encode())
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [
+        "MAX_DRAFT_BYTES",
+        "MAX_SAMPLE_BYTES",
+        "MAX_RESULT_BYTES",
+        "MAX_CHECKPOINT_BYTES",
+        "MAX_CHUNKS",
+        "MAX_BLOBS",
+    ],
+)
+def test_import_limits_precede_nested_model_reconstruction(monkeypatch, limit):
+    from tldw_chatbook.Chunking import lab_recovery
+    from tldw_chatbook.Chunking.lab_models import LabSession
+
+    payload = export_recovery(completed_session())
+
+    def no_oversized_reconstruction(*args, **kwargs):
+        pytest.fail("Oversized import reached nested model reconstruction")
+
+    monkeypatch.setattr(lab_recovery, limit, 0)
+    monkeypatch.setattr(LabSession, "model_validate", no_oversized_reconstruction)
+    with pytest.raises(RecoveryImportError):
+        parse_recovery(payload)
+
+
 def test_pending_controls_and_old_captured_runtime_remain_readable(monkeypatch):
     from tldw_chatbook.Chunking import lab_preflight, lab_state
     from tldw_chatbook.Chunking.lab_state import edit_control, pin_baseline

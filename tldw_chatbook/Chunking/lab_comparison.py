@@ -10,9 +10,55 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from .lab_models import RunResult
+
+
+class CountDistribution(TypedDict):
+    """Chunk-size totals and quantiles; empty output has no quantiles."""
+
+    minimum: int | None
+    median: int | float | None
+    p95: int | None
+    maximum: int | None
+    total: int
+
+
+class MethodBudget(TypedDict):
+    """Captured method budget, measured only for recognized counting units."""
+
+    method: str | None
+    limit: int | float | None
+    unit: str | None
+    oversized_chunks: int | None
+
+
+class ResultSummary(TypedDict):
+    """Output measurements and their definitions for one captured result."""
+
+    status: str
+    chunk_count: int
+    characters: CountDistribution
+    words: CountDistribution
+    character_sizes: tuple[int, ...]
+    word_sizes: tuple[int, ...]
+    tokens: CountDistribution | None
+    measurement_id: str | None
+    budget: MethodBudget
+    expansion_ratio: float | None
+    overlap_characters: int | None
+    elapsed_ms_observation: float
+    definitions: dict[str, str]
+
+
+class ComparisonDeltas(TypedDict):
+    """B minus A counts, with tokens present only for matching measurements."""
+
+    chunk_count: int
+    characters: int
+    words: int
+    tokens: NotRequired[int]
 
 
 def comparison_reason(a: RunResult, b: RunResult) -> str | None:
@@ -29,7 +75,7 @@ def comparison_reason(a: RunResult, b: RunResult) -> str | None:
     return None
 
 
-def _distribution(values: tuple[int, ...]) -> dict:
+def _distribution(values: tuple[int, ...]) -> CountDistribution:
     ordered = sorted(values)
     return {
         "minimum": ordered[0] if ordered else None,
@@ -88,7 +134,7 @@ def summarize_result(
     *,
     token_counts: tuple[int, ...] | None = None,
     measurement_id: str | None = None,
-) -> dict:
+) -> ResultSummary:
     """Measure captured output shape using code points and whitespace words.
 
     Args:
@@ -134,7 +180,7 @@ def summarize_result(
     ):
         limit = None
     sizes = words if unit == "words" else characters
-    budget = {
+    budget: MethodBudget = {
         "method": method,
         "limit": limit,
         "unit": unit,
@@ -175,9 +221,9 @@ def summarize_result(
     }
 
 
-def comparison_deltas(a: dict, b: dict) -> dict:
+def comparison_deltas(a: ResultSummary, b: ResultSummary) -> ComparisonDeltas:
     """Return B minus A common counts; caller first checks compatibility."""
-    result = {
+    result: ComparisonDeltas = {
         "chunk_count": b["chunk_count"] - a["chunk_count"],
         "characters": b["characters"]["total"] - a["characters"]["total"],
         "words": b["words"]["total"] - a["words"]["total"],

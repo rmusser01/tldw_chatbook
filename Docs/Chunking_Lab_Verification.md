@@ -1,12 +1,58 @@
 # Chunking Lab verification record
 
-Branch: `codex/chunking-lab`, based on `origin/dev` commit
-`1a82db60ce47890c6d2df9f918f80309c8608ea6`. Architecture:
+Branch: `codex/chunking-lab`, originally based on `origin/dev` commit
+`1a82db60ce47890c6d2df9f918f80309c8608ea6`, rebased onto
+`93388ba69b7499c2bc3180fc26c82d7f341871a7` on 2026-09-05. Architecture:
 [ADR-118](../backlog/decisions/118-chunking-lab-local-execution-and-recovery.md).
 [Workflow and limits](Chunking_Lab.md),
 [implementation plan](superpowers/plans/2026-09-04-chunking-lab.md).
 
-## Pre-push bookkeeping correction (2026-09-05)
+## PR 2416 integration and Qodo corrections (2026-09-05)
+
+The user explicitly authorized rebasing onto latest dev, addressing PR feedback,
+and merging after verification. This supersedes the earlier publication-only
+authorization below. The 31-commit rebase completed at `e96ebdb23c`; additive ADR
+and lesson conflicts retain both branches' content. The diagnostic inventory was
+regenerated against the integrated sources after reviewing the same exception-
+class-only cleanup diagnostic and explicit private export sink described below.
+The pre-rebase head `cfd097b1aa` remains on backup branch
+`codex/chunking-lab-pre-rebase-20260905`; historical evidence commit IDs remain valid.
+
+All five Qodo findings on the original PR head are corrected:
+
+- Recovery (comment 3940995304): raw size/count admission precedes full nested
+  Pydantic validation; only validated sessions reach pruning/digest processing.
+  Malformed structure and oversized pre-validation cases have regression tests.
+- Record fields (3940995308): complete Google-style argument/return documentation.
+- Comparison (3940995314): structured summary/distribution/budget/delta TypedDicts,
+  including unavailable values and optional token deltas; no runtime change.
+- Preview limits (3940995315): shared named ceilings for defaults and validation,
+  without conflating independent IPC/working-memory policies.
+- Template import (3940995316): regular-path admission plus nonblocking descriptor
+  open and `fstat` closes the FIFO replacement race. Real FIFO/race tests verify
+  rejection without session changes; ordinary imports preserve source permissions.
+
+The affected ingest compositor tests initially reproduced two progress-color
+failures (146 passed, 2 failed). Their local host loaded only the boot stylesheet,
+omitting the lazy Library rules. Loading existing `APP_STYLESHEETS` fixes both
+assertions (2 passed in 4.53s); production styling and shared harness are unchanged.
+The two formerly failing diagnostic-architecture tests now pass on latest dev;
+their source guards were corrected upstream, not weakened in this branch.
+
+Final combined targeted feature, compatibility, route/ingest, diagnostic and
+private-SQLite gate: **635 passed, zero failures/errors/skips, 5 warnings in
+157.71s**. Genuine XML: `qodo-final-targeted.xml` in the follow-up evidence
+directory. Warnings are the existing Requests version warning, vendored datetime
+deprecation, and three unrelated invalid-escape SyntaxWarnings. Scoped Ruff,
+format checks and whitespace checks pass; the legacy ingest module retains its
+existing narrowed lint selection. Independent correction review found no
+Critical, Important or Minor findings and independently ran recovery/comparison
+(82 passed) and template import/export (3 passed). No full-suite sweep or broader
+platform/startup qualification is claimed. Existing ADR-078/ADR-118 apply; no new
+architecture decision is introduced. Current-head remote review and required CI
+remain merge gates, not implied by these local results.
+
+## Historical pre-push bookkeeping correction (2026-09-05)
 
 The user selected push/create PR, then explicitly approved correcting task-ID
 collisions and the diagnostic inventory before publication. No implementation

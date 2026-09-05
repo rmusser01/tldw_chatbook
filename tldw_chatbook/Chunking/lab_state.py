@@ -604,7 +604,17 @@ def _template_record(candidate: dict) -> dict | None:
 
 
 def captured_record_fields(fields: dict) -> dict:
-    """Derive canonical tags at capture/save/export without rewriting raw input."""
+    """Derive canonical tags at capture/save/export without rewriting raw input.
+
+    Args:
+        fields: Authored record fields, optionally including raw comma-separated
+            ``tags_text`` or an existing ``tags`` list. Raw text takes precedence.
+
+    Returns:
+        A new dictionary containing name, description, and a detached tags list.
+        Missing name/description default to empty strings. Raw tags are stripped
+        and empty entries omitted; existing tags are copied without normalization.
+    """
     return {
         "name": fields.get("name", ""),
         "description": fields.get("description", ""),

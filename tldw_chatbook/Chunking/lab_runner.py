@@ -34,28 +34,37 @@ _REAP_SECONDS = 0.5
 _POLL_SECONDS = 0.025
 _FRAME_HEADER = 8
 _MAX_INPUT_BYTES = 33554432
+_MAX_SAMPLE_BYTES = 2097152
+_MAX_CHUNKS = 10000
+_MAX_RESULT_BYTES = 33554432
+_MAX_WALL_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
 class PreviewLimits:
     """Hard parent budgets; lower values support explicit smaller previews."""
 
-    sample_bytes: int = 2097152
-    chunks: int = 10000
-    result_bytes: int = 33554432
-    wall_seconds: float = 60.0
+    sample_bytes: int = _MAX_SAMPLE_BYTES
+    chunks: int = _MAX_CHUNKS
+    result_bytes: int = _MAX_RESULT_BYTES
+    wall_seconds: float = _MAX_WALL_SECONDS
 
     def __post_init__(self):
         for name, ceiling in (
-            ("sample_bytes", 2097152),
-            ("chunks", 10000),
-            ("result_bytes", 33554432),
+            ("sample_bytes", _MAX_SAMPLE_BYTES),
+            ("chunks", _MAX_CHUNKS),
+            ("result_bytes", _MAX_RESULT_BYTES),
         ):
             value = getattr(self, name)
             if type(value) is not int or not 0 < value <= ceiling:
                 raise ValueError(f"{name} must be positive and within the v1 ceiling")
-        if not math.isfinite(self.wall_seconds) or not 0 < self.wall_seconds <= 60:
-            raise ValueError("wall_seconds must be positive and at most 60")
+        if (
+            not math.isfinite(self.wall_seconds)
+            or not 0 < self.wall_seconds <= _MAX_WALL_SECONDS
+        ):
+            raise ValueError(
+                f"wall_seconds must be positive and at most {_MAX_WALL_SECONDS:g}"
+            )
 
 
 class _Limited(ValueError):
