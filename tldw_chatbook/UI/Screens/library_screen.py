@@ -9681,8 +9681,19 @@ class LibraryScreen(BaseAppScreen):
             # true -- the cancelled worker cannot resume until this handler
             # yields. Finished items persisted; the rest simply never ran,
             # and a fresh run skips what is already analysed.
+            #
+            # (task-28007 Task 3, N1) ``_library_media_analyze_total`` is
+            # only stamped once the AC#3 partition pass resolves -- an
+            # unmount that lands DURING that pass (still awaiting
+            # ``_library_media_unanalyzed_ids``) sees total == 0 and would
+            # otherwise notify the nonsensical "stopped at 0 of 0".
             notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
+            if callable(notify) and self._library_media_analyze_total == 0:
+                notify(
+                    "Analysis stopped before it started",
+                    severity="warning",
+                )
+            elif callable(notify):
                 notify(
                     f"Analysis stopped at {self._library_media_analyze_done} "
                     f"of {self._library_media_analyze_total} · reopen "
@@ -42478,7 +42489,11 @@ class LibraryScreen(BaseAppScreen):
                 # Progress only: if the user has left the media canvas
                 # mid-run, a missing canvas must NOT escalate to a
                 # whole-screen recompose once per item on whatever screen
-                # they moved to. The settling sync below keeps the default.
+                # they moved to. The settling sync below uses the SAME
+                # no-fallback rule (task-28007 Task 3, N2 -- this comment
+                # used to claim it "keeps the default", which the fix-round-1
+                # change to that sync's own ``allow_screen_fallback=False``
+                # contradicted).
                 _sync_library_canvas(self, "media", allow_screen_fallback=False)
         finally:
             self._library_media_analyze_running = False

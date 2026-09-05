@@ -665,6 +665,56 @@ async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
 
 
 @pytest.mark.asyncio
+async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
+    """task-28007 Task 3 (N1): an unmount that lands DURING the AC#3
+    partition pass -- before ``_library_media_analyze_total`` is ever
+    stamped -- must not notify the nonsensical "stopped at 0 of 0"."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _blocked_unanalyzed(media_ids):
+            entered.set()
+            await release.wait()
+            return media_ids
+
+        screen._library_media_unanalyzed_ids = _blocked_unanalyzed
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._start_library_media_analyze(("a", "b"), overwrite=False)
+        worker = next(
+            candidate
+            for candidate in host.workers
+            if candidate.group
+            == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+        )
+        await _wait_for_condition(
+            pilot,
+            entered.is_set,
+            message="the run never reached the partition pass",
+        )
+        assert screen._library_media_analyze_total == 0
+        await host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert worker.state is WorkerState.CANCELLED
+        assert notices, "a run cancelled before its total is known must still say so"
+        assert notices[0][0] == "Analysis stopped before it started", notices
+        assert notices[0][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
 async def test_analyze_bulk_action_follows_the_selection_in_place():
     """task-28007 AC#4, learning task-28242's Qodo #2335 lesson: the
     in-place row-toggle patcher must flip Analyze alongside Export/Review
