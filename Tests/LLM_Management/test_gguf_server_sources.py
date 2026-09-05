@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-from contextlib import contextmanager
-from dataclasses import dataclass
 import os
-from pathlib import Path
-import signal
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import pytest
@@ -28,11 +28,11 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
 from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
     llm_management_events_vllm as vllm_events,
 )
+from tldw_chatbook.Event_Handlers.LLM_Management_Events import server_lifecycle
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes import (
     GGUFSourceMode,
     GGUFSourceSelection,
 )
-from tldw_chatbook.Event_Handlers.LLM_Management_Events import server_lifecycle
 from tldw_chatbook.Model_Artifacts import (
     ArtifactInUseError,
     ArtifactOperationLease,
@@ -41,7 +41,6 @@ from tldw_chatbook.Model_Artifacts import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.gguf_admission import OpenedLocalGGUF
-
 
 REF = ArtifactRef("local-gguf-example", "sha256-abc", "q4-k-m")
 INACTIVE_REF = ArtifactRef("inactive", "sha256-def", "q8-0")
@@ -253,6 +252,136 @@ def _reserve(
     )
     assert claim is not None
     return claim
+
+
+@pytest.mark.parametrize("stop_during_prepare", [False, True])
+def test_snapshot_launch_prepares_private_directory_before_popen_and_preserves_lease(
+    tmp_path, monkeypatch, stop_during_prepare
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+    from tldw_chatbook.LLM_Management.snapshot_store import SnapshotStore
+
+    model = tmp_path / "model.gguf"
+    _write_sparse_gguf(model)
+    runtime = tmp_path / "llama-server"
+    runtime.write_bytes(b"runtime")
+    store = SnapshotStore(tmp_path / "snapshots")
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=store)
+    selection = _selection(GGUFSourceMode.MANAGED, managed_ref=REF)
+    claim = _reserve(app, "llamacpp", selection)
+    lease = _Lease()
+    monkeypatch.setattr(events, "managed_service", lambda: object())
+    monkeypatch.setattr(events, "acquire_managed_gguf", lambda *args: (model, lease))
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    monkeypatch.setattr(
+        events, "_snapshot_listener_exists", lambda url: False, raising=False
+    )
+    prepare = store.prepare_launch_directory
+    directories = []
+
+    def prepare_directory(launch_id):
+        directory = prepare(launch_id)
+        directories.append(directory)
+        if stop_during_prepare:
+            claim.cancel_event.set()
+        return directory
+
+    monkeypatch.setattr(store, "prepare_launch_directory", prepare_directory)
+    calls = []
+
+    def run(app, provider, command, captured_claim, subprocess_module, **kwargs):
+        calls.append((command, kwargs))
+        assert captured_claim is claim
+        assert claim._resource is lease
+        assert directories[0].is_dir()
+        assert claim._snapshot_context.directory == directories[0]
+        return "started"
+
+    monkeypatch.setattr(events, "run_server_subprocess", run)
+    events._run_gguf_server_worker(
+        app,
+        "llamacpp",
+        str(runtime),
+        "127.0.0.1",
+        "8080",
+        (
+            "--ctx-size",
+            "4096",
+            "--flash-attn",
+            "off",
+            "--fit",
+            "off",
+            "--device",
+            "none",
+            "--n-gpu-layers",
+            "0",
+            "--no-mmproj",
+        ),
+        selection,
+        claim,
+    )
+    assert len(directories) == 1
+    if stop_during_prepare:
+        assert calls == []
+        assert lease.close_count == 1
+    else:
+        command, kwargs = calls[0]
+        assert command.count("--slots") == command.count("--slot-save-path") == 1
+        assert (
+            command[command.index("--slot-save-path") + 1]
+            == str(directories[0]) + os.sep
+        )
+        assert kwargs["private_umask"] == 0o077
+        assert kwargs["env"] is not os.environ
+        assert lease.close_count == 0
+
+
+def test_snapshot_preflight_refuses_existing_listener_before_directory_or_spawn(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+
+    model = tmp_path / "model.gguf"
+    _write_sparse_gguf(model)
+    runtime = tmp_path / "llama-server"
+    runtime.write_bytes(b"runtime")
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=object())
+    selection = _selection(GGUFSourceMode.EXTERNAL, external_path=model)
+    claim = _reserve(app, "llamacpp", selection)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    observed = []
+    monkeypatch.setattr(
+        events,
+        "_snapshot_listener_exists",
+        lambda url: observed.append(url) or True,
+        raising=False,
+    )
+    spawned = []
+    monkeypatch.setattr(
+        events, "run_server_subprocess", lambda *args, **kwargs: spawned.append(args)
+    )
+    events._run_gguf_server_worker(
+        app, "llamacpp", str(runtime), "127.0.0.1", "8080", (), selection, claim
+    )
+    assert observed == ["http://127.0.0.1:8080"]
+    assert spawned == []
+    assert server_lifecycle.current_server_claim(app, "llamacpp") is None
 
 
 _SOURCE_OVERRIDE_ARGUMENTS = (

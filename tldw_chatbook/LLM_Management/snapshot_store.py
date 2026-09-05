@@ -12,7 +12,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -422,6 +422,8 @@ class SnapshotStore:
         evidence: CompatibilityEvidence,
         model_label: str,
         keep_count: int,
+        *,
+        validate_publication: Callable[[], bool] | None = None,
     ) -> SaveResult:
         """Durably publish acknowledged complete bytes, then prune by publication order."""
         with self._locked():
@@ -479,6 +481,14 @@ class SnapshotStore:
                 metadata = record.model_dump_json()
                 if len(metadata.encode()) > MAX_METADATA_BYTES:
                     raise _error("metadata_too_large")
+                if validate_publication is not None:
+                    admitted = False
+                    try:
+                        admitted = validate_publication() is True
+                    except Exception:  # noqa: BLE001 - failed validation cannot authorize publication
+                        admitted = False
+                    if not admitted:
+                        raise _error("publication_invalidated")
                 _move_verified(
                     working.path, self.catalog / record.filename, _identity(info)
                 )

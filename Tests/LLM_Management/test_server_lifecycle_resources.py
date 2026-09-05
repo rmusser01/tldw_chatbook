@@ -148,6 +148,55 @@ class _SubprocessModule:
         return self.process
 
 
+@pytest.mark.parametrize("configured", [False, True])
+def test_snapshot_subprocess_options_are_opt_in(configured):
+    import os
+
+    app = _App()
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+    captured = []
+
+    class Subprocess:
+        def Popen(self, command, **kwargs):
+            captured.append(kwargs)
+            return _Process()
+
+    options = {"env": {"FROZEN": "yes"}, "private_umask": 0o077} if configured else {}
+    server_lifecycle.run_server_subprocess(
+        app, "llamacpp", ["server"], claim, Subprocess(), **options
+    )
+    assert len(captured) == 1
+    if configured:
+        assert captured[0]["env"] == {"FROZEN": "yes"}
+        assert captured[0].get("umask") == (0o077 if os.name == "posix" else None)
+    else:
+        assert "env" not in captured[0]
+        assert "umask" not in captured[0]
+
+
+def test_snapshot_live_predicate_requires_exact_child_not_listener():
+    app = _App()
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+    assert not server_lifecycle.snapshot_claim_is_live(app, claim)
+    process = _Process()
+    server_lifecycle.publish_server_process(app, "llamacpp", claim, process)
+    assert server_lifecycle.snapshot_claim_is_live(app, claim)
+    process.running = False
+    assert not server_lifecycle.snapshot_claim_is_live(app, claim)
+
+
+def test_snapshot_readiness_rejects_unverifiable_child_liveness():
+    app = _App()
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+
+    class UnverifiableProcess:
+        def poll(self):
+            raise OSError("private-process-canary")
+
+    app.llamacpp_server_process = UnverifiableProcess()
+    assert server_lifecycle.snapshot_claim_is_live(app, claim) is False
+
+
 def _reserve_with_resource(
     app: _App,
     resource: _Resource,

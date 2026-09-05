@@ -12,7 +12,7 @@
 
 **Backlog:** [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
-**Status:** Implementation plan; application code and runtime verification not started.
+**Status:** Implementation in progress. Units 1–3 are implemented and reviewed; lifecycle, UI, and live verification remain. See TASK-31552 for feature completion status.
 
 ADR required: yes
 
@@ -49,7 +49,7 @@ Verified integration points:
 - `Event_Handlers/LLM_Management_Events/llm_management_events.py`: `_build_gguf_server_command()` appends extra arguments after form host/port. `_run_gguf_server_worker()` resolves external/managed model sources and retains the existing managed lease on the launch claim.
 - `Event_Handlers/LLM_Management_Events/server_lifecycle.py`: `ServerLaunchClaim`, `current_server_claim()`, `publish_server_process()`, `release_server_claim()`, `stop_server_process()`, and `run_server_subprocess()`. Process publication currently precedes API readiness. The claim's single `_resource` is already used by managed-model leases; do not commandeer it for snapshots.
 - `app.py`: compose after configuration and local launch state exist. Integrate idempotent teardown into `_shutdown_app_owned_lifecycles()`, which runs before Textual closes screens and is called again defensively on unmount.
-- `UI/LLM_Management_Window.py`: `_compose_server_panes()` and `_sync_process_controls()`. Preserve lazy provider-pane mounting and the existing Start/Stop IDs.
+- `UI/LLM_Management_Window.py`: `compose()` and `_sync_process_controls()`. In the execution checkout, six server views are eager and five Ollama/library views arrive via `_finish_deferred_mount()`. Preserve that boundary and the existing Start/Stop IDs; do not introduce an unrelated lazy-pane refactor.
 - `UI/Screens/settings_screen.py`: use Providers & Models for the snapshot preferences. Its `SettingsConfigAdapter.save_sections()` delegates to `config.save_settings_to_cli_config()`; do not use the per-key `save_values()` loop for this pair of settings.
 - `config.py`: add defaults to `CONFIG_TOML_CONTENT`; use `get_cli_setting()` at action boundaries and `get_user_data_dir()` off-thread when creating the store.
 - Tests already cover source authority, model leases, lazy panes, production CSS, and config ownership. Extend them instead of replacing their harnesses.
@@ -102,7 +102,8 @@ SnapshotStore(root: Path)
 SnapshotStore.prepare_launch_directory(launch_id: str) -> Path
 SnapshotStore.reserve_save(launch_id: str, slot_id: int) -> WorkingFile
 SnapshotStore.commit_save(working: WorkingFile, receipt: SlotReceipt,
-    evidence: CompatibilityEvidence, model_label: str, keep_count: int) -> SaveResult
+    evidence: CompatibilityEvidence, model_label: str, keep_count: int,
+    *, validate_publication: Callable[[], bool] | None = None) -> SaveResult
 SnapshotStore.stage_restore(snapshot_id: str, launch_id: str) -> WorkingFile
 SnapshotStore.list_records(offset: int = 0, limit: int = 50) -> CatalogPage
 SnapshotStore.delete(snapshot_id: str) -> tuple[str, ...]
@@ -116,10 +117,12 @@ SnapshotClient.slots() -> async tuple[SlotObservation, ...]
 SnapshotClient.save(slot_id: int, filename: str) -> async SlotReceipt
 SnapshotClient.restore(slot_id: int, filename: str) -> async SlotReceipt
 SnapshotClient.aclose() -> async None
-LlamaCppSnapshotService(store: SnapshotStore,
+LlamaCppSnapshotService(store: SnapshotStore | None,
     is_current: Callable[[ServerLaunchClaim], bool])
+LlamaCppSnapshotService.initialize(root_factory: Callable[[], Path]) -> async None
 LlamaCppSnapshotService.attach(descriptor: LaunchDescriptor) -> None
 LlamaCppSnapshotService.refresh() -> async None
+LlamaCppSnapshotService.browse_catalog(offset: int = 0, limit: int = 50) -> async None
 LlamaCppSnapshotService.start_save(slot_id: int) -> str
 LlamaCppSnapshotService.start_restore(snapshot_id: str, slot_id: int) -> str
 LlamaCppSnapshotService.delete_snapshot(snapshot_id: str) -> async None
@@ -137,7 +140,7 @@ LlamaCppSnapshotService.shutdown() -> async None
 
 **Interfaces:** Produces the shared types and the settings/admission APIs above. Consumes existing `ServerLaunchClaim`, config owner, path validation and managed GGUF identity primitives.
 
-- [ ] Write strict preference tests before adding defaults or modules:
+- [x] Write strict preference tests before adding defaults or modules:
 
 ```python
 import pytest
@@ -153,8 +156,8 @@ def test_snapshot_defaults_are_opt_in_and_keep_ten():
     assert SnapshotPreferences().model_dump() == {"enabled": False, "keep_count": 10}
 ```
 
-- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_settings.py -q`; record RED due to the absent feature module. Use the project's Python >=3.11 environment; do not silently use a system interpreter below the version floor.
-- [ ] Implement the constrained preferences and one persistence call. Parse UI text to a strict integer before constructing the model; invalid input leaves disk and effective settings unchanged. Missing settings get defaults; malformed configured settings yield a visible validation error rather than silently granting Save.
+- [x] Run `python -m pytest Tests/LLM_Management/test_snapshot_settings.py -q`; record RED due to the absent feature module. Use the project's Python >=3.11 environment; do not silently use a system interpreter below the version floor.
+- [x] Implement the constrained preferences and one persistence call. Parse UI text to a strict integer before constructing the model; invalid input leaves disk and effective settings unchanged. Missing settings get defaults; malformed configured settings yield a visible validation error rather than silently granting Save.
 
 ```python
 from typing import Annotated
@@ -170,9 +173,9 @@ def save_snapshot_preferences(value: SnapshotPreferences) -> bool:
     return save_settings_to_cli_config({"llamacpp_snapshots": value.model_dump()})
 ```
 
-- [ ] Add `[llamacpp_snapshots]` to `CONFIG_TOML_CONTENT`, keeping the class/template values identical. Test loading through the real isolated config owner, a failed save, and changed count reload; a class-default-only assertion does not test the shipping template.
-- [ ] Add admission RED cases: last host/port argument wins; `--key=value` and aliases; environment fallback; empty/invalid key file; IPv4/IPv6 loopback; `localhost` with a non-loopback result; invalid port; conflicting slot flags; model/projector file replacement; missing compatibility evidence; credentials absent from repr and persisted records.
-- [ ] Implement a bounded parser for the already-built command, not a second launcher. Explicit CLI values override recognized upstream environment values; unknown options or unknown `LLAMA_ARG_*` settings cannot be silently ignored when declaring compatibility. Unknown management transport disables the manager; conflicting owned slot flags fail snapshot-enabled preflight as specified. Keep ordinary launches available with snapshots off.
+- [x] Add `[llamacpp_snapshots]` to `CONFIG_TOML_CONTENT`, keeping the class/template values identical. Test loading through the real isolated config owner, a failed save, and changed count reload; a class-default-only assertion does not test the shipping template.
+- [x] Add admission RED cases: last host/port argument wins; `--key=value` and aliases; environment fallback; empty/invalid key file; IPv4/IPv6 loopback; `localhost` with a non-loopback result; invalid port; conflicting slot flags; model/projector file replacement; missing compatibility evidence; credentials absent from repr and persisted records.
+- [x] Implement a bounded parser for the already-built command, not a second launcher. Explicit CLI values override recognized upstream environment values; unknown options or unknown `LLAMA_ARG_*` settings cannot be silently ignored when declaring compatibility. Unknown management transport disables the manager; conflicting owned slot flags fail snapshot-enabled preflight as specified. Keep ordinary launches available with snapshots off.
 
 Canonical state-setting groups to represent from the pinned upstream baseline:
 
@@ -191,8 +194,8 @@ Store unset model-derived values as explicit canonical sentinels paired with ide
 
 For split models, `model_sha256` is SHA-256 of a canonical ordered manifest of shard numbers, lengths and verified content digests; the single-file case uses its content digest directly. Missing shards or an unresolvable projector leave evidence unavailable. `prepare_launch()` creates the pre-readiness descriptor; `finalize_launch()` combines its verified file/argument identity with the observed build, model path and effective slot context, returning an immutable replacement for the same claim/launch ID. Refresh never borrows current UI values to complete missing evidence.
 
-- [ ] Verify aliases, environment names and supported value domains against `common/arg.cpp` and the server README at `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`; retain focused argument fixtures in the admission test file. Do not fetch GitHub at app runtime. Hash missing artifact identities off-thread once per unchanged file identity. Revalidation compares device/inode/size/mtime/ctime; a changed identity requires re-admission, not rebinding a running server to new bytes.
-- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_settings.py Tests/LLM_Management/test_snapshot_admission.py Tests/LLM_Management/test_gguf_server_sources.py -q`; record GREEN. Commit only these task files and the config change: `feat: validate llama.cpp snapshot settings and launch identity`.
+- [x] Verify aliases, environment names and supported value domains against `common/arg.cpp` and the server README at `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`; retain focused argument fixtures in the admission test file. Do not fetch GitHub at app runtime. Hash missing artifact identities off-thread once per unchanged file identity. Revalidation compares device/inode/size/mtime/ctime; a changed identity requires re-admission, not rebinding a running server to new bytes.
+- [x] Run `python -m pytest Tests/LLM_Management/test_snapshot_settings.py Tests/LLM_Management/test_snapshot_admission.py Tests/LLM_Management/test_gguf_server_sources.py -q`; record GREEN. Commit only these task files and the config change: `feat: validate llama.cpp snapshot settings and launch identity`.
 
 ## Task 2: Private snapshot store and commit-before-prune retention
 
@@ -200,9 +203,9 @@ For split models, `model_sha256` is SHA-256 of a canonical ordered manifest of s
 
 **Interfaces:** Produces `SnapshotStore` APIs, `SnapshotRecord`, `WorkingFile`, `SaveResult`, and `CatalogPage`; consumes validated compatibility evidence and receipts. The store never decides whether an HTTP request completed.
 
-- [ ] Add reusable test evidence and an integrity regression. The settings in this fixture must be the complete canonical minimal-state set validated by Task 1, constructed by its real parser from a recorded minimal launch; do not bypass the evidence validator with `model_construct()`.
-- [ ] Write RED tests for reserve/commit, newest-N across models, rapid timestamp collision, clock rollback, keep=1, invalid metadata, foreign files, symlinks/hardlinks, failed binary flush, failed sidecar commit, failed prune, and two-process publication/deletion. Use real private temp directories and `multiprocessing` events, not only mocked locks.
-- [ ] Implement the on-disk layout:
+- [x] Add reusable test evidence and an integrity regression. The settings in this fixture must be the complete canonical minimal-state set validated by Task 1, constructed by its real parser from a recorded minimal launch; do not bypass the evidence validator with `model_construct()`.
+- [x] Write RED tests for reserve/commit, newest-N across models, rapid timestamp collision, clock rollback, keep=1, invalid metadata, foreign files, symlinks/hardlinks, failed binary flush, failed sidecar commit, failed prune, and two-process publication/deletion. Use real private temp directories and `multiprocessing` events, not only mocked locks.
+- [x] Implement the on-disk layout:
 
 ```text
 llamacpp_snapshots/
@@ -216,9 +219,9 @@ llamacpp_snapshots/
 
 Use generated IDs and basename validation. Reservation manifests hold only the generated IDs, operation kind, expected member identity, and acknowledged/unknown/terminal state; never serialize credentials or request bodies. POSIX directory/file creation goes through the existing private-path primitives. Precreate child write targets as 0600 and use the POSIX `Popen(umask=0o077)` parameter for snapshot-enabled launches; do not call process-global `os.umask()` or `preexec_fn`.
 
-- [ ] Implement save publication: validate positive receipt counts and exact basename/slot; verify regular-file identity and receipt byte size; flush/fsync binary; hash off-thread; under `portalocker` durably allocate `max(counter, observed valid publication_sequence)+1`, move binary into catalog, then atomically write metadata as commit marker. Initialize/recover a missing or invalid counter only after a complete safe catalog scan; otherwise fail publication with a fixed ordering-unavailable error and preserve earlier records. Allocation gaps after interrupted saves are harmless. Keep binary and metadata in the same committed directory and make its publication durable before deleting old records. Metadata-first tombstoning makes deletion crash-recoverable. A failed publication never runs pruning.
-- [ ] Bound metadata to 64 KiB and scans to 10,000 entries per pass; page visible results at 50. If a complete safe catalog scan cannot be obtained, publish without pruning and report cleanup incomplete; mark totals unknown. Do not silently prune only the first page. Foreign/malformed entries are untouched, not adopted or deleted.
-- [ ] Implement restore staging under the catalog lock, using chunked reads/writes through verified handles, checking length and SHA-256. No hard links. On short write, corrupt bytes, changed identity or full disk, close handles and clean only that owned partial file. Confirm the staged member's final identity/length before handing it to the service.
+- [x] Implement save publication: validate positive receipt counts and exact basename/slot; verify regular-file identity and receipt byte size; flush/fsync binary; hash off-thread; under `portalocker` durably allocate `max(counter, observed valid publication_sequence)+1`, move binary into catalog, then atomically write metadata as commit marker. Initialize/recover a missing or invalid counter only after a complete safe catalog scan; otherwise fail publication with a fixed ordering-unavailable error and preserve earlier records. Allocation gaps after interrupted saves are harmless. Keep binary and metadata in the same committed directory and make its publication durable before deleting old records. Metadata-first tombstoning makes deletion crash-recoverable. A failed publication never runs pruning.
+- [x] Bound metadata to 64 KiB and scans to 10,000 entries per pass; page visible results at 50. If a complete safe catalog scan cannot be obtained, publish without pruning and report cleanup incomplete; mark totals unknown. Do not silently prune only the first page. Foreign/malformed entries are untouched, not adopted or deleted.
+- [x] Implement restore staging under the catalog lock, using chunked reads/writes through verified handles, checking length and SHA-256. No hard links. On short write, corrupt bytes, changed identity or full disk, close handles and clean only that owned partial file. Confirm the staged member's final identity/length before handing it to the service.
 
 ```python
 import pytest
@@ -239,10 +242,10 @@ def test_corrupt_snapshot_never_produces_restore_staging(tmp_path):
 
 Define `commit_test_snapshot(store: SnapshotStore, *, payload: bytes, slot_id: int) -> SnapshotRecord` in `snapshot_fixtures.py`: reserve a save, write the supplied test bytes to its private file, build the matching positive `SlotReceipt`, and call the real `commit_save` with Task 1's complete evidence and `keep_count=10`. The fixture bypasses only llama-server, not validation/publication/retention.
 
-- [ ] Implement cleanup/reconciliation for the exact reservation states. Repeated successful restore cycles leave no staged binaries. Unknown writers stay untouched unless their launch is in `terminated_launch_ids`; after an app crash an unverifiable launch is not added merely because its PID is absent or old. Surface residual storage and never automatically promote an unacknowledged binary. Test pre-submission abort, empty acknowledged save, acknowledged failure, cleanup warning, and unknown operation retention separately.
+- [x] Implement cleanup/reconciliation for the exact reservation states. Repeated successful restore cycles leave no staged binaries. Unknown writers stay untouched unless their launch is in `terminated_launch_ids`; after an app crash an unverifiable launch is not added merely because its PID is absent or old. Surface residual storage and never automatically promote an unacknowledged binary. Test pre-submission abort, empty acknowledged save, acknowledged failure, cleanup warning, and unknown operation retention separately.
 
 The service durably marks `unknown` before possible POST, `acknowledged` after a valid successful receipt, and `terminal` only after local file work settles and no server operation may use the member. Acknowledgement alone is not cleanup eligibility for another process: reconciliation cleans terminal reservations, or other reservations only after confirmed launch termination and settled local work. Store filesystem methods hold the catalog lock for their owned handle lifetimes; direct owner cleanup is allowed for safely settled reserved/acknowledged/terminal work. `commit_save` may acknowledge its supplied valid receipt internally. Failed state persistence prevents submission.
-- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_store.py Tests/Utils/test_private_paths.py -q`; record RED/GREEN and mutation-check removal of the checksum/commit-before-prune guards. Commit only this unit: `feat: store private prompt-cache snapshots with safe retention`.
+- [x] Run `python -m pytest Tests/LLM_Management/test_snapshot_store.py Tests/Utils/test_private_paths.py -q`; record RED/GREEN and mutation-check removal of the checksum/commit-before-prune guards. Commit only this unit: `feat: store private prompt-cache snapshots with safe retention`.
 
 ## Task 3: Loopback-only management transport
 
@@ -250,8 +253,8 @@ The service durably marks `unknown` before possible POST, `acknowledged` after a
 
 **Interfaces:** Produces `SnapshotClient` APIs and safe `SnapshotError` codes; consumes immutable `LaunchDescriptor`. It neither publishes files nor retries mutations.
 
-- [ ] Write recording `httpx.MockTransport` tests for GET health/props/slots and exact POST path/query/body; slot array with absent metrics; malformed/oversized JSON; unsupported route; unauthorized response; unexpected redirect; mismatched receipt basename/slot; and 200/error bodies containing secret/prompt canaries. Assert canaries are absent from logs, exception text, and projections.
-- [ ] Write RED for explicit defaults and proxy isolation:
+- [x] Write recording `httpx.MockTransport` tests for GET health/props/slots and exact POST path/query/body; slot array with absent metrics; malformed/oversized JSON; unsupported route; unauthorized response; unexpected redirect; mismatched receipt basename/slot; and 200/error bodies containing secret/prompt canaries. Assert canaries are absent from logs, exception text, and projections.
+- [x] Write RED for explicit defaults and proxy isolation:
 
 ```python
 import httpx
@@ -265,7 +268,7 @@ def test_mutation_timeouts_do_not_inherit_probe_timeout():
     assert MUTATION_TIMEOUT.read == 600
 ```
 
-- [ ] Implement a dedicated client with `trust_env=False`, `follow_redirects=False`, no proxy, and the descriptor's validated numeric loopback URL. Give each GET an overall 5-second `asyncio.timeout` and bound the complete health/props/slots readiness observation by the same 5-second overall budget; test the aggregate with a short injected deadline. Wrap each POST in an overall 600-second timeout and the explicit per-phase values. Stream responses into a capped 1 MiB buffer; parse only whitelisted fields and discard raw bodies. Unsupported, auth and protocol errors become fixed codes. On a possibly submitted mutation with no valid terminal response, raise `SnapshotError("outcome_unknown", submission_possible=True)`.
+- [x] Implement a dedicated client with `trust_env=False`, `follow_redirects=False`, no proxy, and the descriptor's validated numeric loopback URL. Give each GET an overall 5-second `asyncio.timeout` and bound the complete health/props/slots readiness observation by the same 5-second overall budget; test the aggregate with a short injected deadline. Wrap each POST in an overall 600-second timeout and the explicit per-phase values. Stream responses into a capped 1 MiB buffer; parse only whitelisted fields and discard raw bodies. Unsupported, auth and protocol errors become fixed codes. On a possibly submitted mutation with no valid terminal response, raise `SnapshotError("outcome_unknown", submission_possible=True)`.
 
 ```python
 PROBE_SECONDS = 5.0
@@ -283,21 +286,28 @@ client = httpx.AsyncClient(
 )
 ```
 
-- [ ] Prove proxy isolation beyond MockTransport: use two owned numeric-loopback recording listeners, set HTTP_PROXY/ALL_PROXY to the decoy, leave NO_PROXY empty, and assert only the real endpoint sees traffic. Return a redirect to the decoy and assert no second request or credential forwarding. Mark this test `loopback_network`, not unrestricted `allow_network`.
-- [ ] Test timeout behavior using short injectable constants/events instead of waiting ten minutes. A response after the probe threshold but before the mutation deadline succeeds; expiration after dispatch reports possible submission; a connection failure before dispatch does not. Verify exactly one POST, response/client close, and no raw HTTP exception retained in long-lived service state.
-- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_client.py -q`; record GREEN and commit: `feat: add bounded loopback llama.cpp snapshot transport`.
+- [x] Prove proxy isolation beyond MockTransport: use two owned numeric-loopback recording listeners, set HTTP_PROXY/ALL_PROXY to the decoy, leave NO_PROXY empty, and assert only the real endpoint sees traffic. Return a redirect to the decoy and assert no second request or credential forwarding. Mark this test `loopback_network`, not unrestricted `allow_network`.
+- [x] Test timeout behavior using short injectable constants/events instead of waiting ten minutes. A response after the probe threshold but before the mutation deadline succeeds; expiration after dispatch reports possible submission; a connection failure before dispatch does not. Verify exactly one POST, response/client close, and no raw HTTP exception retained in long-lived service state.
+- [x] Run `python -m pytest Tests/LLM_Management/test_snapshot_client.py -q`; record GREEN and commit: `feat: add bounded loopback llama.cpp snapshot transport`.
 
 ## Task 4: App-owned operation and subprocess lifecycle
 
-**Files:** Create `snapshot_service.py`, `Tests/LLM_Management/test_snapshot_service.py`; modify `app.py`, `llm_management_events.py`, `server_lifecycle.py`; extend `Tests/LLM_Management/test_server_lifecycle_resources.py` and `Tests/LLM_Management/test_gguf_server_sources.py`.
+**Files:** Create `snapshot_service.py`, `Tests/LLM_Management/test_snapshot_service.py`; modify `app.py`, `llm_management_events.py`, `server_lifecycle.py`, `snapshot_store.py`; extend `Tests/LLM_Management/test_snapshot_store.py`, `Tests/LLM_Management/test_server_lifecycle_resources.py` and `Tests/LLM_Management/test_gguf_server_sources.py`.
 
 **Interfaces:** Produces `LlamaCppSnapshotService` APIs. Consumes store, client, admission and existing claim identity. Stores snapshot launch context separately from `claim._resource`, preserving managed-model lease teardown.
 
 - [ ] Write event-barrier RED tests for duplicate Save; Stop before Popen; Stop during staging; navigation away during POST; old response after replacement launch; unknown response followed by another mutation; old generation cleanup while a new server is alive; and double shutdown. Assert calls/retained records after the race, not exceptions swallowed by callbacks.
 - [ ] Make the critical keep=1 test cross the service/store boundary: start with one committed usable snapshot, invalidate launch compatibility immediately after the fake server acknowledgement but before publication, then assert no new record and no removed old record. A lower-level metadata validator alone cannot prove this rule.
+
+The optional `commit_save(validate_publication=...)` predicate runs under the catalog lock immediately before publication, after hash/fsync work. The service supplies a thread-safe captured-generation/closing/current-claim predicate plus file revalidation. A false result or failed validation publishes/prunes nothing. This is publication admission: invalidation before the predicate wins and rejects; after admission an acknowledged local commit may finish, with stale UI updates still suppressed. Test invalidation during the file worker, not only before calling it, and keep lifecycle/store lock ordering acyclic.
+
 - [ ] Add optional keyword-only `env: Mapping[str, str] | None = None` and `private_umask: int | None = None` to `run_server_subprocess()`. Add Popen kwargs only when supplied and platform-supported, so existing runtime call sites remain unchanged. Snapshot-enabled llama.cpp prepares its working directory and frozen environment after resolving the actual GGUF source but before spawning. Pass owned slot flags once; record the exact claim and directory. Keep the existing model lease attached to that claim.
 - [ ] Compose the service once in `TldwCli`; construction itself performs no heavy I/O. Initialize its store in an app-owned off-thread setup task using the effective profile directory. Until ready, render an explicit preparing/unavailable state. Marshal lifecycle publish/stop callbacks to the app loop and call `attach()`/`server_stopped()` only for their captured claims. Preflight refuses an existing listener and readiness requires the current child still alive; never infer ownership from HTTP success alone.
+
+The stable service may start with `store=None`; its idempotent `initialize(root_factory)` resolves the effective root and constructs the store off-thread in retained app-owned work. Shutdown settles that local setup. Tests may still inject a ready store through the existing constructor seam.
+
 - [ ] In `refresh()`, obtain `ReadinessObservation`, recheck the current claim, and pass it with the captured descriptor to `finalize_launch()`. Store the resulting same-generation descriptor and project only safe slot/status fields. Later differing build/model/context observations invalidate compatibility; they do not silently relabel saved files or another generation as matching.
+- [ ] Expose catalog-only pagination through `browse_catalog(offset=0, limit=50)`: retained off-thread store reads publish a safe `CatalogPage` to subscribers without HTTP. Validate page arguments through the store contract and reject stale concurrent browse results. Catalog mutations may reset to page zero. Test pagination, absence of HTTP, and newer-page precedence; widgets never access storage directly.
 - [ ] Implement the state transitions below. Operation admission occurs before returning from `start_*`, so rapid duplicate clicks cannot replace workers. Store file tasks remain strongly owned even when awaiting coroutines are cancelled; cleanup waits until their local handles close.
 
 ```text
@@ -311,13 +321,15 @@ any stale-generation completion -> original bookkeeping only; no new-generation 
 
 - [ ] Save sequence: load keep count at admission, recheck eligibility, reserve, submit once, validate receipt/evidence/current claim, commit, prune, cleanup, refresh. Restore sequence: capture snapshot/slot IDs, stage/verify, recheck eligibility/current claim, submit once, validate receipt, cleanup, refresh even on acknowledged restore failure. Delete operates on the catalog and remains available when mutations are blocked. Serialize local file publication/deletion with the store lock, not a second app-wide lock.
 - [ ] For shutdown: reject new work, stop subscriptions/readiness retries, settle tracked local filesystem work, close HTTP clients, and record possibly submitted requests as unknown if acknowledgement is lost. Do not delete their working files while the child may still run; normal explicit Stop/confirmed process exit permits cleanup. Do not hold UI teardown for the 600-second network deadline. Both `_shutdown()` and `on_unmount()` may invoke the owner shutdown path; it must be idempotent.
-- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_service.py Tests/LLM_Management/test_server_lifecycle_resources.py Tests/LLM_Management/test_gguf_server_sources.py Tests/UI/test_llm_gguf_source_modes.py -q`. Record GREEN; verify snapshot-disabled command/Popen behavior is unchanged for llama.cpp and llamafile. Commit: `feat: coordinate snapshot operations with managed server lifecycle`.
+- [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_service.py Tests/LLM_Management/test_snapshot_store.py Tests/LLM_Management/test_server_lifecycle_resources.py Tests/LLM_Management/test_gguf_server_sources.py Tests/UI/test_llm_gguf_source_modes.py -q`. Record GREEN; verify snapshot-disabled command/Popen behavior is unchanged for llama.cpp and llamafile. Commit: `feat: coordinate snapshot operations with managed server lifecycle`.
 
 ## Task 5: Manual manager and canonical settings
 
 **Files:** Create `Widgets/llamacpp_snapshot_manager.py`, `Tests/UI/test_llamacpp_snapshot_manager.py`, `Tests/UI/test_llamacpp_snapshot_settings.py`; modify `UI/LLM_Management_Window.py`, `UI/Screens/settings_screen.py`, `UI/Screens/settings_config_models.py` only if its category ownership record needs the new section; extend `Tests/UI/test_llm_deferred_views.py` and `Tests/UI/test_llm_screen_lab_adoption.py`.
 
 **Interfaces:** Widget constructor `LlamaCppSnapshotManager(service: LlamaCppSnapshotService)`. Settings and launcher both call `save_snapshot_preferences()` off-thread; only the existing config module writes TOML. Views subscribe/unsubscribe without cancelling operations.
+
+**Styles:** Use `css/features/_llm-management.tcss` for manager-specific rules and rebuild generated sheets with `python -m tldw_chatbook.css.build_css`; commit changed source and generated outputs, never hand-edit the bundle. Use `service.browse_catalog()` for paging, not store access. Preserve the existing six eager server views and five deferred Ollama/library views.
 
 - [ ] Write production-shaped RED tests using `Tests/UI/app_factory.py::_build_test_app`, the real `LLMScreen` route, and `TldwCli.CSS_PATH`. Inject the real service with a recording transport/private store. Assert rendered frame text and action containment, not only `widget.render()` or computed styles.
 - [ ] Compose slots and snapshots as selectable tables with shared action rows. Use stable IDs: `snapshot-slots`, `snapshot-records`, `snapshot-save`, `snapshot-restore`, `snapshot-delete`, `snapshot-refresh`, `snapshot-retention`, `snapshot-operation-status`, `snapshot-disabled-reason`. Keep selected opaque IDs stable across refresh; do not select a different record silently when a confirmation is open.
