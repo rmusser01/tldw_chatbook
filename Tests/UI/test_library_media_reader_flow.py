@@ -18,6 +18,7 @@ from Tests.UI.test_library_media_side_by_side import (
 from Tests.UI.test_library_shell import (
     LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
+    _open_media_find,
     StaticLibraryMediaScopeService,
     _seed_conversations,
     _two_conversations,
@@ -35,7 +36,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     set_mode,
     settle_success,
 )
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen, _sync_library_canvas
 
 
 class ControlledDetailMediaService(StaticLibraryMediaScopeService):
@@ -1900,5 +1901,212 @@ async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
         await pilot.press("c")
         await pilot.pause()
         assert calls == [1]
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+# ---------------------------------------------------------------------------
+# task-31567: after ANY media-path recompose, focus returns to the widget that
+# held it -- never to a pane grip. Measured on this branch's head (d7d8c687df),
+# real gestures, at BOTH sizes:
+#
+#   content focused -> Reader recompose        -> library-media-items-grip
+#   Find input focused -> Reader recompose     -> library-media-items-grip
+#   media row focused -> receipt repaint       -> library-media-library-grip
+#   media row focused -> leave select mode     -> library-media-library-grip
+#
+# Textual re-picks focus after the widget that held it is removed, and the
+# grips are the first focusable widgets in the adaptive shell. Every earlier
+# wave patched one caller (wave 4 PR B's Space collapse, PR C's grip end-caps,
+# PR F Task 1's select-mode entry); this is the general seam.
+# ---------------------------------------------------------------------------
+
+_MEDIA_GRIP_IDS = {"library-media-library-grip", "library-media-items-grip"}
+
+
+def _focused_id(screen) -> str:
+    """The id of whatever currently holds DOM focus ("" when nothing does)."""
+    return str(getattr(screen.focused, "id", "") or "")
+
+
+def _top_border_row(host, box) -> str:
+    """Painted top-border row of one widget, glyphs included (task-31634 cue)."""
+    region = box.region
+    strips = list(host.screen._compositor.render_strips())
+    return strips[region.y].crop(region.x, region.right).text
+
+
+def _painted_cells(host, region):
+    """(text, style) for every non-blank painted segment inside ``region``."""
+    strips = list(host.screen._compositor.render_strips())
+    cells = []
+    for y in range(region.y, min(region.bottom, len(strips))):
+        for segment in strips[y].crop(region.x, region.right):
+            if segment.text.strip():
+                cells.append((segment.text, segment.style))
+    return cells
+
+
+def _row_is_painted_focused(host, row) -> bool:
+    """Whether ``row`` really carries the media row focus cue on screen.
+
+    ``.library-media-row:focus`` sets ``outline: none`` and paints its cue as
+    a STYLE (focus background + bold underline), so a region assertion cannot
+    tell a focused row from an unfocused one (the task-31221 lesson).
+    """
+    cells = _painted_cells(host, row.region)
+    return bool(cells) and all(style.underline for _text, style in cells)
+
+
+async def _settle(pilot, times: int = 4) -> None:
+    for _ in range(times):
+        await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_reader_recompose_returns_focus_to_the_content_not_a_grip(size):
+    """task-31567 AC#1/AC#3: a Reader recompose leaves focus on the content."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+        await _load_row_0(screen, service, pilot)
+        await _settle(pilot)
+
+        content = screen.query_one("#library-media-viewer-content")
+        content.focus()
+        await pilot.pause()
+        assert _focused_id(screen) == "library-media-viewer-content"
+        assert _top_border_row(host, content).startswith("┏")
+
+        # A real in-Reader recompose (the "More" toggle rebuilds the viewer).
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _settle(pilot)
+
+        assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
+        assert _focused_id(screen) == "library-media-viewer-content", screen.focused
+        after = _top_border_row(
+            host, screen.query_one("#library-media-viewer-content")
+        )
+        assert after.startswith("┏"), after
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_find_input_keeps_focus_through_a_reader_recompose(size):
+    """task-31567 AC#1/AC#3: Find keeps focus -- and is focused exactly once.
+
+    The Find bar owns its own one-shot focus token
+    (``_library_media_find_focus_pending``); the restore seam must not fire a
+    second focus move at the same input.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        await _settle(pilot)
+
+        await _open_media_find(screen, pilot)
+        await _settle(pilot)
+        assert _focused_id(screen) == "library-media-content-search"
+
+        moves: list[str] = []
+        original_set_focus = screen.set_focus
+
+        def counting_set_focus(_self, widget, scroll_visible=True):
+            moves.append(str(getattr(widget, "id", widget)))
+            return original_set_focus(widget, scroll_visible=scroll_visible)
+
+        screen.set_focus = MethodType(counting_set_focus, screen)
+        try:
+            screen.query_one("#library-media-reader-more", Button).press()
+            await _settle(pilot)
+        finally:
+            del screen.set_focus
+
+        assert screen._library_media_find_open is True
+        assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
+        assert _focused_id(screen) == "library-media-content-search", screen.focused
+        assert moves.count("library-media-content-search") == 1, moves
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_row_focus_survives_a_bulk_delete_receipt_repaint(size):
+    """task-31567 AC#1/AC#3: a receipt repaint leaves focus on the same row."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0 = screen.query_one("#library-media-row-0", Button)
+        row_0_id, _backing, _title = _row_identity(row_0)
+        screen._library_media_delete_receipt_ids = (row_0_id,)
+        _sync_library_canvas(screen, "media")
+        await _settle(pilot)
+
+        dismiss = screen.query_one(
+            "#library-media-bulk-delete-receipt-dismiss", Button
+        )
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+        assert _focused_id(screen) == "library-media-row-0"
+
+        dismiss.press()
+        await _settle(pilot)
+
+        assert screen._library_media_delete_receipt_ids == ()
+        assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
+        assert _focused_id(screen) == "library-media-row-0", screen.focused
+        restored = screen.query_one("#library-media-row-0", Button)
+        assert _row_is_painted_focused(host, restored), _painted_cells(
+            host, restored.region
+        )
+        other = screen.query_one("#library-media-row-1", Button)
+        assert not any(
+            style.underline for _text, style in _painted_cells(host, other.region)
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_media_focus_restore_never_clobbers_a_queued_follow_up(size):
+    """task-31567: the restore must not evict another sync's follow-up.
+
+    ``queue_after_recompose`` REPLACES the pending callback. A media
+    mutation queues its ``focus_identity`` follow-up (PR E: land on the
+    receipt's Undo) from one sync, and the facet reload riding the same
+    completion issues a second, target-less sync before the canvas has
+    recomposed. Installing the restore there dropped the Undo intent:
+    reproduced live at 100x30 -- the receipt came back with a pane grip
+    focused instead of ``┃ Undo ┃``.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        canvas = screen.query_one("#library-media-canvas")
+        ran: list[str] = []
+        canvas.queue_after_recompose(lambda: ran.append("owner"))
+
+        # A target-less media sync (Select all, a receipt dismiss, a facet
+        # reload): it must leave the queued follow-up alone.
+        _sync_library_canvas(screen, "media")
+        await _settle(pilot)
+
+        assert ran == ["owner"], ran
         for media_id in tuple(service.detail_release):
             service.release(media_id)

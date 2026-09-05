@@ -584,6 +584,45 @@ def _sync_library_canvas(
                     _explicit()
 
             follow_up = _restore_then_explicit
+        elif kind == "media":
+            # task-31567: the Media equivalent of the Notes restore above,
+            # and for the same reason -- a canvas-scoped sync recomposes the
+            # Items pane's children, and the adaptive reader shell's two pane
+            # GRIPS are the first focusable widgets Textual then picks. Every
+            # media site without its own focus ``then=`` (Select all/Clear,
+            # arming and cancelling the bulk-delete confirm, both receipt
+            # Dismisses, leaving select mode, the Analyze progress repaints)
+            # therefore dropped the user onto a grip, where Space collapses a
+            # pane. Captured here, at the same choke point, so a new call site
+            # gets it for free; the screen owns the capture/restore pair.
+            # An explicit ``then`` runs FIRST and wins -- the restore no-ops
+            # unless focus is still missing or on a grip.
+            media_focus = screen._capture_library_media_focus_identity()
+
+            def _media_restore(
+                _previous: str | None = media_focus,
+                _explicit: Callable[[], bool | None] | None = then,
+            ) -> None:
+                if _explicit is not None:
+                    _explicit()
+                screen._restore_library_media_focus(_previous)
+
+            if then is not None or (
+                getattr(canvas, "_post_recompose_callback", None) is None
+            ):
+                # NEVER clobber a follow-up another sync already queued.
+                # ``queue_after_recompose`` REPLACES, and a media mutation
+                # queues its ``focus_identity`` follow-up (PR E's "land on
+                # Undo") from one sync while a second, target-less sync --
+                # the facet reload that rides the same completion -- lands
+                # before the canvas has recomposed. Installing this restore
+                # there dropped the Undo intent on the floor: live at 100x30
+                # the bulk-delete receipt came back with a pane grip focused
+                # and `Undo` unhighlighted, where dev focuses `┃ Undo ┃`.
+                # With nothing queued there is nothing to lose, and an
+                # explicit ``then`` replaces the pending callback here
+                # exactly as it did before this branch existed.
+                follow_up = _media_restore
         if kind == "landing":
             canvas.set_deferred_sync_guard(deferred_guard)
         follow_up_canvas = canvas
