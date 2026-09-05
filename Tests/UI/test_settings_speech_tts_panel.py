@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from Tests.UI.consolidated_css import app_css_text
+from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -65,6 +66,7 @@ from tldw_chatbook.UI.Speech.speech_runtime_status import (
     SpeechLocalDependencyAvailability,
     SpeechTTSRuntimeStatusStore,
 )
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
@@ -350,6 +352,12 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
         lambda section, key=None, default=None: (
             False if (section, key) == ("splash_screen", "enabled") else default
         ),
+    )
+    tts_service = FakeTTSService()
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(tts_service),
     )
     app = _build_test_app(configured_default="settings")
 
