@@ -564,17 +564,24 @@ async def test_initial_load_survives_yielding_mount_handler(
     """
     from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 
+    mount_observations: list[tuple[BaseAppScreen, bool]] = []
+
     async def yielding_mount(self: BaseAppScreen) -> None:
         """Yield during inherited mount dispatch without altering framework state."""
-        # A real Mount handler may yield before Textual sets is_mounted. This
-        # reproduces the live PTY ordering without modifying framework state.
+        # Textual dispatches handlers across the MRO, including this base handler
+        # after the Lab override. Observe that ordering instead of assuming it.
+        mount_observations.append((self, self.is_mounted))
         await asyncio.sleep(0)
         await asyncio.sleep(0)
+        mount_observations.append((self, self.is_mounted))
 
     monkeypatch.setattr(BaseAppScreen, "on_mount", yielding_mount)
     async with lab_app.run_test(size=(120, 40)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         await lab_app.push_screen(screen)
+        assert [
+            mounted for owner, mounted in mount_observations if owner is screen
+        ] == [False, False]
         await asyncio.wait_for(screen.wait_until_ready(), 3)
         await settle_lab(lab_app, screen, pilot)
         assert screen.coordinator is not None
