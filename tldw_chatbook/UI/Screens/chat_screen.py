@@ -1087,6 +1087,20 @@ def _consume_console_roleplay_writer_completion(
         )
 
 
+def _release_console_roleplay_transition_after_writer(
+    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult | None],
+    *,
+    store: ConsoleChatStore,
+    plan: ConsoleRoleplayProjectionPersistencePlan,
+) -> None:
+    """Schedule fallback release after the owner's acceptance callback can run."""
+
+    try:
+        future.get_loop().call_soon(store.abandon_roleplay_projection_plan, plan)
+    except RuntimeError:
+        store.abandon_roleplay_projection_plan(plan)
+
+
 def _consume_console_roleplay_repair_for_current_screen(
     app_instance: Any,
 ) -> None:
@@ -4052,6 +4066,13 @@ class ChatScreen(BaseAppScreen):
                 _consume_console_roleplay_writer_completion,
                 session_id=plan.session_id,
                 generation=plan.generation,
+            )
+        )
+        persistence_task.add_done_callback(
+            partial(
+                _release_console_roleplay_transition_after_writer,
+                store=store,
+                plan=plan,
             )
         )
         self._console_roleplay_writer_task = persistence_task
