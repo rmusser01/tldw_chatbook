@@ -44,6 +44,7 @@ from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.meetings_screen import MeetingsScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -62,6 +63,7 @@ SCREEN_BY_ROUTE = {
     "library": LibraryScreen,
     "artifacts": ArtifactsScreen,
     "personas": PersonasScreen,
+    "meetings": MeetingsScreen,
     "watchlists_collections": WatchlistsCollectionsScreen,
     "schedules": SchedulesWorkbench,
     "workflows": WorkflowsScreen,
@@ -1204,6 +1206,7 @@ def _custom_policy_recovery_state(
         ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
+        ("meetings", "#meetings-title", "record a call"),
     ],
 )
 @pytest.mark.asyncio

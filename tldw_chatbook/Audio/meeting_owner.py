@@ -77,6 +77,7 @@ class PrepareResult:
     diarization_available: bool
     diarization_missing: tuple[str, ...]
     recoverable: tuple[Path, ...]
+    input_devices: tuple[str, ...] = ()
 
 
 def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
@@ -206,9 +207,16 @@ class MeetingSessionOwner:
         tap_mode = self._tap_probe(system_source=self.settings.system_source)
         missing = diarization_requirements()
         recoverable = tuple(scan_recoverable(self.settings.recordings_dir))
+        devices: tuple[str, ...] = ()
+        try:
+            probe_recorder = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
+            devices = tuple(str(d.get("name", "")) for d in probe_recorder.get_audio_devices() if d.get("name"))
+        except Exception as exc:  # noqa: BLE001 - no backend: pickers stay empty
+            logger.info("meeting device enumeration unavailable: {}", exc)
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing, recoverable=recoverable,
+            input_devices=devices,
         )
         return self.prepared
 
@@ -283,6 +291,15 @@ class MeetingSessionOwner:
     def resume(self) -> None:
         if self.session is not None:
             self.session.resume()
+
+    def apply_device_choice(self, kind: str, value: str) -> None:
+        from tldw_chatbook.config import save_setting_to_cli_config
+
+        key = "mic_device" if kind == "mic" else "system_source"
+        value = "" if (kind == "mic" and value == "default") else value
+        setattr(self.settings, key, value)
+        save_setting_to_cli_config("meetings", key, value)
+        self.prepared = None   # next prepare() re-probes with the new source
 
     def stop(self, reason: str = "user") -> MeetingResult | None:
         # ponytail: claim under the owner RLock, then run the (possibly

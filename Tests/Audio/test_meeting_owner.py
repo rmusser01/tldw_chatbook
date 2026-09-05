@@ -337,3 +337,21 @@ def test_stop_does_not_hold_owner_lock_during_session_stop(tmp_path, monkeypatch
     owner.stop()
     assert acquired == [True]
     assert not owner.is_active
+
+
+def test_prepare_enumerates_input_devices_and_choice_persists(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    saved = []
+    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", lambda s, k, v: saved.append((s, k, v)) or True)
+
+    class Rec(FakeRecorder):
+        def get_audio_devices(self):
+            return [{"id": 0, "name": "MacBook Pro Microphone"}, {"id": 1, "name": "BlackHole 2ch"}]
+
+    owner, _, _ = _owner(tmp_path)
+    owner._mic_factory = Rec
+    assert owner.prepare().input_devices == ("MacBook Pro Microphone", "BlackHole 2ch")
+    owner.apply_device_choice("system", "BlackHole 2ch")
+    assert owner.settings.system_source == "BlackHole 2ch" and owner.prepared is None
+    owner.apply_device_choice("mic", "default")
+    assert saved == [("meetings", "system_source", "BlackHole 2ch"), ("meetings", "mic_device", "")]
