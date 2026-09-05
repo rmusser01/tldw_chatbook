@@ -26,6 +26,7 @@ import subprocess
 import threading
 import time
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
@@ -61,6 +62,7 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
+    RunAdmittedWorkspaceRoot,
     _default_specs,
 )
 from tldw_chatbook.Agents.run_context import current_run_id
@@ -3686,24 +3688,37 @@ def git_repo(tmp_path):
 
 
 def _fs_local_provider(root):
-    """A `LocalToolProvider` over `root` with real fs_read/fs_write specs
-    (a real `WorkspaceToolExecutor`, not the noop double above -- this
-    provider's writes must actually hit disk) and zero-round-trip
-    execution, so a scripted child can call fs_write with no approval
-    plumbing.
-    """
-    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+    """A `LocalToolProvider` over `root` with real fs_read/fs_write specs.
 
-    executor = WorkspaceToolExecutor(root)
+    This helper pins the one-shot executor to the in-process protocol
+    harness. An isolated ``python -I`` helper resolves
+    the editable install's original checkout, not this linked worktree, so it
+    cannot provide evidence about the code under test here.
+    """
+    from Tests.Agents.test_local_tool_provider import InProcessWorkspaceExecutor
+
+    class InProcessWorktreeProvider(LocalToolProvider):
+        def admit_run_workspace_root(
+            self, run_id: str, authority: RunAdmittedWorkspaceRoot
+        ) -> None:
+            super().admit_run_workspace_root(
+                run_id,
+                replace(
+                    authority,
+                    workspace_executor=InProcessWorkspaceExecutor(authority.root),
+                ),
+            )
+
+    executor = InProcessWorkspaceExecutor(root)
     specs = [
         spec
         for spec in _default_specs(root, workspace_executor=executor)
         if spec.name in {"fs_read", "fs_write"}
     ]
-    return LocalToolProvider(
+    return InProcessWorktreeProvider(
         workspace_root=root,
         specs=specs,
-        resolve_state=lambda hub: EffectiveToolState(state="allow", origin="test"),
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="test"),
     )
 
 
