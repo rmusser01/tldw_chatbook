@@ -206,6 +206,23 @@
     }
 
 
+/* ===== WIDGET: VllmSetupView (UI/LLM_Management/vllm_setup_view.py) ===== */
+
+    VllmSetupView > #vllm-local-setup,
+    VllmSetupView > #vllm-existing-setup,
+    VllmSetupView > #vllm-current-server,
+    VllmSetupView > #vllm-next-restart {
+        height: auto;
+    }
+    VllmSetupView > #vllm-next-action,
+    VllmSetupView > .vllm-mode-actions,
+    VllmSetupView > .vllm-profile-actions,
+    VllmSetupView > .vllm-source-actions,
+    VllmSetupView > .vllm-console-actions {
+        height: 3;
+    }
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
     LLMManagementWindow {
@@ -276,6 +293,19 @@
 
 
 
+
+
+
+
+
+
+
+/* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
+
+    SkillImportChoiceModal {
+        align: center middle;
+        background: $background 75%;
+    }
 
 
 
@@ -1609,6 +1639,81 @@
 
 
 
+/* ===== WIDGET: AutomationDefinitionForm (UI/Screens/scheduling/forms/automation_definition_form.py) ===== */
+
+    AutomationDefinitionForm {
+        align: center middle;
+    }
+
+    AutomationDefinitionForm > VerticalScroll {
+        width: 84;
+        max-width: 100%;
+        height: auto;
+        max-height: 100%;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: NewTaskChoiceModal (UI/Screens/scheduling/forms/new_task_choice_modal.py) ===== */
+
+    NewTaskChoiceModal {
+        align: center middle;
+    }
+
+    NewTaskChoiceModal .new-task-choice-modal {
+        width: 64;
+        height: auto;
+        border: tall $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    NewTaskChoiceModal .new-task-choice-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    NewTaskChoiceModal .new-task-choice-copy {
+        height: auto;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    NewTaskChoiceModal .new-task-choice-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+    NewTaskChoiceModal .new-task-choice-actions Button {
+        width: auto;
+        margin-left: 1;
+    }
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
     ResultsTab {
@@ -2200,6 +2305,27 @@
 
 
 
+/* ===== WIDGET: ConsoleProviderPicker (Widgets/Console/console_provider_picker.py) ===== */
+
+    ConsoleProviderPicker {
+        height: auto;
+        width: 1fr;
+    }
+
+    ConsoleProviderPicker #console-settings-provider-picker-input {
+        width: 100%;
+    }
+
+    ConsoleProviderPicker #console-settings-provider-picker-status {
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleProviderPicker #console-settings-provider-picker-results {
+        max-height: 12;
+    }
+
+
 /* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
 
     ConsoleReactionPickerModal {
@@ -2276,6 +2402,17 @@
 
 
 
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py) ===== */
+
+    ConsoleSaveMarkdownModal {
+        align: center middle;
+    }
 
 
 
@@ -2428,6 +2565,19 @@
         height: auto;
         width: 1fr;
     }
+
+
+/* ===== WIDGET: ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py) ===== */
+
+    ConsoleTerminalSessionModal {
+        align: center middle;
+    }
+
+
+
+
+
+
 
 
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
@@ -4082,6 +4232,53 @@
         width: auto;
         min-width: 12;
         margin-left: 1;
+    }
+
+
+/* ===== WIDGET: ToolProfilesPanel (Widgets/Settings_Widgets/tool_profiles_panel.py) ===== */
+
+    ToolProfilesPanel {
+        width: 100%;
+        height: auto;
+    }
+
+    ToolProfilesPanel .tool-profiles-toolbar,
+    ToolProfilesPanel .tool-profile-actions {
+        width: 100%;
+        height: auto;
+        layout: horizontal;
+    }
+
+    ToolProfilesPanel .tool-profile-row {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+        padding: 0 1;
+        border: round $panel;
+    }
+
+    ToolProfilesPanel .tool-profile-title {
+        width: 100%;
+        text-style: bold;
+    }
+
+    ToolProfilesPanel .tool-profile-detail {
+        width: 100%;
+        color: $text-muted;
+    }
+
+    ToolProfilesPanel Button {
+        width: auto;
+        min-width: 8;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        margin-right: 1;
+    }
+
+    ToolProfilesPanel .tool-profile-actions Button {
+        margin-right: 0;
     }
 
 

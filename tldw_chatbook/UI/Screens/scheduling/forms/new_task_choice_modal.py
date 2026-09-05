@@ -26,7 +26,7 @@ NewTaskChoice = Literal["reminder", "recurring_question"]
 class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None]):
     """Ask which kind of scheduled task to create."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     NewTaskChoiceModal {
         align: center middle;
     }
