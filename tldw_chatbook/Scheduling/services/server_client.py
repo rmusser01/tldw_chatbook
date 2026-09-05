@@ -105,7 +105,7 @@ class SchedulingServerClient:
         # across it (task-3 handshake caching discipline).
         self._capabilities_cache = _CAPABILITIES_UNSET
 
-    async def get_capabilities(self) -> dict[str, Any] | None:
+    async def get_capabilities(self, *, force: bool = False) -> dict[str, Any] | None:
         """Probe Scheduled Tasks automation capabilities, cached per connection.
 
         task-3 (schedules UAT remediation ruling 5) capabilities handshake
@@ -119,6 +119,21 @@ class SchedulingServerClient:
         connection (reset by `set_notifications_service`), so repeated
         callers (every sync cycle) don't re-probe.
 
+        Qodo fix round (finding 1, HIGH): the cache is permanent for the
+        life of a connection, which is right for affordance-gating reads
+        but wrong for an explicit reachability probe -- a server that
+        died after a successful first probe would otherwise answer every
+        later probe from the stale cached verdict forever. ``force=True``
+        bypasses the cache READ (still writing a successful result back
+        to it, so ordinary callers keep benefiting) so
+        `SchedulingService.refresh_server_reachability` always makes a
+        real network attempt.
+
+        Args:
+            force: Skip the cached verdict and re-probe the server. Used
+                by explicit reachability checks; affordance-gating reads
+                should leave this ``False``.
+
         Returns:
             The parsed capabilities dict once fetched successfully (cached
             from then on), or ``None`` when the server does not expose the
@@ -130,7 +145,7 @@ class SchedulingServerClient:
             class) -- a blip must never be permanently misread as "this
             server is too old".
         """
-        if self._capabilities_cache is not _CAPABILITIES_UNSET:
+        if not force and self._capabilities_cache is not _CAPABILITIES_UNSET:
             return self._capabilities_cache  # type: ignore[return-value]
         try:
             result = await self._call_with_retry(

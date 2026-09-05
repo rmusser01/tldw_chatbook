@@ -4655,13 +4655,15 @@ class _FakeConnectedServerClient:
     def __init__(self) -> None:
         self.notifications_service = object()
 
-    async def get_capabilities(self):
+    async def get_capabilities(self, *, force: bool = False):
         """task-3 (ruling 4/5): `SchedulesWorkbench.on_mount` kicks a real
         `refresh_server_reachability` probe, which calls this -- without
         it, the mount-time worker's `AttributeError` gets caught as
         "unreachable" and silently overwrites this fixture's whole
         "looks connected" premise (`_server_reachable` back to `False`)
-        moments after `_connected_service` pre-seeds it `True`."""
+        moments after `_connected_service` pre-seeds it `True`. Accepts
+        `force` (Qodo fix round finding 1) since the real probe always
+        passes it -- this fake has no cache to bypass."""
         return {}
 
 
@@ -4710,7 +4712,7 @@ class _SlowProbeServerClient:
         self.notifications_service = object()
         self.release = asyncio.Event()
 
-    async def get_capabilities(self):
+    async def get_capabilities(self, *, force: bool = False):
         await self.release.wait()
         return {}
 
@@ -4901,8 +4903,10 @@ async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
     configured`/`_server_available` both read `False`, `_start_server_
     notification_observer`/`_schedule_catch_up_results_pull` both no-op,
     and nothing in this test ever calls `action_sync_now`/presses `s` --
-    `_settle_orphaned_transfers` (called directly from `on_mount`,
-    unconditionally) is the only mechanism that could possibly settle it.
+    `_settle_orphaned_transfers` (kicked unconditionally from `on_mount`,
+    running on its own deferred worker since the Qodo fix round finding 2
+    fix -- `wait_for_complete()` below lets it actually finish) is the
+    only mechanism that could possibly settle it.
     """
     app = WorkbenchTestApp()
     db, service = _connected_service(tmp_path, app)
@@ -4930,6 +4934,8 @@ async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
         async with app.run_test() as pilot:
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
 
             row = db.get_reminder_task(local_id)
             assert row["transfer_state"] == "to_server_failed", (
@@ -4941,6 +4947,41 @@ async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
             )
             assert len(pending) == 1
             assert pending[0]["payload"]["transfer_errors"]
+    finally:
+        db.close()
+
+
+def test_settle_orphaned_transfers_defers_to_a_worker_not_inline(tmp_path):
+    """Qodo fix round finding 2 (MEDIUM) pin: `_settle_orphaned_transfers`
+    must hand the actual local-DB sweep to a worker and return
+    immediately, never run it inline on the calling (UI) thread --
+    `run_worker` itself is substituted here so the assertion holds
+    regardless of when a real worker would actually get scheduled to
+    run (the concern the app-level test above can only prove after the
+    fact, via `wait_for_complete()`)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        workbench = SchedulesWorkbench(app_instance=app)
+
+        calls: list[str | None] = []
+        service.sync_engine._settle_orphaned_transfer_mutations = (
+            lambda target_owner: calls.append(target_owner)
+        )
+
+        captured = {}
+
+        def _fake_run_worker(work, *, exclusive=False, group=None, **_kwargs):
+            captured["work"] = work
+            captured["group"] = group
+
+        workbench.run_worker = _fake_run_worker
+
+        workbench._settle_orphaned_transfers()
+
+        assert calls == [], "must not run the sweep inline before returning"
+        assert captured["group"] == "schedules-orphan-sweep"
+        assert captured["work"] is not None
     finally:
         db.close()
 

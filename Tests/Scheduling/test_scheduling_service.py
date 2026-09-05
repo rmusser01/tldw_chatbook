@@ -13,6 +13,7 @@ from tldw_chatbook.Scheduling.services import SchedulingServerClient, Scheduling
 from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientConfig,
     ServerClientPolicyError,
     ServerClientValidationError,
     ServerUnavailableError,
@@ -2269,7 +2270,9 @@ async def test_refresh_server_reachability_no_client_stays_false(db):
 async def test_refresh_server_reachability_succeeds_when_capabilities_probe_lands(db):
     """Reuses the capabilities handshake's own round trip (ruling 5) as
     the reachability probe -- any successful response, present or absent
-    capabilities alike, proves the server actually answered."""
+    capabilities alike, proves the server actually answered. Also pins
+    the Qodo fix round finding 1 cache-bypass: the explicit probe always
+    passes `force=True` so it never answers from a stale cached verdict."""
     client = AsyncMock()
     client.notifications_service = object()
     client.get_capabilities.return_value = {"items": []}
@@ -2279,6 +2282,7 @@ async def test_refresh_server_reachability_succeeds_when_capabilities_probe_land
 
     assert result is True
     assert svc.server_reachable is True
+    client.get_capabilities.assert_awaited_once_with(force=True)
 
 
 @pytest.mark.asyncio
@@ -2298,29 +2302,17 @@ async def test_refresh_server_reachability_false_when_probe_raises(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "exc",
-    [
-        ServerClientPolicyError("scheduler.automations.list.server denied"),
-        ServerClientValidationError("401 unauthorized"),
-    ],
-)
-async def test_refresh_server_reachability_policy_denial_is_not_unreachable(
-    db, exc
-):
-    """Final review finding 7: a local policy denial (`ServerClientPolicy
-    Error`, refused before any network attempt) or a genuine 401/403 from
-    the server (`ServerClientValidationError`) is a PERMISSION problem,
-    not evidence the server is unreachable -- conflating either into
-    "unreachable" additionally blocked reminder transfer (unrelated to
-    the automations permission the probe is actually gated on) on a
-    permission gate that has nothing to do with it. Neither exception
-    establishes anything new about the network, so a PRIOR reachable
-    verdict must survive it, and `server_permission_denied` must record
-    the distinct signal."""
+async def test_refresh_server_reachability_policy_denial_leaves_reachable_as_is(db):
+    """A local `ServerClientPolicyError` refuses BEFORE any network
+    attempt -- no round trip happened, so it establishes nothing new
+    about the network either way. A PRIOR reachable verdict must
+    survive it, and `server_permission_denied` must record the distinct
+    signal (final review finding 7)."""
     client = AsyncMock()
     client.notifications_service = object()
-    client.get_capabilities.side_effect = exc
+    client.get_capabilities.side_effect = ServerClientPolicyError(
+        "scheduler.automations.list.server denied"
+    )
     svc = SchedulingService(db=db, server_client=client)
     svc._server_reachable = True  # a prior probe had succeeded
 
@@ -2349,6 +2341,80 @@ async def test_refresh_server_reachability_policy_denial_leaves_unprobed_as_unpr
     assert result is False  # bool(None) is False -- still "not confirmed"
     assert svc.server_reachable is None
     assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_401_proves_reachable_even_from_false(db):
+    """Qodo fix round finding 1 (ruling reversal), pin (b): a genuine
+    401/403 from the server (`ServerClientValidationError`) is the
+    server ACTUALLY ANSWERING -- that answer IS proof of network
+    reachability, so it is set `True` outright, even overriding a prior
+    `False` verdict. A reminder transfer needs no automations-list
+    permission at all -- only the automations affordance itself refuses,
+    with permission-naming copy via `server_permission_denied`, never
+    'server not reachable'."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientValidationError("401 unauthorized")
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = False  # a prior probe had failed
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True, "a 401 answer proves the server is there, unlike a prior failure"
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_401_proves_reachable_even_unprobed(db):
+    """The FIRST-EVER probe landing a 401 still proves reachability --
+    unlike a policy denial, a `ServerClientValidationError` means the
+    server actually answered, so `server_reachable` becomes `True`
+    rather than staying `None`."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientValidationError("403 forbidden")
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_bypasses_the_capabilities_cache(db):
+    """Qodo fix round finding 1, pin (a): a server that dies after an
+    earlier successful probe must be caught on the NEXT explicit probe,
+    not answered forever from `SchedulingServerClient`'s permanent
+    per-connection capabilities cache. Exercises the real
+    `SchedulingServerClient` (not a mock) so the cache-bypass wiring
+    itself is under test, not just the service's exception handling."""
+    service = MagicMock()
+    service.get_scheduled_automation_capabilities = AsyncMock(return_value={"items": []})
+    client = SchedulingServerClient(
+        notifications_service=service,
+        config=ServerClientConfig(max_retries=0, retry_delay=0),
+    )
+    svc = SchedulingService(db=db, server_client=client)
+
+    first = await svc.refresh_server_reachability()
+    assert first is True
+    assert svc.server_reachable is True
+
+    # The server dies; without a cache bypass, `get_capabilities()` would
+    # answer from the cached success forever and never notice.
+    service.get_scheduled_automation_capabilities = AsyncMock(
+        side_effect=ConnectionRefusedError("connection refused")
+    )
+
+    second = await svc.refresh_server_reachability()
+    assert second is False
+    assert svc.server_reachable is False, (
+        "the cache must not lie -- a dead server must flip reachability on the next probe"
+    )
 
 
 def test_transfer_refusal_names_permissions_not_the_network(db):
