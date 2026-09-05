@@ -680,6 +680,32 @@ pre-existing selected-suite failures; do not mark Done or infer authorization
 for those repairs, a full sweep, merge or cleanup. Preserve the branch and
 review evidence pending separate direction on that acceptance blocker.
 
+### User-authorized six-baseline repair
+
+The user explicitly approved addressing the six failures listed in
+`Docs/Canvas/V1_VERIFICATION.md`, after the clean DOM handoff. This supersedes
+the preceding baseline exclusion only for those failures and their directly
+affected regression coverage. It does not authorize a full suite or integration.
+
+ADR required: no new ADR; existing contracts apply.
+ADR paths: `backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md`,
+`backlog/decisions/079-console-library-conversation-authority.md`,
+`backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md`, and ADR-115.
+Reason: repair existing behavior or stale fixtures, without introducing storage,
+permission, provider or runtime boundaries. The later ADR-097 accepted spec and
+TASK-23113.2 AC8 explicitly require retained semantic bytes on soft deletion;
+do not restore older ADR-090 sidecar clearing to make a stale assertion pass.
+
+- [ ] Reproduce all six exact IDs and classify product defects versus fixture
+  drift using current governing contracts, without weakening mutation guards.
+- [ ] Repair image-only send preparation, MCP exclusion coverage, legacy
+  promotion-double fidelity, guarded future-thinking export setup, soft-delete
+  retention coverage and Settings navigation readiness as diagnosis requires.
+- [ ] Run exact RED/GREEN plus directly affected targeted tests/statics, review
+  the repair diff independently, and record any new or unresolved failure.
+- [ ] Reconcile AC9 against the selected-suite evidence without presenting
+  focused passes as a newly executed full matrix or waiving outstanding checks.
+
 ## Execution Handoff
 
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.

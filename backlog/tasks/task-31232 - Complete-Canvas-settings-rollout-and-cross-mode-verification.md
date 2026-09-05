@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 18:30'
+updated_date: '2026-09-05 18:45'
 labels:
   - canvas
   - settings
@@ -58,4 +58,5 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 9. Apply one consolidated final-review correction wave under existing ADR-115: enforce production staging admission, preserve virtual DOM move identity, keep ordinary non-opt-in continuations byte-compatible, remove synchronous transcript compatibility compilation, and retain historical pins on ordinary publication. Correct helper limit validation and explicit Close versus Hide wording. Add exact failing regressions before each fix, run affected targeted checks/statics, and obtain one scoped rereview; do not fix unrelated baseline failures or weaken runtime/security contracts.
 10. User-authorized additional focused pass: enforce the distinct default 8 MiB temporary-session ceiling across committed and concurrently staged history; support detached edits/restructuring and exact empty/false form-state reconstruction; fence late compile-refusal repair against disable, owner/session and exact source-block changes. Write failing production-path/browser regressions, implement under existing ADR-115, run affected targeted checks and one scoped rereview. Prior I3/I5/M1/M2 closures and unrelated baseline scope remain unchanged.
 11. User-approved DOM-only correction: restore explicit select values after rebuilt options and handle mixed-presence descendants without duplicate native IDs. Add actual-renderer RED/GREEN cases for non-first/empty selections and new/live children under detached parents; preserve default controls, identity, cycles and limits. Verify targeted DOM/assets/statics and owned browser cleanup, then one scoped rereview from 648530ac6 under existing ADR-115. No unrelated baseline work or full sweep.
+12. User-authorized six-baseline repair: reproduce the exact six IDs in Docs/Canvas/V1_VERIFICATION.md, distinguish fixture drift from product failures, and repair only their causes and directly affected regression coverage. Existing ADR-097 (retained soft-delete semantics and guarded mutations), ADR-079 (Library authority), ADR-094 (raw CLI consent) and ADR-115 apply; no new ADR required. Preserve guards/privacy and exercise real image-only send, MCP filtering, promotion, export/deletion and Settings readiness contracts. Run targeted RED/GREEN, affected checks/statics and independent scoped review; reconcile AC9 honestly without a full repository sweep or integration.
 <!-- SECTION:PLAN:END -->

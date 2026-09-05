@@ -222,6 +222,19 @@ project-instruction bodies never enter default durable capture.
     chunk-row encoding are deferred to [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
 
+### Clarification recorded 2026-09-05: retained soft-delete envelopes
+
+The accepted design's mutation-boundary section and TASK-23113.2 AC8 specify
+that soft deletion changes visibility/ownership while retaining semantic bytes.
+For that operation, this supersedes ADR-090's older deletion-sidecar clearing
+amendment: thinking and continuation remain with the retained message envelope,
+not as active transcript or replay content. Hard deletion and semantic edits
+still use the preservation/mutation boundary above. This clarification records
+the already-implemented contract; it does not add retention or disclosure rights.
+It resolves the stale tombstone expectation discovered during TASK-31232's
+baseline repair. See the [accepted mutation boundary](../../Docs/superpowers/specs/2026-08-28-console-reference-backed-semantic-trace-ledger-design.md#semantic-message-revisions)
+and [TASK-23113.2](../tasks/task-23113.2%20-%20Enforce-semantic-revisions-for-every-model-visible-mutation.md).
+
 ## Consequences
 
 - Safe remains diagnostically useful because the stored trace can explain provider-
