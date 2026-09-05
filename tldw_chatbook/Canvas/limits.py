@@ -117,7 +117,18 @@ class DecodedDataUrl:
 
 
 def utf8_byte_length(value: str) -> int:
-    """Return the strict UTF-8 byte length of *value* without coercion."""
+    """Return the strict UTF-8 byte length of a string without coercion.
+
+    Args:
+        value: Text to encode as strict UTF-8.
+
+    Returns:
+        The encoded byte length.
+
+    Raises:
+        CanvasLimitError: If ``value`` is not a string or contains invalid
+            Unicode.
+    """
     if not isinstance(value, str):
         raise CanvasLimitError("value must be a string")
     try:
@@ -127,7 +138,20 @@ def utf8_byte_length(value: str) -> int:
 
 
 def validate_utf8_text(value: str, *, limit: int, field_name: str) -> int:
-    """Validate a strict UTF-8 string and return its encoded byte length."""
+    """Validate a strict UTF-8 string and return its encoded byte length.
+
+    Args:
+        value: Text to validate.
+        limit: Maximum accepted UTF-8 byte length.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The encoded byte length.
+
+    Raises:
+        CanvasLimitError: If the value is not valid strict UTF-8 text, the
+            limit is invalid, or the encoded value exceeds the limit.
+    """
     byte_count = utf8_byte_length(value)
     _validate_non_negative_integer(limit, field_name=f"{field_name} limit")
     if limit > MAX_WIRE_INTEGER:
@@ -140,7 +164,20 @@ def validate_utf8_text(value: str, *, limit: int, field_name: str) -> int:
 def validate_utf8_text_parts(
     values: Iterable[str], *, limit: int, field_name: str
 ) -> int:
-    """Validate the aggregate strict UTF-8 size of untrusted text values."""
+    """Validate the aggregate strict UTF-8 size of untrusted text values.
+
+    Args:
+        values: Text values whose encoded sizes are accumulated.
+        limit: Maximum accepted aggregate UTF-8 byte length.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The aggregate encoded byte length.
+
+    Raises:
+        CanvasLimitError: If a value is not valid strict UTF-8 text, the limit
+            is invalid, or the aggregate exceeds a supported boundary.
+    """
     _validate_non_negative_integer(limit, field_name=f"{field_name} limit")
     if limit > MAX_WIRE_INTEGER:
         raise CanvasLimitError(f"{field_name} limit exceeds the supported integer range")
@@ -156,7 +193,18 @@ def validate_utf8_text_parts(
 
 
 def sha256_utf8(value: str) -> str:
-    """Return the lowercase SHA-256 identity for one strict UTF-8 text value."""
+    """Return the lowercase SHA-256 identity for strict UTF-8 text.
+
+    Args:
+        value: Text to encode and hash.
+
+    Returns:
+        The 64-character lowercase hexadecimal digest.
+
+    Raises:
+        CanvasLimitError: If ``value`` is not a string or contains invalid
+            Unicode.
+    """
     if not isinstance(value, str):
         raise CanvasLimitError("value must be a string")
     try:
@@ -167,14 +215,39 @@ def sha256_utf8(value: str) -> str:
 
 
 def verify_sha256_utf8(value: str, digest: str) -> bool:
-    """Return whether *digest* is the exact lowercase SHA-256 of UTF-8 *value*."""
+    """Return whether a digest is the exact lowercase SHA-256 of UTF-8 text.
+
+    Args:
+        value: Text whose strict UTF-8 encoding is hashed.
+        digest: Expected lowercase hexadecimal SHA-256 digest.
+
+    Returns:
+        ``True`` when the digest matches; otherwise ``False``.
+
+    Raises:
+        CanvasLimitError: If the digest is malformed or the value is not valid
+            strict UTF-8 text.
+    """
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise CanvasLimitError("SHA-256 digest must be 64 lowercase hexadecimal characters")
     return hmac.compare_digest(sha256_utf8(value), digest)
 
 
 def validate_count(count: int, *, limit: int, field_name: str) -> int:
-    """Validate an untrusted count, accepting the ceiling and rejecting overflow."""
+    """Validate an untrusted count, accepting the ceiling.
+
+    Args:
+        count: Non-negative integer (not boolean) to validate.
+        limit: Maximum accepted count.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The validated count.
+
+    Raises:
+        CanvasLimitError: If either integer is invalid or outside the supported
+            range, or the count exceeds the limit.
+    """
     _validate_non_negative_integer(limit, field_name=f"{field_name} limit")
     if limit > MAX_WIRE_INTEGER:
         raise CanvasLimitError(f"{field_name} limit exceeds the supported integer range")
@@ -189,7 +262,19 @@ def validate_count(count: int, *, limit: int, field_name: str) -> int:
 def validate_unique_identifiers(
     identifiers: Sequence[str], *, field_name: str
 ) -> tuple[str, ...]:
-    """Return opaque identifiers after rejecting empty, malformed, or duplicate IDs."""
+    """Return validated unique opaque identifiers.
+
+    Args:
+        identifiers: Ordered identifier sequence to validate.
+        field_name: Safe plural field label used in failures.
+
+    Returns:
+        The validated identifiers as a tuple in their original order.
+
+    Raises:
+        CanvasLimitError: If the input is not an identifier sequence, or an
+            identifier is empty, malformed, oversized, or duplicated.
+    """
     if isinstance(identifiers, (str, bytes)) or not isinstance(identifiers, Sequence):
         raise CanvasLimitError(f"{field_name} must be a sequence")
 
@@ -205,7 +290,19 @@ def validate_unique_identifiers(
 
 
 def validate_opaque_identifier(identifier: str, *, field_name: str = "identifier") -> str:
-    """Validate an application-issued opaque identifier without interpreting it."""
+    """Validate an application-issued opaque identifier without interpreting it.
+
+    Args:
+        identifier: Non-empty identifier to validate.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The unchanged validated identifier.
+
+    Raises:
+        CanvasLimitError: If the identifier is not a non-empty strict UTF-8
+            string within the identifier byte limit.
+    """
     if not isinstance(identifier, str) or not identifier:
         raise CanvasLimitError(f"{field_name} must be a non-empty string")
     validate_utf8_text(identifier, limit=256, field_name=field_name)
@@ -213,7 +310,19 @@ def validate_opaque_identifier(identifier: str, *, field_name: str = "identifier
 
 
 def decode_data_url(value: str, *, field_name: str) -> DecodedDataUrl:
-    """Decode a base64 ``data:`` URL while rejecting permissive browser syntax."""
+    """Decode a base64 ``data:`` URL under the closed Canvas syntax.
+
+    Args:
+        value: Data URL to decode.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The normalized MIME type and decoded bytes.
+
+    Raises:
+        CanvasLimitError: If the value, MIME type, parameters, or base64 payload
+            is malformed or unsupported.
+    """
     if not isinstance(value, str) or not value.startswith("data:"):
         raise CanvasLimitError(f"{field_name} must be a data URL")
     try:
@@ -235,7 +344,15 @@ def decode_data_url(value: str, *, field_name: str) -> DecodedDataUrl:
 
 
 def raster_signature_matches(mime_type: str, data: bytes) -> bool:
-    """Return whether decoded bytes carry the closed V1 raster signature."""
+    """Return whether decoded bytes carry the closed V1 raster signature.
+
+    Args:
+        mime_type: Declared raster MIME type.
+        data: Decoded raster bytes.
+
+    Returns:
+        ``True`` when the MIME type is supported and its signature matches.
+    """
 
     if mime_type == "image/png":
         return data.startswith(b"\x89PNG\r\n\x1a\n")
@@ -251,7 +368,20 @@ def raster_signature_matches(mime_type: str, data: bytes) -> bool:
 def validate_asset_payloads(
     assets: Sequence[DecodedDataUrl], *, per_asset_limit: int, aggregate_limit: int
 ) -> int:
-    """Validate decoded asset and aggregate byte ceilings and return their total."""
+    """Validate decoded asset and aggregate byte ceilings.
+
+    Args:
+        assets: Decoded data URL assets to measure.
+        per_asset_limit: Maximum decoded bytes for one asset.
+        aggregate_limit: Maximum decoded bytes across all assets.
+
+    Returns:
+        The aggregate decoded byte length.
+
+    Raises:
+        CanvasLimitError: If the sequence or a limit is invalid, an element is
+            not decoded data, or a per-asset or aggregate ceiling is exceeded.
+    """
     if isinstance(assets, (str, bytes)) or not isinstance(assets, Sequence):
         raise CanvasLimitError("assets must be a sequence")
     for field_name, limit in (
@@ -278,12 +408,37 @@ def validate_asset_payloads(
 
 
 def json_depth(value: JsonValue) -> int:
-    """Return a validated JSON value's structural depth without recursive descent."""
+    """Return a validated JSON value's structural depth.
+
+    Args:
+        value: JSON-compatible value to validate without recursive descent.
+
+    Returns:
+        The greatest value depth, with the root at depth zero.
+
+    Raises:
+        CanvasLimitError: If the value contains an unsupported type, invalid
+            Unicode, a non-string object key, a cycle, a non-finite number, or
+            an integer outside the supported wire range.
+    """
     return _validate_json_value(value, field_name="JSON value", max_depth=None)
 
 
 def validate_json_value(value: JsonValue, *, max_depth: int, field_name: str) -> int:
-    """Validate JSON compatibility and structural depth without calling user code."""
+    """Validate JSON compatibility and depth without recursive descent.
+
+    Args:
+        value: JSON-compatible value to validate.
+        max_depth: Maximum accepted container depth.
+        field_name: Safe field label used in failures.
+
+    Returns:
+        The greatest observed value depth, with the root at depth zero.
+
+    Raises:
+        CanvasLimitError: If the depth limit is invalid or exceeded, or the
+            value violates the supported JSON and wire-value contract.
+    """
     _validate_non_negative_integer(max_depth, field_name=f"{field_name} maximum JSON depth")
     return _validate_json_value(value, field_name=field_name, max_depth=max_depth)
 

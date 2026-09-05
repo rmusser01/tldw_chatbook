@@ -35,20 +35,26 @@ _STALE_OWNER_REQUEST_REASONS = frozenset(
 )
 
 
-def ChatbookCreator(*args: Any, **kwargs: Any) -> Any:
-    """Construct the archive creator on first export while retaining the patch seam."""
+def _chatbook_creator_factory(*args: Any, **kwargs: Any) -> Any:
+    """Construct the archive creator on first export."""
 
     from .chatbook_creator import ChatbookCreator as Creator
 
     return Creator(*args, **kwargs)
 
 
-def ChatbookImporter(*args: Any, **kwargs: Any) -> Any:
+def _chatbook_importer_factory(*args: Any, **kwargs: Any) -> Any:
     """Construct the archive importer on first preview/import."""
 
     from .chatbook_importer import ChatbookImporter as Importer
 
     return Importer(*args, **kwargs)
+
+
+# Existing callers and tests patch these names. Keep them as the stable lazy
+# compatibility seams while the implementations follow function naming style.
+ChatbookCreator = _chatbook_creator_factory
+ChatbookImporter = _chatbook_importer_factory
 
 
 def _registry_lock(path: Path) -> threading.RLock:

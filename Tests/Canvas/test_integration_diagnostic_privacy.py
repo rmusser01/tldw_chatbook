@@ -45,9 +45,25 @@ async def test_canvas_disposal_diagnostics_omit_exception_content(
     assert all("PRIVATE-CANVAS" not in record["message"] for record in records)
 
 
-@pytest.mark.parametrize("stage", ["snapshot", "generation"])
+@pytest.mark.parametrize(
+    ("stage", "expected_error_messages"),
+    [
+        (
+            "snapshot",
+            ["Failed to refresh Canvas runtime config snapshot (attempt 1 of 3)"],
+        ),
+        (
+            "generation",
+            [
+                "Failed to guard Canvas config reconciliation (attempt 1 of 3)",
+                "Failed to guard Canvas config reconciliation (attempt 2 of 3)",
+                "Failed to guard Canvas config reconciliation (attempt 3 of 3)",
+            ],
+        ),
+    ],
+)
 def test_canvas_config_failure_diagnostics_omit_exception_content(
-    stage, monkeypatch, caplog
+    stage, expected_error_messages, monkeypatch, caplog
 ):
     """Config refresh failures must fail closed without serializing secret values."""
     app = _build_test_app()
@@ -72,5 +88,8 @@ def test_canvas_config_failure_diagnostics_omit_exception_content(
     assert policy.enabled is False
     records = [record for record in caplog.records if "Canvas" in record.getMessage()]
     assert records
+    assert [
+        record.getMessage() for record in records if record.levelname == "ERROR"
+    ] == expected_error_messages
     assert all(record.exc_info is None for record in records)
     assert all("PRIVATE-CANVAS" not in record.getMessage() for record in records)

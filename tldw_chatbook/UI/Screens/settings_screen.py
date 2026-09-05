@@ -26475,7 +26475,12 @@ class SettingsScreen(BaseAppScreen):
                 try:
                     candidate = get_runtime_config_snapshot()
                 except Exception:  # noqa: BLE001 - fail closed without logging config
-                    logger.error("Failed to refresh Canvas runtime config snapshot")
+                    logger.error(
+                        "Failed to refresh Canvas runtime config snapshot "
+                        "(attempt %d of %d)",
+                        _attempt + 1,
+                        RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                    )
                     break
                 parsed = self._canvas_snapshot_policy(candidate)
                 if parsed is None:
@@ -26503,7 +26508,11 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     return policy, True
             except Exception:  # noqa: BLE001 - fail closed without logging config
-                logger.error("Failed to guard Canvas config reconciliation")
+                logger.error(
+                    "Failed to guard Canvas config reconciliation (attempt %d of %d)",
+                    _attempt + 1,
+                    RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                )
             candidate = None
 
         logger.warning("Canvas runtime config generation did not stabilize; failing closed")
