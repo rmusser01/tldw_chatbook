@@ -4870,9 +4870,9 @@ temp_dir = ""  # Empty means use system temp
 
 [meetings]
 # Meetings screen: record a call (mic + system audio) or a room (mic only).
-# STT provider for the live transcript: "auto" uses the Console dictation
-# resolution (privacy local-only mode honoured). Never the shared executor.
+# STT provider for the live transcript; "auto" = the Console dictation choice.
 provider = "auto"
+# Model override for that provider; empty = the provider's default.
 model = ""
 # "auto" = native system audio (macOS 14.2+ tap, Linux parec/pw-record,
 # Windows WASAPI loopback). Or name an input device such as "BlackHole 2ch".
@@ -5215,13 +5215,6 @@ CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
 CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
     "__DEFAULT_SPLASH_DURATION__", str(DEFAULT_SPLASH_DURATION_SECONDS)
 )
-
-# Alias to the fully-substituted raw TOML template text, for readers (and
-# tests) that want to inspect the shipped default-config source rather than
-# the parsed `DEFAULT_CONFIG_FROM_TOML` dict below. Distinct from the
-# "COMPREHENSIVE_CONFIG_RAW" *dict key* other modules read off a loaded
-# `app_config` mapping (that one holds the parsed raw TOML, not this text).
-COMPREHENSIVE_CONFIG_RAW = CONFIG_TOML_CONTENT
 
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)

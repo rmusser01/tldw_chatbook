@@ -35,16 +35,16 @@ def test_screen_route_points_at_meetings_screen():
 
 def test_app_help_text_covers_meetings():
     from tldw_chatbook.Constants import TAB_MEETINGS
-    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.app import TabNavigationProvider
 
-    assert "Meetings" in TldwCli.TAB_HELP_TEXT[TAB_MEETINGS]
-    assert TAB_MEETINGS in TldwCli.NAVIGATION_TABS
+    assert "Meetings" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MEETINGS]
+    assert TAB_MEETINGS in TabNavigationProvider.NAVIGATION_TABS
 
 
 def test_config_template_has_meetings_section():
-    from tldw_chatbook.config import COMPREHENSIVE_CONFIG_RAW
+    from tldw_chatbook.config import CONFIG_TOML_CONTENT
 
-    block = COMPREHENSIVE_CONFIG_RAW.split("[meetings]", 1)[1].split("\n[", 1)[0]
+    block = CONFIG_TOML_CONTENT.split("[meetings]", 1)[1].split("\n[", 1)[0]
     for key in ("provider", "model", "system_source", "mic_device", "recordings_dir",
                 "keep_raw_tracks", "post_transcribe", "post_diarize"):
         assert f"\n{key} = " in block, key

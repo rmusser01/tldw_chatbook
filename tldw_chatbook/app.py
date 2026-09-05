@@ -7329,12 +7329,6 @@ class TldwCli(
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
 
-    # Canonical tab help text and navigable-tab order live on
-    # TabNavigationProvider (the command-palette tab-search Provider);
-    # aliased here so the app class itself exposes them too (task 10).
-    TAB_HELP_TEXT = TabNavigationProvider.TAB_HELP_TEXT
-    NAVIGATION_TABS = TabNavigationProvider.NAVIGATION_TABS
-
     def action_command_palette(self) -> None:
         """Open the app's stable Textual command palette."""
         if self.use_command_palette and not StableCommandPalette.is_open(self):
