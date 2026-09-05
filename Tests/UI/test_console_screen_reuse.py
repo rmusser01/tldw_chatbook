@@ -75,7 +75,12 @@ def test_chat_route_is_flagged_reusable() -> None:
 async def test_console_reuse_timer_quiescence_and_runtime_attachment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """One journey pins reuse, timer quiescence, and runtime survival."""
+    """One journey pins reuse, timer quiescence, and runtime survival.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped attribute patching.
+        tmp_path: Pytest fixture providing the scratch profile root.
+    """
     _scratch_env(monkeypatch, tmp_path)
     from tldw_chatbook.app import TldwCli
 
@@ -120,7 +125,12 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
 async def test_console_resume_restarts_sync_timer_for_active_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A run still in flight when the user returns gets its poll back."""
+    """A run still in flight when the user returns gets its poll back.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped attribute patching.
+        tmp_path: Pytest fixture providing the scratch profile root.
+    """
     _scratch_env(monkeypatch, tmp_path)
     from tldw_chatbook.app import TldwCli
 
@@ -154,7 +164,12 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
 async def test_console_confirm_navigation_no_longer_gates_switches(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Tab switches are lossless under reuse; quit still confirms."""
+    """Tab switches are lossless under reuse; quit still confirms.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped attribute patching.
+        tmp_path: Pytest fixture providing the scratch profile root.
+    """
     _scratch_env(monkeypatch, tmp_path)
     from tldw_chatbook.app import TldwCli
 
