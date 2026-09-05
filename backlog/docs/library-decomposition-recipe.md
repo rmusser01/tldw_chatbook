@@ -7594,3 +7594,44 @@ fresh** (notes has no row-geometry message, its own canvas-origin/deferred
 census must be taken from source, and its sync-storm shape differed from
 media's — notes' storm was a first-entry placeholder-layout collapse, not
 media's outgoing-canvas rebuild).
+## Historical PR-2427 Analysis and Reader extraction (tasks 31648, 31649)
+
+**Historical checkpoint, superseded during the 2026-09-08 rebase.** The
+following records the review branch before dev's Wave-7 Media ownership
+landed. It is not the current ownership map or current size evidence. The
+reconciliation retains section 22's MediaState/MediaController and existing
+screen seams rather than adding competing Analysis/Reader state owners;
+useful behavior characterization is retained against those current owners.
+
+The rebased review tree had grown to 42,558 Library lines and 1,319 screen
+methods, beyond the existing 41,574/1,302 ceilings. Two separately attributable
+controllers move coherent ownership out of the screen:
+
+- `library_media_analysis_controller.py`: Reader analysis generation/saving,
+  bulk partition/overwrite/retry, and receipt state. The in-flight flag remains
+  shared shell state because Import also reads it; per-item Import outcomes
+  remain on Import. Provider dispatch and provider-reason rendering retain their
+  screen seams.
+- `library_media_reader_controller.py`: content search, display-state memo,
+  reading-position coalescing/draining, and read-later operations. The Reader
+  session identity and detail remain screen-provided named ports; the controller
+  owns the transient search, progress, and memo fields.
+
+Moved bodies keep their original operations and names. Explicit keyword wiring
+binds sibling callbacks and shell reads at call time; only real framework state
+is read through the screen handle. The stable app identity is documented as the
+existing snapshot exception. No DOM ids, nesting, or CSS moved.
+
+Compatibility state declarations use `ControllerState`, the exact read/write
+descriptor shape already used by Console. Each declaration names one controller
+and one field; it installs no catch-all proxy. This avoids inflating the screen
+method census with duplicated getter/setter bodies while preserving assignment
+behavior. Private method callers move to their owner; DOM handlers remain screen
+entry points. The shared canvas checkbox updater still calls
+`_library_media_analyze_reason`, so that named screen delegator is retained.
+
+The new controllers are born governed at their measured sizes. The screen is
+41,325 lines / 1,301 methods after the extraction and private-call cleanup, a
+reduction of 1,233 lines / 18 methods from the actual rebased starting point.
+No existing ceiling increases. New ADR required: no; this directly applies the
+approved screen decomposition design and `DESIGN.md` section 7.
