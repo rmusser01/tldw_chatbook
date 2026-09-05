@@ -1,5 +1,5 @@
 ---
-id: TASK-31588
+id: TASK-31762
 title: Repair screen navigation regression cluster
 status: Done
 assignee: []

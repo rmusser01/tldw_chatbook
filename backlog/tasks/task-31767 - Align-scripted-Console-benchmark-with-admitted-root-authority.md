@@ -1,5 +1,5 @@
 ---
-id: TASK-31651
+id: TASK-31767
 title: Align scripted Console benchmark with admitted-root authority
 status: Done
 assignee:

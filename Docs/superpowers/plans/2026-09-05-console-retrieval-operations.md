@@ -1,4 +1,4 @@
-# Console retrieval operations ownership (TASK-31738)
+# Console retrieval operations ownership (TASK-31773)
 
 > Execute with the executing-plans skill; root reviews the scoped diff before commit.
 

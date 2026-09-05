@@ -1,5 +1,5 @@
 ---
-id: TASK-31586
+id: TASK-31760
 title: Repair MCP documentation inventory contract
 status: Done
 assignee: []
