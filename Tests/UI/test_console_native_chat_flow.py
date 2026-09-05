@@ -2686,7 +2686,7 @@ class _PromptImprovementGateway:
             )
         )
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
         self.auxiliary_calls += 1
         payload = json.loads(str(request.messages[-1]["content"]))
         rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
@@ -2707,10 +2707,10 @@ class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
         self.started.set()
         await self.release.wait()
-        return await super().complete_auxiliary(request)
+        return await super().complete_auxiliary(request, route=route)
 
 
 class _MutableResolutionPromptGateway(_PromptImprovementGateway):
@@ -4769,6 +4769,20 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     console._sync_console_control_bar()
 
 
+def _disable_next_trace_capture(console: ChatScreen) -> None:
+    """Keep provider-adapter tests outside the independent trace ledger."""
+    controller = console._ensure_console_chat_controller()
+    session_id = controller.store.active_session_id
+    assert session_id is not None
+    policy = controller.capture_policy_snapshot(session_id)
+    controller.set_next_trace_privacy(
+        session_id,
+        capture_enabled=False,
+        pii_redaction_enabled=None,
+        expected_policy_revision=policy.policy_revision,
+    )
+
+
 @pytest.mark.asyncio
 async def test_console_native_generic_provider_send_renders_completed_message(
     monkeypatch,
@@ -4797,6 +4811,10 @@ async def test_console_native_generic_provider_send_renders_completed_message(
             model="gpt-4.1",
             provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
         )
+        # This case exercises the legacy generic-provider adapter, not the
+        # semantic-trace ledger. Opt this one send out of capture explicitly
+        # so a trace-reservation recovery flow cannot replace its subject.
+        _disable_next_trace_capture(console)
         # TASK-2154.6: mounted setup-blocked (no key) -> Send genuinely
         # disabled; re-sync after the config fix so the block lifts, exactly
         # as the Settings save path syncs after a real key fix.
@@ -4850,6 +4868,7 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
             model="gpt-4.1",
             provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
         )
+        _disable_next_trace_capture(console)
         # TASK-2154.6: the console mounted setup-blocked (no key), so Send is
         # genuinely disabled; a raw post-mount config mutation only lifts the
         # block once the UI re-syncs -- the same umbrella sync the Settings
@@ -4891,6 +4910,7 @@ async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeyp
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        _disable_next_trace_capture(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("send once")
 
@@ -5727,7 +5747,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         composer.load_draft("second send")
         send_button = console.query_one("#console-send-message", Button)
         for _ in range(40):
-            if send_button.label.plain == "Queue":
+            if send_button.label.plain.startswith("Queue"):
                 break
             await pilot.pause(0.05)
         else:
@@ -6164,6 +6184,10 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         active_session = store.switch_session(store.active_session_id)
         assert active_session.workspace_id == "ws-b"
         assert active_session.title == "Workspace B Chat"
+        # A newly selected workspace intentionally starts from blank Console
+        # defaults rather than inheriting another workspace's provider.
+        _select_llamacpp_console(console)
+        active_session = store.switch_session(store.active_session_id)
         assert active_session.settings.provider == "llama_cpp"
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello from b")
@@ -8739,8 +8763,19 @@ async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        def resolve_eligibility(_message_id):
+            return eligibility
+
         monkeypatch.setattr(
-            console, "_console_fork_eligibility", lambda _message_id: eligibility
+            console._message,
+            "console_fork_eligibility",
+            resolve_eligibility,
+        )
+        monkeypatch.setattr(
+            console,
+            "_console_fork_eligibility",
+            resolve_eligibility,
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()

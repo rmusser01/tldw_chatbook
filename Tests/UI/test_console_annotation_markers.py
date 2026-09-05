@@ -163,7 +163,12 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -345,7 +350,12 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -472,7 +482,12 @@ async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_pa
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -528,7 +543,12 @@ async def test_no_review_notes_for_message_toasts_and_never_opens_modal(tmp_path
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -577,7 +597,12 @@ async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -641,7 +666,12 @@ async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -711,7 +741,12 @@ async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -805,7 +840,12 @@ async def test_oversized_note_edit_is_refused(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             screen._ensure_console_chat_controller().store = store
 
