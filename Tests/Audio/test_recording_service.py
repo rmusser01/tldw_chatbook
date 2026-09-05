@@ -564,8 +564,13 @@ class TestErrorHandling:
                 # Should return empty list on error
                 assert devices == []
 
+    @pytest.mark.real_audio_device
     def test_recording_thread_error(self):
-        """Test handling of recording thread errors."""
+        """Test handling of recording thread errors.
+
+        Exercises `_recording_loop`'s exception path; backend loop is mocked
+        so no real device is opened (qualifies for opt-out marker).
+        """
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
             service = AudioRecordingService()
 
