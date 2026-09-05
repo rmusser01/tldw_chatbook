@@ -1,11 +1,11 @@
 ---
 id: TASK-31428
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 04:56'
+updated_date: '2026-09-05 05:12'
 labels:
   - chunking
   - chunking-lab
@@ -38,12 +38,18 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #6 Pure record-field edits and saved-record association preserve invalid JSON, pending controls, undo semantics and captured provenance; unsaved pinned records retain authored fields without fabricated catalog identity, and late saves cannot attach to an unrelated draft.
 - [x] #7 Fallback to a previous valid recovery checkpoint is visibly explained through a read-only coordinator warning without exposing private sample/path details.
 - [x] #8 Exclusive result preparation/inspection workers can be canceled before starting without leaking an unawaited coroutine.
+- [ ] #9 Catalog save acknowledgments identify exactly the revision written by that operation; an intervening peer update conflicts with the next unchanged local save.
+- [ ] #10 Malformed known recovery presentation fields are refused before replacement, while valid historical unsupported results remain readable after restore and reopen.
+- [ ] #11 Recovery import is inspectable after initial local-store failure and requires a validated summary plus explicit Replace current session confirmation before writable replacement.
+- [ ] #12 Users can explicitly inspect current and retained Previous output per candidate, including after failed or pending reruns, without substituting old output into current comparisons.
+- [ ] #13 Unfinished raw tag input survives ordinary renders and reopening, and deliberate save produces the intended separate tags.
+- [ ] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: approved Library/profile/recovery UI integration. 1. Read Task8 brief/context, canonical route/Library/save/recovery contracts; re-read and archive unimplemented TASK24404 via CLI with ADR/design reference. 2. TDD with isolated temporary SQLite and mounted route/editor/recovery flows. 3. Async single-flight profile owner, Library/palette tool route and exact local-media handoff; preserve shell destinations. 4. Sample/Configure/Results/dialog composition; serialized off-loop deltas, validation and captured A/current B saves. Approved pure record-field/association extension preserves invalid/pending authority, undo, unsaved captured fields and lineage-fences delayed saves. 5. Recovery labels, retry/export/restore/undo/Clear, navigation/quit checkpoint through coordinator.cancel. Approved read-only coordinator.recovery_warning pass-through explains existing fallback without storage/lifecycle changes. 6. Real process/crash/cancel/failed-write/transfer tests, exact three-size flows and two bounded visual rounds; no full suite. 7. Approved narrow ResultsRegion callable worker submission with regression prevents pre-created unawaited coroutine on cancellation; no results behavior/layout change. 8. Task-derived CSS builder, targeted static/self-review, docs/privacy/runtime limits, exact baseline comparison and independent review; remain In Progress until review.
+ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: direct correction of the approved canonical-save, recovery and authoring contracts; no new storage owner/runtime or policy. Original eight-step Task8 plan completed and reviewed. Final correction wave: 1. Read final-review.md, approved constraints and corresponding existing tasks/source. 2. TDD for exact catalog-write acknowledgment and post-commit peer interleaving; validate known recovery UI shapes while preserving opaque authored data. 3. Historical output readability and explicit per-candidate Previous inspection. 4. Read-only import inspection on failed local load, validated summary and explicit replacement confirmation. 5. Preserve unfinished raw tags, lazy screen workers, builtin copy default, sample provenance and export without runnable admission. 6. Focused amended-code service/state/recovery/UI tests, no full suite or new visual polish loop. 7. Reconcile docs/ADR/plan status, append exact evidence and self-review, one scoped final re-review; no merge/push.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -52,4 +58,6 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 Implemented the Library-owned local recoverable authoring screen under ADR-118 (backlog/decisions/118-chunking-lab-local-execution-and-recovery.md), with async single-flight profile ownership, exact local text handoff, serialized lossless edits, captured A/current B saves, canonical ingest refresh preserving selection, explicit recovery transfer and guarded navigation/quit. Approved narrow extensions add pure record-field/save-lineage transitions, read-only fallback warning and lazy/teardown-fenced ResultsRegion workers. TASK24404 was re-read unimplemented and archived with ADR/design note, not marked Done. User workflow/privacy/runtime limits are in Docs/Chunking_Lab.md. Final affected UI gate:36 passed45.17s; prior release selection103 passed with the subsequently fixed result teardown failure. Full requested integration:294 passed33 failed; exact BASE replay reproduced30, while3 startup/navigation differentials remain unqualified review concerns (not baseline-proven). Exact commands, RED/GREEN chronology, real SQLite/child/crash/failed-write/fresh-profile evidence, two accepted three-size viewport rounds, static audits and AC mapping: .superpowers/sdd/2026-09-04-chunking-lab/task-8-report.md. Scoped Ruff/format/compile/whitespace checks passed; no full sweep or unrelated repair. Status and AC acceptance remain In Progress pending independent review.
 
 Task-level independent review complete after fix cd3e13926a: final-render edit ownership now rechecks the queue, with deterministic RED3/GREEN3 and final screen/recovery27 passing. Re-review found no new blocking issues. Controller explained the three startup differentials through active7-second splash versus readiness polling; exact3 no-splash intervention passes, untouched BASE reproduces same active-splash boundary. Original integration remains non-green; no blanket cold-start qualification. Durable qualifications and verification chronology: Docs/Chunking_Lab_Verification.md. Deferred Minor tag-entry normalization/eager screen workers go to the pending whole-branch review. All Task8 ACs accepted with documented existing-environment/platform limits; ADR118 unchanged.
+
+Reopened for the single final whole-branch correction wave after review at462e5cc30e identified seven Important gaps and five Minor refinements. Task-level review history remains valid, but final completion awaits this correction and scoped re-review. Root startup diagnosis is documented separately and does not authorize unrelated startup repair.
 <!-- SECTION:NOTES:END -->
