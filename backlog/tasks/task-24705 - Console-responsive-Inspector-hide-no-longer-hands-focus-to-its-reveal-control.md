@@ -1,5 +1,5 @@
 ---
-id: task-24705
+id: TASK-24705
 title: >-
   Console: responsive Inspector hide no longer hands focus to its reveal
   control
