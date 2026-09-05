@@ -118,14 +118,21 @@ def _record_turn(db, tracker, root: Path, run_id: str, mutate) -> None:
 class _Harness(App[None]):
     CSS_PATH = str(BUNDLE)
 
-    def __init__(self, provider, workspace_roots=None) -> None:
+    def __init__(
+        self, provider, workspace_roots=None, initial_current_mode=False
+    ) -> None:
         super().__init__()
         self._provider = provider
         self._workspace_roots = workspace_roots
+        self._initial_current_mode = initial_current_mode
 
     def on_mount(self) -> None:
         self.push_screen(
-            ChangeReviewScreen(self._provider, workspace_roots=self._workspace_roots)
+            ChangeReviewScreen(
+                self._provider,
+                workspace_roots=self._workspace_roots,
+                initial_current_mode=self._initial_current_mode,
+            )
         )
 
 
@@ -1516,3 +1523,80 @@ async def test_a_landing_bug_that_raises_RuntimeError_is_not_read_as_teardown(
     assert excinfo.value.error is boom, (
         f"the original RuntimeError must survive; got {excinfo.value.error!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# `initial_current_mode` (task-12): open straight onto the working tree
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_initial_current_mode_selects_working_tree_after_detection(
+    monkeypatch, git_review_fixture
+):
+    """`initial_current_mode=True` lands on `current` mode once detection
+    offers the pseudo-entry, instead of the latest turn.
+
+    Also pins the one-shot / single-load promise: `_land_git_detection`
+    only SETS `select.value` -- it is the posted `Select.Changed` message,
+    picked up by `_on_turn_changed`, that actually calls
+    `_load_current_mode()`. A class-level counter proves it fires exactly
+    once (the double-load hazard the brief calls out: setting `.value` and
+    ALSO calling `_load_current_mode()` explicitly would fire it twice).
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db, _run1, run2 = git_review_fixture
+    loads: list[int] = []
+    real_load = ChangeReviewScreen._load_current_mode
+
+    def counting_load(self):
+        loads.append(1)
+        return real_load(self)
+
+    monkeypatch.setattr(ChangeReviewScreen, "_load_current_mode", counting_load)
+
+    app = _Harness(provider, initial_current_mode=True)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        await _wait_for(
+            pilot,
+            lambda: (
+                screen.query_one("#change-review-turn-select", Select).value
+                == CURRENT_MODE_SENTINEL
+            )
+            or None,
+            "the working-tree entry to be selected",
+        )
+        await _wait_idle(pilot, app, "change-review-current")
+        await pilot.pause()
+
+        select = screen.query_one("#change-review-turn-select", Select)
+        assert select.value == CURRENT_MODE_SENTINEL
+        assert screen._active_turn is None, (
+            "current mode must have actually loaded, not just been selected "
+            f"(latest turn was {run2!r})"
+        )
+        assert loads == [1], (
+            f"_load_current_mode must run exactly once; got {loads!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_initial_current_mode_is_noop_without_git(
+    monkeypatch, plain_review_fixture
+):
+    """No repository among the candidate roots ⇒ the pseudo-entry never
+    appears, so `initial_current_mode=True` is a silent no-op: no crash,
+    detection still settles, and the screen opens on the latest turn."""
+    _patch_git_actions(monkeypatch, True)
+    provider, root, _db, run1 = plain_review_fixture
+    app = _Harness(provider, initial_current_mode=True)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        await pilot.pause()
+
+        assert screen.git_detection_settled
+        assert CURRENT_MODE_SENTINEL not in _select_values(screen)
+        assert screen.query_one("#change-review-turn-select", Select).value == run1
