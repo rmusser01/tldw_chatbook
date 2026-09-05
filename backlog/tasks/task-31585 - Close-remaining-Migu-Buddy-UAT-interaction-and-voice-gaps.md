@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:32'
-updated_date: '2026-09-05 04:56'
+updated_date: '2026-09-05 05:24'
 labels: []
 dependencies: []
 priority: high
@@ -54,4 +54,6 @@ Rebased first onto dev b52080fee0. Repaired all eight baseline verification fail
 Qodo review: restore captured undo/redo on post-acceptance refusal only for the unchanged visible draft, preserving successful-send history barriers and newer edits. Centralized the existing canonical-directory root policy in Utils/path_validation.py; publication and cleanup consume its returned paths while retaining descriptor/identity/containment checks. Lazy mount failure records only an allowlisted view key (unknown otherwise), with no exception capture. 174 focused undo/draft/LLM/publication/path tests and two diagnostic privacy guards passed. Diagnostic statement review: exactly one 14-call LLM owner signature changed to add safe_view, with unchanged sink topology. Existing ADR-074/069/029 apply; no new ADR.
 
 Qodo follow-up final checks: all six derived-artifact preflight gates and scoped fatal-rule Ruff checks pass. Physical dragging/OpenAI realtime AC9 remains open as explicitly documented.
+
+Latest-dev CI exposed TASK-31585 collision with PR #2403 Console closeout. Applied the TASK-19601 older-created-date rule: Buddy at 03:32 retains TASK-31585; Console closeout at 03:40 moves to TASK-31591 with provenance and both plan/spec references updated. This is metadata-only; no new ADR. Local backlog guard rerun before publication.
 <!-- SECTION:NOTES:END -->
