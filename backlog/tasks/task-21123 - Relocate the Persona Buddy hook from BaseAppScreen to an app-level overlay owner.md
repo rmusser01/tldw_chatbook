@@ -126,3 +126,14 @@ delta before regenerating the pin, with no new diagnostics or persistent sinks.
 
 Task status and criteria use the documented direct-file workaround for the broken
 five-digit Backlog CLI, rather than generating a malformed TASK-TASK- record.
+
+### PR #2407 review follow-up
+
+Rebased onto dev `b52080fee0`; the sole conflict was the diagnostic-inventory
+aggregate, resolved by retaining dev's TASK-492 changes and this PR's TASK-494
+decrement. Qodo reported zero bugs and one Google-style docstring violation:
+documented `is_current`'s argument and return value, plus the new owner's
+constructor argument and reconciliation result. No runtime behavior changed.
+Rebased verification: 256 targeted tests passed (374 deselected, one inherited
+RequestsDependencyWarning), 123.89 seconds; all derived-artifact preflight checks
+and the overlay's Ruff/format checks passed.

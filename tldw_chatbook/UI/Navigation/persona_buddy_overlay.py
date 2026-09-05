@@ -20,6 +20,11 @@ class PersonaBuddyOverlay:
     """Own one presentation generation across primary screens and rebuilds."""
 
     def __init__(self, app: Any) -> None:
+        """Create the presentation owner.
+
+        Args:
+            app: Textual app providing Buddy authority and reconciliation hooks.
+        """
         self.app = app
         self.view: Any = None
         self.screen: Any = None
@@ -30,7 +35,15 @@ class PersonaBuddyOverlay:
         self.closed = False
 
     def is_current(self, view: Any) -> bool:
-        """Return whether a view may interact with the active primary screen."""
+        """Return whether a view may interact with the active primary screen.
+
+        Args:
+            view: Candidate Buddy view whose presentation authority is checked.
+
+        Returns:
+            True when the attached view owns the current generation on the
+            active primary screen and presentation admission remains open.
+        """
         return bool(
             not self.closed
             and view is self.view
@@ -82,7 +95,12 @@ class PersonaBuddyOverlay:
             self.screen = None
 
     async def reconcile(self) -> bool:
-        """Reconcile current authority; return whether the current view is absent."""
+        """Reconcile current presentation authority.
+
+        Returns:
+            True if the view is absent or presentation admission is closed;
+            False if a view is retained or the active screen cannot host it.
+        """
         from .base_app_screen import BaseAppScreen
 
         async with self._lock:
