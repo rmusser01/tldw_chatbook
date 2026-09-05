@@ -1,11 +1,11 @@
 ---
 id: TASK-31232
 title: Complete Canvas settings rollout and cross-mode verification
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 19:11'
+updated_date: '2026-09-05 19:39'
 labels:
   - canvas
   - settings
@@ -35,7 +35,7 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 - [x] #6 Native live verification covers create, update, submit draft, download, historical selection, undo, and temporary save/destruction
 - [x] #7 Served live verification covers split pane, hot reload, branch switch, exact transcript reopen, authenticated remote/proxy flow, and two-browser isolation
 - [x] #8 Archive 3.0 round-trip and zero-egress evidence are captured through the outermost user-visible paths
-- [ ] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
+- [x] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
 - [x] #10 Final review regressions demonstrate production staging count/byte admission, supported DOM move/reinsert behavior, byte-preserving ordinary disabled continuations, nonblocking transcript Canvas actions, and pin-preserving settlement publication; helper limit validation and close/hide copy match their actual contracts
 <!-- AC:END -->
 
@@ -61,3 +61,11 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 12. User-authorized six-baseline repair: reproduce the exact six IDs in Docs/Canvas/V1_VERIFICATION.md, distinguish fixture drift from product failures, and repair only their causes and directly affected regression coverage. Existing ADR-097 (retained soft-delete semantics and guarded mutations), ADR-079 (Library authority), ADR-094 (raw CLI consent) and ADR-115 apply; no new ADR required. Preserve guards/privacy and exercise real image-only send, MCP filtering, promotion, export/deletion and Settings readiness contracts. Run targeted RED/GREEN, affected checks/statics and independent scoped review; reconcile AC9 honestly without a full repository sweep or integration.
 13. User-authorized retry correction: reproduce the two failed-assistant retry cases, trace exact run/assistant settlement and durable projection through retry, and repair their shared cause or stale expectation without weakening atomic commit, discarded failed history, cleanup, rollback or restart hydration. Existing ADR-115 applies; no new ADR required. Coordinator runs isolated targeted tests/statics, worker performs static edits only; obtain independent scoped review and reconcile AC9 without full sweep or integration.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Completed Canvas V1 rollout under existing ADR-115 (backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md); no duplicate ADR. Canonical Settings, global kill switch, measured production quotas, author/user/operations guidance, and native/served/archive/zero-egress verification are implemented. Reviewed corrections cover nonblocking compilation, exact selection-intent fencing, production staging admission, DOM reconstruction, disabled continuation compatibility, transcript actions, pin-preserving publication and the six characterized baseline failures. The final retry repair (5bba89d3a) excludes only native-only SYSTEM notices from durable Canvas scope; persisted messages, temporary alias behavior and all service validation remain unchanged. Five real projection controls and six retry variants cover completion, discard, atomic rollback, durable provenance, restart and stale callbacks.
+
+Final affected check: 970 passed; post-format focused check: 11 passed. Independent scoped review b125832cb..8388ae696 passed spec and quality gates. Changed-range formatting, compilation and whitespace checks pass; two-path normalized Ruff findings are unchanged (189/189). AC9 is reconciled incrementally against prior passing Agents, packaging, migration, Web Server, browser and archive evidence, not a newly executed full matrix. Full chronology, commands and qualifications: Docs/Canvas/V1_VERIFICATION.md. Dependency mismatch, unattributed descriptor growth, inherited static debt and prior isolation/cleanup limitations remain disclosed; no pristine-resource or full-suite claim. A testing lesson records the accepted-versus-complete retry trap. TASK-31003 remains To Do; no sync, runtime privileges, full sweep, merge, push or cleanup added.
+<!-- SECTION:NOTES:END -->

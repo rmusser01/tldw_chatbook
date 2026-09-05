@@ -576,11 +576,11 @@ quotas alone do not remove the scheduling requirement.
 - [x] Served live flow: authenticated login, sibling split view, create/update, branch switch, exact card reopen, control-channel failure, reconnect, proxy/TLS configuration, and two-browser isolation. Verify durable exact-revision recovery by explicitly loading the saved conversation and opening its persisted card in a fresh authenticated child; distinguish this from fresh temporary replacement and automatic resume.
 - [x] Archive flow: export a branching Canvas conversation, delete/purge the source as appropriate in a disposable database, import, and verify graph/source/digests/reopen behavior.
 - [x] Security flow: rerun the adversarial real-browser suite through native and served outer routes while recording zero attempted egress at the harness boundary.
-- [ ] Run targeted Canvas, Agents, Console, database migration, Chatbooks, Web Server, packaging, and browser suites. Run formatter/linter only over changed files. Run `git diff --check`.
+- [x] Run targeted Canvas, Agents, Console, database migration, Chatbooks, Web Server, packaging, and browser suites. Run formatter/linter only over changed files. Run `git diff --check`. Final incremental evidence reconciliation is in `Docs/Canvas/V1_VERIFICATION.md`; this is not a newly executed full matrix or pristine warning/static-debt claim.
 - [x] Ask the user whether they want the full repository test sweep. Do not silently substitute the targeted result for a full-suite claim.
-- [ ] Perform a final self-review against every design invariant and every TASK-31226 through TASK-31232 acceptance criterion.
-- [ ] Mark each task Done only after its own Definition of Done is met. TASK-31003 remains To Do as the explicit future sync-contract backlog item.
-- [x] Commit: `test(canvas): verify native and served v1 workflows` (initial verification `f41d8ca22a`, selection fixes `0724726a0c`, durable recovery `4ce7fc756f`; independent task rereviews approved, final branch gate pending).
+- [x] Perform a final self-review against every design invariant and every TASK-31226 through TASK-31232 acceptance criterion.
+- [x] Mark each task Done only after its own Definition of Done is met. TASK-31003 remains To Do as the explicit future sync-contract backlog item.
+- [x] Commit: `test(canvas): verify native and served v1 workflows` (initial verification `f41d8ca22a`, selection fixes `0724726a0c`, durable recovery `4ce7fc756f`; subsequent whole-branch findings and scoped corrections are closed in `Docs/Canvas/V1_VERIFICATION.md`).
 
 ---
 
@@ -735,8 +735,11 @@ artifact commit, retry and staged-history cleanup contracts without new boundari
   preserve persisted messages, temporary native paths and service validation.
 - [x] Correct the cause with regression evidence while preserving stale-run
   fencing, discarded failed revisions, atomic rollback and restart hydration.
-- [ ] Run the complete retry parameter group and affected Canvas/Console checks,
+- [x] Run the complete retry parameter group and affected Canvas/Console checks,
   static analysis and independent scoped review, then reconcile AC9 honestly.
+  Final product `5bba89d3a`; affected 970 tests pass, final focused 11 pass;
+  independent review of `b125832cb..8388ae696` passes both gates. Existing
+  dependency/resource warnings and inherited static debt remain documented.
 
 All executable tests remain coordinator-owned isolated pytest runs; the worker
 is limited to static inspection, edits and exact git operations. Preserve prior

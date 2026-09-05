@@ -8,10 +8,11 @@ This is targeted evidence, **not full-suite, release, or integration approval**.
 Latest scoped rereview (`648530ac6..03cd979df`) closes both remaining I2 DOM
 cases with spec and quality gates passing and no new Critical/Important
 fix-diff issue identified. Those final-review implementation findings are
-closed. TASK-31232 remains In Progress pending the final retry scoped review.
+closed. TASK-31232's final retry scoped review also passes both gates.
 The six-baseline repair resolved its original six failures; the subsequent
 user-authorized retry correction now passes all 970 directly affected tests,
-including both newly identified retry failures. AC9 remains open until review.
+including both newly identified retry failures. AC9 is satisfied by the
+incremental targeted evidence reconciled below, not a newly run full matrix.
 Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
@@ -122,8 +123,38 @@ the controller and 17/17 for its test, zero added/removed findings. No formatter
 diff overlaps changed ranges; inherited whole-file debt was not rewritten.
 Both-file `compileall` and `git diff --check` returned zero. The worker remains
 static-only; all executable tests and static orchestration were root-run without
-application imports. Independent scoped review remains pending; TASK-31232 AC9
-is not yet closed.
+application imports. Independent static review of `b125832cb..8388ae696` passes
+both spec and quality gates, with no blocking retry-code regression. The
+descriptor-growth warning remains unresolved and is not a resource-clean claim.
+
+## Final acceptance reconciliation
+
+Root reconciled every previously failing selected node with its correction and
+later passing run, reviewed the completed TASK-31226–31231 acceptance records,
+and cross-checked the design's failure, verification, configuration and final
+boundary decisions. TASK-31232 is complete under the targeted-only test policy.
+This is incremental evidence across reviewed commits; unaffected passing gates
+were not rerun wholesale after this six-line scope correction.
+
+| Previously selected slice | Closing evidence |
+| --- | --- |
+| Core/migrations/Chatbooks/Web Server: 3 failures | Schema assertion corrected and six-node schema/census slice rechecked; both Thinking cases now pass in the final 970-test run. Remaining original cases had passed. |
+| Console/UI: 6 failures, plus 2 subsequently identified retries | Two census cases corrected and rechecked; the four baseline cases and both retry cases now pass in the final 970-test run. Remaining original cases had passed. |
+| Agents and packaging | Prior 380-test Agents and two-test packaging gates retained; Canvas provider/composition covered again by the final affected run. Runtime asset and vendor checks remain recorded below. |
+| Native/served/browser/archive | Prior outer-path and zero-egress gates, scoped selection fixes and final DOM/assets corrections retained with their recorded optional skips and cleanup limitations. This correction changes no browser/runtime/archive code. |
+
+The final self-review confirms existing ADR-115 still governs all boundaries:
+closed virtual runtime, local branch-aware immutable history, atomic staged
+turns/promotion, same-origin authenticated served routing, confirmed unsent-draft
+bridge, and inert archives. No scope expansion or new ADR was needed. Sync
+remains deferred in TASK-31003; bundled libraries, multi-file projects and
+privileged external capabilities are not V1 deliverables.
+
+Completion does **not** certify a full repository sweep, pristine dependency/
+resource output, clean dependency installation, every browser engine, or
+unobserved cleanup. Retained warnings, static debt and earlier isolation/cleanup
+incidents remain part of this record. No merge, push, release or worktree cleanup
+is authorized or performed by this acceptance reconciliation.
 
 ## User-authorized six-baseline repair evidence
 
