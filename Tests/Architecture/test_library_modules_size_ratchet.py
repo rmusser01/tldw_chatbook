@@ -376,7 +376,7 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3139,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line

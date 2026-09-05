@@ -321,6 +321,7 @@ def _sync_library_canvas(
     notes_focus_identity: LibraryNotesFocusIdentity | None = None,
     deferred_guard: Callable[[], bool] | None = None,
     sync_prompt_work: bool = True,
+    sync_skill_work: bool = True,
     projection_owned: bool = False,
 ) -> bool:
     """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
@@ -372,6 +373,9 @@ def _sync_library_canvas(
         sync_prompt_work: Whether a Prompt Items projection should also sync
             the independent retained Work pane. Browse-only settlements pass
             ``False`` so live editor widgets, cursor, and undo state survive.
+        sync_skill_work: Whether a Skills Items projection also syncs Work.
+            Browse-only settlements pass ``False`` to preserve live drafts
+            and keep their focus callbacks on the Items owner.
         projection_owned: Whether this is the projection's own final sync.
             External syncs that land during a swap request one replay after
             the swap; the final sync itself must not request another replay.
@@ -470,10 +474,11 @@ def _sync_library_canvas(
         elif kind == "skills":
             canvas = screen.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
             sync_kwargs = screen._library_skills_list_canvas_kwargs()
-            work_panes = screen.query("#library-skill-work-pane")
-            if work_panes:
-                skill_work = work_panes.first(LibrarySkillWorkPane)
-                skill_work_kwargs = screen._library_skill_work_pane_kwargs()
+            if sync_skill_work:
+                work_panes = screen.query("#library-skill-work-pane")
+                if work_panes:
+                    skill_work = work_panes.first(LibrarySkillWorkPane)
+                    skill_work_kwargs = screen._library_skill_work_pane_kwargs()
         elif kind == "ingest":
             canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
             sync_args = (screen._build_library_ingest_state(),)
