@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 09:53'
+updated_date: '2026-09-05 15:02'
 labels:
   - canvas
   - settings
@@ -32,9 +32,9 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 - [x] #3 Conservative quota defaults are fixed from explicitly labeled synthetic assistant-authored page, compiler, virtual-engine, and browser-memory probes and enforced consistently across all boundaries; measured compilation work above 100 ms stays off interactive event loops without bypassing lifecycle or scope checks
 - [x] #4 User documentation explains preview-first workflow, temporary/durable history, revisions/branches, source safety, runtime compatibility, remote authentication, and recovery
 - [x] #5 Model/tool guidance uses Canvas only when the visual medium materially helps and generates against the supported V1 runtime profile
-- [ ] #6 Native live verification covers create, update, submit draft, download, historical selection, undo, and temporary save/destruction
-- [ ] #7 Served live verification covers split pane, hot reload, branch switch, exact transcript reopen, authenticated remote/proxy flow, and two-browser isolation
-- [ ] #8 Archive 3.0 round-trip and zero-egress evidence are captured through the outermost user-visible paths
+- [x] #6 Native live verification covers create, update, submit draft, download, historical selection, undo, and temporary save/destruction
+- [x] #7 Served live verification covers split pane, hot reload, branch switch, exact transcript reopen, authenticated remote/proxy flow, and two-browser isolation
+- [x] #8 Archive 3.0 round-trip and zero-egress evidence are captured through the outermost user-visible paths
 - [ ] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
 <!-- AC:END -->
 

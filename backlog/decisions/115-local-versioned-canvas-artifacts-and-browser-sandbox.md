@@ -323,8 +323,8 @@ Parent/browser response checks alone cannot prevent a child mutation that has
 already happened. The latest intermittent live-card failure is not assigned
 to this race without its own child/parent/frame evidence.
 
-Accepted repair contract (implemented in `0724726a0c`; independent rereview
-and whole-branch acceptance pending):
+Accepted repair contract (implemented in `0724726a0c`; independent task
+rereview approved, whole-branch acceptance pending):
 
 - A child-owned bounded opaque `selection_generation` identifies selection
   intent. Every explicit bind, including a same-revision pin, and successful

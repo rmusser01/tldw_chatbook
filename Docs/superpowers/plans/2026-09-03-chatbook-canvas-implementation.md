@@ -572,15 +572,15 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `tldw_chatbook/Canvas/control_protocol.py`, `tldw_chatbook/Canvas/capabilities.py`, the already scoped gateway/served-parent/shell, and focused protocol/capability/gateway/browser tests to fence a queued navigation against its original selection intent before child mutation. Preserve a child-owned opaque generation through scope/capability/bootstrap round trips and validate the browser's issued selection epoch; explicit same-revision pin changes intent, passive snapshots do not. Missing served expectations fail closed. See ADR-115's selection-intent amendment; do not add a legacy served bypass.
 - Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
 
-- [ ] Native live flow: create, automatic browser open, interact, update/hot reload, submit to unsent draft, passive download, exact revision reopen, historical branch update, temporary promotion, and unsaved destruction.
-- [ ] Served live flow: authenticated login, sibling split view, create/update, branch switch, exact card reopen, control-channel failure, reconnect, proxy/TLS configuration, and two-browser isolation.
-- [ ] Archive flow: export a branching Canvas conversation, delete/purge the source as appropriate in a disposable database, import, and verify graph/source/digests/reopen behavior.
-- [ ] Security flow: rerun the adversarial real-browser suite through native and served outer routes while recording zero attempted egress at the harness boundary.
+- [x] Native live flow: create, automatic browser open, interact, update/hot reload, submit to unsent draft, passive download, exact revision reopen, historical branch update, temporary promotion, and unsaved destruction.
+- [x] Served live flow: authenticated login, sibling split view, create/update, branch switch, exact card reopen, control-channel failure, reconnect, proxy/TLS configuration, and two-browser isolation. Verify durable exact-revision recovery by explicitly loading the saved conversation and opening its persisted card in a fresh authenticated child; distinguish this from fresh temporary replacement and automatic resume.
+- [x] Archive flow: export a branching Canvas conversation, delete/purge the source as appropriate in a disposable database, import, and verify graph/source/digests/reopen behavior.
+- [x] Security flow: rerun the adversarial real-browser suite through native and served outer routes while recording zero attempted egress at the harness boundary.
 - [ ] Run targeted Canvas, Agents, Console, database migration, Chatbooks, Web Server, packaging, and browser suites. Run formatter/linter only over changed files. Run `git diff --check`.
 - [x] Ask the user whether they want the full repository test sweep. Do not silently substitute the targeted result for a full-suite claim.
 - [ ] Perform a final self-review against every design invariant and every TASK-31226 through TASK-31232 acceptance criterion.
 - [ ] Mark each task Done only after its own Definition of Done is met. TASK-31003 remains To Do as the explicit future sync-contract backlog item.
-- [ ] Commit: `test(canvas): verify native and served v1 workflows`
+- [x] Commit: `test(canvas): verify native and served v1 workflows` (initial verification `f41d8ca22a`, selection fixes `0724726a0c`, durable recovery `4ce7fc756f`; independent task rereviews approved, final branch gate pending).
 
 ---
 

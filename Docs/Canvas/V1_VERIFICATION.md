@@ -8,9 +8,13 @@ This is targeted evidence, **not full-suite, release, or integration approval**.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
 create-triggered native opening, exact card/replacement-session coverage and
-setup rollback, plus the selection repair described below. Scoped rereview
-and whole-branch review are pending; passing tests alone do not close those
-gates. TASK-31232 remains
+setup rollback, plus the selection repair described below. Independent
+round-1 rereview closed four findings and found no new
+Critical/Important breakage in the intent fence. It left the durable exact-
+revision recovery evidence open; test-only fix `4ce7fc756f` now supplies that
+evidence. Independent round-2 rereview closed that final finding with no new
+Critical/Important breakage. Whole-branch review remains pending.
+TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
 
@@ -20,7 +24,7 @@ its old branch. The committed gateway/shell/parent repair carries exact
 selection epochs and distinguishes passive synchronization from explicit
 selection. Fresh affected-path coverage is recorded separately below.
 
-Subsequent combined runs remain review-blocked. Deterministic delayed-command
+Before the successful fix runs, deterministic delayed-command
 tests additionally reproduced an unfenced child navigation after an explicit
 different-revision or same-revision pin (2 failed, 1 warning, 2.01s). ADR-115's
 selection-intent amendment records the accepted pre-mutation generation/epoch
@@ -77,10 +81,39 @@ were formatted without rewriting inherited debt, and JS syntax/diff checks pass.
 The served recovery case explicitly closes the old transport, waits for
 production unbind, then opens an authenticated fresh child: Connected, old URL
 404, other browser unaffected. Its new temporary root is not restoration of
-old temporary IDs. **Automatic reconnect and durable saved-Console resume are
-not demonstrated.** The final normal run captured its exact browser/driver/
+old temporary IDs. **Automatic reconnect is not demonstrated.** Durable manual
+recovery is covered separately below. The final normal run captured its exact browser/driver/
 child PIDs and profile and verified their absence after cleanup; this does not
 close the interrupted-run provenance gap above.
+
+## Durable manual recovery (`4ce7fc756f`)
+
+The actual served Console flow now creates and saves two revisions, closes the
+old control/transport, and starts a fresh authenticated AppService child against
+the same owned database. A normal saved-conversation load and real persisted
+transcript-card open restore the original conversation, Canvas and root revision
+IDs and digest. The shell is Connected and shows pinned v1 despite saved v2;
+the old capability URL returns 404 and the replacement provider has zero calls.
+This is explicit manual recovery, not automatic resume or temporary-history revival.
+
+```sh
+../../.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_chatbook_console_finalizes_canvas_create_and_update Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_chatbook_scripted_gateway_emits_create_then_stable_update Tests/Canvas/browser/test_canvas_served_flow.py::test_live_stack_setup_failure_rolls_back_owned_resources Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_child_abnormal_exit_cleans_owned_state -q --tb=short --show-capture=no
+```
+
+Exit 0: **6 passed, 1 RequestsDependencyWarning in 44.87s**. The amended actual
+flow took 30.78s; abnormal cleanup took 11.60s. Ruff and whole-file formatter
+checks on both changed test files and `git diff --check` pass. No product edits.
+Captured owned browser/driver/child processes and browser profile were absent
+afterward; the test also asserts both services and owned DB/data/certs/sites
+are cleaned. This does not repair the earlier interrupted-run provenance gap.
+
+Focused iteration first exposed a missing saved-load adapter (49.55s), then
+composer focus settling (15.02s), then a fixture whose services were constructed
+with no DB before attaching its real file DB (33.29s). The helper now runs the
+existing production service-wiring method after that assignment, and waits
+within the existing focus budget using real Escape/focus observation, without
+replaying Send. The focused recovery then passed in 42.53s before the final
+covering run. These failures establish fixture gaps, not production defects.
 
 ## Original browser and archive slice (`f41d8ca22a`)
 
