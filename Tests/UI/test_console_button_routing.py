@@ -152,7 +152,7 @@ def _browser_config(app) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_path):
+async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_path, monkeypatch):
     """Pressing the star persists through `conversation_local_marks_service`.
 
     The mark is the whole point of the branch: the row repaints from the
@@ -174,7 +174,14 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
-        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        state = _base_grouped_workspace_state(rows=rows)
+        # Keep the fixture row at the actual paint-input boundary. A queued
+        # boot refresh otherwise replaces the directly painted fixture with
+        # the unrelated blank native-session row during pilot.pause().
+        monkeypatch.setattr(
+            console._workspace, "_build_console_workspace_context_state", lambda: state
+        )
+        await _sync_tray(console, pilot, state)
 
         # TASK-23200: the per-row star button became an asterisk that opens
         # the row action menu. The durable write this test guards is now
@@ -344,7 +351,7 @@ async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
         console._workspace._workspace_files_availability_by_id = MappingProxyType(
             {"ws-a": True}
         )
-        target = console._workspace_menu_target("ws-a")
+        target = console._row_actions._workspace_menu_target("ws-a")
 
         assert target.workspace_id == "ws-a"
         assert target.name == "Workspace [label only]"

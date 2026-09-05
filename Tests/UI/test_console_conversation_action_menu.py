@@ -454,9 +454,9 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
         )
 
         async def _fake_save(t):
-            markdown = screen._render_console_conversation_markdown(t, "clean")
+            markdown = screen._row_actions._render_console_conversation_markdown(t, "clean")
             assert markdown is not None
-            await screen._write_console_markdown_file(str(target), markdown)
+            await screen._row_actions._write_console_markdown_file(str(target), markdown)
 
         monkeypatch.setattr(screen, "_save_console_conversation_markdown", _fake_save)
         screen.on_conversation_action_chosen(
