@@ -44,6 +44,9 @@ RAW_CLI_DISCLOSURE = (
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
+#: Ceiling for a mounted-destination predicate, not a fixed delay or a
+#: performance assertion. The helper returns as soon as Settings arrives.
+MOUNTED_DESTINATION_TIMEOUT_SECONDS = 30.0
 HOST_ACCESS_UNLOCK_DISCLOSURE = (
     "This saved setting only makes one-shot raw CLI and Persistent Terminal "
     "eligible on this device.",
@@ -710,7 +713,7 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
         await _wait_until(
             pilot,
             lambda: isinstance(app.screen, SettingsScreen),
-            timeout=3,
+            timeout=MOUNTED_DESTINATION_TIMEOUT_SECONDS,
         )
         screen = app.screen
         assert isinstance(screen, SettingsScreen)

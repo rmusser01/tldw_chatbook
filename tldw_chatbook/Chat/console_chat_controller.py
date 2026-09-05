@@ -518,7 +518,7 @@ class _TodoWiring(TypedDict, total=False):
 
 
 #: task-1337 (plan Task 8): raw built-in tool names the Console-composed
-#: ``MCPToolProvider`` must exclude -- the 18 ``library_*`` descriptor tools
+#: ``MCPToolProvider`` must exclude -- the current ``library_*`` descriptor tools
 #: (served to Console agents by the run's own direct/RAG Library provider, in
 #: either retrieval mode) plus the five legacy RAG/chat readers whose Console
 #: coverage those providers replace. The legacy names live HERE, not in the

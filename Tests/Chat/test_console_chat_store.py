@@ -2201,6 +2201,7 @@ class FakePersistence:
         self.speech_update_result = True
         self.restored_speech_preferences = None
         self.last_create_kwargs = None
+        self.promotion_trace_boundaries = []
         self._message_versions = {}
 
     def create_conversation(self, **kwargs):
@@ -2221,9 +2222,11 @@ class FakePersistence:
         project_context_json=None,
         context_policy_overrides=None,
         contributions=(),
+        trace_boundary=None,
     ):
         if contributions:
             raise RuntimeError("FakePersistence does not execute contributions")
+        self.promotion_trace_boundaries.append(trace_boundary)
         self.created_conversations.append(
             {"conversation_id": conversation_id, **dict(conversation_kwargs)}
         )
@@ -7950,6 +7953,7 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert conversation_id is not None
     assert temporary.ephemeral is False
     assert temporary.persisted_conversation_id == conversation_id
+    assert persistence.promotion_trace_boundaries[-1] is None
     roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
     assert roleplay["user_name_override"] == "Rowan"
     assert roleplay["character_name_snapshot"] == "Alraune"

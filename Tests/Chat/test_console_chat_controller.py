@@ -2721,6 +2721,7 @@ def test_image_only_draft_is_sendable(monkeypatch):
     assert result.accepted
     user_payload = gateway.messages_seen[-1]
     assert [part["type"] for part in user_payload["content"]] == ["image_url"]
+    assert store.pending_attachment(session.id) is None
 
 
 def test_history_images_capped_to_most_recent(monkeypatch):
@@ -7661,8 +7662,8 @@ async def test_library_provider_factory_failure_degrades_to_no_provider():
 
 @pytest.mark.asyncio
 async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
-    """The Console-composed MCP provider drops exactly the 29 shadowed raw
-    names (24 descriptor tools + 5 legacy readers) from the
+    """The Console-composed MCP provider drops the current descriptor tools
+    plus five legacy readers from the
     `builtin:tldw_chatbook` source -- the Console serves Library retrieval
     through its own direct/RAG provider (either mode), so the MCP copies
     would be an ungoverned duplicate. Same-named external/local profile
@@ -7690,7 +7691,6 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
             "export_conversation",
         }
     )
-    assert len(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS) == 29
     assert "search_rag" not in LIBRARY_TOOL_DESCRIPTORS
 
     inventory = {

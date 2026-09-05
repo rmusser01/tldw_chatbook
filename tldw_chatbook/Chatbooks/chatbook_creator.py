@@ -813,7 +813,15 @@ class ChatbookCreator:
                 message_data["_private"] = {
                     "provider_continuation": json.loads(canonical or "null")
                 }
-            thinking_json = msg.get("thinking_blocks_json")
+            # Soft deletion retains the durable semantic envelope and only
+            # changes visibility/ownership. V2 archives keep the tombstone for
+            # graph identity, but the V2 importer deliberately rejects
+            # `_thinking` on a deleted row. Project only active thinking into
+            # the archive; do not mutate the retained database bytes or strip
+            # the separately governed private continuation.
+            thinking_json = (
+                None if message_data["deleted"] else msg.get("thinking_blocks_json")
+            )
             if thinking_json is not None:
                 if message_data["role"] != "assistant":
                     raise _ConversationGraphProjectionError(
