@@ -147,6 +147,47 @@ async def settled(service):
 
 
 @pytest.mark.asyncio
+async def test_catalog_compatibility_projection_tracks_ready_and_invalidated_launch(
+    harness,
+):
+    from Tests.LLM_Management.snapshot_fixtures import commit_test_snapshot
+    from tldw_chatbook.LLM_Management.snapshot_service import LlamaCppSnapshotService
+
+    h = harness
+    try:
+        await h.service.refresh()
+        h.service.start_save(0)
+        await settled(h.service)
+        matching = h.store.list_records().records[0]
+        different = commit_test_snapshot(h.store, payload=b"other model", slot_id=1)
+        await h.service.browse_catalog()
+        assert dict(h.service.view().snapshot_compatibility) == {
+            matching.snapshot_id: "matching",
+            different.snapshot_id: "different",
+        }
+        assert h.service.view().storage_location == str(h.store.root)
+        assert str(h.store.root) not in repr(h.service.view())
+        await h.service.browse_catalog(limit=1)
+        assert h.service.view().snapshot_compatibility == (
+            (different.snapshot_id, "different"),
+        )
+        h.current = None
+        assert h.service.view().snapshot_compatibility == (
+            (different.snapshot_id, "unknown"),
+        )
+        detached = LlamaCppSnapshotService(h.store, lambda claim: False)
+        try:
+            await detached.browse_catalog()
+            assert set(dict(detached.view().snapshot_compatibility).values()) == {
+                "unknown"
+            }
+        finally:
+            await detached.shutdown()
+    finally:
+        await h.service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_disabled_preference_preserves_attached_capability_and_live_retention(
     harness, monkeypatch
 ):

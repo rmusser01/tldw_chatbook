@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from types import MappingProxyType
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -271,6 +271,10 @@ class ManagerView:
     catalog: CatalogPage
     disabled_reason: str | None
     message: str | None
+    snapshot_compatibility: tuple[
+        tuple[str, Literal["matching", "different", "unknown"]], ...
+    ] = ()
+    storage_location: str | None = field(default=None, repr=False)
 
 
 class SnapshotError(Exception):

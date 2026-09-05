@@ -449,6 +449,24 @@ class LlamaCppSnapshotService:
     def view(self) -> ManagerView:
         """Return only bounded status, slot and catalog fields."""
         generation = self._current
+        evidence = (
+            generation.descriptor.compatibility
+            if generation is not None and self._valid(generation) and generation.ready
+            else None
+        )
+        compatibility = tuple(
+            (
+                record.snapshot_id,
+                "unknown"
+                if evidence is None
+                else (
+                    "matching"
+                    if compatibility_matches(record.compatibility, evidence)
+                    else "different"
+                ),
+            )
+            for record in self._catalog.records
+        )
         if generation is None:
             return ManagerView(
                 None,
@@ -466,6 +484,8 @@ class LlamaCppSnapshotService:
                     else "Start a managed llama.cpp server."
                 ),
                 None,
+                compatibility,
+                str(self.store.root) if self.store is not None else None,
             )
         return ManagerView(
             generation.descriptor.launch_id,
@@ -477,6 +497,8 @@ class LlamaCppSnapshotService:
             generation.descriptor.disabled_reason
             or (None if self._valid(generation) else "Launch unavailable."),
             generation.message or self._unavailable,
+            compatibility,
+            str(self.store.root) if self.store is not None else None,
         )
 
     def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
