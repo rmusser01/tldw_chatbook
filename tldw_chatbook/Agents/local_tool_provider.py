@@ -4187,17 +4187,28 @@ def _default_specs(
         # callback (the todo_* pattern -- absent in headless runs, A10),
         # exempt from the permission layer (A12), imported lazily so the
         # module stays off the boot path (ADR-097).
+        import os
+
         from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
-        from .ask_user_questions import ASK_USER_DESCRIPTION, ASK_USER_PARAMETERS
+        from .ask_user_questions import (
+            ASK_USER_DESCRIPTION,
+            ASK_USER_DESCRIPTION_ENV_VAR,
+            ASK_USER_PARAMETERS,
+            resolve_tool_description,
+        )
 
         # task-31420: the description is a registry prompt (its catalog
         # default is byte-identical to ASK_USER_DESCRIPTION) so a user can
         # inspect and override the restraint text like any other prompt the
-        # app puts in front of a model. The resolver never raises for a bad
-        # override; an empty result falls back to the constant.
-        description = (
-            get_internal_prompt("agents.ask_user_tool_description") or ASK_USER_DESCRIPTION
+        # app puts in front of a model. Precedence is env -> config/registry
+        # -> shipped constant, and every candidate is validated through the
+        # Pydantic `ToolDescriptionText` model before it can reach the spec;
+        # a blank, over-long, or non-text override is skipped, never shipped.
+        description = resolve_tool_description(
+            os.environ.get(ASK_USER_DESCRIPTION_ENV_VAR),
+            get_internal_prompt("agents.ask_user_tool_description"),
+            ASK_USER_DESCRIPTION,
         )
         specs.append(
             LocalToolSpec(

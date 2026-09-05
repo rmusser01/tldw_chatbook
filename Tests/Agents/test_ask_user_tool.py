@@ -194,3 +194,40 @@ def test_a_registry_override_reaches_the_built_spec(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module, "get_cli_setting", fake_setting)
     provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
     assert _spec(provider).description == "Ask only about deployment targets."
+
+
+def test_env_override_beats_the_registry_and_blank_or_bad_env_is_skipped(tmp_path, monkeypatch):
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: "Registry text."
+        if (section, key) == ("internal_prompts.agents", "ask_user_tool_description")
+        else default,
+    )
+    monkeypatch.setenv("TLDW_INTERNAL_PROMPT_AGENTS_ASK_USER_TOOL_DESCRIPTION", "  Env text.\n ")
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == "Env text."
+    monkeypatch.setenv("TLDW_INTERNAL_PROMPT_AGENTS_ASK_USER_TOOL_DESCRIPTION", "   ")
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == "Registry text."
+    monkeypatch.setenv("TLDW_INTERNAL_PROMPT_AGENTS_ASK_USER_TOOL_DESCRIPTION", "x" * 5000)
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == "Registry text.", "over-long env value is skipped"
+
+
+def test_an_over_long_registry_override_falls_back_to_the_constant(tmp_path, monkeypatch):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.ask_user_questions import ASK_USER_DESCRIPTION
+
+    monkeypatch.delenv("TLDW_INTERNAL_PROMPT_AGENTS_ASK_USER_TOOL_DESCRIPTION", raising=False)
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: "y" * 5000
+        if (section, key) == ("internal_prompts.agents", "ask_user_tool_description")
+        else default,
+    )
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == ASK_USER_DESCRIPTION
