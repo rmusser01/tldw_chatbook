@@ -517,3 +517,27 @@ def test_console_command_names_are_treated_as_shadowing():
     for name in ("rewind", "generate-image"):
         assert skill_name_shadows_builtin(name) == name
         assert skill_name_shadows_builtin(f"  {name.upper()} ") == name
+
+
+def test_new_runtime_and_console_names_are_treated_as_shadowing():
+    """Pin the names uncovered by the resumed dev sweep independently of registries."""
+    for name in (
+        "discard_agent_worktree",
+        "merge_agent_worktree",
+        "prepare_managed_skill_promotion",
+        "context",
+        "doctor",
+        "emergency-stop",
+        "help",
+        "model",
+        "new",
+        "redirect",
+        "sessions",
+        "settings",
+        "steer",
+        "temp",
+        "workspace",
+    ):
+        assert skill_name_shadows_builtin(name) == name
+        assert skill_name_shadows_builtin(f"  {name.upper()} ") == name
+        assert skill_name_shadows_builtin(f"my-{name}-skill") is None
