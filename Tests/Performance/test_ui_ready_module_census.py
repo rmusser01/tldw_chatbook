@@ -122,6 +122,11 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Inspect's Environment implementation is first-open work, not closed-rail boot.
+    "tldw_chatbook.Chat.console_environment_state",
+    "tldw_chatbook.UI.Console_Modules.environment",
+    "tldw_chatbook.Workspaces.environment_status",
+    "tldw_chatbook.Workspaces.git_workspace",
     "tldw_chatbook.UI.Screens.trajectory_screen",
     "tldw_chatbook.Chat.trajectory_import",
     "tldw_chatbook.Chat.trajectory_export",

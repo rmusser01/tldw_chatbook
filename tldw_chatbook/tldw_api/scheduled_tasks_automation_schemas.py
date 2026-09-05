@@ -216,3 +216,44 @@ class ScheduledTaskAuditList(BaseModel):
     offset: int = Field(default=0, ge=0)
     has_more: bool = False
     next_offset: int | None = Field(default=None, ge=0)
+
+
+class ScheduledTaskAutomationCapabilityAction(BaseModel):
+    """One action's capability status within a family capability report.
+
+    Mirrors the server's ``ScheduledTaskActionCapability`` (schemas file
+    of the same name), trimmed to the fields this client reads.
+    """
+
+    status: str
+    reason: str | None = None
+
+
+class ScheduledTaskAutomationCapability(BaseModel):
+    """One automation family's capability report.
+
+    Mirrors the server's ``ScheduledTaskAutomationCapability``, trimmed to
+    the fields this client reads.
+    """
+
+    family: str
+    family_availability: str
+    actions: dict[str, ScheduledTaskAutomationCapabilityAction] = Field(
+        default_factory=dict
+    )
+    reason: str | None = None
+
+
+class ScheduledTaskAutomationCapabilities(BaseModel):
+    """``GET /api/v1/scheduled-tasks/capabilities`` response.
+
+    Mirrors the server's ``ScheduledTaskAutomationCapabilitiesResponse``
+    (task-3, schedules UAT remediation ruling 5 -- the capabilities
+    handshake per the ``client.py``'s ``/sync/capabilities`` precedent).
+    A 404 on the request this backs means the server predates Scheduled
+    Tasks automation entirely; that is the caller's job to interpret
+    (``SchedulingServerClient.get_capabilities``), not this model's --
+    this model only describes a SUCCESSFUL response's shape.
+    """
+
+    items: list[ScheduledTaskAutomationCapability] = Field(default_factory=list)

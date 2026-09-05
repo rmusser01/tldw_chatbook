@@ -237,19 +237,6 @@ from ...Library.library_notes_tree_paging import (
     fail_notes_slice_load,
 )
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
-from ...Notes.note_import_discovery import discover_import_sources
-from ...Notes.note_import_execution_models import approve_note_import_plan
-from ...Notes.note_import_executor import LocalNoteImportTarget, NoteImportExecutor
-from ...Notes.note_import_parsers import parse_import_sources
-from ...Notes.note_import_plan_models import ImportBounds
-from ...Notes.note_import_planner import (
-    analyze_root_collision,
-    apply_item_override,
-    classify_import_batch,
-    confirm_uncertain_match,
-    resolve_root_collision,
-)
-from ...Notes.note_import_receipts import NoteImportReceiptRepository
 from ...Library.library_notes_session import (
     ConflictAction,
     ConflictOutcomeKind,
@@ -536,13 +523,7 @@ from ..Library_Modules.library_media_trash_browse_controller import (
 from ..Library_Modules.library_collections_capture_controller import (
     LibraryCollectionsCaptureController,
 )
-from ..Library_Modules.library_collections_controller import (
-    LibraryCollectionsController,
-)
 from ..Library_Modules.library_collections_state import LibraryCollectionsState
-from ..Library_Modules.library_conversation_reader_controller import (
-    LibraryConversationReaderController,
-)
 from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
@@ -550,22 +531,12 @@ from ..Library_Modules.library_conversations_state import LibraryConversationsSt
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
-from ..Library_Modules.library_note_import_controller import (
-    LibraryNoteImportController,
-)
-from ..Library_Modules.library_notes_sync_controller import (
-    InertLastingSyncRuntime,
-    LibraryNotesSyncController,
-)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
     reduce_notes_work_session,
 )
-from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
-from ..Library_Modules.library_ingest_controller import LibraryIngestController
-from ..Library_Modules.library_skills_controller import LibrarySkillsController
 from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
@@ -585,6 +556,8 @@ if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
     from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
+    from ...Notes.note_import_executor import NoteImportExecutor
+    from ...Notes.note_import_receipts import NoteImportReceiptRepository
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
     )
@@ -2073,9 +2046,43 @@ class LibraryScreen(BaseAppScreen):
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
+        # The registry pre-imports this class without constructing the screen.
+        # Keep runtime controllers and their service closures on first use.
+        from ...Notes.note_import_discovery import discover_import_sources
+        from ...Notes.note_import_execution_models import approve_note_import_plan
+        from ...Notes.note_import_parsers import parse_import_sources
+        from ...Notes.note_import_plan_models import ImportBounds
+        from ...Notes.note_import_planner import (
+            analyze_root_collision,
+            apply_item_override,
+            classify_import_batch,
+            confirm_uncertain_match,
+            resolve_root_collision,
+        )
+        from ...Notes.note_import_receipts import NoteImportReceiptRepository
+        from ..Library_Modules.library_collections_controller import (
+            LibraryCollectionsController,
+        )
+        from ..Library_Modules.library_conversation_reader_controller import (
+            LibraryConversationReaderController,
+        )
+        from ..Library_Modules.library_ingest_controller import (
+            LibraryIngestController,
+        )
+        from ..Library_Modules.library_note_import_controller import (
+            LibraryNoteImportController,
+        )
+        from ..Library_Modules.library_notes_sync_controller import (
+            InertLastingSyncRuntime,
+            LibraryNotesSyncController,
+        )
+        from ..Library_Modules.library_rag_search_controller import (
+            LibraryRagSearchController,
+        )
         from ..Library_Modules.library_skill_import_controller import (
             ensure_library_skill_import_coordinator,
         )
+        from ..Library_Modules.library_skills_controller import LibrarySkillsController
 
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
@@ -9994,10 +10001,16 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _restore_library_skills_scope(state: Mapping[str, Any]) -> SkillBrowseScope:
+        from ..Library_Modules.library_skills_controller import LibrarySkillsController
+
         return LibrarySkillsController._restore_library_skills_scope(state)
 
     @staticmethod
     def _restore_library_collections_page(state: Mapping[str, Any]) -> int:
+        from ..Library_Modules.library_collections_controller import (
+            LibraryCollectionsController,
+        )
+
         return LibraryCollectionsController._restore_library_collections_page(state)
 
     def save_state(self) -> dict[str, Any]:
@@ -31738,6 +31751,11 @@ class LibraryScreen(BaseAppScreen):
         receipts: NoteImportReceiptRepository,
     ) -> NoteImportExecutor:
         """Build one executor from exact current local authorities."""
+        from ...Notes.note_import_executor import (
+            LocalNoteImportTarget,
+            NoteImportExecutor,
+        )
+
         return NoteImportExecutor(
             target=LocalNoteImportTarget(db=database, folder_repository=repository),
             receipt_repository=receipts,
@@ -40963,6 +40981,10 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
+        from ..Library_Modules.library_rag_search_controller import (
+            LibraryRagSearchController,
+        )
+
         return LibraryRagSearchController._library_rag_scope_summary(panel_state)
 
     def _open_selected_conversation_handoff(self) -> None:

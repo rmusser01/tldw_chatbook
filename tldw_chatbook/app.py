@@ -178,6 +178,7 @@ from tldw_chatbook.Constants import (
     TAB_ACP,
     TAB_SKILLS,
     TAB_SETTINGS,
+    TAB_MEETINGS,
     TAB_STTS,
     TAB_STUDY,
     TAB_WRITING,
@@ -1260,6 +1261,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, storage, and app behavior",
+        TAB_MEETINGS: "Open Meetings to record a call or a room with a live transcript",
         TAB_CCP: "Switch to Roleplay for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to Library search and RAG",
@@ -7702,6 +7704,9 @@ class TldwCli(
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
         self.audio_cpp_model_install_owner = AudioCppModelInstallOwner()
+        # Built lazily by the `meeting_session_owner` property so the meeting
+        # modules are not resident at `_ui_ready` (UI-ready module census).
+        self._meeting_session_owner = None
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         #: TASK-1143 (F5): count of Console agent runs/rounds the last
@@ -7764,6 +7769,7 @@ class TldwCli(
         self.onnx_server_process = None
         self._llm_server_launch_claims = {}
         self._llm_server_lifecycle_lock = threading.RLock()
+        self._wire_llamacpp_snapshot_service()
         self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
         log_histogram(
             "app_startup_phase_duration_seconds",
@@ -10427,6 +10433,12 @@ class TldwCli(
             handler_timeout_seconds=get_cli_setting(
                 "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
             ),
+            # UAT finding 3a: `on_queue_changed` (above) only reloads the
+            # loop's OWN in-memory queue -- it never reaches a screen.
+            # This is the fallback the plan calls for: a lightweight
+            # `post_message` bridge so a fired reminder's row repaints
+            # without navigating away and back.
+            on_reminder_dispatched=self._post_reminder_dispatched,
         )
         # The report demo is opt-in. Keep its audio stack off first paint and
         # let the property above build it on the first demo entry-point read.
@@ -11003,6 +11015,39 @@ class TldwCli(
             )
             self._automation_definition_handler = handler
         return handler
+
+    def _post_reminder_dispatched(self, task_id: str) -> None:
+        """`SchedulerLoop.on_reminder_dispatched` callback (finding 3a).
+
+        Lazy import: `Scheduling.events` pulls in `Widgets.
+        detail_value_row` (ADR-097 boot-census ratchet), and this only
+        runs once a reminder has actually fired -- long after boot.
+        Posting to `self` (the App) is the only route available: the
+        loop is UI-agnostic and holds no screen reference, so
+        `on_reminder_dispatched` below relays this to whichever
+        `SchedulesWorkbench` is currently on the screen stack, if any.
+        """
+        from .Scheduling.events import ReminderDispatched
+
+        self.post_message(ReminderDispatched(task_id))
+
+    def on_reminder_dispatched(self, message: Any) -> None:
+        """Relay a scheduler-fired reminder into the live Schedules
+        workbench, if one is mounted (finding 3a).
+
+        A purely local scheduler fire has no other route to the UI --
+        the only existing push path is the server SSE observer, which
+        requires a server. Same `screen_stack` scan idiom as
+        `_mounted_chat_screen` above; a full `_request_tasks_refresh()`
+        rather than a targeted repaint, since the fired row's own
+        bucket/next-run text both change together.
+        """
+        from .UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+
+        for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+            if isinstance(screen, SchedulesWorkbench):
+                screen._request_tasks_refresh(refresh_definitions=False)
+                return
 
     def _backfill_subscription_items_fts(self) -> None:
         """Worker body: index subscription_items rows that predate the FTS
@@ -14438,6 +14483,47 @@ class TldwCli(
         self.scheduler_loop.queue.briefing_projection = projection
         return self.scheduler_loop.request_reload()
 
+    def _wire_llamacpp_snapshot_service(self) -> None:
+        """Reserve lazy owner slots without importing the snapshot stack at boot."""
+        self._llamacpp_snapshot_service = None
+        self._llamacpp_snapshot_setup_task = None
+
+    @property
+    def llamacpp_snapshot_service(self) -> Any:
+        """Compose snapshots on first Models/launch use (ADR-097, ADR-119)."""
+        owner = self._llamacpp_snapshot_service
+        if owner is None:
+            from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+                snapshot_claim_is_live,
+            )
+            from tldw_chatbook.LLM_Management.snapshot_service import (
+                LlamaCppSnapshotService,
+            )
+
+            owner = LlamaCppSnapshotService(
+                None, lambda claim: snapshot_claim_is_live(self, claim)
+            )
+            self._llamacpp_snapshot_service = owner
+        if self.is_running and self._llamacpp_snapshot_setup_task is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Pre-run callers and launch workers can inspect the owner safely.
+                pass
+            else:
+                self._llamacpp_snapshot_setup_task = loop.create_task(
+                    owner.initialize(
+                        lambda: get_user_data_dir() / "llamacpp_snapshots"
+                    ),
+                    name="initialize_llamacpp_snapshots",
+                )
+        return owner
+
+    @llamacpp_snapshot_service.setter
+    def llamacpp_snapshot_service(self, service: Any) -> None:
+        """Preserve the public injection seam used by screens and tests."""
+        self._llamacpp_snapshot_service = service
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
@@ -17241,6 +17327,29 @@ class TldwCli(
             return
         await owner.close_and_drain()
 
+    @property
+    def meeting_session_owner(self):
+        """App-owned meeting session owner, built on first use.
+
+        Deferred so ``Audio.meeting_owner`` and the session/tap/wav modules it
+        pulls in are not resident at ``_ui_ready``: the UI-ready module census
+        (``Tests/Performance/test_ui_ready_module_census.py``) ratchets that
+        count, and these four modules only matter once someone opens Meetings
+        or presses a Console voice control.
+        """
+        owner = self._meeting_session_owner
+        if owner is None:
+            from .Audio.meeting_owner import build_meeting_session_owner
+
+            owner = build_meeting_session_owner(self)
+            self._meeting_session_owner = owner
+        return owner
+
+    @meeting_session_owner.setter
+    def meeting_session_owner(self, owner) -> None:
+        """Inject an owner (tests use a fake); ``None`` returns to lazy building."""
+        self._meeting_session_owner = owner
+
     def on_chunking_templates_changed(self, event) -> None:
         """Refresh local ingest consumers without changing their selection/defaults."""
         from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
@@ -17318,10 +17427,20 @@ class TldwCli(
         if change_review is not None:
             await asyncio.to_thread(change_review.shutdown, timeout=1.0)
         await self._shutdown_persona_buddy()
+        snapshot_owner = getattr(self, "_llamacpp_snapshot_service", None)
+        if snapshot_owner is not None:
+            await snapshot_owner.shutdown()
+            snapshot_setup = getattr(self, "_llamacpp_snapshot_setup_task", None)
+            if snapshot_setup is not None:
+                await asyncio.shield(snapshot_setup)
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
+        meeting_session_owner = self._meeting_session_owner
+        if meeting_session_owner is not None:
+            # Only an owner that was actually built can hold a live meeting.
+            await asyncio.to_thread(meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
         if lab_error is not None:

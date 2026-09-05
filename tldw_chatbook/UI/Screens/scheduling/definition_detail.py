@@ -1159,6 +1159,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current_owner,
                     id=_RUNS_ON_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._model_row:
@@ -1182,6 +1183,7 @@ class DefinitionDetail(Vertical):
                     value=initial,
                     placeholder="provider/model — blank for auto",
                     id=_MODEL_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._generation_row:
@@ -1197,6 +1199,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current,
                     id=_GENERATION_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._finding_policy_row:
@@ -1212,6 +1215,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current,
                     id=_FINDING_POLICY_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._sources_row:
@@ -1224,6 +1228,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current,
                     id=_NOTIFICATIONS_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._repeat_row:
@@ -1240,6 +1245,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current_preset,
                     id=_REPEAT_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._at_row:
@@ -1260,7 +1266,12 @@ class DefinitionDetail(Vertical):
                 "2026-08-28 09:00" if field == "run_at" else DEFAULT_TIME_OF_DAY
             )
             row.begin_edit(
-                Input(value=initial, placeholder=placeholder, id=_AT_EDITOR_ID)
+                Input(
+                    value=initial,
+                    placeholder=placeholder,
+                    id=_AT_EDITOR_ID,
+                    compact=True,
+                )
             )
         elif row is self._timezone_row:
             schedule = (
@@ -1277,6 +1288,7 @@ class DefinitionDetail(Vertical):
                     allow_blank=False,
                     value=current_tz,
                     id=_TIMEZONE_EDITOR_ID,
+                    compact=True,
                 )
             )
 

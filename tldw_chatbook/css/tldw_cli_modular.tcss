@@ -3679,7 +3679,8 @@ ChatScreen.-focus #console-workbench-header {
 #acp-workbench,
 #skills-workbench,
 #settings-workbench,
-#evals-workbench {
+#evals-workbench,
+#meetings-workbench {
     height: 1fr;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
@@ -8300,6 +8301,101 @@ MediaDetailsWidget {
  * ======================================== */
 
 /* --- LLM Management Tab --- */
+#llamacpp-snapshot-manager {
+    height: auto;
+    width: 100%;
+    margin-top: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#llamacpp-snapshot-manager .section-title,
+#llamacpp-snapshot-manager .snapshot-copy,
+#llamacpp-snapshot-manager .snapshot-keep-label,
+#snapshot-retention,
+#snapshot-operation-status,
+#snapshot-disabled-reason,
+#snapshot-details,
+#snapshot-preferences-result,
+#snapshot-enabled,
+#settings-snapshot-enabled,
+#settings-snapshot-controls CollapsibleTitle,
+#llamacpp-snapshot-manager CollapsibleTitle,
+#settings-snapshot-controls .settings-help-copy,
+#settings-snapshot-controls .settings-input-label {
+    height: auto;
+    text-wrap: wrap;
+}
+
+#llamacpp-snapshot-manager .snapshot-actions {
+    height: 3;
+    width: 100%;
+}
+
+#llamacpp-snapshot-manager #snapshot-save,
+#llamacpp-snapshot-manager #snapshot-restore,
+#llamacpp-snapshot-manager #snapshot-delete,
+#llamacpp-snapshot-manager #snapshot-refresh,
+#llamacpp-snapshot-manager #snapshot-previous,
+#llamacpp-snapshot-manager #snapshot-next,
+#llamacpp-snapshot-manager #snapshot-apply,
+#llamacpp-snapshot-manager #snapshot-reload {
+    min-width: 8;
+    width: 1fr;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    text-wrap: nowrap;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+#llamacpp-snapshot-manager #snapshot-save:disabled,
+#llamacpp-snapshot-manager #snapshot-restore:disabled,
+#llamacpp-snapshot-manager #snapshot-delete:disabled,
+#llamacpp-snapshot-manager #snapshot-refresh:disabled,
+#llamacpp-snapshot-manager #snapshot-previous:disabled,
+#llamacpp-snapshot-manager #snapshot-next:disabled,
+#llamacpp-snapshot-manager #snapshot-apply:disabled,
+#llamacpp-snapshot-manager #snapshot-reload:disabled {
+    border: none;
+}
+
+#snapshot-slots,
+#snapshot-records {
+    height: 5;
+    width: 100%;
+}
+
+#snapshot-disabled-reason,
+#snapshot-operation-status,
+#settings-snapshot-result {
+    color: $warning;
+}
+
+#llamacpp-snapshot-manager .snapshot-copy {
+    color: $text-muted;
+}
+
+#snapshot-retention {
+    text-style: bold;
+}
+
+#snapshot-keep,
+#settings-snapshot-keep {
+    width: 8;
+}
+
+#llamacpp-snapshot-manager .snapshot-keep-label {
+    width: 12;
+}
+
+#settings-snapshot-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
 .gguf-source-mode-row {
     layout: horizontal;
     width: 100%;
@@ -12710,6 +12806,22 @@ Button.error:hover {
 }
 
 /* ===== MODULE: features/_scheduling.tcss ===== */
+
+/* UAT display blocker (finding 2): both detail panes are a plain
+ * `Vertical` (`overflow: hidden hidden` by default) taller than their
+ * own box at every measured width -- History and the lifecycle action
+ * row were clipped with no scrollbar, no wheel handling, no PageDown.
+ * `overflow-y: auto` alone is not enough: `#scheduling-task-detail-
+ * groups` is itself a plain `Vertical` (`height: 1fr` by default), which
+ * clips ITS OWN children a second time before `TaskDetail` ever gets a
+ * chance to scroll them -- `height: auto` lets it size to its real
+ * content instead. `DefinitionDetail` nests one level shallower (no
+ * separate groups wrapper -- its DetailGroups are direct children of
+ * `#scheduling-automation-detail-body`), so that container gets the
+ * same treatment. */
+TaskDetail, DefinitionDetail {
+    overflow-y: auto;
+}
 
 /* Compact mode: the filter's margin row goes to the table (80x24 has
  * exactly one spare row; without this the queue shows only the filter). */

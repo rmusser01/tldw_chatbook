@@ -4,7 +4,8 @@ Footer: global hints (F1/F6/palette/quit) are always present, screen
 context prepends instead of replacing, and narrow widths degrade
 gracefully without mid-word clipping. Nav bar: overflow is explicit —
 destinations that do not fit are hidden behind the More hint, never
-clipped mid-word, and all 13 destination labels fit at 156 columns.
+clipped mid-word, and every destination label fits at a wide enough
+terminal (179 columns, as of the Meetings destination).
 """
 
 from __future__ import annotations
@@ -104,9 +105,11 @@ class _NavHarness(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_nav_bar_fits_all_destinations_at_156() -> None:
+async def test_nav_bar_fits_all_destinations_at_179() -> None:
+    # Was 156 for 14 destinations; the Meetings destination (meeting
+    # transcription task 10) pushed the no-overflow width to 179.
     app = _NavHarness()
-    async with app.run_test(size=(156, 24)) as pilot:
+    async with app.run_test(size=(179, 24)) as pilot:
         await pilot.pause()
         strip = app.query_one("#nav-destination-strip")
         await pilot.pause(0.6)  # let the overflow interval fire
@@ -114,7 +117,7 @@ async def test_nav_bar_fits_all_destinations_at_156() -> None:
         assert app.query_one("#nav-overflow-hint").display is False
         for destination in SHELL_DESTINATION_ORDER:
             button = app.query_one(f"#nav-{destination.destination_id}")
-            assert button.display, f"{destination.destination_id} hidden at 156 cols"
+            assert button.display, f"{destination.destination_id} hidden at 179 cols"
         settings = app.query_one("#nav-settings")
         assert settings.region.right <= strip.content_region.right
 

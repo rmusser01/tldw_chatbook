@@ -604,13 +604,32 @@ def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
     This is the backstop; file-local guards (e.g.
     `Tests/TTS/test_console_audio_cpp_native.py`'s own
     `_sink_unavailable_by_default`) still document intent at their point
-    of use and are not replaced by this.
+    of use and are not replaced by this. Since the meeting-transcription work
+    it also stubs `AudioRecordingService._recording_loop` so no test opens
+    a microphone.
     """
     if request.node.get_closest_marker("real_audio_device"):
         return
     import tldw_chatbook.Audio.streaming_sink as streaming_sink
 
     monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
+
+    # Meeting transcription (2026-09-04): the same backstop for the INPUT
+    # side. `AudioRecordingService.start_recording` only spawns a thread
+    # running `_recording_loop`, which is where the backend opens the
+    # device -- so stubbing the loop is the single chokepoint. Tests that
+    # exercise `_pyaudio_recording_loop` / `_sounddevice_recording_loop`
+    # directly with mocked backends are unaffected.
+    import tldw_chatbook.Audio.recording_service as recording_service
+
+    def _guarded_recording_loop(self) -> None:
+        self.is_recording = False
+
+    monkeypatch.setattr(
+        recording_service.AudioRecordingService,
+        "_recording_loop",
+        _guarded_recording_loop,
+    )
 
 
 @pytest.fixture(autouse=True)

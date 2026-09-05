@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import logging
+import os
 import subprocess
 import threading
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tldw_chatbook.LLM_Management.snapshot_models import LaunchDescriptor
 
 
 SERVER_PROCESS_ATTRS = {
@@ -20,6 +26,14 @@ SERVER_PROCESS_ATTRS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SnapshotLaunchContext:
+    """Private snapshot context separate from the claim's managed-model lease."""
+
+    descriptor: LaunchDescriptor = field(repr=False)
+    directory: Path | None = field(repr=False)
 
 
 @dataclass(eq=False)
@@ -37,6 +51,7 @@ class ServerLaunchClaim:
     cancel_event: threading.Event = field(default_factory=threading.Event)
     _resource: Any | None = field(default=None, repr=False)
     _spawning: bool = field(default=False, repr=False)
+    _snapshot_context: SnapshotLaunchContext | None = field(default=None, repr=False)
 
 
 def _validate_provider(provider: str) -> str:
@@ -175,6 +190,40 @@ def claim_is_current(app: Any, provider: str, claim: ServerLaunchClaim) -> bool:
     return claim.provider == provider and current_server_claim(app, provider) is claim
 
 
+def snapshot_claim_is_live(app: Any, claim: ServerLaunchClaim) -> bool:
+    """Require the exact uncancelled claim and its published live child."""
+    with _lock(app):
+        if (
+            claim.provider != "llamacpp"
+            or app._llm_server_launch_claims.get("llamacpp") is not claim
+            or claim.cancel_event.is_set()
+        ):
+            return False
+        process = getattr(app, "llamacpp_server_process", None)
+        if process is None:
+            return False
+        try:
+            return process.poll() is None
+        except Exception:  # noqa: BLE001 - uncertain liveness cannot authorize management
+            return False
+
+
+def _notify_snapshot_published(app: Any, claim: ServerLaunchClaim) -> None:
+    """Run on the app loop after publication, with the captured launch context."""
+    owner = getattr(app, "llamacpp_snapshot_service", None)
+    context = claim._snapshot_context
+    if owner is not None and context is not None and snapshot_claim_is_live(app, claim):
+        owner.attach(context.descriptor)
+        owner.start_readiness()
+
+
+def _notify_snapshot_stopped(app: Any, claim: ServerLaunchClaim) -> None:
+    """Schedule exact-generation settlement on the application loop."""
+    owner = getattr(app, "llamacpp_snapshot_service", None)
+    if owner is not None and claim._snapshot_context is not None:
+        owner._spawn(owner.server_stopped(claim, confirmed=True))
+
+
 def publish_server_process(
     app: Any,
     provider: str,
@@ -200,7 +249,8 @@ def publish_server_process(
             return False
         setattr(app, process_attr, process)
         claim._spawning = False
-        return True
+    _notify_snapshot_published(app, claim)
+    return True
 
 
 def retain_cancelled_server_process(
@@ -415,6 +465,7 @@ async def stop_server_process(
         stopped = True
     if stopped and claim is not None:
         clear_server_process(app, provider, claim, process)
+        _notify_snapshot_stopped(app, claim)
         app.notify(f"{label} stopped.", severity="information")
     elif stopped:
         clear_unclaimed_process(app, provider, process)
@@ -459,6 +510,8 @@ def run_server_subprocess(
     *,
     cwd: Any = None,
     nonzero_status: str | None = None,
+    env: Mapping[str, str] | None = None,
+    private_umask: int | None = None,
 ) -> str:
     """Run one claimed server while discarding potentially sensitive output."""
 
@@ -510,6 +563,10 @@ def run_server_subprocess(
         }
         if cwd is not None:
             kwargs["cwd"] = cwd
+        if env is not None:
+            kwargs["env"] = dict(env)
+        if private_umask is not None and os.name == "posix":
+            kwargs["umask"] = private_umask
         process = subprocess_module.Popen(command, **kwargs)
         published = bool(
             app.call_from_thread(
@@ -580,3 +637,9 @@ def run_server_subprocess(
                     process,
                     status=final_status,
                 )
+            if spawn_started and (process is None or not process_is_running(process)):
+                try:
+                    app.call_from_thread(_notify_snapshot_stopped, app, claim)
+                except Exception:  # noqa: BLE001,S110 - the closed app loop cannot accept safe cleanup
+                    # No worker-thread service/UI mutation after the app loop closes.
+                    pass

@@ -9,6 +9,30 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## CSS ratchet paydown must preserve inherited subjects and specificity
+
+**PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a
+277-versus-274 bare-type selector breach, but the first narrowed selectors
+regressed the 80-column Models and F9 paint checks. A plain button ID lost to
+the launcher disabled-border rule and clipped Restore. Checkbox and
+CollapsibleTitle both inherit Static; excluding them lost height/wrapping
+behavior and left the focused checkbox text outside the painted viewport.
+Preserving button ancestor specificity and explicitly targeting those inherited
+subjects restored the checks without raising the boot budget.
+
+**What to do.** Pair parsed-selector census checks with actual small-terminal
+paint checks. When replacing a type selector, inspect its subclasses and preserve
+the relevant cascade precedence, not just the obvious direct widget instances.
+
+The same PR then inherited TASK-31450's 976/972 startup breach. A controller's
+closed-rail dispatch guard did not prevent its constructor and module imports
+from loading four Environment modules. First-use owner/projection construction
+restored 972/972, but required explicit first-open painting for a workspace-less
+panel (there is no worker result to paint it). Measure imports as well as I/O,
+and pair lazy-owner guards with a no-result first-use UI test.
+
+---
+
 ## Spend forecasts must test admitted media and durable recovery IDs
 
 **PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
@@ -2106,14 +2130,40 @@ actually works: add the override to a `CSS_PATH`-bundled source file (`_navigati
 tcss` here), in the SAME tier as the rule being overridden, where ordinary
 specificity resolves it without needing `!important` at all.
 
-**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+**Sixth instance (TASK-31551 task 13, 2026-09-04, whole-screen collapse this time, not
+a single rule).** The Meetings screen's task-11 brief composed its workbench Horizontal
+with `classes="ds-panel destination-workbench"` — the identical two-class combination
+nine sibling screens (Artifacts, Personas, Watchlists, Workflows, MCP, ACP, Skills,
+Settings, Evals) already use, each paired with an `#<id>-workbench { height: 1fr; ... }`
+ID-scoped override in `css/components/_agentic_terminal.tcss` that beats `.ds-panel`'s
+own `height: auto; min-height: 3`. Task 11's brief never asked for that override for
+`#meetings-workbench`, and every one of its mounted `Tests/UI/test_meetings_screen.py`
+pilots (`_build_test_app`, no real `CSS_PATH`) stayed green through Tasks 8-11 and
+review, including tests that `pilot.click("#meetings-start")` at a hard-coded
+coordinate. Live-driving the real app under tmux for task 13 showed why: with the real
+bundle loaded, `.ds-panel`'s `height: auto` won outright (no priority inversion needed,
+just an entirely absent override), collapsing the workbench AND both its panes to
+zero visible rows — no Select, Button, Static, or RichLog painted anywhere on screen,
+confirmed with `tmux capture-pane` showing two adjacent empty bordered boxes. The fix
+was the same one-line pattern as the other nine screens: add `#meetings-workbench` to
+the existing ID list. This is not a single missing/mis-tiered rule (instances 1-5) but
+the SAME root cause at the scale of an entire screen: a harness with no `CSS_PATH`
+cannot fail a geometry assertion that a required per-screen CSS override was never
+written, because it never applied the class-level rule that override exists to beat in
+the first place.
+
+**What to do (all six instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
 color/opacity or geometry as proof of live behavior — it can miss a rule entirely
-(instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
+(instances 1-4, 6) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
 regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
 (`color == background`, opacity-to-zero, etc.), grep for prior art
 (`Button:disabled`, `:disabled` opacity overrides already exist for MCP inspector)
 and verify with `button.styles.opacity`/`get_visual_style()` under a REAL-bundle
-harness or live tmux, not just a bare widget construction.
+harness or live tmux, not just a bare widget construction. When a new screen reuses a
+shared "workbench" class combination (`ds-panel destination-workbench` or similar),
+grep for the sibling screens' matching ID-scoped override in the same pass that adds
+the class names — the class alone renders a screen with, at best, three rows of
+content no matter how many widgets it composes.
 
 ---
 
@@ -11199,6 +11249,44 @@ contract, not a comparison against old ordinal data: recapture the structural
 baseline before reformatting. Fail closed for ambiguous exception headers, never
 discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
 or decorator boundary for every non-header directive.
+
+---
+
+## A hand-written JSON fixture that omits one real field can hide a 100%-reproducible crash (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** `Audio/meeting_owner.py::recover_folder()` reads a crashed meeting's
+`meeting.json`, updates a few fields, and calls
+`update_meeting_json(folder, **payload)` — a function whose first parameter is
+also named `folder`. Every meeting.json the app's own writer ever produces
+(`MeetingSession`/`meeting_owner.start()`/`stop()`) includes a `"folder"` key, so
+in production this call *always* raises
+`TypeError: update_meeting_json() got multiple values for argument 'folder'`.
+The recover button's worker is `@work(thread=True)` with Textual's default
+`exit_on_error=True`, so this single `TypeError` did not just fail the recovery —
+it took the entire app down. Both of the feature's existing `recover_folder` unit
+tests (`test_scan_and_recover_unfinished_folder`,
+`test_recover_folder_survives_missing_mixed_wav`) hand-write their own
+`meeting.json` fixture from scratch, and both happen to omit the one key
+(`"folder"`) that the real writer always includes and that triggers the crash —
+so a fully reviewed, 100%-passing feature crashed on the very first live
+recovery attempt (reproduced by `kill -9` on the running app mid-meeting,
+relaunching, and pressing Recover). It was found only by live-driving the actual
+crash → relaunch → Recover cycle in the real app under tmux, not by reading the
+diff or the passing suite.
+
+**What to do.** When a test constructs a JSON/dict fixture by hand to feed a
+function that reads a file your OWN code also writes elsewhere, do not write the
+fixture from what the function's logic *seems* to need — grep for every call
+site that actually produces that file/payload in production and copy its real
+shape (or better, round-trip through the real writer function itself) into the
+fixture. A hand-typed fixture that "looks about right" is a guessed contract,
+and the field most likely to be missing is exactly the one the code path
+under test never gets to touch precisely because the guess omitted it. For any
+`@work(thread=True)`-decorated callback that can reach unvalidated on-disk
+data (recovery, import, migration), also check whether Textual's default
+`exit_on_error=True` means a single unhandled exception there takes down the
+whole app, not just the feature — that raises the cost of an untested edge case
+from "one broken button" to "total data-loss-adjacent crash."
 ---
 
 ## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
@@ -11377,3 +11465,12 @@ the shared authority does not repair local hosts that continue to bypass it.
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
 
 **What to do.** When a change flips what an existing pin asserts (a gate, a disabled state, a focus target), the gate for that change is the WHOLE files that pin the gate — here `test_library_shell.py` and `test_library_media_side_by_side.py` — compared as failing-name sets against the base, not a `-k` subset named after the action. The 80-minute whole-file shell run is the price; run it once per PR at the review boundary, not per task. `-k` stays fine for iterating, never for the parity claim.
+
+## Covered reusable screens can still report visible
+
+PR2419 reuse integration (2026-09-05): after Console became reusable, Environment
+collectors still dispatched while covered because Textual suspension preserves
+widget `display`. A mounted regression proved four unwanted dispatches. Its first
+attempt also exposed that `Screen.is_current` includes background screens. Use
+`app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
+exercise real cover/return and retained-owner refresh, not a visibility mock.
