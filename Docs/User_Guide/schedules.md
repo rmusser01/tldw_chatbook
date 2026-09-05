@@ -131,7 +131,7 @@ rows.
 | `space` | Enable or disable (reminders) |
 | `d` | Delete (reminders) |
 | `x` | Mark or unmark the row for a bulk action |
-| `Esc` | Clear marks — or, in a view opened over the list, close it |
+| `Esc` | Leave the filter box (when it has focus) — otherwise clear marks, or, in a view opened over the list, close it |
 | `s` | Sync now |
 | `a` | Mark every unread automation result read |
 
@@ -481,6 +481,17 @@ reason — no server connection, no server identity, a transfer already
 running, or, moving a `recurring_question` mirror to this device, the
 same local-health reason the automation's own pane reports.
 
+"Configured" and "reachable" are two different answers and the screen
+says which one it means. A profile with no scheduling server at all
+refuses with *"No server connection is configured."*; a server that is
+configured but has not answered refuses with *"The configured server is
+not reachable right now."* Nothing is offered on a hope: the answer
+comes from a real round trip (the same capabilities probe the sync
+layer uses), it is re-taken when you change the owner or press **s**,
+and until one has succeeded the create forms' `Runs on` dropdown lists
+only **This device** — the server option is omitted rather than offered
+and then refused.
+
 Picking the other owner opens a confirmation listing anything worth knowing before
 you commit: an imminent or already-passed one-time run time ("server
 behavior this close to run time is unverified"), and, for a reminder,
@@ -535,6 +546,15 @@ happened".
 **Retry transfer** appears only alongside a local → server move the
 server definitively rejected; the stored reason is shown beside the
 button, and retrying resubmits the same task.
+
+A queued move can also be stranded rather than rejected — you point the
+app at a different server, or drop the connection entirely, while a
+local → server transfer is still waiting. That queued mutation can never
+be delivered, so the next sync settles it to *failed* with the reason
+*"The server this move was queued for is no longer configured."* rather
+than leaving the row reading "(Moving to server…)" with nothing behind
+it. The task is editable again and carries the usual **Retry
+transfer** / **Cancel transfer** pair.
 
 **A disabled server reminder stays disabled** when it is released to this
 device — the release moves the task, not its on/off state.
@@ -718,6 +738,19 @@ example "the server has archived this automation") rather than the
 connection message — only genuine connectivity failures mention the
 network.
 
+**A server too old for this surface says so.** Before pulling, the app
+asks the server what it supports. A server that does not answer that
+question at all is not asked for automations or results — nothing is
+pulled, no error is invented, and the run-history pane reads *"This
+server does not support scheduled task automation (server too old)."* A
+server new enough to answer but not yet serving the results route
+reports *"This server does not provide the results inbox (server too
+old)."* — carried in the sync notice as *"Sync completed with issues —
+Automation results pull: …"*, so the missing route names itself instead
+of surfacing as a server-worded error about a task that was never the
+problem. The results view itself still reads "No results yet." when
+nothing has arrived; the sync notice is where the *why* lives.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -733,6 +766,31 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules UAT remediation, Tasks 1/3/4 — live in
+the real TUI, 2026-09-05 (scratch profile, 235x52 and 80x24). Copy
+changed in three places, each because the behaviour behind it changed:
+**Moving a task…** now separates "no server is configured" from "the
+configured server is not reachable" — the offer is gated on a real probe
+rather than on a server profile merely existing, so the `Runs on`
+dropdown lists only **This device** when nothing answers (confirmed
+live: with nothing listening, both the create form's dropdown and a
+row's `m` dropdown offered exactly one option, and `s` refused with
+"Local only — nothing to sync (no server connection)"). The same
+section gained the stranded-transfer paragraph: a queued local -> server
+move whose server is no longer configured settles to *failed* with a
+stated reason instead of reading "(Moving to server…)" forever. **The
+results view** gained the server-too-old paragraph for the capabilities
+handshake. The keyboard table's `Esc` row now says it leaves the filter
+box first. Fixed without a copy change, re-verified live: the in-pane
+row editors and the queue filter paint their text while focused (they
+rendered as a bare top border before), and the detail pane scrolls to
+its `History` group while keeping the Edit/Run now/Enable/Disable/Delete
+row above the fold at both sizes. Pinned by
+`Tests/UI/test_schedules_responsive_floor.py`,
+`Tests/UI/test_schedules_workbench.py`,
+`Tests/Scheduling/test_scheduling_service.py` and
+`Tests/Scheduling/test_sync_engine.py`.*
 
 *Verified against the schedules UAT remediation, Task 2 (the stale-
 display cluster) — 2026-09-04. Two corrections to prior copy in this
