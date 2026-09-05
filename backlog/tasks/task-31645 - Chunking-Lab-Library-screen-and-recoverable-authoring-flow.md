@@ -1,11 +1,11 @@
 ---
 id: TASK-31645
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 18:31'
+updated_date: '2026-09-05 18:48'
 labels:
   - chunking
   - chunking-lab
@@ -48,7 +48,7 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
 - [x] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
 - [x] #18 Normal live Library entry finishes initialization even when mount handling yields; targeted regression and real A/B, template-save, and reopen/crash-recovery UAT pass.
-- [ ] #19 PR 2421 startup budget correction keeps UI-ready imports at or below 972 without raising guard limits, preserves Environment refresh and vLLM handoffs, and passes current-head review and CI before merge.
+- [x] #19 PR 2421 startup budget correction keeps UI-ready imports at or below 972 without raising guard limits, preserves Environment refresh and vLLM handoffs, and passes current-head review and CI before merge.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -103,6 +103,8 @@ Final code acceptance at13441478984bf17cd28f62172bce4f59df0f85d9: Qodo reports z
 User-authorized post-merge UAT correction (2026-09-05): real PTY tracing proved the load worker could run during Mount with is_mounted=False and silently abandon initialization. Deferred only lazy worker dispatch with call_after_refresh, retaining teardown checks, exclusivity and error handling. Yielding-Mount regression RED readiness timeout; focused GREEN2; final screen/recovery/results GREEN66 in70.30s after the new test awaited its superseding render via existing settle helper. Scoped Ruff/format/whitespace pass. Independent read-only review: no findings, focused2 independently pass. Uninstrumented live UAT verifies provider-free Library entry, exact sample, advanced JSON/control preservation, six-versus-three chunk A/B with prefix execution and local backend metadata, Media DB template save, reopen, exact complete-state force-kill recovery, and invalid JSON recovery/discard. Docs/Chunking_Lab_UAT_2026-09-05.md records the precise coverage, historical failed run, warning and two unfixed non-blocking presentation findings (stale error strip and clipped Replace A). Added the measured Mount-order lesson. ADR required: no new ADR; backlog/decisions/118-chunking-lab-local-execution-and-recovery.md applies. No global startup/storage/runtime/dependency change, full sweep, existing user-data mutation, commit or publication. Plan: Docs/superpowers/plans/2026-09-05-chunking-lab-live-initialization.md.
 
 PR 2421 user-authorized startup correction under ADR-097 (ADR-118 retained): deferred first-use Environment gatherers, vLLM setup types, Anthropic subscription helpers and custom-PII regex worker without changing ownership or auth/privacy/scheduler policy. Initial976 census; first4 deferrals left timing-dependent973/974; final970/972 after2 further first-use deferrals. Independent reviews report no findings. Bounded final runs: Lab66, Environment/handoff/setup322, subscription/readiness/PII/imports/census274, exact Perf Guard27, gateway customPII1 pass. vLLM workflow12 pass/1 fail: pending handoff line2551 identically fails on clean dev22006e84d; documented unrelated regression, not waived as passing. Broad combined run stalled and was stopped, not acceptance evidence. Six preflight checks and scoped static/whitespace pass; older API-related files retain unchanged baseline lint debt. Exact commands/selections, JUnit artifacts and warnings in Docs/Chunking_Lab_Verification.md; plan Docs/superpowers/plans/2026-09-05-chunking-lab-startup-budget.md. AC19/status remain pending current-head Qodo and CI. User authorizes merge after gates.
+
+PR 2421 code acceptance at a88a6c292e66c4a9f56bd40c0c24f19ff5f64440 on latest dev2c9c144181: Qodo explicit review5553936113 reports no major issues/security concerns; persistent review has zero unresolved findings and the sole inline thread is resolved. Required CI33984407143 passes Fast Lane and Derived Artifacts; Perf Guard33984407162, CSS and Backlog guards pass. Fresh local six-check preflight passes, including3304 unique task files. AC19 accepted with all prior baseline-failure, warning, live-UAT and platform qualifications retained. Existing ADR-097 and ADR-118 apply. Final plan/verification/task bookkeeping is documentation only; its exact-head review and CI still gate the user-authorized merge. No merge claim yet.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
