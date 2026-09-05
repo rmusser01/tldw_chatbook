@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A mount-started worker may run before is_mounted becomes true
+
+**TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
+stayed on Loading local recovery through reopening and restart, despite the
+earlier mounted-test passes. Temporary tracing observed the Lab load worker
+enter and exit with `is_mounted=False`, its message widget present and no
+coordinator. Textual sets the mounted flag after Mount dispatch; an inherited
+handler can yield while a worker started by the subclass already runs. The
+worker's teardown guard silently rejected this valid initialization attempt.
+A yielding inherited Mount-handler regression failed with readiness timeout;
+deferring lazy dispatch with `call_after_refresh` made it pass while retaining
+teardown protection. Real A/B, local save and force-kill recovery then worked.
+
+**What to do.** Schedule mount-sensitive background initialization after the
+mount boundary, and keep its teardown guard. Test a yielding Mount handler,
+not just an immediately completing fixture. Verify real route entry; passing
+tests that await an already-mounted screen cannot alone qualify that ordering.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
