@@ -42,7 +42,7 @@ import pytest
 from PIL import Image
 from textual.widgets import Button, Static
 
-import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+import tldw_chatbook.UI.Library_Modules.library_media_reader_controller as library_screen_module
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
     _row_identity,

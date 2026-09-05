@@ -1,3 +1,4 @@
+from tldw_chatbook.UI.Library_Modules.library_media_reader_controller import LibraryMediaReaderController
 from tldw_chatbook.UI.Library_Modules.library_media_analysis_controller import LibraryMediaAnalysisController
 import asyncio
 import dataclasses
@@ -100,7 +101,7 @@ def _bind_media_mutation_seams(fake):
     # one ``_close_library_media_find`` seam (collapsed, no query, first
     # match) instead of poking the two query attributes directly.
     fake._close_library_media_find = types.MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaReaderController._close_library_media_find, fake
     )
     if fake._library_media_bulk_delete_in_flight:
         fake._begin_library_media_mutation()

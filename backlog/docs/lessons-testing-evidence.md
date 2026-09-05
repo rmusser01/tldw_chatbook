@@ -11925,3 +11925,19 @@ source tree a spawned isolated Python helper imports. If isolation deliberately
 removes checkout paths, use a test-only in-process protocol harness for behavior
 tests and keep separate executor-containment tests for the subprocess boundary;
 otherwise a green or red result may describe another checkout's code.
+
+## Release a debounced fake request only after that request starts
+
+**TASK-31649, 2026-09-05.** Before the Reader extraction, both no-change
+image traversal probes reached row five but never settled its detail. The
+instrumented baseline showed focus and `selected_id` advancing correctly while
+the controlled service's release table contained only earlier rows: the final
+debounced request had not started. Releasing every currently known request
+therefore missed the final one forever; one probe spent its full 180-second
+timeout waiting for an event the harness never released.
+
+The test-only repair awaits the existing `_wait_for_detail_call` for the final
+backing id before releasing requests. The complete no-change/match-navigation
+files and Reader handoff node then passed together (13 tests); performance and
+content assertions stayed unchanged. A selected UI identity proves intent, not
+that its asynchronous request has reached a controlled fake's release boundary.

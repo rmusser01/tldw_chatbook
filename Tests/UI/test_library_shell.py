@@ -11266,7 +11266,7 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         screen.handle_library_media_content_search_submitted(
             Input.Submitted(search_input, "setup")
         )
-        screen._advance_library_media_content_match(1)
+        screen._media_reader_controller._advance_library_media_content_match(1)
 
         body = viewer.query_one(
             "#library-media-viewer-content", LibraryMediaContentBody
