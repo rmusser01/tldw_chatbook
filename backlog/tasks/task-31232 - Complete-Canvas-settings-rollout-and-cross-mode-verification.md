@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 08:51'
+updated_date: '2026-09-05 09:53'
 labels:
   - canvas
   - settings
@@ -53,4 +53,5 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 5. Run targeted Canvas/Agents/Console/database/Chatbooks/Web Server/packaging/browser checks and changed-file static analysis, then ask the user whether they want the optional full repository sweep.
 6. Request independent code/security/UX review, check every Canvas task/design invariant, update ADR-115 and this task with evidence, and mark Done only after its Definition of Done is satisfied. TASK-31003 remains To Do as the explicit sync-contract follow-up.
 7. Repair the live-reproduced exact-card selection delivery gap: child authority selects the historical root but the already-open served renderer stays on the branch. Keep existing ADR-115 capability revocation, pin/follow semantics, shell ownership and stale-response fences. Add targeted gateway and real native/served browser regressions before claiming exact reopen complete; no authentication relaxation or unrelated production repair.
+8. Implement ADR-115 selection-intent amendment: fence original browser epoch and expected child conversation/Canvas/revision/generation before mutation; preserve generation through capability/bootstrap round trips and reject missing served expectations. Verify delayed old commands after different-revision and same-revision pin cannot mutate, while passive polling and explicit current navigation retain their distinct behavior.
 <!-- SECTION:PLAN:END -->

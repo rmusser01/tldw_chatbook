@@ -312,6 +312,49 @@ draft or authorize a download. A dropped control channel clears only that
 browser's Canvas region and never substitutes another conversation; the
 terminal WebSocket remains alive.
 
+#### Selection-intent amendment (2026-09-05, TASK-31232)
+
+The final live verification exposed insufficient end-to-end navigation
+freshness. Deterministic regressions deliver an older navigation after an
+explicit transcript-card bind and demonstrate that it can undo a different-
+revision or same-revision pin. Native navigation is synchronous; this is a
+queued-before-bind/delivered-after-bind race, not mid-call native preemption.
+Parent/browser response checks alone cannot prevent a child mutation that has
+already happened. The latest intermittent live-card failure is not assigned
+to this race without its own child/parent/frame evidence.
+
+Accepted repair contract (implemented in `0724726a0c`; independent rereview
+and whole-branch acceptance pending):
+
+- A child-owned bounded opaque `selection_generation` identifies selection
+  intent. Every explicit bind, including a same-revision pin, and successful
+  explicit navigation rotates it. Read-only snapshots preserve it; internal
+  reconciliation rotates only when authoritative IDs/following state change.
+- Served snapshots and selection replies require a valid generation. The
+  original command carries its expected conversation session, Canvas, revision
+  and generation; the child validates them before navigation. It must not
+  replace the original expectation with a fresh-at-delivery snapshot.
+- The trusted browser sends the selection epoch captured when issuing the
+  command. The gateway rejects mismatches before calling the authority. Child
+  intent validation remains necessary across the asynchronous control hop.
+- Gateway and capability scopes preserve generation through bootstrap, source,
+  renderer and action round trips, retaining equality and exact revocation.
+  Native internal scopes may use `None`; served requests/snapshots may not use
+  missing or malformed expectations as a compatibility bypass. Mixed old/new
+  private clients fail closed; there is no legacy served fallback.
+- Passive parent synchronization of an already-current, available exact scope
+  is idempotent; explicit selection still invalidates even for unchanged
+  revision IDs. Historical pinning and ordinary publication notices remain
+  separate behaviors. Unknown transport/authentication failures still close
+  the preview; only explicitly recognized freshness refusals may retry within
+  existing bounded polling/admission behavior.
+
+This extends the existing private service/security contract without changing
+durable artifact schema, export format, runtime permissions or user approval
+policy. Revision-only checks and post-response checks were rejected because
+they cannot protect same-revision intent or prevent the demonstrated mutation.
+The trade-off is added ephemeral protocol state and cross-boundary tests.
+
 The release checkpoint exercised the production server behind an allowlisted
 numeric-loopback TLS reverse proxy with an ephemeral dedicated credential,
 two independent Chromium profiles, two real AppService child processes, and

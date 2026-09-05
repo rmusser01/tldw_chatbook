@@ -5,21 +5,31 @@ Architecture: [ADR-115](../../backlog/decisions/115-local-versioned-canvas-artif
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
-Independent Task 7.4 review found five Important evidence/fixture gaps; fixes
-and scoped rereview are pending, followed by whole-branch review. Specifically,
-the corpus needs explicit expected admission/runtime outcomes, Console needs
-a persisted terminal-message assertion, native auto-open needs create-triggered
-coverage, served card reopen/reconnection must reach completion, and setup
-failure needs resource rollback. The passing counts below do not close these
-findings or establish the stronger lifecycle claims by themselves. TASK-31232 remains
+Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
+commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
+create-triggered native opening, exact card/replacement-session coverage and
+setup rollback, plus the selection repair described below. Scoped rereview
+and whole-branch review are pending; passing tests alone do not close those
+gates. TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
 
 The stricter exact-reopen test subsequently reproduced a product defect: the
 child selects the historical root, but the existing served renderer remains on
-its old branch. A narrow gateway/shell delivery repair is in progress under
-the existing ADR-115 contract. The earlier results below precede that repair;
-fresh affected-path coverage is required before accepting it.
+its old branch. The committed gateway/shell/parent repair carries exact
+selection epochs and distinguishes passive synchronization from explicit
+selection. Fresh affected-path coverage is recorded separately below.
+
+Subsequent combined runs remain review-blocked. Deterministic delayed-command
+tests additionally reproduced an unfenced child navigation after an explicit
+different-revision or same-revision pin (2 failed, 1 warning, 2.01s). ADR-115's
+selection-intent amendment records the accepted pre-mutation generation/epoch
+fence, implemented in `0724726a0c`. This code-proven race has not
+been established as the cause of every intermittent live-card failure; initial
+direct-TLS startup had insufficient retained state for causal attribution.
+The final focused and covering runs passed both live cases. The actual card
+fixture now acknowledges completed handler/pinned state rather than a queued
+button press. Do not retroactively assign every earlier transient to this fix.
 
 During diagnosis, a retained-browser-response probe timed out at 300 seconds
 and teardown was interrupted at 332 seconds. It is inconclusive evidence, not
@@ -38,7 +48,41 @@ Nonbrowser matrix runs used product HEAD `fa0f6fcb82`; subsequent Task 7.4 commi
 Canvas worktree with `../../.venv/bin/python` as Python. No merge, rebase, push,
 PR, ambient browser interaction, or paid/live provider call is implied.
 
-## Final browser and archive slice
+## Selection-fix verification (`0724726a0c`)
+
+Full affected command:
+
+```sh
+../../.venv/bin/python -m pytest Tests/Canvas/test_control_protocol.py Tests/Canvas/test_capabilities.py Tests/Canvas/test_gateway.py Tests/Web_Server/test_canvas_control_spawn.py Tests/Canvas/browser/test_canvas_native_flow.py Tests/Canvas/browser/test_canvas_served_flow.py Tests/Canvas/browser/test_canvas_zero_egress.py Tests/Web_Server/test_canvas_kill_switch.py -q --tb=short --show-capture=no
+```
+
+Exit 0: **193 passed, 2 skipped, 1 warning in 161.00s**. Actual Console 19.92s;
+direct TLS 7.18s; proxy 7.21s; strict served/native corpora 30.05s/17.69s.
+This run precedes a final error-code split that reserves `selection_refused`
+for validated freshness mismatch and keeps actual navigation exceptions generic
+and fail-closed. Its negative first failed on an incorrectly classified
+ValueError (1 failed, 1 warning, 2.06s), then the final-split command passed:
+
+```sh
+../../.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_served_flow.py::test_authority_navigation_failure_is_not_selection_freshness Tests/Canvas/browser/test_canvas_served_flow.py::test_proxy_preserves_only_exact_navigation_freshness_refusal Tests/Canvas/browser/test_canvas_served_flow.py::test_queued_follow_cannot_overwrite_later_exact_pin Tests/Canvas/browser/test_canvas_native_flow.py::test_stale_navigation_is_discarded_but_unknown_failure_closes Tests/Canvas/browser/test_canvas_native_flow.py::test_old_failed_navigation_cannot_close_newer_valid_selection Tests/Canvas/browser/test_canvas_native_flow.py::test_shell_retries_only_validated_stale_selection Tests/Canvas/test_gateway.py::test_original_browser_epoch_is_checked_before_authority_mutation -q --tb=short --show-capture=no
+```
+
+Exit 0: **17 passed, 1 warning in 5.88s**. This is the final handler/proxy/browser
+error-path coverage; do not describe the 193-test run as post-split execution
+or add overlapping counts as distinct tests. RequestsDependencyWarning remains;
+the two skips are missing Firefox/WebKit. Final Ruff checks pass on 12 changed
+Python files, four whole-file formatter checks pass, other changed Python hunks
+were formatted without rewriting inherited debt, and JS syntax/diff checks pass.
+
+The served recovery case explicitly closes the old transport, waits for
+production unbind, then opens an authenticated fresh child: Connected, old URL
+404, other browser unaffected. Its new temporary root is not restoration of
+old temporary IDs. **Automatic reconnect and durable saved-Console resume are
+not demonstrated.** The final normal run captured its exact browser/driver/
+child PIDs and profile and verified their absence after cleanup; this does not
+close the interrupted-run provenance gap above.
+
+## Original browser and archive slice (`f41d8ca22a`)
 
 ```sh
 ../../.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_native_flow.py Tests/Canvas/browser/test_canvas_served_flow.py Tests/Canvas/browser/test_canvas_zero_egress.py Tests/Chatbooks/test_chatbook_canvas_round_trip.py::test_canvas_v3_whole_graph_round_trips_atomically_as_new -q --tb=short

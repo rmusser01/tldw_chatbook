@@ -569,6 +569,7 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the reviewed Canvas schema 67 migration; preserve the genuine v64 upgrade fixture and compaction assertions)
 - Modify: `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Docs/Development/console-semantic-mutation-inventory.md` (synchronize exact census totals and owner documentation for the two already-classified Canvas routes; retain the bidirectional structural checks)
 - Modify: TASK-31232 with final evidence and notes
+- Modify: `tldw_chatbook/Canvas/control_protocol.py`, `tldw_chatbook/Canvas/capabilities.py`, the already scoped gateway/served-parent/shell, and focused protocol/capability/gateway/browser tests to fence a queued navigation against its original selection intent before child mutation. Preserve a child-owned opaque generation through scope/capability/bootstrap round trips and validate the browser's issued selection epoch; explicit same-revision pin changes intent, passive snapshots do not. Missing served expectations fail closed. See ADR-115's selection-intent amendment; do not add a legacy served bypass.
 - Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
 
 - [ ] Native live flow: create, automatic browser open, interact, update/hot reload, submit to unsent draft, passive download, exact revision reopen, historical branch update, temporary promotion, and unsaved destruction.
