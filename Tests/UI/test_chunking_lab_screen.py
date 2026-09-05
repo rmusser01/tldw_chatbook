@@ -243,7 +243,14 @@ async def test_template_export_retains_tags_and_recovery_transfer(lab_app, tmp_p
         await pilot.pause()
         assert await pilot.click("#dialog-accept")
         await clearing
-        await screen.file_operation("restore", {"path": recovery})
+        from Tests.UI.test_chunking_lab_recovery_flow import wait_for_dialog
+
+        restoring = asyncio.create_task(
+            screen.file_operation("restore", {"path": recovery})
+        )
+        await wait_for_dialog(lab_app, pilot)
+        assert await pilot.click("#dialog-accept")
+        await restoring
         assert (
             screen.coordinator.session.candidates[screen._b_id()]["draft"][
                 "record_fields"
@@ -279,6 +286,312 @@ def test_file_excerpt_is_explicit_utf8_and_never_silently_truncated(tmp_path):
 def lab_app(tmp_path, monkeypatch):
     monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
     return _build_test_app()
+
+
+@pytest.mark.asyncio
+async def test_slow_tags_keep_unfinished_separator_after_render_reopen_and_failed_save(
+    lab_app, tmp_path
+):
+    from textual.widgets import Input
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    lab_app.media_db = MediaDatabase(str(tmp_path / "tags.sqlite3"), client_id="tags")
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        assert await pilot.click("#lab-show-configure")
+        tags = screen.query_one("#lab-tags", Input)
+        tags.focus()
+        await pilot.press(*"alpha,")
+        await pilot.pause()
+        await screen.drain_edits()
+        await settle_lab(lab_app, screen, pilot)
+        assert tags.value == "alpha,"
+        assert await screen.confirm_navigation()
+        owner = screen.coordinator
+        await lab_app.pop_screen()
+        await owner.close()
+        lab_app._chunking_lab_coordinator = None
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        tags = screen.query_one("#lab-tags", Input)
+        assert tags.value == "alpha,"
+        tags.focus()
+        await pilot.press("end", *"beta")
+        await pilot.pause()
+        await screen.drain_edits()
+        with pytest.raises(Exception, match="name cannot be empty"):
+            await screen.save_candidate("B")
+        await settle_lab(lab_app, screen, pilot)
+        assert tags.value == "alpha,beta"
+        screen._queue_editor_edit("record", "name", "Separated")
+        screen._queue_editor_edit("record", "description", "Two tags")
+        record = await screen.save_candidate("B")
+        assert record["tags"] == ["alpha", "beta"]
+        await settle_lab(lab_app, screen, pilot)
+        assert tags.value == "alpha,beta"
+
+
+@pytest.mark.asyncio
+async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(lab_app, tmp_path):
+    from textual.widgets import Checkbox, Input
+
+    from Tests.UI.test_chunking_lab_recovery_flow import wait_for_dialog
+    from tldw_chatbook.Chunking.chunking_interop_library import ChunkingInteropService
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    lab_app.media_db = MediaDatabase(
+        str(tmp_path / "builtins.sqlite3"), client_id="builtin"
+    )
+    service = ChunkingInteropService(lab_app.media_db)
+    identity = service.create_template(
+        "Protected",
+        "Builtin description",
+        {"chunking": {"method": "words"}},
+        is_builtin=True,
+    )
+    original = service.get_template_by_id(identity)
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+
+        async def select_builtin(_):
+            return original
+
+        with patch.object(screen, "_dialog", select_builtin):
+            await screen._menu_action("catalog")
+        saving = asyncio.create_task(screen._save("B"))
+        try:
+            dialog = await wait_for_dialog(lab_app, pilot)
+            assert dialog.query_one("#dialog-new", Checkbox).value
+            dialog.query_one("#dialog-name", Input).value = "Custom copy"
+            accept = dialog.query_one("#dialog-accept")
+            accept.focus()
+            await pilot.pause()
+            await pilot.wait_for_scheduled_animations()
+            assert accept.region in dialog.content_region
+            await pilot.press("enter")
+            await asyncio.wait_for(saving, 5)
+        finally:
+            if not saving.done():
+                saving.cancel()
+            await asyncio.gather(saving, return_exceptions=True)
+        assert service.get_template_by_id(identity) == original
+        copy = service.get_template_by_name("Custom copy")
+        assert copy and not copy["is_builtin"]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_authored_template_exports_without_run_or_save_admission(
+    lab_app, tmp_path
+):
+    from tldw_chatbook.Chunking import lab_state
+
+    body = {"legacy_operation": {"removed": True}, "metadata": {"author": "preserve"}}
+    async with lab_app.run_test(size=(80, 24)):
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        screen.queue_edit(
+            lambda session: lab_state.replace_template(
+                session,
+                screen._b_id(session),
+                body,
+                record_fields={
+                    "name": "Unsupported",
+                    "description": "Exportable",
+                    "tags": ["kept"],
+                },
+                expected_record=None,
+            )
+        )
+        await screen.drain_edits()
+        target = tmp_path / "preserved.json"
+        await screen.file_operation("export-template", {"path": str(target)})
+        exported = json.loads(target.read_text())
+        assert exported["template_json"] == body
+        assert exported["tags"] == ["kept"]
+        with pytest.raises(ValueError):
+            await screen.save_candidate("B")
+        with pytest.raises(ValueError):
+            await screen.run_candidates()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source,labels",
+    [
+        ({"kind": "file", "name": "chosen.txt"}, ("chosen.txt", "Full text")),
+        (
+            {"kind": "file_excerpt", "name": "excerpt.txt", "start": 12, "end": 30},
+            ("excerpt.txt", "Excerpt", "12", "30"),
+        ),
+        (
+            {
+                "kind": "local_media_excerpt",
+                "local_media_id": 42,
+                "start": 2,
+                "end": 15,
+            },
+            ("42", "Excerpt", "2", "15"),
+        ),
+    ],
+)
+async def test_sample_source_and_extent_are_visible_after_reopen(
+    lab_app, source, labels
+):
+    from tldw_chatbook.Chunking import lab_state
+
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        screen.queue_edit(
+            lambda session: lab_state.replace_sample(session, "copied text", source)
+        )
+        await screen.drain_edits()
+        assert await screen.confirm_navigation()
+        owner = screen.coordinator
+        await lab_app.pop_screen()
+        await owner.close()
+        lab_app._chunking_lab_coordinator = None
+        reopened = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(reopened)
+        await reopened.wait_until_ready()
+        await settle_lab(lab_app, reopened, pilot)
+        label = str(reopened.query_one("#lab-sample-source").content)
+        assert all(value in label for value in labels)
+
+
+@pytest.mark.asyncio
+async def test_lazy_screen_workers_abandon_work_after_teardown(lab_app, monkeypatch):
+    import inspect
+
+    async with lab_app.run_test(size=(80, 24)):
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        pending = []
+        monkeypatch.setattr(
+            screen, "run_worker", lambda work, **kwargs: pending.append(work)
+        )
+        try:
+            await lab_app.push_screen(screen)
+            screen._coordinator_changed(None)
+            assert len(pending) == 2
+            assert all(inspect.iscoroutinefunction(work) for work in pending)
+            await lab_app.pop_screen()
+            for work in tuple(pending):
+                await work()
+            assert screen.coordinator is None
+            assert getattr(lab_app, "_chunking_lab_coordinator", None) is None
+        finally:
+            for work in pending:
+                if inspect.iscoroutine(work):
+                    work.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size,outcome",
+    [((80, 24), "failed"), ((120, 40), "canceled"), ((160, 50), "pending")],
+)
+async def test_previous_choice_survives_reopen_without_completing_failed_batch(
+    lab_app, size, outcome
+):
+    from textual.widgets import Button
+
+    from Tests.Chunking.test_lab_state import _completed
+    from tldw_chatbook.Chunking import lab_state
+    from tldw_chatbook.Chunking.lab_models import RunResult
+    from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
+
+    async with lab_app.run_test(size=size) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        initial = screen.coordinator.session
+        request = lab_state.capture_batch(initial, (screen._b_id(),))[0]
+        successful = lab_state.accept_result(
+            lab_state.install_batch(initial, (request,)),
+            _completed(request, "retained successful output"),
+        )
+        pinned = lab_state.pin_baseline(successful)
+        reruns = lab_state.capture_batch(pinned, tuple(pinned.candidates))
+        current = lab_state.install_batch(pinned, reruns)
+        current = lab_state.accept_result(
+            current, _completed(reruns[0], "current A output")
+        )
+        if outcome != "pending":
+            current = lab_state.accept_result(
+                current,
+                RunResult(
+                    request=reruns[1],
+                    status=outcome,
+                    report=None,
+                    started_at="",
+                    finished_at="",
+                    elapsed_ms=0,
+                    error={"message": "current B failure"},
+                ),
+            )
+        screen.coordinator.set_session(current)
+        await screen._refresh_session()
+        await settle_lab(lab_app, screen, pilot)
+        assert await pilot.click("#lab-show-results")
+        await screen.drain_edits()
+        region = screen.query_one(ResultsRegion)
+        assert "retained successful output" not in region.query_one(TextArea).text
+        previous = screen.query_one("#lab-previous-b", Button)
+        assert not previous.disabled
+        previous.focus()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert previous.region in screen.content_region
+        await pilot.press("enter")
+        await pilot.pause()
+        await screen.drain_edits()
+        await settle_lab(lab_app, screen, pilot)
+        assert region.query_one(TextArea).text == "retained successful output"
+        assert "Previous" in str(region.query_one("#status-b").content)
+        assert (
+            "current batch"
+            in str(region.query_one("#comparison-status").content).lower()
+        )
+        assert (
+            "B minus A common counts" not in region._prepared["documents"]["statistics"]
+        )
+        assert screen.coordinator.session.batch["outcomes"].get(reruns[1].run_id) == (
+            None if outcome == "pending" else outcome
+        )
+        assert await screen.confirm_navigation()
+        owner = screen.coordinator
+        await lab_app.pop_screen()
+        await owner.close()
+        lab_app._chunking_lab_coordinator = None
+        reopened = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(reopened)
+        await reopened.wait_until_ready()
+        await settle_lab(lab_app, reopened, pilot)
+        region = reopened.query_one(ResultsRegion)
+        assert region.query_one(TextArea).text == "retained successful output"
+        assert "Previous" in str(region.query_one("#status-b").content)
+        current_button = reopened.query_one("#lab-current-b", Button)
+        current_button.focus()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert current_button.region in reopened.content_region
+        await pilot.press("enter")
+        await pilot.pause()
+        await reopened.drain_edits()
+        await settle_lab(lab_app, reopened, pilot)
+        assert "Previous" not in str(region.query_one("#status-b").content)
+        assert "retained successful output" not in region.query_one(TextArea).text
+        assert set(reopened.coordinator.session.candidates) == set(current.candidates)
 
 
 @pytest.mark.asyncio

@@ -74,6 +74,28 @@ def _run_b(session: LabSession) -> tuple[LabSession, RunRequest]:
     return accept_result(installed, _completed(request)), request
 
 
+def test_repeated_failed_reruns_keep_last_success_as_previous():
+    session, successful = _run_b(new_session("profile"))
+    for status in ("failed", "canceled", "limited"):
+        request = capture_batch(session, (_candidate_b(session),))[0]
+        session = accept_result(
+            install_batch(session, (request,)),
+            RunResult(
+                request=request,
+                status=status,
+                report=None,
+                started_at="",
+                finished_at="",
+                elapsed_ms=0,
+                error={"message": status},
+            ),
+        )
+        candidate = session.candidates[_candidate_b(session)]
+        assert candidate["current_run_id"] == request.run_id
+        assert candidate["previous_run_id"] == successful.run_id
+        assert session.results[successful.run_id]["status"] == "completed"
+
+
 def test_many_edits_keep_only_one_content_undo():
     session = new_session("profile")
     candidate_id = _candidate_b(session)
@@ -516,7 +538,12 @@ def test_pure_draft_edits_reuse_large_result_and_sample_maps():
 
 
 def test_models_detach_nested_inputs_and_publication_outputs():
-    fields = {"name": "n", "description": "", "tags": [{"nested": [1]}]}
+    fields = {
+        "name": "n",
+        "description": "",
+        "tags": [],
+        "extension": [{"nested": [1]}],
+    }
     draft = DraftState(
         raw_json="{}",
         parsed_json="{}",
@@ -526,11 +553,11 @@ def test_models_detach_nested_inputs_and_publication_outputs():
         record_fields=fields,
         expected_record=None,
     )
-    fields["tags"][0]["nested"].append(2)
-    assert draft.record_fields["tags"] == [{"nested": [1]}]
+    fields["extension"][0]["nested"].append(2)
+    assert draft.record_fields["extension"] == [{"nested": [1]}]
     dumped = draft.model_dump(mode="json")
-    dumped["record_fields"]["tags"][0]["nested"].append(3)
-    assert draft.record_fields["tags"] == [{"nested": [1]}]
+    dumped["record_fields"]["extension"][0]["nested"].append(3)
+    assert draft.record_fields["extension"] == [{"nested": [1]}]
 
     session = new_session("profile")
     published = session.model_dump(mode="json")
@@ -597,7 +624,13 @@ def test_run_result_status_and_session_reference_integrity_are_validated():
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
-        ({"authority": "synced", "parse_error": {"message": "bad"}}, "JSON"),
+        (
+            {
+                "authority": "synced",
+                "parse_error": {"message": "bad", "line": 1, "column": 1},
+            },
+            "JSON",
+        ),
         ({"authority": "json", "pending_controls": {"x": "-"}}, "control"),
         ({"authority": "controls", "pending_controls": {}}, "pending"),
     ],

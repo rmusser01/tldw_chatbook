@@ -153,6 +153,35 @@ class DraftState(_Snapshot):
             value = json.loads(canonical_json(value))
             if value.get("authority") not in {"json", "controls", "synced"}:
                 raise ValueError("Draft authority must be json, controls, or synced")
+            validate_record_fields(value.get("record_fields"))
+            expected = value.get("expected_record")
+            if expected is not None:
+                if not isinstance(expected, dict) or any(
+                    type(expected.get(key)) is not kind
+                    for key, kind in (("id", int), ("uuid", str), ("version", int))
+                ):
+                    raise ValueError("Expected record requires ID, UUID and version")
+                if (
+                    expected["id"] < 1
+                    or expected["version"] < 1
+                    or not expected["uuid"]
+                ):
+                    raise ValueError("Expected record identity must be nonempty")
+            error = value.get("parse_error")
+            if error is not None and (
+                not isinstance(error, dict)
+                or not isinstance(error.get("message"), str)
+                or any(
+                    type(error.get(key)) is not int or error[key] < 1
+                    for key in ("line", "column")
+                )
+            ):
+                raise ValueError("Parse error requires message, line and column")
+            parsed = value.get("parsed_json")
+            if parsed is not None:
+                if not isinstance(parsed, str):
+                    raise ValueError("Last parsed JSON must be text")
+                json.loads(parsed)
         return value
 
     @model_validator(mode="after")
@@ -272,6 +301,51 @@ class LabSession(_Snapshot):
         return self
 
 
+def validate_record_fields(fields: Any) -> None:
+    """Validate fields used by the editor, preserving unknown extension data."""
+    if not isinstance(fields, dict):
+        raise ValueError("Record fields must be an object")  # noqa: TRY004 - Pydantic validators require ValueError.
+    for key in ("name", "description", "tags_text"):
+        if key in fields and not isinstance(fields[key], str):
+            raise ValueError(f"Record {key} must be text")
+    if "tags" in fields and (
+        not isinstance(fields["tags"], list)
+        or any(not isinstance(tag, str) for tag in fields["tags"])
+    ):
+        raise ValueError("Record tags must be a list of text")
+
+
+def validate_view(view: Any) -> None:
+    """Check known persisted UI shapes; unknown optional values remain opaque."""
+    if not isinstance(view, dict):
+        raise ValueError("Session view must be an object")  # noqa: TRY004 - Pydantic validators require ValueError.
+    if "region" in view and not isinstance(view["region"], str):
+        raise ValueError("View region must be text")
+    choices = view.get("result_choices", {})
+    if not isinstance(choices, dict) or any(
+        not isinstance(value, str) for value in choices.values()
+    ):
+        raise ValueError("Result choices must map candidate IDs to text")
+    results = view.get("results", {})
+    if not isinstance(results, dict):
+        raise ValueError("Results view must be an object")  # noqa: TRY004 - Pydantic validators require ValueError.
+    for key in ("active_view", "detail"):
+        if key in results and not isinstance(results[key], str):
+            raise ValueError(f"Results {key} must be text")
+    if results.get("inspected_candidate") is not None and not isinstance(
+        results["inspected_candidate"], str
+    ):
+        raise ValueError("Inspected candidate must be text")
+    selections = results.get("selections", {})
+    if not isinstance(selections, dict) or any(
+        not isinstance(key, str) or type(index) is not int or index < 0
+        for key, index in selections.items()
+    ):
+        raise ValueError(
+            "Chunk selections must map candidate IDs to nonnegative indices"
+        )
+
+
 def validate_session_references(
     session: LabSession, *, validate_blobs: bool = False
 ) -> None:
@@ -289,6 +363,7 @@ def validate_session_references(
         raise ValueError("Content revision must be within the session revision")
     if not 1 <= len(session.candidates) <= 2:
         raise ValueError("Lab v1 supports at most two candidates")
+    validate_view(session.view)
 
     editable_b = 0
     for candidate_id, candidate in session.candidates.items():
@@ -303,6 +378,8 @@ def validate_session_references(
             DraftState.model_validate(candidate.get("draft"))
         elif role == "A" and candidate.get("editable") is False:
             PreparedRecipe.model_validate(candidate.get("pinned_recipe"))
+            if candidate.get("template_record") is not None:
+                validate_record_fields(candidate["template_record"])
         else:
             raise ValueError("Candidates require one editable B and optional frozen A")
     if editable_b != 1:

@@ -39,6 +39,11 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review. Earlier In Progress and
+pending-review statements below are preserved chronology. Final branch acceptance
+and original non-green integration/platform/privacy qualifications are tracked in
+[Chunking Lab verification](../../Docs/Chunking_Lab_Verification.md).
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the named `prepare_recipe` admission seam for Run/Lab Save consumers,
 canonical immutable authored/effective recipes and runtime identity, and shared

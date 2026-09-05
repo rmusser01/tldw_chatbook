@@ -1,8 +1,8 @@
 # Chunking Lab: template authoring and recoverable A/B experiments
 
 Date: 2026-09-04
-Status: Reviewed design; reconciled with ADR-078 and current dev during implementation planning.
-Scope: v1 design. Implementation has not started.
+Status: Implemented under ADR-118; single final correction wave awaiting scoped independent re-review.
+Scope: v1. Task-level implementation/review is recorded in TASK-31421–TASK-31428; TASK-31428 remains In Progress for final acceptance.
 
 ## 1. Purpose and confirmed decisions
 
@@ -623,6 +623,10 @@ historical, not a request to rebuild deleted infrastructure. ADR-118 adopts ADR-
 and adds a Lab-only capability gate and recovery boundary. TASK-24404 must be
 reconciled to this Library-owned authoring workflow before the UI lands.
 
-Next: execute the [implementation plan](../plans/2026-09-04-chunking-lab.md)
-in an isolated worktree based on current dev, with task-by-task evidence. This
-planning pass does not start implementation.
+Historical planning handoff: the [implementation plan](../plans/2026-09-04-chunking-lab.md)
+was subsequently executed in the isolated `codex/chunking-lab` worktree.
+TASK-24404 was archived as superseded. Final review found seven integration gaps
+and five bounded refinements; the single correction wave is tracked in TASK-31428
+and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
+Final acceptance awaits the controller's scoped re-review. The original integration
+gate remains non-green; see [verification and limitations](../../Chunking_Lab_Verification.md).

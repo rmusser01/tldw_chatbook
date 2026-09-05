@@ -7,6 +7,7 @@ import json
 import threading
 import uuid as uuid_module
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
 
@@ -138,6 +139,57 @@ def test_lab_update_returns_refreshed_identity_and_version(media_db):
     assert updated["version"] == created["version"] + 1
     assert updated["name"] == "Versioned renamed"
     assert updated["description"] == "Second"
+
+
+@pytest.mark.parametrize("creating", [False, True])
+def test_save_acknowledges_own_commit_before_peer_then_next_save_conflicts(
+    media_db, monkeypatch, creating
+):
+    service = ChunkingInteropService(media_db)
+    created = (
+        None
+        if creating
+        else save_lab_template(
+            service, body=_body(), name="Race", description="Original", tags=[]
+        )
+    )
+    transaction = media_db.transaction
+    interleaved = False
+
+    @contextmanager
+    def peer_after_commit(*args, **kwargs):
+        nonlocal interleaved
+        with transaction(*args, **kwargs) as connection:
+            yield connection
+        if not interleaved:
+            interleaved = True
+            record = service.get_template_by_name("Race")
+            service.update_template(record["id"], description="Peer content")
+
+    monkeypatch.setattr(media_db, "transaction", peer_after_commit)
+    acknowledged = save_lab_template(
+        service,
+        body=_body(),
+        name="Race",
+        description="Local content",
+        tags=[],
+        expected=None if creating else _expected(created),
+    )
+    assert interleaved
+    assert acknowledged["description"] == "Local content"
+    assert acknowledged["version"] == (1 if creating else 2)
+    with pytest.raises(TemplateSaveConflict):
+        save_lab_template(
+            service,
+            body=_body(),
+            name="Race",
+            description="Local content",
+            tags=[],
+            expected=_expected(acknowledged),
+        )
+    assert (
+        service.get_template_by_id(acknowledged["id"])["description"] == "Peer content"
+    )
 
 
 def test_expected_uuid_is_part_of_the_atomic_update_identity(media_db):

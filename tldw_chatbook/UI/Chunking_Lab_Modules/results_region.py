@@ -47,13 +47,15 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def _prepare(a: RunResult | None, b: RunResult | None) -> dict:
+def _prepare(
+    a: RunResult | None, b: RunResult | None, comparison_block: str | None = None
+) -> dict:
     summaries = {
         side: summarize_result(result)
         for side, result in (("A", a), ("B", b))
         if result
     }
-    reason = (
+    reason = comparison_block or (
         comparison_reason(a, b)
         if a and b
         else "Comparison requires two successful results. Run both to compare."
@@ -189,6 +191,8 @@ class ResultsRegion(Widget):
         self._prepared = None
         self._stale_ids = frozenset()
         self._previous_ids = frozenset()
+        self._previous_sides = None
+        self._comparison_block = None
         self._view = {"active_view": "B", "selections": {}, "detail": "chunk"}
         self._pages = {"A": 0, "B": 0}
         self._linked = {"A": (), "B": ()}
@@ -250,7 +254,11 @@ class ResultsRegion(Widget):
         self._load()
 
     def configure_view(
-        self, view: dict, *, previous_ids: frozenset[str] = frozenset()
+        self,
+        view: dict,
+        *,
+        previous_ids: frozenset[str] = frozenset(),
+        previous_sides: frozenset[str] | None = None,
     ) -> None:
         """Restore session.view['results'] without emitting a user edit.
 
@@ -259,36 +267,51 @@ class ResultsRegion(Widget):
         previous_ids describe explicit retained-result choices, not staleness.
         """
         saved = view.get("results", {})
+        saved = saved if isinstance(saved, dict) else {}
+        selections = saved.get("selections", {})
+        selections = selections if isinstance(selections, dict) else {}
         self._view = {
+            **saved,
             "active_view": saved.get("active_view")
-            if saved.get("active_view") in {"A", "B", "Compare"}
+            if saved.get("active_view") in ("A", "B", "Compare")
             else "B",
             "selections": {
                 k: v
-                for k, v in saved.get("selections", {}).items()
+                for k, v in selections.items()
                 if isinstance(k, str) and type(v) is int and v >= 0
             },
             "detail": saved.get("detail")
-            if saved.get("detail") in {value for _, value in DETAILS}
+            if saved.get("detail") in tuple(value for _, value in DETAILS)
             else "chunk",
             "inspected_candidate": saved.get("inspected_candidate"),
         }
         self._previous_ids = previous_ids
+        self._previous_sides = previous_sides
         if self.is_mounted:
             self.query_one("#detail-kind", Select).value = self._view["detail"]
             self._refresh_results()
             self._inspect()
 
     def show_results(
-        self, a: RunResult | None, b: RunResult | None, *, stale_ids: frozenset[str]
+        self,
+        a: RunResult | None,
+        b: RunResult | None,
+        *,
+        stale_ids: frozenset[str],
+        comparison_block: str | None = None,
     ) -> None:
         """Show caller-selected results. None never substitutes previous output.
 
         Pass reused immutable RunResult instances, converted off-loop by the
         coordinator. Stale-only updates reuse measurements and diff documents.
         """
-        changed = a is not self._results["A"] or b is not self._results["B"]
+        changed = (
+            a is not self._results["A"]
+            or b is not self._results["B"]
+            or comparison_block != self._comparison_block
+        )
         self._stale_ids = stale_ids
+        self._comparison_block = comparison_block
         if changed:
             self._results = {"A": a, "B": b}
             self._prepared = None
@@ -308,11 +331,12 @@ class ResultsRegion(Widget):
     def _load(self) -> None:
         generation = self._generation
         a, b = self._results.values()
+        comparison_block = self._comparison_block
 
         async def prepare() -> None:
             if not self.is_mounted or not self.query("#comparison-status"):
                 return
-            prepared = await asyncio.to_thread(_prepare, a, b)
+            prepared = await asyncio.to_thread(_prepare, a, b, comparison_block)
             if (
                 generation != self._generation
                 or not self.is_mounted
@@ -393,7 +417,9 @@ class ResultsRegion(Widget):
                 f"{len(chunks):,} chunks",
                 result.request.recipe.runtime.backend,
             ]
-            if result.request.run_id in self._previous_ids:
+            if result.request.run_id in self._previous_ids and (
+                self._previous_sides is None or side in self._previous_sides
+            ):
                 labels.append("Previous")
             if result.request.run_id in self._stale_ids:
                 labels.append("Newer draft")
@@ -581,7 +607,9 @@ class ResultsRegion(Widget):
             chunk = result.report.chunks[index]
             mapping = chunk_mapping(result, index)
             linked = (
-                linked_chunks(result, index, other) if other and other.report else ()
+                linked_chunks(result, index, other)
+                if other and other.report and not self._comparison_block
+                else ()
             )
             space = mapping["coordinate_space"]
             label = (

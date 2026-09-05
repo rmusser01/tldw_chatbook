@@ -41,6 +41,14 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review. Final correction replaces
+the post-commit reread described below with opt-in `return_record` results captured
+inside canonical create/update transactions, preserving legacy return values and
+builtin/uniqueness/CAS protection. Real SQLite create/update interleavings prove the
+next local Save conflicts with a newer peer revision. Builtin screen saves default
+to creating a copy. Existing ADR-118 applies; additional evidence and scoped final
+review handoff: `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the headless Lab save adapter over the canonical Media DB catalog and extended template updates with atomic ID/UUID/version/live/builtin predicates. Saves deep-detach authored bodies before canonical tag extraction, run the existing parity plus Lab capability gate, persist the authored body rather than normalized execution defaults, and return the refreshed record. Concurrent live-name collisions remain InputError, stale/deleted expected records become TemplateSaveConflict, and builtins remain BuiltinTemplateError. Added real SQLite coverage for stale updates, concurrent creates, stored-invalid repair, reserved auto variants, builtin copy/update behavior, resource ceilings, advanced metadata/tags, caller/default immutability, and refreshed identities. ADR required: yes; implemented ADR-118 and retained ADR-078's canonical store/flat body without schema changes. Targeted verification: 90 passed; scoped Ruff checks and formatting passed. One environment-level RequestsDependencyWarning remains unchanged.
 

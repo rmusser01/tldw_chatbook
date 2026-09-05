@@ -20,6 +20,148 @@ def lab_app(tmp_path, monkeypatch):
     return _build_test_app()
 
 
+async def wait_for_dialog(app, pilot):
+    from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
+
+    for _ in range(100):
+        if isinstance(app.screen, LabDialog):
+            await pilot.pause()
+            return app.screen
+        await asyncio.sleep(0.01)
+    raise AssertionError("Expected recovery inspection dialog")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40), (160, 50)])
+async def test_recovery_preview_requires_explicit_replace_and_cancel_keeps_epoch(
+    lab_app, tmp_path, size
+):
+    from textual.widgets import Button
+
+    from Tests.Chunking.test_lab_recovery import historical_session
+    from Tests.UI.test_chunking_lab_screen import settle_lab
+    from tldw_chatbook.Chunking.lab_recovery import export_recovery
+
+    incoming = tmp_path / "incoming.json"
+    incoming.write_bytes(export_recovery(historical_session()))
+    async with lab_app.run_test(size=size) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        before = screen.coordinator.session
+        for confirm in (False, True):
+            restoring = asyncio.create_task(
+                screen.file_operation("restore", {"path": str(incoming)})
+            )
+            try:
+                dialog = await wait_for_dialog(lab_app, pilot)
+                assert "exact sample" in dialog.explanation
+                assert "completed" in dialog.explanation
+                assert screen.coordinator.session is before
+                accept = dialog.query_one("#dialog-accept", Button)
+                assert str(accept.label) == "Replace current session"
+                assert not accept.disabled
+                if confirm:
+                    # Approval applies to the inspected bytes even if the chosen
+                    # file changes while the confirmation is open.
+                    incoming.write_bytes(b"changed after inspection")
+                target = (
+                    accept if confirm else dialog.query_one("#dialog-cancel", Button)
+                )
+                target.focus()
+                await pilot.pause()
+                await pilot.wait_for_scheduled_animations()
+                assert target.region in dialog.content_region
+                await pilot.press("enter")
+                await asyncio.wait_for(restoring, 5)
+                if not confirm:
+                    assert screen.coordinator.session is before
+            finally:
+                if not restoring.done():
+                    restoring.cancel()
+                await asyncio.gather(restoring, return_exceptions=True)
+        assert screen.coordinator.session.epoch != before.epoch
+        await settle_lab(lab_app, screen, pilot)
+        assert "exact sample" in screen.query_one("#chunk-inspector").text
+        assert await screen.confirm_navigation()
+        owner = screen.coordinator
+        await lab_app.pop_screen()
+        await owner.close()
+        lab_app._chunking_lab_coordinator = None
+        reopened = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(reopened)
+        await reopened.wait_until_ready()
+        await settle_lab(lab_app, reopened, pilot)
+        assert "exact sample" in reopened.query_one("#chunk-inspector").text
+
+
+@pytest.mark.asyncio
+async def test_failed_local_load_allows_read_only_recovery_inspection(
+    lab_app, tmp_path
+):
+    from textual.widgets import Button, Input
+
+    from Tests.DB.test_chunking_lab_db import completed_session
+    from tldw_chatbook.Chunking.lab_recovery import export_recovery
+
+    store_path = tmp_path / "chunking_lab.sqlite3"
+    store_path.write_bytes(b"unreadable existing recovery")
+    incoming = tmp_path / "known-good.json"
+    incoming.write_bytes(export_recovery(completed_session()))
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        assert screen.coordinator is None
+        restoring = asyncio.create_task(screen._menu_action("restore"))
+        try:
+            selection = await wait_for_dialog(lab_app, pilot)
+            selection.query_one("#dialog-path", Input).value = str(incoming)
+            assert await pilot.click("#dialog-accept")
+            await pilot.pause()
+            preview = await wait_for_dialog(lab_app, pilot)
+            assert "exact sample" in preview.explanation
+            assert "unavailable" in preview.explanation.lower()
+            assert preview.query_one("#dialog-accept", Button).disabled
+            assert screen.coordinator is None
+            assert await pilot.click("#dialog-cancel")
+            await asyncio.wait_for(restoring, 5)
+        finally:
+            if not restoring.done():
+                restoring.cancel()
+            await asyncio.gather(restoring, return_exceptions=True)
+        assert store_path.read_bytes() == b"unreadable existing recovery"
+
+
+@pytest.mark.asyncio
+async def test_malformed_recovery_does_not_cancel_pending_work_or_change_state(
+    lab_app, tmp_path
+):
+    from Tests.UI.test_chunking_lab_screen import settle_lab
+    from tldw_chatbook.Chunking import lab_state
+    from tldw_chatbook.Chunking.lab_recovery import RecoveryImportError, export_recovery
+
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        before = lab_state.install_batch(
+            screen.coordinator.session,
+            lab_state.capture_batch(screen.coordinator.session, (screen._b_id(),)),
+        )
+        screen.coordinator.set_session(before)
+        envelope = json.loads(export_recovery(before))
+        envelope["session"]["view"]["results"] = []
+        path = tmp_path / "malformed.json"
+        path.write_text(json.dumps(envelope))
+        with pytest.raises(RecoveryImportError):
+            await screen.file_operation("restore", {"path": str(path)})
+        assert screen.coordinator.session is before
+        assert before.batch["outcomes"] == {}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["export", "navigation"])
 async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, boundary):
@@ -82,8 +224,9 @@ async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, bounda
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("corruption", ["json", "view", "draft"])
 async def test_recovery_fallback_explains_rollback_without_private_content(
-    lab_app, tmp_path
+    lab_app, tmp_path, corruption
 ):
     import sqlite3
 
@@ -106,9 +249,23 @@ async def test_recovery_fallback_explains_rollback_without_private_content(
 
     await asyncio.to_thread(seed)
     with sqlite3.connect(tmp_path / "chunking_lab.sqlite3") as connection:
+        document = "broken"
+        if corruption != "json":
+            document = json.loads(
+                connection.execute(
+                    "SELECT document FROM lab_checkpoints WHERE id = (SELECT current_checkpoint FROM lab_state)"
+                ).fetchone()[0]
+            )
+            if corruption == "view":
+                document["session"]["view"]["results"] = []
+            else:
+                next(iter(document["session"]["candidates"].values()))["draft"][
+                    "record_fields"
+                ]["tags"] = "malformed"
+            document = json.dumps(document)
         connection.execute(
             "UPDATE lab_checkpoints SET document = ? WHERE id = (SELECT current_checkpoint FROM lab_state)",
-            ("broken",),
+            (document,),
         )
     async with lab_app.run_test(size=(80, 24)):
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
@@ -376,9 +533,14 @@ async def test_failed_checkpoint_blocks_navigation_export_survives(
         destination = route.load_screen_class()(lab_app)
         await lab_app.push_screen(destination)
         await destination.wait_until_ready()
-        await destination.file_operation(
-            "restore", {"path": str(tmp_path / "failed-export.json")}
+        restoring = asyncio.create_task(
+            destination.file_operation(
+                "restore", {"path": str(tmp_path / "failed-export.json")}
+            )
         )
+        await wait_for_dialog(lab_app, pilot)
+        assert await pilot.click("#dialog-accept")
+        await restoring
         assert destination.coordinator.session.profile_key == str(fresh_path)
         assert (
             destination.coordinator.session.samples[

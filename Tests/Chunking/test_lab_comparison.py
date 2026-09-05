@@ -168,6 +168,25 @@ def test_zero_output_has_unavailable_quantiles_and_no_division_by_zero():
     assert summary["expansion_ratio"] is None
 
 
+def test_historical_large_integer_budget_does_not_break_output_counts():
+    from tldw_chatbook.Chunking.lab_comparison import summarize_result
+
+    result = make_result()
+    recipe = result.request.recipe.model_copy(
+        update={
+            "effective_json": json.dumps(
+                {"chunking": {"method": "words", "config": {"max_size": 10**400}}}
+            )
+        }
+    )
+    historical = result.model_copy(
+        update={"request": result.request.model_copy(update={"recipe": recipe})}
+    )
+    summary = summarize_result(historical)
+    assert summary["chunk_count"] == 1
+    assert summary["budget"]["oversized_chunks"] == 0
+
+
 def test_measurement_requires_identity_and_does_not_reuse_chunking_tokenizer():
     from tldw_chatbook.Chunking.lab_comparison import (
         comparison_deltas,

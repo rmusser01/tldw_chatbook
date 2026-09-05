@@ -41,6 +41,58 @@ async def settle(app, pilot):
 
 
 @pytest.mark.asyncio
+async def test_restored_historical_result_prepares_counts_text_and_raw_config():
+    from Tests.Chunking.test_lab_recovery import historical_session
+    from tldw_chatbook.Chunking.lab_models import RunResult
+    from tldw_chatbook.Chunking.lab_recovery import export_recovery, parse_recovery
+    from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
+
+    restored = parse_recovery(export_recovery(historical_session()))
+    result = RunResult.model_validate(next(iter(restored.results.values())))
+    app = ResultsApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        region = app.query_one(ResultsRegion)
+        region.configure_view(restored.view)
+        region.show_results(None, result, stale_ids=frozenset())
+        await settle(app, pilot)
+        assert region.query_one(TextArea).text == result.report.chunks[0]["text"]
+        summary = region._prepared["summaries"]["B"]
+        assert summary["chunk_count"] == len(result.report.chunks)
+        assert summary["budget"]["unit"] is None
+        assert summary["budget"]["limit"] is None
+        region.query_one("#detail-kind", Select).value = "effective"
+        await settle(app, pilot)
+        assert '"legacy_operation"' in region.query_one(TextArea).text
+
+
+@pytest.mark.parametrize(
+    "saved", [[], {"selections": []}, {"active_view": [], "detail": {}}]
+)
+def test_optional_view_restoration_falls_back_without_crashing(saved):
+    from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
+
+    region = ResultsRegion()
+    region.configure_view({"results": saved})
+    assert region._view["active_view"] == "B"
+    assert region._view["selections"] == {}
+
+
+@pytest.mark.asyncio
+async def test_unknown_view_extension_survives_result_inspection():
+    from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
+
+    app = ResultsApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        region = app.query_one(ResultsRegion)
+        region.configure_view({"results": {"future": {"opaque": [1, 2]}}})
+        region.show_results(None, make_result(), stale_ids=frozenset())
+        await settle(app, pilot)
+        assert await pilot.click("#view-compare")
+        await settle(app, pilot)
+        assert app.selections[-1].view.get("future") == {"opaque": [1, 2]}
+
+
+@pytest.mark.asyncio
 async def test_exclusive_workers_are_lazy_when_canceled_before_start(monkeypatch):
     import inspect
 

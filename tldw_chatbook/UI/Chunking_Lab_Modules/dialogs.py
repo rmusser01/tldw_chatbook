@@ -38,12 +38,16 @@ class LabDialog(ModalScreen[dict | None]):
         fields: dict[str, tuple[str, str]] | None = None,
         checks: dict[str, str] | None = None,
         accept: str = "Continue",
+        accept_disabled: bool = False,
+        checked: frozenset[str] = frozenset(),
         on_edit: Callable[[str, str], None] | None = None,
     ):
         super().__init__()
         self.title_text, self.explanation = title, explanation
         self.fields, self.checks = fields or {}, checks or {}
         self.accept_text, self.on_edit = accept, on_edit
+        self.accept_disabled = accept_disabled
+        self.checked = checked
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -53,9 +57,14 @@ class LabDialog(ModalScreen[dict | None]):
                 yield Static(label, markup=False)
                 yield Input(value=value, id=f"dialog-{key}")
             for key, label in self.checks.items():
-                yield Checkbox(label, id=f"dialog-{key}")
+                yield Checkbox(label, value=key in self.checked, id=f"dialog-{key}")
             with Horizontal():
-                yield Button(self.accept_text, id="dialog-accept", variant="primary")
+                yield Button(
+                    self.accept_text,
+                    id="dialog-accept",
+                    variant="primary",
+                    disabled=self.accept_disabled,
+                )
                 yield Button("Cancel", id="dialog-cancel")
 
     @on(Input.Changed)

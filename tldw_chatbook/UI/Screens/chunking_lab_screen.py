@@ -17,7 +17,11 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 from tldw_chatbook.Chunking import lab_state
 from tldw_chatbook.Chunking.lab_models import RunResult
 from tldw_chatbook.Chunking.lab_preflight import current_local_runtime, prepare_recipe
-from tldw_chatbook.Chunking.lab_recovery import MAX_ENVELOPE_BYTES, export_recovery
+from tldw_chatbook.Chunking.lab_recovery import (
+    MAX_ENVELOPE_BYTES,
+    export_recovery,
+    parse_recovery,
+)
 from tldw_chatbook.RAG_Admin.chunking_lab_service import (
     ExpectedTemplate,
     save_lab_template,
@@ -31,6 +35,7 @@ from tldw_chatbook.UI.Chunking_Lab_Modules.sample_region import (
     SampleRegion,
     read_sample_excerpt,
     read_sample_file,
+    sample_source_label,
 )
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
@@ -79,7 +84,11 @@ def _save_payload(session, role: str) -> tuple[dict, dict, dict | None, str]:
             for key in ("name", "description", "tags")
         }
         expected = (
-            {key: record[key] for key in ("id", "uuid", "version")}
+            {
+                key: record[key]
+                for key in ("id", "uuid", "version", "is_builtin")
+                if key in record
+            }
             if all(key in record for key in ("id", "uuid", "version"))
             else None
         )
@@ -95,7 +104,30 @@ def _save_payload(session, role: str) -> tuple[dict, dict, dict | None, str]:
             draft["expected_record"],
         )
     prepare_recipe(body, runtime=current_local_runtime())
-    return body, dict(fields), expected, candidate_id
+    return body, lab_state.captured_record_fields(fields), expected, candidate_id
+
+
+def _export_template(session) -> bytes:
+    """Preserve a syntactically valid authored object without Run/Save admission."""
+    candidate = next(
+        value for value in session.candidates.values() if value["role"] == "B"
+    )
+    draft = candidate["draft"]
+    body = json.loads(draft["raw_json"])
+    if not isinstance(body, dict):
+        raise TypeError(
+            "Template export requires a JSON object; use recovery export to preserve any raw draft"
+        )
+    return json.dumps(
+        {
+            **lab_state.captured_record_fields(draft["record_fields"]),
+            "template_json": body,
+            "version": "1.0",
+            "source": "tldw_chatbook",
+        },
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
 
 
 def _write_selected_file(selected: str, payload: bytes, overwrite: bool) -> None:
@@ -111,6 +143,66 @@ def _write_selected_file(selected: str, payload: bytes, overwrite: bool) -> None
         with open_private_binary(path) as opened:
             precondition = PrivateFileWritePrecondition.from_opened(opened)
     atomic_private_write_bytes(path, payload, target_precondition=precondition)
+
+
+def _inspect_recovery(selected: str) -> tuple[bytes, str]:
+    """Read and validate once for bounded inspection, with no store authority."""
+    path = validate_path_simple(selected, require_exists=True)
+    if not path.is_file():
+        raise ValueError("Choose a regular recovery JSON file")
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_ENVELOPE_BYTES + 1)
+    imported = parse_recovery(payload)
+    sample = imported.samples[imported.view["sample_hash"]]
+    lines = [
+        f"Sample: {len(sample['text']):,} characters · {len(sample['text'].encode('utf-8')):,} UTF-8 bytes",
+        "Sample preview: "
+        + sample["text"][:240]
+        + ("…" if len(sample["text"]) > 240 else ""),
+    ]
+    for candidate in sorted(
+        imported.candidates.values(), key=lambda value: value["role"]
+    ):
+        record = (
+            (candidate.get("draft") or {}).get("record_fields")
+            or candidate.get("template_record")
+            or {}
+        )
+        lines.append(
+            f"{candidate['role']}: {record.get('name', '')[:80] or 'Unnamed recipe'}"
+        )
+    for result in imported.results.values():
+        report = result.get("report")
+        lines.append(
+            f"Retained result: {result['status']} · {len(report['chunks']) if report else 0:,} chunks · {result['request']['recipe']['runtime']['backend'][:80]}"
+        )
+    lines.append(
+        "Replacement preserves the displaced session for Undo restore until a content edit."
+    )
+    return payload, "\n".join(lines)
+
+
+def _inspection_runs(session, candidate_id: str) -> tuple[str | None, str | None]:
+    """Keep current batch membership distinct from retained successful evidence."""
+    candidate = session.candidates[candidate_id]
+    current, previous = (
+        candidate.get("current_run_id"),
+        candidate.get("previous_run_id"),
+    )
+    if session.batch:
+        member = next(
+            (
+                key
+                for key, request in session.batch["requests"].items()
+                if request["candidate_id"] == candidate_id
+            ),
+            None,
+        )
+        if member is not None and member != current:
+            if session.results.get(current, {}).get("status") == "completed":
+                previous = current
+            current = member
+    return current, previous
 
 
 class ChunkingLabScreen(BaseAppScreen):
@@ -131,6 +223,8 @@ class ChunkingLabScreen(BaseAppScreen):
     ChunkingLabScreen #lab-work { height: 1fr; min-height: 0; }
     ChunkingLabScreen #lab-inputs { width: 2fr; height: 1fr; min-width: 0; }
     ChunkingLabScreen #lab-results-scroll { width: 3fr; height: 1fr; min-width: 0; min-height: 0; }
+    ChunkingLabScreen #lab-result-choices { height: 1; }
+    ChunkingLabScreen #lab-result-choices Button { height: 1; min-width: 10; width: auto; padding: 0 1; }
     ChunkingLabScreen ResultsRegion { width: 1fr; height: 1fr; min-width: 0; }
     ChunkingLabScreen.-narrow #lab-inputs, ChunkingLabScreen.-narrow #lab-results-scroll { width: 1fr; }
     ChunkingLabScreen.-narrow #lab-actions { height: 1; }
@@ -214,6 +308,18 @@ class ChunkingLabScreen(BaseAppScreen):
                 yield SampleRegion(id="lab-sample", disabled=True)
                 yield EditorRegion(id="lab-editor", disabled=True)
             with VerticalScroll(id="lab-results-scroll"):
+                with Horizontal(id="lab-result-choices"):
+                    for side in ("a", "b"):
+                        yield Button(
+                            f"{side.upper()} current",
+                            id=f"lab-current-{side}",
+                            disabled=True,
+                        )
+                        yield Button(
+                            f"{side.upper()} Previous",
+                            id=f"lab-previous-{side}",
+                            disabled=True,
+                        )
                 yield ResultsRegion(id="lab-results")
 
     def apply_navigation_context(self, context: dict) -> None:
@@ -237,7 +343,7 @@ class ChunkingLabScreen(BaseAppScreen):
             editor._bindings.key_to_bindings.pop("f6", None)
         self._layout()
         self.run_worker(
-            self._load(), group="lab-load", exclusive=True, exit_on_error=False
+            self._load, group="lab-load", exclusive=True, exit_on_error=False
         )
 
     async def wait_until_ready(self) -> None:
@@ -245,9 +351,14 @@ class ChunkingLabScreen(BaseAppScreen):
         await self._ready.wait()
 
     async def _load(self) -> None:
+        if not self.is_mounted or not self.query("#lab-message"):
+            return
         self._ready.clear()
         try:
-            self.coordinator = await self.app_instance.get_chunking_lab_coordinator()
+            owner = await self.app_instance.get_chunking_lab_coordinator()
+            if not self.is_mounted or not self.query("#lab-message"):
+                return
+            self.coordinator = owner
             self._unsubscribe = self.coordinator.subscribe(self._coordinator_changed)
             region = self.coordinator.session.view.get("region", "sample")
             self._active_region = (
@@ -268,6 +379,8 @@ class ChunkingLabScreen(BaseAppScreen):
                         f"Could not load Library source: {exc}. Your recovered draft is unchanged."
                     )
         except Exception as exc:  # noqa: BLE001 - load boundary must retain unavailable recovery, never replace it.
+            if not self.is_mounted or not self.query("#lab-message"):
+                return
             self._message(
                 f"Could not load local recovery ({type(exc).__name__}). Retry reads it again; no empty draft is writable."
             )
@@ -283,7 +396,7 @@ class ChunkingLabScreen(BaseAppScreen):
         if self.is_mounted:
             self._observe_result_revisions()
             self.run_worker(
-                self._refresh_session(),
+                self._refresh_session,
                 group="lab-render",
                 exclusive=True,
                 exit_on_error=False,
@@ -367,11 +480,7 @@ class ChunkingLabScreen(BaseAppScreen):
 
     def _queue_editor_edit(self, kind: str, field: str, value: str) -> None:
         if kind == "record":
-            value = (
-                [tag.strip() for tag in value.split(",") if tag.strip()]
-                if field == "tags"
-                else value
-            )
+            field = "tags_text" if field == "tags" else field
             self.queue_edit(
                 lambda session: lab_state.edit_record_fields(
                     session, self._b_id(session), {field: value}
@@ -389,7 +498,11 @@ class ChunkingLabScreen(BaseAppScreen):
             )
 
     async def _refresh_session(self, *, edit_complete: bool = False) -> None:
-        if self.coordinator is None or not self.is_mounted:
+        if (
+            self.coordinator is None
+            or not self.is_mounted
+            or not self.query("#lab-message")
+        ):
             return
         self._observe_result_revisions()
         self._render_generation += 1
@@ -404,19 +517,22 @@ class ChunkingLabScreen(BaseAppScreen):
         )
         a = b = None
         stale = set()
+        previous_ids, previous_sides = set(), set()
+        choices = session.view.get("result_choices", {})
+        current_complete = True
+        controls = {}
         for candidate_id, candidate in session.candidates.items():
-            run_id = candidate.get("current_run_id")
-            if session.batch:
-                member = next(
-                    (
-                        key
-                        for key, request in session.batch["requests"].items()
-                        if request["candidate_id"] == candidate_id
-                    ),
-                    None,
-                )
-                if member is not None:
-                    run_id = member
+            current_id, previous_id = _inspection_runs(session, candidate_id)
+            current_complete &= (
+                session.results.get(current_id, {}).get("status") == "completed"
+            )
+            previous = choices.get(candidate_id) == "previous"
+            run_id = previous_id if previous else current_id
+            controls[candidate["role"]] = (previous_id is not None, previous)
+            if previous:
+                previous_sides.add(candidate["role"])
+                if run_id is not None:
+                    previous_ids.add(run_id)
             result = None
             if run_id in session.results:
                 stored = session.results[run_id]
@@ -440,6 +556,7 @@ class ChunkingLabScreen(BaseAppScreen):
             generation != self._render_generation
             or session is not self.coordinator.session
             or not self.is_mounted
+            or not self.query("#lab-message")
         ):
             return
         self._results_cache = {
@@ -454,7 +571,11 @@ class ChunkingLabScreen(BaseAppScreen):
             and not self._edits
             and (edit_complete or not editing)
         ):
-            sample = session.samples[session.view["sample_hash"]]["text"]
+            snapshot = session.samples[session.view["sample_hash"]]
+            sample = snapshot["text"]
+            self.query_one("#lab-sample-source", Static).update(
+                sample_source_label(snapshot["source"])
+            )
             editor = self.query_one("#lab-sample-text", TextArea)
             with self.query_one(SampleRegion).prevent(TextArea.Changed):
                 if editor.text != sample:
@@ -467,8 +588,32 @@ class ChunkingLabScreen(BaseAppScreen):
             self.coordinator.guarded or self._leaving
         )
         results = self.query_one(ResultsRegion)
-        results.configure_view(session.view)
-        results.show_results(a, b, stale_ids=frozenset(stale))
+        for side in ("A", "B"):
+            available, previous = controls.get(side, (False, False))
+            for choice in ("current", "previous"):
+                button = self.query_one(f"#lab-{choice}-{side.lower()}", Button)
+                button.display = side in controls
+                button.disabled = (
+                    self.coordinator.guarded
+                    or self._leaving
+                    or (choice == "previous" and not available)
+                )
+                button.variant = (
+                    "primary" if (choice == "previous") == previous else "default"
+                )
+        results.configure_view(
+            session.view,
+            previous_ids=frozenset(previous_ids),
+            previous_sides=frozenset(previous_sides),
+        )
+        results.show_results(
+            a,
+            b,
+            stale_ids=frozenset(stale),
+            comparison_block="Inspecting Previous output; current batch is incomplete. Run both to compare."
+            if previous_sides and not current_complete
+            else None,
+        )
         status = self.coordinator.save_status
         saved = (
             status.acknowledged is not None
@@ -641,12 +786,19 @@ class ChunkingLabScreen(BaseAppScreen):
                     "description": ("Description", fields.get("description", "")),
                     "tags": (
                         "Tags · comma separated",
-                        ", ".join(fields.get("tags", [])),
+                        captured_session.candidates[candidate_id]["draft"][
+                            "record_fields"
+                        ].get("tags_text", ", ".join(fields.get("tags", [])))
+                        if role == "B"
+                        else ", ".join(fields.get("tags", [])),
                     ),
                 },
                 checks={"new": "Save as new (required for built-ins)"}
                 if expected
                 else {},
+                checked=frozenset({"new"})
+                if expected and expected.get("is_builtin")
+                else frozenset(),
                 accept="Save template",
                 on_edit=(
                     lambda field, value: self._queue_editor_edit("record", field, value)
@@ -717,7 +869,9 @@ class ChunkingLabScreen(BaseAppScreen):
             tags=fields.get("tags", []),
             expected=None
             if as_new or expected is None
-            else ExpectedTemplate(**expected),
+            else ExpectedTemplate(
+                **{key: expected[key] for key in ("id", "uuid", "version")}
+            ),
         )
         if role == "B":
             self.queue_edit(
@@ -790,7 +944,7 @@ class ChunkingLabScreen(BaseAppScreen):
 
     async def _menu_action(self, action: str) -> None:
         await self.drain_edits()
-        if self.coordinator is None:
+        if self.coordinator is None and action != "restore":
             raise ValueError("Retry loading local recovery before authoring")
         if action == "undo-restore":
             await self.coordinator.undo_restore()
@@ -829,7 +983,8 @@ class ChunkingLabScreen(BaseAppScreen):
                             for key in ("name", "description", "tags")
                         },
                         expected_record={
-                            key: record[key] for key in ("id", "uuid", "version")
+                            **{key: record[key] for key in ("id", "uuid", "version")},
+                            "is_builtin": bool(record.get("is_builtin")),
                         },
                     )
                 )
@@ -865,6 +1020,33 @@ class ChunkingLabScreen(BaseAppScreen):
         """Execute one explicit user-selected bounded local file operation off-loop."""
         await self.drain_edits()
         selected = choice["path"]
+        if action == "restore":
+            payload, summary = await asyncio.to_thread(_inspect_recovery, selected)
+            owner = self.coordinator
+            unavailable = self._replacement_unavailable()
+            answer = await self._dialog(
+                LabDialog(
+                    "Inspect recovery snapshot",
+                    summary + ("\n\n" + unavailable if unavailable else ""),
+                    accept="Replace current session",
+                    accept_disabled=bool(unavailable),
+                )
+            )
+            if answer is None:
+                return
+            if owner is not self.coordinator or self._replacement_unavailable():
+                raise ValueError(
+                    "Replacement authority changed; inspect the snapshot again after Retry"
+                )
+            # Retained bytes are immutable: replacement validates this same snapshot,
+            # never a later file revision. Validation precedes coordinator quiescence.
+            await owner.replace_recovery(payload)
+            region = owner.session.view.get("region", "sample")
+            self._active_region = (
+                region if region in ("sample", "configure", "results") else "sample"
+            )
+            await self._refresh_session()
+            return
         if action in {"sample-file", "excerpt"}:
             text, source = (
                 await asyncio.to_thread(
@@ -886,20 +1068,8 @@ class ChunkingLabScreen(BaseAppScreen):
                     export_recovery, self.coordinator.session
                 )
             else:
-                body, fields, _, _ = await asyncio.to_thread(
-                    _save_payload, self.coordinator.session, "B"
-                )
                 payload = await asyncio.to_thread(
-                    lambda: json.dumps(
-                        {
-                            **fields,
-                            "template_json": body,
-                            "version": "1.0",
-                            "source": "tldw_chatbook",
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ).encode("utf-8")
+                    _export_template, self.coordinator.session
                 )
             await asyncio.to_thread(
                 _write_selected_file, selected, payload, bool(choice.get("overwrite"))
@@ -909,7 +1079,7 @@ class ChunkingLabScreen(BaseAppScreen):
 
             def read():
                 path = validate_path_simple(selected, require_exists=True)
-                limit = MAX_ENVELOPE_BYTES if action == "restore" else 8 * 1024 * 1024
+                limit = 8 * 1024 * 1024
                 with path.open("rb") as stream:
                     payload = stream.read(limit + 1)
                 if len(payload) > limit:
@@ -917,12 +1087,7 @@ class ChunkingLabScreen(BaseAppScreen):
                 return payload
 
             payload = await asyncio.to_thread(read)
-            if action == "restore":
-                await self.coordinator.replace_recovery(payload)
-                self._active_region = self.coordinator.session.view.get(
-                    "region", "sample"
-                )
-            elif action == "import-template":
+            if action == "import-template":
 
                 def parse():
                     record = json.loads(payload.decode("utf-8"))
@@ -951,12 +1116,42 @@ class ChunkingLabScreen(BaseAppScreen):
                 raise ValueError("Unknown file operation")
         await self._refresh_session()
 
+    def _replacement_unavailable(self) -> str | None:
+        if self.coordinator is None:
+            return "Replacement unavailable: local recovery could not be loaded. Retry the existing store before replacing; this snapshot remains available for read-only inspection."
+        if self.coordinator.guarded or self._leaving:
+            return "Replacement unavailable while another session transition settles."
+        if self.coordinator.save_status.state in ("failed", "conflict"):
+            return "Replacement unavailable until local persistence and authority are repaired. Retry or deliberately reopen the profile so the displaced session can be preserved."
+        return None
+
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
         identity = event.button.id or ""
         if not identity.startswith("lab-"):
             return
         event.stop()
+        if identity.startswith(("lab-current-", "lab-previous-")):
+            _, choice, side = identity.split("-")
+
+            def select_result(session):
+                candidate_id = next(
+                    key
+                    for key, candidate in session.candidates.items()
+                    if candidate["role"] == side.upper()
+                )
+                return lab_state.update_view(
+                    session,
+                    {
+                        "result_choices": {
+                            **session.view.get("result_choices", {}),
+                            candidate_id: choice,
+                        }
+                    },
+                )
+
+            self.queue_edit(select_result)
+            return
         if identity.startswith("lab-show-"):
             self._active_region = identity.removeprefix("lab-show-")
             self._layout()

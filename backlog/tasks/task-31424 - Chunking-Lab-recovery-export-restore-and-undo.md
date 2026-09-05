@@ -41,6 +41,14 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review; earlier pending-review
+statements below are historical. Final correction admission rejects malformed known
+view/draft shapes before replacement while retaining unknown extensions and opaque
+invalid input. The screen previews the bounded validated import and requires explicit
+Replace current session; initial unreadable storage still permits read-only inspection.
+Existing ADR-118 and transactional displaced-session protection remain in force.
+Additional evidence: `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
+
 <!-- SECTION:NOTES:BEGIN -->
 - Added `lab_recovery.py` for versioned UTF-8 transfer, digest and structural validation, active reachability, and matching byte/depth/count admission. Raw authoring text remains opaque; captured recipe hashes use their original authored/effective documents and runtime identity. No source-path reads or executable preflight occur on recovery.
 - Added transactional replace/Undo restore to the existing private store and serialized autosave owner. A single commit preserves exact displaced in-memory content, a rebased previous fallback, and the new session. Failed publication rolls back new blobs/checkpoints and retains old retry authority. View-only saves retain the displaced checkpoint; content saves and Clear release it.

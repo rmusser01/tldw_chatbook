@@ -40,6 +40,12 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review. Earlier pending-review
+statements below are historical; original failed census evidence remains unchanged.
+The final correction verifies malformed known UI/draft fields trigger the existing
+previous-checkpoint fallback on mounted reopen. No store/schema contract changed;
+see [Chunking Lab verification](../../Docs/Chunking_Lab_Verification.md).
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented schema-1 private recovery in `DB/Chunking_Lab_DB.py`, a serialized off-loop writer in `Chunking/lab_autosave.py`, shared small-graph validation in `Chunking/lab_models.py`, and private owner `db.chunking_lab` with inventory row C54 and tests. This directly implements ADR-118 (`backlog/decisions/118-chunking-lab-local-execution-and-recovery.md`); no additional ADR or Media DB migration is needed.
 

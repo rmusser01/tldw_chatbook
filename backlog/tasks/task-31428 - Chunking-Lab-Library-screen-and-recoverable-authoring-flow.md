@@ -60,4 +60,28 @@ Implemented the Library-owned local recoverable authoring screen under ADR-118 (
 Task-level independent review complete after fix cd3e13926a: final-render edit ownership now rechecks the queue, with deterministic RED3/GREEN3 and final screen/recovery27 passing. Re-review found no new blocking issues. Controller explained the three startup differentials through active7-second splash versus readiness polling; exact3 no-splash intervention passes, untouched BASE reproduces same active-splash boundary. Original integration remains non-green; no blanket cold-start qualification. Durable qualifications and verification chronology: Docs/Chunking_Lab_Verification.md. Deferred Minor tag-entry normalization/eager screen workers go to the pending whole-branch review. All Task8 ACs accepted with documented existing-environment/platform limits; ADR118 unchanged.
 
 Reopened for the single final whole-branch correction wave after review at462e5cc30e identified seven Important gaps and five Minor refinements. Task-level review history remains valid, but final completion awaits this correction and scoped re-review. Root startup diagnosis is documented separately and does not authorize unrelated startup repair.
+
+Final correction wave implemented all R1–R7 and Minor1–5 under existing ADR-118
+(`backlog/decisions/118-chunking-lab-local-execution-and-recovery.md`). Catalog writes
+now acknowledge their exact transaction record. Recovery validates known fields,
+previews the immutable selected snapshot and requires explicit replacement; an
+unreadable local store still permits inspection. Historical results retain readable
+counts/text/config/runtime. Current/Previous choices persist per candidate without
+completing failed batches; successful Previous output survives repeated failures.
+Raw comma-separated tags persist through edits/reopen/failed Save. Screen workers
+are lazy and teardown-fenced, builtin saves default to copies, sample provenance is
+visible, and unsupported authored objects export without runnable admission.
+Design/ADR/plan/task chronology and user documentation are reconciled.
+
+Final amended-code and directly affected compatibility selection: 344 passed,
+1 existing RequestsDependencyWarning, 73.73s. Exact commands, each finding's RED/GREEN
+evidence, changed interfaces, self-review and qualifications are in
+`.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`; genuine JUnit output:
+`final-fix-targeted.xml`. Scoped Ruff/format/whitespace checks passed. New controls
+and dialogs have three-size focus/keyboard/geometry assertions; no new visual round,
+full suite, environment upgrade, startup repair, merge or push. The original
+294-pass/33-fail integration result, startup diagnosis, platform/resource limitations
+and earlier privacy incident remain explicit in Docs/Chunking_Lab_Verification.md.
+Status stays In Progress and AC9–14 remain unchecked until the controller's scoped
+independent final re-review. Earlier pending-review statements above are chronology.
 <!-- SECTION:NOTES:END -->

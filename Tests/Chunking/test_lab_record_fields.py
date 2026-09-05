@@ -12,12 +12,13 @@ def test_record_edit_preserves_invalid_and_pending_authority():
     session = state.edit_json(session, candidate_id, '{"bad":')
     before = session.candidates[candidate_id]["draft"]
     changed = state.edit_record_fields(
-        session, candidate_id, {"name": "Draft", "tags": ["kept"]}
+        session, candidate_id, {"name": "Draft", "tags_text": "kept,"}
     )
     draft = changed.candidates[candidate_id]["draft"]
     assert draft["raw_json"] == '{"bad":'
     assert draft["parsed_json"] == before["parsed_json"]
     assert draft["parse_error"] == before["parse_error"]
+    assert draft["record_fields"]["tags_text"] == "kept,"
     assert state.undo_edit(changed).candidates[candidate_id]["draft"] == before
     valid = state.discard_pending_edit(changed, candidate_id)
     pending = state.edit_control(valid, candidate_id, "chunking.config.max_size", "-")
@@ -27,6 +28,10 @@ def test_record_edit_preserves_invalid_and_pending_authority():
     assert changed.candidates[candidate_id]["draft"]["pending_controls"] == {
         "chunking.config.max_size": "-"
     }
+    assert (
+        changed.candidates[candidate_id]["draft"]["record_fields"]["tags_text"]
+        == "kept,"
+    )
 
 
 def test_unsaved_run_captures_record_fields_without_catalog_identity():
@@ -34,7 +39,7 @@ def test_unsaved_run_captures_record_fields_without_catalog_identity():
     session = state.new_session("test")
     candidate_id = next(iter(session.candidates))
     session = state.edit_record_fields(
-        session, candidate_id, {"name": "Captured", "tags": ["original"]}
+        session, candidate_id, {"name": "Captured", "tags_text": "original,"}
     )
     request = state.capture_batch(session, (candidate_id,))[0]
     assert request.template_record == {
@@ -44,6 +49,10 @@ def test_unsaved_run_captures_record_fields_without_catalog_identity():
     }
     state.edit_record_fields(session, candidate_id, {"tags": ["new"]})
     assert request.template_record["tags"] == ["original"]
+    assert (
+        session.candidates[candidate_id]["draft"]["record_fields"]["tags_text"]
+        == "original,"
+    )
 
 
 def test_saved_association_keeps_new_edits_and_refuses_replaced_draft():

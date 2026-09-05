@@ -41,6 +41,14 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review; earlier pending-review
+statements below are historical. Final correction renders admitted historical recipes
+without current method/budget schema, preserves unknown view extensions, and connects
+per-candidate current/Previous choices to truthful badges and incomplete-batch guards.
+Counts/text and raw captured configuration/runtime remain readable. Existing ADR-118
+applies; new controls have three-size keyboard/geometry checks without another visual
+polish round. Evidence: `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented captured-result compatibility, Unicode/word distributions, explicit method budgets, separately identified token measurements, verified overlap, and effective/authored JSON Pointer diffs in `Chunking/lab_comparison.py`. Different methods/assets remain experimental variables; incompatible results receive reasons without comparative deltas.
 

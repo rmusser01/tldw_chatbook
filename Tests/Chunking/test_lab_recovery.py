@@ -108,6 +108,13 @@ def test_pending_controls_and_old_captured_runtime_remain_readable(monkeypatch):
 
 
 def test_old_unsupported_captured_recipe_uses_original_identity():
+    session = historical_session()
+    restored = parse_recovery(export_recovery(session))
+    assert restored.results == session.results
+
+
+def historical_session():
+    """Accepted historical fixture whose captured execution schema was removed."""
     from tldw_chatbook.Chunking.lab_models import LabSession
 
     document = completed_session().model_dump(mode="json")
@@ -124,9 +131,68 @@ def test_old_unsupported_captured_recipe_uses_original_identity():
         canonical_json(identity).encode()
     ).hexdigest()
     document["batch"]["requests"][result["request"]["run_id"]] = result["request"]
-    session = LabSession.model_validate(document)
-    restored = parse_recovery(export_recovery(session))
-    assert restored.results == session.results
+    return LabSession.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("results", []),
+        ("region", []),
+        ("results.selections", []),
+        ("results.selections", {"candidate": "1"}),
+        ("results.active_view", []),
+        ("results.detail", {}),
+        ("results.inspected_candidate", 12),
+    ],
+)
+def test_recovery_rejects_malformed_known_view_fields(field, value):
+    envelope = json.loads(export_recovery(new_session("profile")))
+    target = envelope["session"]["view"]
+    for part in field.split(".")[:-1]:
+        target = target.setdefault(part, {})
+    target[field.split(".")[-1]] = value
+    with pytest.raises(RecoveryImportError):
+        parse_recovery(json.dumps(envelope).encode())
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("record_fields.name", []),
+        ("record_fields.description", 123),
+        ("record_fields.tags", "alpha"),
+        ("record_fields.tags", [12]),
+        ("parse_error", {"message": "invalid"}),
+        ("parse_error", {"message": [], "line": 1, "column": 2}),
+        ("parsed_json", "{"),
+        ("expected_record", {"id": "1", "uuid": "identity", "version": 1}),
+    ],
+)
+def test_recovery_rejects_malformed_known_draft_fields(field, value):
+    session = new_session("profile")
+    candidate_id = next(iter(session.candidates))
+    session = edit_json(session, candidate_id, "{")
+    envelope = json.loads(export_recovery(session))
+    target = envelope["session"]["candidates"][candidate_id]["draft"]
+    for part in field.split(".")[:-1]:
+        target = target.setdefault(part, {})
+    target[field.split(".")[-1]] = value
+    with pytest.raises(RecoveryImportError):
+        parse_recovery(json.dumps(envelope).encode())
+
+
+def test_recovery_keeps_unknown_view_and_record_extensions_with_opaque_input():
+    session = new_session("profile")
+    candidate_id = next(iter(session.candidates))
+    session = edit_json(session, candidate_id, '{"unfinished":')
+    envelope = json.loads(export_recovery(session))
+    envelope["session"]["view"]["results"] = {"future": [1, {"a": True}]}
+    draft = envelope["session"]["candidates"][candidate_id]["draft"]
+    draft["record_fields"]["extension"] = {"opaque": []}
+    restored = parse_recovery(json.dumps(envelope).encode())
+    assert restored.view["results"]["future"] == [1, {"a": True}]
+    assert restored.candidates[candidate_id]["draft"] == draft
 
 
 @pytest.mark.parametrize(

@@ -40,6 +40,13 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after independent review; earlier pending-review
+statements below are historical. The final correction adds structurally validated
+known presentation fields, raw `record_fields.tags_text`, canonical capture without
+editor rewriting, and retention of the last successful Previous result across failed
+reruns. Existing ADR-118 applies; no schema change. Final correction evidence and
+remaining independent review: `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented frozen publication models and pure copy-on-edit Lab transitions under the existing ADR-118 boundary. Raw invalid JSON now retains the last-valid parsed document separately; incomplete controls retain exact pending strings with sole editing authority, and explicit discard/Undo restores prior state without normalizing unknown data. Known control paths patch only their flat-body locations, preserving metadata, classifier rules, incompatible options, and operation order.
 

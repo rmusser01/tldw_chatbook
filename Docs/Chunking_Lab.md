@@ -13,6 +13,8 @@ Back returns to the opening route. There is no separate Settings editor.
    their exact decoded text, including line endings. Samples may contain at most
    2 MiB of UTF-8 text. Larger files/Library records require an explicit character
    range (zero-based start, exclusive end); no automatic truncation occurs.
+   The sample header shows the stored filename or Library item and full/excerpt
+   range after reopening, even if the original source no longer exists.
 2. Configure editable B using the method controls or Full JSON. Words measures
    words; Fixed size measures characters. Empty, malformed, or incomplete controls
    remain visible until corrected or explicitly discarded. Invalid JSON retains
@@ -26,17 +28,24 @@ Back returns to the opening route. There is no separate Settings editor.
    transformed text, statistics, authored/effective configuration differences,
    or execution metadata. Source linking is available only for verified spans;
    transformed output without a trustworthy map is explicitly unaligned.
+   Use each candidate's current / Previous controls to inspect retained successful
+   output after a rerun fails or while it is pending. The choice survives reopening;
+   Previous output cannot complete an incomplete current batch comparison.
 5. Save A or Save B as a reusable local template. Name and description are required
    by the catalog; tags are retained. Save A uses its captured record fields and
    authored metadata/classifier, with captured effective executable sections made
    explicit. Save B uses its current valid authored body. Dialog field edits are
-   explicit. Built-ins require Save as new. Saving refreshes Library ingest's
+   explicit. Unfinished comma-separated tag text remains exactly as entered;
+   capture, export and Save derive separate canonical tags. Built-ins default to
+   Save as new. Saving refreshes Library ingest's
    template choices; it does not change the selected default or re-chunk sources.
 
 Saved templates are searchable and decorated for built-in, invalid, or reserved
 entries. Loading is a detached draft, not live catalog state. Template JSON import
-and export retain the flat body and record tags; importing does not save a catalog
-record. Concurrent catalog changes produce a conflict and retain the draft: reload
+and export retain the authored body and record tags; importing does not save a catalog
+record. Syntactically valid unsupported objects can be exported without granting
+Run or Save capability. Use recovery export for invalid JSON or unfinished controls.
+Concurrent catalog changes produce a conflict and retain the draft: reload
 deliberately or Save as new. A late save cannot attach an unrelated imported draft.
 
 At 80 columns, Sample, Configure, and Results are separate regions. Results scroll
@@ -97,13 +106,20 @@ covered by an acknowledged checkpoint.
 After a write failure, stay in the Lab and choose Retry or Export recovery. Export
 does not depend on the failed checkpoint write. An initial recovery-load failure
 disables authoring; Retry performs a fresh read, never treats an empty placeholder
-as overwrite authority. Concurrent-instance recovery conflicts require deliberate
+as overwrite authority. Restore recovery still opens a read-only snapshot inspection;
+replacement remains unavailable until safe local persistence and authority are repaired.
+Concurrent-instance recovery conflicts require deliberate
 export/reopen, not blind overwrite. Recovery fallback can retain an earlier valid
 checkpoint; no mixed partial result/configuration is accepted.
 
 Export recovery writes the complete admitted active session to an explicit path.
-Restore validates before replacement and binds the imported session to the current
-profile; imported data never supplies filesystem write targets. Undo restore
+Restore validates and previews sample/candidate/result details, then requires
+**Replace current session**. Cancel preserves current content and epoch. Replacement
+uses the inspected snapshot and binds it to the current profile; imported data never
+supplies filesystem write targets. Historical unsupported recipes retain readable
+output, raw captured configuration and runtime details; missing method budgets are
+unavailable. Malformed known presentation fields are refused before replacement.
+Undo restore
 restores the replaced local session. Clear local recovery requires confirmation
 and removes Lab recovery state without deleting reusable templates. Existing
 output files require explicit overwrite permission and an identity-checked atomic

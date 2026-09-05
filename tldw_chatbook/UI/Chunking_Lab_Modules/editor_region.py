@@ -100,7 +100,7 @@ class EditorRegion(VerticalScroll):
             for field in ("name", "description", "tags"):
                 value = fields.get(field, [] if field == "tags" else "")
                 if field == "tags":
-                    value = ", ".join(value)
+                    value = fields.get("tags_text", ", ".join(value))
                 widget = self.query_one(f"#lab-{field}", Input)
                 if widget.value != value:
                     widget.value = value

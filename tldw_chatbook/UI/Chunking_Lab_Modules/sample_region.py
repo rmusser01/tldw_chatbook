@@ -15,6 +15,24 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 SAMPLE_BYTES = 2 * 1024 * 1024
 
 
+def sample_source_label(source: dict) -> str:
+    """Describe stored user-selected provenance locally, never as navigation data."""
+    name = source.get("name") or source.get("path")
+    origin = (
+        f"Library item {source['local_media_id']}"
+        if source.get("local_media_id")
+        else str(name)
+        if name
+        else "Pasted text"
+    )
+    extent = (
+        f"Excerpt · characters {source['start']}–{source['end']} (end exclusive)"
+        if "start" in source and "end" in source
+        else "Full text"
+    )
+    return f"{origin[:100]} · {extent}"
+
+
 def read_sample_file(selected: str) -> tuple[str, dict]:
     """Read one explicitly selected UTF-8 file, refusing unbounded reads.
 
@@ -79,7 +97,7 @@ class SampleRegion(Vertical):
             super().__init__()
 
     def compose(self) -> ComposeResult:
-        yield Static("Sample · copied text", markup=False)
+        yield Static("Pasted text · Full text", id="lab-sample-source", markup=False)
         yield Static(
             "Paste text below, or use Files / Recovery to load UTF-8 text.",
             markup=False,

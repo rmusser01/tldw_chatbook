@@ -116,19 +116,30 @@ def summarize_result(
         raise ValueError("Measurement identity requires token counts")
     characters = tuple(len(chunk["text"]) for chunk in chunks)
     words = tuple(len(chunk["text"].split()) for chunk in chunks)
-    config = json.loads(result.request.recipe.effective_json)["chunking"]
-    method = config["method"]
+    document = json.loads(result.request.recipe.effective_json)
+    config = document.get("chunking") if isinstance(document, dict) else None
+    config = config if isinstance(config, dict) else {}
+    method = config.get("method")
+    method = method if isinstance(method, str) else None
     # Only units with a defined counting contract are measured. Future methods
     # remain inspectable without guessing their budget semantics.
     unit = {"words": "words", "fixed_size": "characters"}.get(method)
-    limit = config.get("config", {}).get("max_size")
+    options = config.get("config")
+    limit = options.get("max_size") if isinstance(options, dict) else None
+    if (
+        not unit
+        or type(limit) not in (int, float)
+        or (isinstance(limit, float) and not math.isfinite(limit))
+        or limit <= 0
+    ):
+        limit = None
     sizes = words if unit == "words" else characters
     budget = {
         "method": method,
         "limit": limit,
         "unit": unit,
         "oversized_chunks": sum(n > limit for n in sizes)
-        if unit and isinstance(limit, (int, float))
+        if unit and limit is not None
         else None,
     }
     spans = [chunk_mapping(result, i) for i in range(len(chunks))]

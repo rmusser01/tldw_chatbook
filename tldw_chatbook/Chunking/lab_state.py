@@ -406,7 +406,7 @@ def edit_record_fields(
     Returns:
         Detached, undoable authoring transition.
     """
-    if set(changes) - {"name", "description", "tags"}:
+    if set(changes) - {"name", "description", "tags", "tags_text"}:
         raise ValueError("Unknown template record field")
     for key, value in changes.items():
         if key == "tags":
@@ -419,6 +419,8 @@ def edit_record_fields(
     candidate = _require_b(session, candidate_id)
     previous = _draft(candidate)
     fields = {**previous.record_fields, **json.loads(canonical_json(changes))}
+    if "tags" in changes and "tags_text" not in changes:
+        fields.pop("tags_text", None)
     draft = DraftState.model_validate(
         {**previous.model_dump(mode="json"), "record_fields": fields}
     )
@@ -594,17 +596,22 @@ def _template_record(candidate: dict) -> dict | None:
     draft = _draft(candidate)
     record = {
         key: (draft.expected_record or {})[key]
-        for key in ("id", "uuid", "version")
+        for key in ("id", "uuid", "version", "is_builtin")
         if key in (draft.expected_record or {})
     }
-    record.update(
-        {
-            key: draft.record_fields[key]
-            for key in ("name", "description", "tags")
-            if key in draft.record_fields
-        }
-    )
+    record.update(captured_record_fields(draft.record_fields))
     return record
+
+
+def captured_record_fields(fields: dict) -> dict:
+    """Derive canonical tags at capture/save/export without rewriting raw input."""
+    return {
+        "name": fields.get("name", ""),
+        "description": fields.get("description", ""),
+        "tags": [tag.strip() for tag in fields["tags_text"].split(",") if tag.strip()]
+        if "tags_text" in fields
+        else list(fields.get("tags", [])),
+    }
 
 
 def capture_batch(
@@ -746,9 +753,12 @@ def accept_result(session: LabSession, result: RunResult) -> LabSession:
     results[request.run_id] = result.model_dump(mode="json")
     candidate = session.candidates[request.candidate_id]
     candidates = dict(session.candidates)
+    prior_id = candidate.get("current_run_id")
+    if session.results.get(prior_id, {}).get("status") != "completed":
+        prior_id = candidate.get("previous_run_id")
     candidates[request.candidate_id] = {
         **candidate,
-        "previous_run_id": candidate.get("current_run_id"),
+        "previous_run_id": prior_id,
         "current_run_id": request.run_id,
     }
     batch = dict(session.batch)

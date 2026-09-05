@@ -1,6 +1,6 @@
 # ADR-118: Chunking Lab local execution, authoring, and recovery
 
-- Status: Accepted for the reviewed v1 design; implementation pending
+- Status: Accepted and implemented; final correction acceptance pending scoped independent re-review
 - Date: 2026-09-04
 - Spec: [Chunking Lab design](../../Docs/superpowers/specs/2026-09-04-chunking-lab-design.md)
 - Plan: [Chunking Lab implementation](../../Docs/superpowers/plans/2026-09-04-chunking-lab.md)
@@ -118,4 +118,10 @@ checks while adding real execution fixtures, temporary-SQLite crash/concurrency
 tests, and Textual keyboard/resizing tests under an isolated profile.
 
 Implementation records: TASK-31421–TASK-31428 (created in dependency order; see plan).
-TASK-24404 reconciliation is owned by TASK-31428. No implementation is claimed here.
+TASK-24404 was archived as superseded. The final correction wave directly implements
+this ADR: exact in-transaction catalog acknowledgments, validated replacement
+inspection, readable historical evidence, explicit Previous selection, and lossless
+raw tags. It introduces no store, schema, runtime, or policy owner.
+TASK-31428 remains In Progress until scoped independent re-review. The original
+non-green integration evidence and platform/privacy limits remain in
+[Chunking Lab verification](../../Docs/Chunking_Lab_Verification.md).

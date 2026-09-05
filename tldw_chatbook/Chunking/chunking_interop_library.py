@@ -197,7 +197,9 @@ class ChunkingInteropService:
         template_json: Union[str, Dict[str, Any]],
         tags: Optional[Sequence[str]] = None,
         is_builtin: bool = False,
-    ) -> int:
+        *,
+        return_record: bool = False,
+    ) -> Union[int, Dict[str, Any]]:
         """
         Create a new chunking template (validate-on-write, AC 24).
 
@@ -211,9 +213,11 @@ class ChunkingInteropService:
                 out of the body into the column, matching the v6→v7
                 conversion's placement
             is_builtin: Whether this is a builtin template
+            return_record: Return this write's record captured inside its
+                transaction, instead of the legacy ID result.
 
         Returns:
-            ID of created template
+            ID of created template, or its exact committed record when requested.
 
         Raises:
             InputError: If input validation fails or the name is taken
@@ -262,11 +266,21 @@ class ChunkingInteropService:
                     ),
                 )
                 template_id = cursor.lastrowid
+                record = (
+                    self._row_to_template_dict(
+                        conn.execute(
+                            "SELECT * FROM ChunkingTemplates WHERE id = ?",
+                            (template_id,),
+                        ).fetchone()
+                    )
+                    if return_record
+                    else None
+                )
 
             log_counter("chunking_template_created", 1)
             logger.info(f"Created chunking template '{name}' with ID {template_id}")
 
-            return template_id
+            return record if return_record else template_id
 
         except sqlite3.IntegrityError as exc:
             raise InputError(f"Template with name '{name}' already exists") from exc
@@ -286,7 +300,8 @@ class ChunkingInteropService:
         *,
         expected_uuid: Optional[str] = None,
         expected_version: Optional[int] = None,
-    ) -> None:
+        return_record: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
         Update an existing live template (validates the NEW body only, AC 24).
 
@@ -307,6 +322,8 @@ class ChunkingInteropService:
                 supplied together with ``expected_version``.
             expected_version: Version read with the editable record. Must
                 be supplied together with ``expected_uuid``.
+            return_record: Return the guarded record captured inside this
+                transaction, preserving the legacy None result by default.
 
         Raises:
             TemplateNotFoundError: If no live template has this ID
@@ -367,8 +384,7 @@ class ChunkingInteropService:
             with self.media_db.transaction() as conn:
                 if not updates:
                     row = conn.execute(
-                        "SELECT uuid, version, deleted, is_builtin "
-                        "FROM ChunkingTemplates WHERE id = ?",
+                        "SELECT * FROM ChunkingTemplates WHERE id = ?",
                         (template_id,),
                     ).fetchone()
                     self._raise_update_guard_failure(
@@ -377,7 +393,7 @@ class ChunkingInteropService:
                         expected_uuid=expected_uuid,
                         expected_version=expected_version,
                     )
-                    return
+                    return self._row_to_template_dict(row) if return_record else None
                 updates.append("version = version + 1")
                 predicates = ["id = ?"]
                 params.append(template_id)
@@ -405,9 +421,20 @@ class ChunkingInteropService:
                     raise ChunkingTemplateError(
                         f"Template update affected {cursor.rowcount} rows"
                     )
+                record = (
+                    self._row_to_template_dict(
+                        conn.execute(
+                            "SELECT * FROM ChunkingTemplates WHERE id = ?",
+                            (template_id,),
+                        ).fetchone()
+                    )
+                    if return_record
+                    else None
+                )
 
             log_counter("chunking_template_updated", 1)
             logger.info(f"Updated chunking template ID {template_id}")
+            return record
 
         except sqlite3.IntegrityError as exc:
             raise InputError(f"Template with name '{name}' already exists") from exc

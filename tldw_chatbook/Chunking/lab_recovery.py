@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 
-from .lab_models import LabSession, RunRequest, RunResult, canonical_json
+from .lab_models import LabSession, RunRequest, RunResult, canonical_json, validate_view
 
 MAX_ENVELOPE_BYTES = 256 * 1024 * 1024
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
@@ -188,6 +188,7 @@ def validate_active(session: LabSession, *, reuse: bool = False) -> dict:
     It contains only this session's reachable blob objects, never older sessions.
     Untrusted ingress/export always rebuilds it rather than trusting cached sizes.
     """
+    validate_view(session.view)
     active = prune_session(session, include_undo=False)
     document = _document(active)
     small = {

@@ -799,6 +799,8 @@
     ChunkingLabScreen #lab-work { height: 1fr; min-height: 0; }
     ChunkingLabScreen #lab-inputs { width: 2fr; height: 1fr; min-width: 0; }
     ChunkingLabScreen #lab-results-scroll { width: 3fr; height: 1fr; min-width: 0; min-height: 0; }
+    ChunkingLabScreen #lab-result-choices { height: 1; }
+    ChunkingLabScreen #lab-result-choices Button { height: 1; min-width: 10; width: auto; padding: 0 1; }
     ChunkingLabScreen ResultsRegion { width: 1fr; height: 1fr; min-width: 0; }
     ChunkingLabScreen.-narrow #lab-inputs, ChunkingLabScreen.-narrow #lab-results-scroll { width: 1fr; }
     ChunkingLabScreen.-narrow #lab-actions { height: 1; }

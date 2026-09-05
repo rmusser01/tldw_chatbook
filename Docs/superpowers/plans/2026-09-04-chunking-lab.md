@@ -1,5 +1,13 @@
 # Chunking Lab Implementation Plan
 
+Current status: the eight implementation slices and task-level reviews are complete.
+The original checklist below is retained as planning history, not a current progress
+board. TASK-31428 is In Progress for the single final correction wave and controller's
+scoped re-review; new AC9–14 remain unchecked pending that review. TASK-31421–31427
+retain their task-level Done status. See [verification](../../Chunking_Lab_Verification.md)
+and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md` for the correction
+evidence. No merge or push is authorized by this handoff.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let users locally preview, compare, and save full chunking recipes while automatically recovering their single-sample A/B experiment.
@@ -45,8 +53,9 @@ and line locations on the execution branch. Do not merge/rebase this dirty works
 Read each Backlog task and the area lessons before starting it. Set it In Progress
 and add its Implementation Plan via CLI before code. Leave the other tasks To Do.
 Only after targeted checks, review, and documentation add Implementation Notes,
-check ACs, and mark Done. Task files intentionally have no Implementation Plan or
-Implementation Notes at this planning stage. Re-sweep task/ADR IDs at integration.
+check ACs, and mark Done. At the original planning stage task files intentionally
+had no Implementation Plan or Implementation Notes; they now contain task-level
+implementation/review history. Re-sweep task/ADR IDs at integration.
 
 TASK-24404 on dev is an overlapping, unimplemented Settings form. Task 8 must amend
 its scope/status with a supersession note referencing ADR-118 and the design before
@@ -544,6 +553,7 @@ pytest Tests/UI/test_chunking_lab_screen.py Tests/UI/test_chunking_lab_recovery_
 - [ ] Dirty user files/index remain untouched; staged diff contains only the intended task.
 - [ ] All eight task notes link ADR-118 and this plan; complete only with actual execution evidence.
 
-Planning verification is document-only: source contracts inspected, dependency IDs
+Historical planning verification was document-only: source contracts inspected, dependency IDs
 allocated across refs/worktrees, spec coverage reviewed, and links/whitespace checked.
-No feature tests or implementation have run during this planning pass.
+No feature tests ran during that planning pass. Subsequent implementation and
+verification are recorded in the task notes and current verification document.

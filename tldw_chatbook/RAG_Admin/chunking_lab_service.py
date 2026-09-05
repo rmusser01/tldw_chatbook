@@ -53,7 +53,7 @@ def save_lab_template(
             to create a detached custom record.
 
     Returns:
-        The refreshed canonical catalog record.
+        The exact canonical record written by this operation.
 
     Raises:
         TemplateSaveConflict: If an expected record changed or disappeared.
@@ -66,15 +66,16 @@ def save_lab_template(
     prepare_recipe(detached_body, runtime=current_local_runtime())
 
     if expected is None:
-        template_id = service.create_template(
+        return service.create_template(
             name=name,
             description=description,
             template_json=detached_body,
             tags=list(tags),
+            return_record=True,
         )
     else:
         try:
-            service.update_template(
+            return service.update_template(
                 expected.id,
                 name=name,
                 description=description,
@@ -82,11 +83,9 @@ def save_lab_template(
                 tags=list(tags),
                 expected_uuid=expected.uuid,
                 expected_version=expected.version,
+                return_record=True,
             )
         except (TemplateNotFoundError, TemplateUpdateConflictError) as exc:
             raise TemplateSaveConflict(
                 "The template changed or was deleted; reload it or save as new."
             ) from exc
-        template_id = expected.id
-
-    return service.get_template_by_id(template_id)

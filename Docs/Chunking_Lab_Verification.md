@@ -10,7 +10,10 @@ Branch: `codex/chunking-lab`, based on `origin/dev` commit
 
 All eight tasks received independent specification and quality reviews. Task8
 screen integration is `c1b320d11b`; its reviewed edit-drain correction is
-`cd3e13926a`. Whole-branch review is pending at this checkpoint. No merge or push
+`cd3e13926a`. Whole-branch review at `462e5cc30e` found seven Important gaps and
+five bounded refinements. The single final correction wave is implemented and
+awaits the controller's scoped independent re-review; TASK-31428 remains In Progress
+with new AC9–14 unchecked. No merge or push
 has been performed. The original working checkout was not used for implementation.
 
 Verification used the existing Python3.12.11 virtual environment with Textual8.2.8
@@ -39,6 +42,26 @@ are retained under the ignored, plan-owned directory
   status/lineage/worker/drain fixes, which have amended-code tests.
 - Scoped new-code Ruff, formatting, compilation and whitespace checks passed.
   Existing large-module diagnostics were compared separately, not bulk-repaired.
+
+Final correction evidence: **344 passed, 1 existing Requests warning in 73.73s**
+across 15 amended-feature and directly affected compatibility test modules.
+`final-fix-report.md` retains exact commands and RED/GREEN chronology;
+`final-fix-targeted.xml` is genuine JUnit output in the same ignored evidence directory.
+Coverage includes create/update post-commit peer interleaving followed by a stale
+Save; malformed known UI/draft import and mounted stored-checkpoint fallback;
+historical result counts/text/configuration after restore and reopen; explicit
+snapshot preview/cancel/replacement, including unreadable-store read-only inspection;
+persisted current/Previous choice with failed/canceled/pending reruns; slow raw tag
+entry/reopen/failed Save; builtin copy defaults; source/full-excerpt labels;
+unsupported authored template export; and lazy screen teardown. New controls/dialogs
+use keyboard, focus and geometry assertions at 80×24, 120×40 and 160×50. No additional
+screenshot or visual refinement round was performed. Scoped Ruff and formatting
+passed; legacy interop lint uses its existing narrowed rule selection.
+
+This is targeted correction evidence, not a replacement for the original non-green
+integration run or a new startup/platform qualification. Earlier task notes that say
+In Progress/pending review are chronological records; tasks 31421–31427 have since
+received their task-level reviews and remain Done. Final branch acceptance is pending.
 
 ## Non-green checks and startup qualification
 

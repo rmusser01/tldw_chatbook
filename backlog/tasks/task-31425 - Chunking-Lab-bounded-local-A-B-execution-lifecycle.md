@@ -44,6 +44,11 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+Current task-level status: Done after the independent re-review recorded below.
+Earlier In Progress statements are historical. The final correction retains the
+existing quiesce-before-commit owner and runtime/resource qualifications; final
+branch acceptance remains separate. See [verification](../../Docs/Chunking_Lab_Verification.md).
+
 <!-- SECTION:NOTES:BEGIN -->
 Implemented one fresh stdlib subprocess per immutable preview, bounded framed JSON,
 off-loop admission/serialization/supervision, and termination followed by kill/reap.
