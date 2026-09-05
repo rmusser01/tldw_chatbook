@@ -2654,6 +2654,15 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 "#library-hub-action-import",
                 "#library-hub-action-new-note",
             )
+            await _wait_for_condition(
+                pilot,
+                lambda: all(
+                    screen.query(selector)
+                    and screen.query_one(selector) in screen._compositor.visible_widgets
+                    for selector in selectors
+                ),
+                message="settled Starter widgets did not reach the compositor",
+            )
             visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
                 widget = screen.query_one(selector)

@@ -5317,3 +5317,13 @@ replacing DOM. A regression checks available, failure, custom-policy and restore
 availability states while retaining exact button identity. The original failure
 and custom-tooltip assertions remain unchanged; the screen stays within its
 41,325-line / 1,301-method ceilings (measured 41,324 / 1,301 after both fixes).
+
+## 23. Evidence settlement is not layout settlement (task 31682)
+
+Both production-CSS Starter geometry sizes reached settled empty evidence while
+the replacement rail button still had a zero-sized region. The test now waits
+for the current widgets at its existing required selectors to reach the
+compositor before reading geometry. Every original screen-bound, visibility,
+keyboard-order and painted-copy assertion remains in place. No production timing,
+DOM or CSS changed; 21 Starter/graduation checks and an independent two-size
+geometry rerun pass.
