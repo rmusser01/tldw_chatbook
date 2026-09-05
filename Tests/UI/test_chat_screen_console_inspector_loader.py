@@ -37,8 +37,8 @@ from tldw_chatbook.Chat.console_trace_projection import (
     LegacyExchangeCall,
     NormalizedTraceCall,
 )
-from tldw_chatbook.UI.Screens.chat_screen import (
-    ChatScreen,
+from tldw_chatbook.UI.Console_Modules.context_cost import (
+    ConsoleContextCostController,
     _build_console_inspector_exchanges_loader,
 )
 
@@ -141,7 +141,9 @@ async def test_durable_fallback_consumes_discriminated_projection() -> None:
 
 
 def test_inspector_cost_builder_has_no_raw_database_dependency() -> None:
-    source = inspect.getsource(ChatScreen._build_console_inspector_cost_data)
+    source = inspect.getsource(
+        ConsoleContextCostController._build_console_inspector_cost_data
+    )
 
     assert "chachanotes_db" not in source
     assert "projected_trace_calls" in source

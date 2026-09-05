@@ -90,6 +90,7 @@ from .settings_durability import ConsoleSettingsDurabilityController
 from .settings_navigation import ConsoleSettingsNavigationController
 from .provider_selection import ConsoleProviderSelectionController
 from .commands import ConsoleCommandsController
+from .context_cost import ConsoleContextCostController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -905,6 +906,57 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._context_cost = ConsoleContextCostController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _active_console_provider_model_display=lambda *args, **kwargs: (
+            screen._active_console_provider_model_display(*args, **kwargs)
+        ),
+        _active_console_settings_readiness=lambda *args, **kwargs: (
+            screen._active_console_settings_readiness(*args, **kwargs)
+        ),
+        _active_control_state=lambda *args, **kwargs: (
+            screen._active_console_context_control_state(*args, **kwargs)
+        ),
+        _active_estimate=lambda *args, **kwargs: (
+            screen._active_console_settings_context_estimate(*args, **kwargs)
+        ),
+        _active_session=lambda: screen._session._active_native_console_session(),
+        _active_session_settings=lambda: (
+            screen._session._ensure_active_console_session_settings()
+        ),
+        _agent_fleet_tokens=lambda: screen._agent._console_agent_fleet_token_total(),
+        _build_console_staged_context_state=lambda *args, **kwargs: (
+            screen._build_console_staged_context_state(*args, **kwargs)
+        ),
+        _console_composer_or_none=lambda *args, **kwargs: (
+            screen._console_composer_or_none(*args, **kwargs)
+        ),
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _query_composer=lambda: screen.query_one(
+            "#console-native-composer", ConsoleComposerBar
+        ),
+        _session_control_state=lambda *args, **kwargs: (
+            screen._console_context_control_state_for_session(*args, **kwargs)
+        ),
+        _session_estimate=lambda *args, **kwargs: (
+            screen._console_settings_context_estimate_for_session(*args, **kwargs)
+        ),
+        _workspace_context=lambda: (
+            screen._workspace._current_console_workspace_context()
+        ),
+        _console_chat_controller_accessor=lambda: screen._console_chat_controller,
+        _console_chat_store_accessor=lambda: screen._console_chat_store,
+        _last_console_cost_state_accessor=lambda: screen._last_console_cost_state,
+        _pending_console_launch_context_accessor=lambda: (
+            screen._pending_console_launch_context
+        ),
+    )
+
     build_console_commands_controller(screen)
 
     build_console_provider_selection_controller(screen)
