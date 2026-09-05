@@ -4316,6 +4316,11 @@ class ConsoleAgentBridge:
         #: line reads; a child's slot is reachable through
         #: `live_run_snapshot` and is never the summary.
         self._live: dict[str, dict[str, AgentLiveSnapshot]] = {}
+        #: task-31386: the primary run currently (or most recently) stepping
+        #: in each conversation, memoised from `on_step` so the 0.2s poll
+        #: and the "abandon call" click can find the run's in-flight tool
+        #: call without a DB lookup.
+        self._live_primary_runs: dict[str, str] = {}
         #: Which `_live[conversation_id]` key holds the rail's summary --
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
@@ -5422,6 +5427,8 @@ class ConsoleAgentBridge:
         planning_deriver = _PendingPrimaryPlanningDeriver()
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            if agent_kind == AGENT_KIND_PRIMARY and run_id:
+                self._live_primary_runs[conversation_id] = run_id
             # PR 2a (task-3): AgentService now attributes every step to its
             # run id so a fleet of concurrent children can be told apart.
             # PR3a-1 Task 6b (audit F1): that attribution is finally USED.
@@ -7137,6 +7144,20 @@ class ConsoleAgentBridge:
         return coordinator.snapshot() if coordinator is not None else []
 
     # -- rail reads -----------------------------------------------------
+
+    def live_primary_run_id(self, conversation_id: str) -> str | None:
+        """task-31386: the primary run last seen stepping in ``conversation_id``.
+
+        In-memory only (memoised by ``on_step``), so a run from a previous
+        process is unknown here; callers fall back to the durable lookup.
+
+        Args:
+            conversation_id: The conversation to look up.
+
+        Returns:
+            The run id, or None when no primary step has been seen.
+        """
+        return self._live_primary_runs.get(conversation_id)
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """The rail's view of this conversation's agent activity.
