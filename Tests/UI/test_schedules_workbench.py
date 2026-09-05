@@ -3834,10 +3834,11 @@ async def test_action_sync_now_notifies_when_no_service():
     app = WorkbenchTestApp()
     workbench = SchedulesWorkbench(app)
     # Should not crash and should not start a worker
-    workbench.action_sync_now()
+    await workbench.action_sync_now()
 
 
-def test_action_sync_now_guard_prevents_duplicate_workers():
+@pytest.mark.asyncio
+async def test_action_sync_now_guard_prevents_duplicate_workers():
     class FakeService:
         def __init__(self):
             self.owner_id = "local"
@@ -3849,7 +3850,10 @@ def test_action_sync_now_guard_prevents_duplicate_workers():
     app.scheduling_service = FakeService()
     workbench = SchedulesWorkbench(app)
     workbench._sync_running = True
-    workbench.action_sync_now()
+    # action_sync_now is now async (fix round 1) -- the _sync_running guard
+    # is the very first check, before any await, so this still exercises
+    # exactly what the test claims: the guard fires before anything else.
+    await workbench.action_sync_now()
     # The app should have received a warning notification.
     # Exact assertion depends on the test harness; at minimum it must not start a second worker.
 
@@ -4689,6 +4693,79 @@ def _connected_service(tmp_path, app):
     service._server_reachable = True
     app.scheduling_service = service
     return db, service
+
+
+# -- Fix round 1, finding 1: _on_owner_server / action_sync_now must
+# re-probe like _run_owner_transfer already did, not trust a stale
+# mount-time `server_reachable` while the background probe is still
+# pending. -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
+    """A genuinely configured, about-to-be-confirmed server must not get a
+    false "No server connection" refusal during the on-mount probe's
+    still-pending window. `_connected_service` wires a REAL, working
+    probe (`_FakeConnectedServerClient.get_capabilities` succeeds) --
+    `server_reachable` is forced back to its honest pre-probe default
+    right before the click (the mount-time background worker may already
+    have resolved it by then; this isolates the handler's OWN re-probe as
+    what's under test). `_set_owner` itself is spied out: its downstream
+    runtime-policy write needs a real `RuntimePolicyContext` this test's
+    fixtures don't build, and that machinery is unrelated to what's under
+    test here -- whether `_on_owner_server` reaches `_set_owner` at all,
+    not whether the write it performs afterward succeeds."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+
+            workbench = pilot.app.screen
+            set_owner_calls: list[str] = []
+            workbench._set_owner = set_owner_calls.append
+            notify_calls: list[str] = []
+            app.notify = lambda message, **kwargs: notify_calls.append(message)
+
+            server_button = workbench.query_one("#scheduling-owner-server", Button)
+            server_button.press()
+            await pilot.pause()
+
+            assert set_owner_calls == ["server:1"], (
+                "the re-probe must resolve to reachable before deciding, "
+                "not refuse on the stale pending default"
+            )
+            assert notify_calls == [], (
+                f"must not show the false refusal notice, got {notify_calls!r}"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
+    """Same probe-window bug as `_on_owner_server`, for the `s` key --
+    `action_sync_now` used to refuse ("Local only -- nothing to sync")
+    off a stale `server_reachable=False` without re-probing first."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+            workbench = pilot.app.screen
+
+            await workbench.action_sync_now()
+
+            assert workbench._sync_running is True, (
+                "the re-probe must resolve to reachable before deciding, "
+                "not refuse on the stale pending default"
+            )
+    finally:
+        db.close()
 
 
 # -- bare-harness: widget mechanics, no service needed -----------------------

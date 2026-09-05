@@ -3577,6 +3577,77 @@ async def test_reminder_release_same_cycle_stale_pull_does_not_ghost_reinsert(
 
 
 @pytest.mark.asyncio
+async def test_two_reminder_releases_same_cycle_stale_pull_ghosts_neither(
+    tmp_path,
+):
+    """Fix round 1, finding 5: the single-release pin above doesn't
+    exercise `released_server_ids`' own construction, which is a SET
+    COMPREHENSION over every `staged_outcomes` entry -- correctly handles
+    more than one release per cycle as written, but nothing drove that
+    path. Two mirrors, both released, both still stale-listed in the SAME
+    pull: neither may ghost-reinsert."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+
+    mirror_a = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-a",
+    )
+    db.set_sync_mapping(mirror_a, "srv-rem-a", "reminder_task", "server:1")
+    copy_a = db.create_local_copy_from_mirror("reminder_task", mirror_a)
+    db.record_pending_mutation(
+        mirror_a,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-a",
+            "local_copy_id": copy_a,
+        },
+    )
+
+    mirror_b = db.create_reminder_task(
+        owner_id="server:1",
+        title="Retro",
+        schedule_kind="one_time",
+        server_id="srv-rem-b",
+    )
+    db.set_sync_mapping(mirror_b, "srv-rem-b", "reminder_task", "server:1")
+    copy_b = db.create_local_copy_from_mirror("reminder_task", mirror_b)
+    db.record_pending_mutation(
+        mirror_b,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-b",
+            "local_copy_id": copy_b,
+        },
+    )
+
+    server_client = AsyncMock()
+    # Both server rows still listed: neither release has run yet THIS
+    # cycle -- the same-cycle stale-payload window, for both at once.
+    server_client.list_reminders.return_value = {
+        "items": [
+            {"id": "srv-rem-a", "title": "Standup"},
+            {"id": "srv-rem-b", "title": "Retro"},
+        ]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    all_rows = db.list_reminder_tasks(owner_id=None)
+    assert {row["id"] for row in all_rows} == {copy_a, copy_b}, (
+        f"neither released mirror may ghost-reinsert; rows: {all_rows!r}"
+    )
+    assert db.get_conflicts("server:1") == []
+
+
+@pytest.mark.asyncio
 async def test_rejected_reminder_release_settles_per_mutation(tmp_path):
     """L15: a definitively rejected release used to re-raise through
     `_push_mutation`'s blanket `except ServerClientError: raise`, aborting
