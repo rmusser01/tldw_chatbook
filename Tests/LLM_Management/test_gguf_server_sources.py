@@ -344,6 +344,187 @@ def test_snapshot_launch_prepares_private_directory_before_popen_and_preserves_l
         assert lease.close_count == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "host,arguments,environment,reason",
+    [
+        ("127.0.0.1", ("--ssl-key-file", "/private/key"), {}, "TLS"),
+        ("127.0.0.1", ("--api-prefix=/private-api",), {}, "API prefix"),
+        ("127.0.0.1", ("--models-dir", "/private/models"), {}, "Router"),
+        ("0.0.0.0", (), {}, "loopback"),
+        ("127.0.0.1", (), {"LLAMA_ARG_SSL_CERT_FILE": "/private/cert"}, "TLS"),
+        ("127.0.0.1", (), {"LLAMA_ARG_API_PREFIX": "/private-api"}, "API prefix"),
+        ("127.0.0.1", (), {"LLAMA_ARG_MODELS_DIR": "/private/models"}, "Router"),
+    ],
+)
+async def test_snapshot_unsupported_management_preserves_ordinary_launch(
+    tmp_path, monkeypatch, host, arguments, environment, reason
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_service, snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+
+    model = tmp_path / "model.gguf"
+    _write_sparse_gguf(model)
+    app = _App()
+    owner = snapshot_service.LlamaCppSnapshotService(
+        None, lambda claim: server_lifecycle.snapshot_claim_is_live(app, claim)
+    )
+    app.llamacpp_snapshot_service = owner
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        events,
+        "_snapshot_listener_exists",
+        lambda url: pytest.fail("Disabled management must not probe"),
+    )
+    monkeypatch.setattr(
+        snapshot_service,
+        "SnapshotClient",
+        lambda descriptor: pytest.fail("Disabled management has no client"),
+    )
+    selection = _selection(GGUFSourceMode.EXTERNAL, external_path=model)
+    claim = _reserve(app, "llamacpp", selection)
+    captured = []
+
+    def run(app, provider, command, captured_claim, subprocess_module, **kwargs):
+        captured.append((command, kwargs))
+        assert server_lifecycle.publish_server_process(
+            app, provider, captured_claim, SimpleNamespace(poll=lambda: None)
+        )
+        return "started"
+
+    monkeypatch.setattr(events, "run_server_subprocess", run)
+    try:
+        result = events._run_gguf_server_worker(
+            app,
+            "llamacpp",
+            "/ordinary/llama-server",
+            host,
+            "8080",
+            arguments,
+            selection,
+            claim,
+        )
+        assert result == "started"
+        command, options = captured[0]
+        assert command == [
+            "/ordinary/llama-server",
+            "--model",
+            str(model),
+            "--host",
+            host,
+            "--port",
+            "8080",
+            *arguments,
+        ]
+        assert "env" not in options and "private_umask" not in options
+        assert claim._snapshot_context.directory is None
+        await owner.refresh()
+        assert reason in owner.view().disabled_reason
+        assert "/private/" not in repr(owner.view())
+        assert "/private/" not in repr(app.loguru_logger.records)
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.parametrize(
+    "arguments,environment",
+    [
+        (("--slots",), {}),
+        (("--no-slots",), {}),
+        (("--slot-save-path=/private/slots",), {}),
+        ((), {"LLAMA_ARG_SLOT_SAVE_PATH": "/private/slots"}),
+        ((), {"LLAMA_ARG_ENDPOINT_SLOTS": "0"}),
+    ],
+)
+def test_snapshot_owned_options_fail_even_after_unsupported_transport(
+    monkeypatch, arguments, environment
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_models import SnapshotError
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=None)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    claim = server_lifecycle.ServerLaunchClaim("llamacpp")
+    with pytest.raises(SnapshotError) as caught:
+        events._prepare_snapshot_launch(
+            app, ["llama-server", "--ssl-key-file", "/private/key", *arguments], claim
+        )
+    assert caught.value.code == "snapshot_owned_options"
+    assert "slot" in events._gguf_server_source_failure_message(caught.value).lower()
+    assert claim._snapshot_context is None
+
+
+def test_snapshot_disabled_next_launch_omits_all_snapshot_setup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+
+    model = tmp_path / "model.gguf"
+    _write_sparse_gguf(model)
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=None)
+    selection = _selection(GGUFSourceMode.EXTERNAL, external_path=model)
+    claim = _reserve(app, "llamacpp", selection)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=False),
+    )
+    monkeypatch.setattr(
+        events,
+        "_snapshot_listener_exists",
+        lambda url: pytest.fail("Disabled next launch must not probe"),
+    )
+    captured = []
+    monkeypatch.setattr(
+        events,
+        "run_server_subprocess",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
+    events._run_gguf_server_worker(
+        app,
+        "llamacpp",
+        "/ordinary/llama-server",
+        "127.0.0.1",
+        "8080",
+        ("--slots",),
+        selection,
+        claim,
+    )
+    args, options = captured[0]
+    assert args[2] == [
+        "/ordinary/llama-server",
+        "--model",
+        str(model),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8080",
+        "--slots",
+    ]
+    assert "env" not in options and "private_umask" not in options
+    assert claim._snapshot_context is None
+
+
 def test_snapshot_preflight_refuses_existing_listener_before_directory_or_spawn(
     tmp_path, monkeypatch
 ):

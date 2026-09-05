@@ -86,7 +86,7 @@ def harness(tmp_path, monkeypatch):
     store = SnapshotStore(tmp_path / "snapshots")
     state = SimpleNamespace(current=None, clients={}, store=store)
 
-    def descriptor(launch_id):
+    def descriptor(launch_id, *, parallel=1):
         claim = ServerLaunchClaim("llamacpp")
         state.current = claim
         return prepare_launch(
@@ -101,7 +101,7 @@ def harness(tmp_path, monkeypatch):
                 "--ctx-size",
                 "4096",
                 "--parallel",
-                "1",
+                str(parallel),
                 "--flash-attn",
                 "off",
                 "--fit",
@@ -144,6 +144,99 @@ async def settled(service):
             and service.view().status != "outcome_unknown"
         ):
             await asyncio.sleep(0.001)
+
+
+@pytest.mark.asyncio
+async def test_disabled_preference_preserves_attached_capability_and_live_retention(
+    harness, monkeypatch
+):
+    from tldw_chatbook.LLM_Management import snapshot_service as module
+
+    h = harness
+    try:
+        await h.service.refresh()
+        h.service.start_save(0)
+        await settled(h.service)
+        monkeypatch.setattr(
+            module,
+            "load_snapshot_preferences",
+            lambda: SnapshotPreferences(enabled=False, keep_count=2),
+        )
+        for _ in range(2):
+            h.service.start_save(0)
+            await settled(h.service)
+        records = h.store.list_records().records
+        assert len(records) == 2
+        h.service.start_restore(records[0].snapshot_id, 0)
+        await settled(h.service)
+        assert [call[0] for call in h.clients["launch-a"].calls] == [
+            "save",
+            "save",
+            "save",
+            "restore",
+        ]
+        assert h.store.list_records().records == records
+    finally:
+        await h.service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination_context", [6, 7, 8])
+async def test_restore_capacity_admission_precedes_unknown_and_post(
+    harness, monkeypatch, destination_context
+):
+    h = harness
+    h.service.attach(h.descriptor("launch-b", parallel=2))
+    client = h.clients["launch-b"]
+    original_readiness = client.readiness
+
+    async def readiness():
+        observation = await original_readiness()
+        return ReadinessObservation(
+            build_info=observation.build_info,
+            model_path=observation.model_path,
+            runtime_values=observation.runtime_values,
+            slots=(
+                *observation.slots,
+                SlotObservation(
+                    slot_id=1,
+                    busy=False,
+                    tokens=None,
+                    context_size=destination_context,
+                    observed_at=1.0,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(client, "readiness", readiness)
+    try:
+        await h.service.refresh()
+        h.service.start_save(0)
+        await settled(h.service)
+        record = h.store.list_records().records[0]
+        assert record.tokens == 7
+        transitions = []
+        original_state = h.store.set_operation_state
+
+        def set_state(working, state):
+            transitions.append(state)
+            return original_state(working, state)
+
+        monkeypatch.setattr(h.store, "set_operation_state", set_state)
+        h.service.start_restore(record.snapshot_id, 1)
+        await settled(h.service)
+        restores = [call for call in client.calls if call[0] == "restore"]
+        if destination_context < 7:
+            assert restores == []
+            assert "unknown" not in transitions
+            assert h.service.view().message == "destination_context_too_small"
+        else:
+            assert len(restores) == 1
+            assert restores[0][1] == 1
+            assert "unknown" in transitions
+        assert h.store.list_records().records == (record,)
+    finally:
+        await h.service.shutdown()
 
 
 @pytest.mark.asyncio

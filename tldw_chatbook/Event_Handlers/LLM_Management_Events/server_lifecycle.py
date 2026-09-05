@@ -33,7 +33,7 @@ class SnapshotLaunchContext:
     """Private snapshot context separate from the claim's managed-model lease."""
 
     descriptor: LaunchDescriptor = field(repr=False)
-    directory: Path = field(repr=False)
+    directory: Path | None = field(repr=False)
 
 
 @dataclass(eq=False)
