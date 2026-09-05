@@ -544,6 +544,7 @@ from ..Library_Modules.library_conversations_controller import (
 from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
+from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -3108,7 +3109,12 @@ class LibraryScreen(BaseAppScreen):
         # testable without coupling the canvas to terminal geometry.
         self._library_notes_compact: bool = False
         self._library_rail_collapsed: bool = False
-        self._library_ingest_auto_collapsed_rail: bool = False
+        # Every field below is a static literal/no-argument factory call with
+        # zero entanglement with another subsystem's shared init code (see
+        # LibraryIngestState's own module docstring for the full ownership
+        # analysis) -- constructed once here, at the position of the first
+        # removed field, with no constructor arguments.
+        self._ingest_state = LibraryIngestState()
         self._library_notes_stage: Literal["rail", "notes"] = "rail"
         # TASK-23025: cheap-state gates for the per-frame resize/focus paths.
         # ``_library_layout_ref_cache`` holds positive widget references for
@@ -3262,36 +3268,7 @@ class LibraryScreen(BaseAppScreen):
         # Sync now run. None = not edited this panel visit; fall back to the
         # persisted config value.
         self._library_notes_sync_folder_text: str | None = None
-        # A backend choice remains pending while its config write runs in a
-        # thread. The canvas keeps rendering the persisted app resolver until
-        # completion; this target sequences rapid clicks. An older completion
-        # can neither remain the final persisted value nor repaint a newer
-        # choice.
-        self._library_ingest_backend_target: str | None = None
-        self._library_ingest_backend_generation: int = 0
-        self._library_ingest_backend_save_lock = threading.Lock()
-        # Ingest canvas form echo -- a single bundled mutable dataclass
-        # (rather than a scatter of scalar fields like the sync panel
-        # above) since every field here is reset together on rail
-        # re-entry (see ``_reset_library_ingest_transient_state``); the
-        # job queue itself is registry-owned, not screen state.
-        self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
         self._transcribe_cpp_configured = False
-        # Dedupe counter for the "poke the source snapshot on transitions
-        # into done" rule (Task 5's registry listener): only re-fetch when
-        # the registry's done-job count has grown since the last time this
-        # screen checked. Seeded from the live registry in ``on_mount``
-        # (not here) so a re-mounted, cached screen instance never treats
-        # jobs that finished in a previous mount as a fresh transition.
-        self._library_ingest_last_done_count: int = 0
-        # Pre-flight analysis worker for the ingest path field. Cancelled
-        # and replaced on every new trigger so rapid edits never stack.
-        self._library_ingest_preflight_worker: Worker | None = None
-        # Monotonic stamp for pre-flight validity. Worker cancellation is
-        # cooperative, so a cancelled worker can still deliver its result;
-        # `_apply_library_ingest_preflight_result` drops any result whose
-        # generation is no longer current (task-2011).
-        self._library_ingest_preflight_generation: int = 0
         # One provisional external-root scope exists only while its captured
         # submission is being verified or awaiting VAD consent.
         self._library_external_submit_generation: int = 0
@@ -3303,55 +3280,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_status: str = ""
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
-        # (task-2015) While-typing validation: each path edit restarts this
-        # timer; its fire runs the pre-flight so feedback no longer waits
-        # for blur.
-        self._library_ingest_path_debounce_timer: Timer | None = None
-        # (task-2015) Batch-settle toast bookkeeping: active-job count at the
-        # last registry tick, and the (done, failed) counts captured when the
-        # queue went from idle to active -- the settle toast reports deltas
-        # against that baseline.
-        self._library_ingest_last_active_count: int = 0
-        self._library_ingest_batch_baseline: tuple[int, int, int, int] = (
-            0,
-            0,
-            0,
-            0,
-        )
-        # (task-2015) Two-press "Clear finished": first press arms, second
-        # clears; any registry mutation disarms.
-        self._library_ingest_clear_finished_armed: bool = False
-        self._library_ingest_clear_finished_armed_at: float = 0.0
-        # Two-press inline Start consent for tooling risk and active-source
-        # duplicates. The immutable request fingerprint is the sole armed
-        # carrier, so lifecycle repaint tokens cannot steal consent and a
-        # changed source/options/backend/membership cannot inherit it.
-        self._library_ingest_start_consent: _LibraryIngestStartConsent | None = None
-        self._library_ingest_start_confirm_armed_at: float = 0.0
-        # (task-3313) Session-scoped snapshot of the last submitted batch,
-        # captured at submit time before the form auto-clears; feeds the
-        # "Retry this batch" affordance. Deliberately NOT persisted (the
-        # jobs DB has sources but not staged options) and deliberately NOT
-        # cleared by rail re-entry -- it is submission history, not form
-        # state.
-        self._library_ingest_last_submission: LibraryIngestLastSubmission | None = None
-        # (xhigh review + live-verify round) Two-press consent for the
-        # DESTRUCTIVE half of "Retry this batch". Re-staging replaces
-        # path/title/author/keywords/options wholesale with no undo, and
-        # the ``r`` accelerator can fire it from any non-text focus -- so
-        # when the re-stage would discard work the user entered since the
-        # submit, the first press only arms (the affordance's own label
-        # becomes the confirm) and the second replaces the form. A form
-        # that holds nothing the re-stage would discard skips consent
-        # entirely: friction with nothing at stake is just friction.
-        self._library_ingest_retry_confirm_armed: bool = False
-        self._library_ingest_retry_confirm_armed_at: float = 0.0
-        # (task-2130) Durable session ledger: terminal jobs snapshotted at
-        # Clear-finished time so Recent imports (incl. failure records)
-        # survives the registry removal.
-        self._library_ingest_recent_ledger: list[LibraryIngestJob] = []
-        # (task-2043) Failed rows whose inline error details are expanded.
-        self._library_ingest_expanded_details: set[str] = set()
         # Explicit user-started curated model install. It is separate from
         # inference: providers never acquire models on first use. The same
         # worker slot tracks BOTH the preflight step (plan computation) and
@@ -41572,3 +41500,21 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # own generated shim loop (installed by task 2) for where the SAME shape
 # now lives permanently, one layer down, exactly mirroring the collections/
 # search+RAG precedents immediately above.
+
+# --- BEGIN generated ingest-state shims (delete wholesale at cleanup) ---
+# wave-5 task 1: keeps every original `_library_ingest_<field>` name
+# working as a property over `self._ingest_state` (single prefix, no
+# plural variant needed -- see LibraryIngestState's own module docstring).
+for _lis_field in dataclasses.fields(LibraryIngestState):
+    setattr(
+        LibraryScreen,
+        "_library_ingest_" + _lis_field.name,
+        property(
+            lambda self, _n=_lis_field.name: getattr(self._ingest_state, _n),
+            lambda self, value, _n=_lis_field.name: setattr(
+                self._ingest_state, _n, value
+            ),
+        ),
+    )
+del _lis_field
+# --- END generated ingest-state shims ---

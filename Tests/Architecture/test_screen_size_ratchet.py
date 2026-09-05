@@ -389,7 +389,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # merge conflict this dev-merge produced was in the diagnostic
     # inventory pin, not in this file). Re-pinned to the merged tree's own
     # measured value, not carried forward from either side.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41574, 1302),
+    #
+    # 2026-09-05, wave-5 task 1 (ingest state PR, series 1/3): the 20-field
+    # ingest `__init__` block (all `_library_ingest_*`, single prefix, no
+    # wiring-field exclusion -- see `library_ingest_state.py`'s own module
+    # docstring) collapsed into one `LibraryIngestState` constructor call
+    # (no constructor arguments -- every original line was an uncomputed
+    # literal or a no-argument factory call, unlike every prior series'
+    # entangled reader-preferences trio) plus a generated single-prefix shim
+    # loop; methods unchanged (pure field move, zero FunctionDefs touched).
+    # 41574/1302 -> 41520/1302.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41520, 1302),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

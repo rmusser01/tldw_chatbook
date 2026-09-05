@@ -120,9 +120,13 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     generic toggles, and a per-group copy of the options."""
     from unittest.mock import MagicMock
 
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LibraryIngestState,
+        LibraryScreen,
+    )
 
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
     form = LibraryIngestFormState(path="/tmp/talk.mp3")
     form.title = "My title"
     form.author = "An author"

@@ -41,7 +41,7 @@ from tldw_chatbook.Library.library_ingest_state import (
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryIngestState, LibraryScreen
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -83,6 +83,7 @@ def _minimal_library_screen() -> LibraryScreen:
     rendered line is pinned by the pilot tests below.
     """
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
     screen._is_mounted = False
     screen._library_ingest_form = LibraryIngestFormState()
     screen._library_ingest_preflight_worker = None

@@ -235,6 +235,7 @@ def test_options_persist_to_config(monkeypatch):
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    screen._ingest_state = library_screen_module.LibraryIngestState()
     # task-15470: the actual write moved into a `@work(thread=True)`
     # instance method (`_save_library_ingest_options`), which needs a
     # running app to dispatch through `run_worker` -- this screen was never
@@ -324,6 +325,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    screen._ingest_state = library_screen_module.LibraryIngestState()
     # task-15470: see `test_options_persist_to_config` above for why this
     # patches the `@work(thread=True)` instance method rather than the
     # module-level config function it wraps.
