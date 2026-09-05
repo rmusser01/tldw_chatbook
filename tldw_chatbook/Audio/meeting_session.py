@@ -141,6 +141,7 @@ class MeetingSession:
         self._last_end_s = 0.0
         self._result: MeetingResult | None = None
         self._closing = False
+        self._stop_started = False
 
     # ---- listeners --------------------------------------------------------
     def subscribe(self, listener: Callable[[str, Any], None]) -> None:
@@ -214,22 +215,34 @@ class MeetingSession:
         with self._lock:
             if self._result is not None:
                 return self._result
-            self._closing = True
+            already_stopping = self._stop_started
+            self._stop_started = True
+        if already_stopping:
+            # ponytail: no threading.Event wait for a genuinely concurrent
+            # second caller -- just hand back whatever landed (may still be
+            # None if the first caller hasn't finished). Nothing in this
+            # codebase calls stop() from more than one thread today; add a
+            # threading.Event if that changes.
+            with self._lock:
+                return self._result
         self._set_state("stopping")
         complete = True
         if self.service is not None:
             try:
+                # Finals delivered during this drain must still flow through
+                # _on_final normally (_closing isn't set yet).
                 outcome = self.service.stop_dictation()
                 complete = bool(getattr(outcome, "transcription_complete", True))
             except Exception as exc:  # noqa: BLE001
                 logger.error("stop_dictation failed: {}", exc)
                 complete = False
+        with self._lock:
+            self._closing = True
+            segment_count = len(self.segments)
         try:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
             logger.error("capture stop failed: {}", exc)
-        with self._lock:
-            segment_count = len(self.segments)
         result = MeetingResult(
             meta=self.meta,
             ended_at=datetime.now().isoformat(timespec="seconds"),

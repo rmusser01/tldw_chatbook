@@ -285,6 +285,25 @@ def test_final_after_stop_is_dropped_and_counted(tmp_path):
     assert [c for c in sink.calls if c[0] == "segment"][-1][1].text == "kept"
 
 
+def test_final_delivered_during_the_tail_drain_is_kept(tmp_path):
+    sink = RecordingSink()
+    session, capture, built = _session(tmp_path, sinks=[sink])
+    session.start()
+    service = built[0]
+    capture.last_speech_position_s = 3.0
+
+    def draining_stop():
+        service.stopped += 1
+        service.callbacks["on_final_transcript"]("last thing said before hangup")
+        return SimpleNamespace(transcription_complete=True)
+
+    service.stop_dictation = draining_stop
+    result = session.stop()
+    assert [s.text for s in session.segments] == ["last thing said before hangup"]
+    assert result.segment_count == 1 and session.failed_segments == 0
+    assert [c for c in sink.calls if c[0] == "segment"][-1][1].text == "last thing said before hangup"
+
+
 # ---- LocalMeetingSink ----------------------------------------------------
 
 def _run_meeting(tmp_path, sink, mode="call"):
