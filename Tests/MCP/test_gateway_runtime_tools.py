@@ -652,7 +652,28 @@ async def test_real_provider_schemas_compile_for_every_public_profile(
         registration.name: copy.deepcopy(registration.parameters)
         for registration in registrations
     }
-    assert len(expected_schemas) == 17
+    assert set(expected_schemas) == {
+        "fs_edit",
+        "fs_glob",
+        "fs_grep",
+        "fs_list",
+        "fs_patch",
+        "fs_read",
+        "fs_write",
+        "git_blame",
+        "git_branches",
+        "git_diff",
+        "git_log",
+        "git_status",
+        "watchlists_get_operation_status",
+        "watchlists_get_operations_status",
+        "watchlists_list_briefings",
+        "watchlists_list_collections",
+        "watchlists_list_sources",
+        "web_crawl",
+        "web_fetch",
+        "web_search",
+    }
     assert all("$schema" not in schema for schema in expected_schemas.values())
     runtime = _runtime_with_builtins()
     runtime.register_local_tools(registrations)
