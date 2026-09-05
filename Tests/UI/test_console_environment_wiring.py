@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.console_environment_state import (
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
@@ -282,6 +283,91 @@ async def test_row_activation_message_routes_through_the_screen_handler():
         )
         await pilot.pause()
         assert "env-file-0" in _row_ids(section)
+
+
+@pytest.mark.asyncio
+async def test_expanding_a_row_keeps_focus_on_that_row(monkeypatch):
+    """F2: Enter-Enter must collapse the ROW, never the whole section.
+
+    Expanding recomposes the section (structural key change) and unmounts
+    the focused row; Textual's focus reset then landed the caret on the
+    section's collapse chevron, so the second Enter collapsed the entire
+    Environment section. The section must stay open and focus must return
+    to the same row.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
+
+        snapshot = _snapshot(
+            files=(
+                ChangedFile(path="a.py", status="M", adds=3, dels=1),
+                ChangedFile(path="b.py", status="A", adds=7, dels=0),
+            )
+        )
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+
+        def _changes_row():
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == ENV_ROW_CHANGES
+            )
+
+        _changes_row().focus()
+        await pilot.pause()
+        assert screen.focused is _changes_row()
+
+        # Expand.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert "env-file-1" in _row_ids(section)
+        focused = screen.focused
+        assert isinstance(focused, ConsoleInspectorSectionRow)
+        assert focused.row_id == ENV_ROW_CHANGES  # NOT the collapse toggle
+        assert focused.clickable  # still the expandable row, still activatable
+
+        # Collapse again with a second Enter: the row collapses, the SECTION
+        # stays open, and focus stays put.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert not any(rid.startswith("env-file-") for rid in _row_ids(section))
+        assert section.open  # the section itself was never collapsed
+        focused = screen.focused
+        assert isinstance(focused, ConsoleInspectorSectionRow)
+        assert focused.row_id == ENV_ROW_CHANGES
+
+
+@pytest.mark.asyncio
+async def test_expansion_from_an_unfocused_row_does_not_steal_focus():
+    """Negative control: a click-driven expansion never grabs the caret."""
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        snapshot = _snapshot(
+            files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),)
+        )
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)
+        await pilot.pause()
+
+        screen._focus_console_workbench_target("console-native-composer")
+        await pilot.pause()
+        focused_before = screen.focused
+        assert focused_before is not None
+
+        screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.focused is focused_before
 
 
 # ---------------------------------------------------------------------------

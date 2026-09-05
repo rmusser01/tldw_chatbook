@@ -218,8 +218,9 @@ count) the collapsed line is that task: `task-3401 · In Progress`, with
 instead — `3 in progress · 12 to do`. Enter expands the full list,
 In-Progress first, capped with a "… N more" row; **Add task to chat** pastes
 the branch task's title and file path into the composer. The list is
-read-only — the rail never edits a task file. A first scan of a large
-backlog shows a quiet `Scanning backlog…` row rather than popping in late.
+read-only — the rail never edits a task file. The scan runs off the UI
+thread and finishes in well under a second even on a cold cache, so the
+section simply appears with the git rows.
 
 **Agents** — the sub-agent fleet. This section **moved here from the left
 rail's Agent section**; the left rail keeps the viewed run's status line,
@@ -943,3 +944,15 @@ own credentials, which is the documented no-`gh` degradation; the `gh` path
 itself was verified out-of-app against a real open PR (number, state, +/-
 counts, and a 13-check rollup parsed correctly). The Agents section renders
 only once a reply has spawned sub-agents and was not exercised in this pass.*
+
+*Amended on the same branch — 2026-09-04 (TASK-31450 final review fixes): the
+Tasks paragraph previously promised a `Scanning backlog…` placeholder row.
+That row exists in the projection but nothing in production ever sets the
+flag that renders it, and the cold scan measured ~0.2s off-thread, so the
+claim is removed rather than restated. Also amended in the same pass: the
+Environment header summary is now column-budgeted (a long branch name used to
+squeeze the section title and collapse chevron off the header at every
+terminal size), expanding a row keeps keyboard focus on that row, an errored
+git tier now says "Environment unavailable — Refresh to retry" instead of
+"No git workspace", and the Refresh action revives a backed-off local tier —
+which is what "until manual refresh or scope change" above always promised.*

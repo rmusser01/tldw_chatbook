@@ -16,6 +16,7 @@ The Inspect rail describes the *conversation* (run state, sources, settings) but
 3. **Status + safe actions.** Rows show live status; actions route through existing surfaces (Change Review, staged-context tray, composer). No branch checkout, commit, or push executes from the rail in v1.
 4. **PR/CI via the `gh` CLI.** Auth is gh's problem. Rows hide when gh is missing/unauthenticated or the remote isn't GitHub.
 5. **Tasks row: branch task + full list.** Collapsed line shows the branch-linked backlog task when one matches, else in-progress/to-do counts; expansion shows the branch task's AC checklist above the full scrollable list.
+   - *Post-implementation ruling (2026-09-04, final review):* shipped **count-only**. The collapsed line carries AC progress as `3/6 ACs · <title>`; the expansion shows the full task list, **not** the per-criterion checklist. Rendering the checklist needs the AC block parsed per criterion (text + tick state) and height-capped inside the rail's 34-column body, which is its own piece of work. Completion of this decision is **task-31625**.
 6. **Agent fleet section MOVES from the left rail to the redesigned right rail** — single home, reusing `_console_agent_fleet_section_state()` (`UI/Console_Modules/agent.py`) wholesale.
 7. **"Local" row = execution target.** Local means this instance; remote means a remote `tldw_server`. Remote is a **designed placeholder only** in v1 — the enum and row exist, no remote path is built.
 8. **Architecture: one snapshot provider** (Approach A) — a single `EnvironmentSnapshot` assembled by exclusive grouped workers, two-phase landing (local sources fast, gh slow), following the repo's standard grouped-worker + `call_from_thread` landing convention. (The Changed-files worker precedent cited during brainstorm is feature-branch-only; dev's precedent is the general `group="console-*"` exclusive-worker pattern in `chat_screen.py`.)
@@ -117,6 +118,8 @@ Beside and reusing `Workspaces/git_workspace.py`:
 
 **Keyboard.** New sections join the rail's boundary-focus navigation. Enter/Space toggles row expansion; every action is keyboard-reachable. Expansion state persists in the rail-preferences blob beside `inspector_more_open`. Focus decisions are made synchronously at the call site — never via a flag around `focus()` (`DescendantFocus` is delivered asynchronously) — and no interaction may move focus onto the control that undoes it.
 
+> **Post-implementation ruling (2026-09-04, final review): boundary-focus navigation deferred.** v1 ships the Environment / Tasks / Agents sections as **tab-reachable rows only**. Including them in the rail's `n`/`p` boundary-focus navigation is high-risk surgery on shared machinery that every other rail section depends on, and the arc's own reviews found no user-visible loss from tab-reachability alone. Deferred to **task-31624**. The rest of this paragraph shipped as written: expansion is Enter/Space, the state persists in the rail-preferences blob, and the focus rule is enforced — expanding a row re-focuses that same row after the section's recompose (`_request_console_environment_row_focus` in `chat_screen.py`), because "do nothing about focus" turned out not to mean "leave focus alone": the recompose unmounts the focused row and Textual resets focus onto the section's collapse chevron, i.e. exactly the control that undoes the gesture.
+
 | Row | Enter/expand | Actions |
 |---|---|---|
 | Changes | per-file ± list | **Review** → Change Review (reuses the existing `Review changes` inspector action) |
@@ -125,7 +128,7 @@ Beside and reusing `Workspaces/git_workspace.py`:
 | Commit or push | — (single line; label adapts: "Commit or push · 12 files" / "Push ↑2"; hidden when clean & synced) | jumps to the git-modes commit flow on Change Review |
 | PR | title, state/draft, ±, checks rollup | **Open in browser**; **Add to chat** → inserts a PR summary into the composer (prefill) |
 | Failing checks | failing check names | **Fix** → inserts check names + details URLs into the composer (prefill) |
-| Tasks | branch task's AC checklist (✓/strikethrough) above the full In-Progress→To-Do list in a height-capped `ConsoleBoundedSection` | **Add to chat** on the branch task inserts its file path + title into the composer; list is read-only |
+| Tasks | AC progress as a count on the collapsed line, above the full In-Progress→To-Do list (per-criterion checklist deferred — task-31625) | **Add to chat** on the branch task inserts its file path + title into the composer; list is read-only |
 | Agents | existing fleet rows | existing fleet actions (cancel, …) unchanged |
 
 "Add to chat"/"Fix" deliberately use the **composer prefill path** (`console_composer_bar.py` on dev), not the staged-context tray: the tray is typed evidence-bundle references (source id, authority, freshness) with no free-text kind, and inventing one is v2 scope. Prefill appends below any existing draft and never overwrites user text.
@@ -133,6 +136,8 @@ Beside and reusing `Workspaces/git_workspace.py`:
 **Refresh:** automatic on rail-open and scope change; the Environment header carries a refresh action that busts the gh TTL. Alt+I (dev) remains the rail toggle; no new global bindings.
 
 **Truncation:** titles ellipsize to the 34-column budget; the full text is always one Enter away in the expansion.
+
+> **Post-implementation ruling (2026-09-04, final review):** the *header summary* needed its own budget, not just the row titles. The section header is `title (1fr) + summary (auto) + toggle (3)` on one line, so an unbudgeted summary starved the 1fr title to a single column (measured) and pushed the collapse chevron off the header on any 33+ character branch name — at 200×50 as well as 80×24, because the rail's body width is fixed. `ENV_SUMMARY_BUDGET` (18 columns) now bounds it in the **projection**, keeping the ± counts whole and ellipsizing the branch fragment; truncation stays in the pure module, never in the widget.
 
 ## Degradation & error handling
 

@@ -167,6 +167,8 @@ ENVIRONMENT_SECTION_ID = "environment"
 TASKS_SECTION_ID = "tasks"
 
 ENV_ROW_CHANGES = "env-changes"
+ENV_ROW_ERROR = "env-error"
+ENV_ROW_EMPTY = "env-empty"
 ENV_ROW_LOCAL = "env-local"
 ENV_ROW_BRANCH = "env-branch"
 ENV_ROW_COMMIT_PUSH = "env-commit-push"
@@ -183,9 +185,74 @@ EXPANDABLE_ENV_ROWS = frozenset(
 
 _MAX_FILE_ROWS = 12
 
+# Column budget for the Environment section's header summary.
+#
+# The section header is `title (1fr) + summary (auto) + toggle (3)` on ONE
+# line (`console_inspector_section.py::compose`). The summary Static is
+# `width: auto`, so an unbudgeted summary takes whatever it wants and the
+# 1fr title -- "Environment" -- is starved to nothing. Live-verified at both
+# 80x24 and 200x50: the Inspect rail's body is ~34 columns wide regardless
+# of terminal size, so any branch name over ~33 characters (routine here:
+# `feat/console-inspector-environment`) squeezed the title AND the collapse
+# chevron off the header entirely.
+#
+# 18 leaves 34 - 18 - 3 = 13 columns for the title, which fits
+# "Environment" (11) with slack. Truncation lives HERE, in the pure
+# projection, not in the widget -- this arc's rule, so it is testable
+# without a running app.
+ENV_SUMMARY_BUDGET = 18
+
 
 def _git_status_class(stale: bool) -> str:
     return "blocked" if stale else ""
+
+
+def _ellipsize(text: str, limit: int) -> str:
+    """Trim ``text`` to ``limit`` columns, marking the cut with a trailing "…".
+
+    Head-anchored (keeps the start, drops the tail) because this repo's
+    branch names lead with the identifying fragment -- ``feat/task-31450-…``
+    -- so the head is what tells the branches apart.
+
+    Args:
+        text: Text to fit.
+        limit: Maximum column count; ``<= 0`` yields ``""``.
+
+    Returns:
+        ``text`` unchanged when it already fits, else its head plus "…".
+    """
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit == 1:
+        return "…"
+    return text[: limit - 1] + "…"
+
+
+def environment_summary(git: GitEnvState, *, budget: int = ENV_SUMMARY_BUDGET) -> str:
+    """Build the Environment header summary, fitted to ``budget`` columns.
+
+    The signed ± counts are the priority half -- they are the number the
+    user is scanning for and they are already compacted
+    (``compact_count``), so they are never truncated. Whatever the counts
+    leave over is the branch fragment's budget; when that is too small to
+    say anything (under two columns, i.e. not even one character plus the
+    ellipsis) the branch is dropped and the counts stand alone.
+
+    Args:
+        git: The git tier state to describe.
+        budget: Column budget for the whole summary.
+
+    Returns:
+        A summary string of at most ``budget`` columns (or exactly the
+        counts, when the counts alone already exceed it).
+    """
+    counts = signed_change_counts(git.adds, git.dels)
+    room = budget - len(counts) - 1  # -1 for the separating space
+    if room < 2:
+        return counts
+    return f"{_ellipsize(_branch_primary(git), room)} {counts}"
 
 
 def _branch_primary(git: GitEnvState) -> str:
@@ -214,9 +281,23 @@ def project_environment_section(
     now: datetime,
 ) -> ConsoleInspectorSectionState:
     git = snapshot.git
+    if git.availability is EnvSourceAvailability.ERROR:
+        # ERROR is NOT "there is nothing here" -- it is "we could not look".
+        # Rendering it as the NOT_APPLICABLE empty state told a user whose
+        # git call timed out (or whose tier had backed off after 3 failures)
+        # that their repository was not a git workspace, with no hint that
+        # the Refresh slot would revive it.
+        return ConsoleInspectorSectionState(
+            rows=(InspectorSectionRow(
+                row_id=ENV_ROW_ERROR,
+                primary_text="Environment unavailable — Refresh to retry",
+                status="blocked",
+            ),),
+            summary="",
+        )
     if git.availability is not EnvSourceAvailability.OK:
         return ConsoleInspectorSectionState(
-            rows=(InspectorSectionRow(row_id="env-empty", primary_text="No git workspace"),),
+            rows=(InspectorSectionRow(row_id=ENV_ROW_EMPTY, primary_text="No git workspace"),),
             summary="",
         )
     status = _git_status_class(git.stale)
@@ -278,7 +359,8 @@ def project_environment_section(
 
     if git.dirty or git.ahead:
         if git.dirty:
-            label = f"Commit or push · {len(git.files)} files"
+            count = len(git.files)
+            label = f"Commit or push · {count} file" + ("s" if count != 1 else "")
         else:
             label = f"Push ↑{git.ahead}"
         rows.append(InspectorSectionRow(
@@ -341,8 +423,9 @@ def project_environment_section(
                         clickable=True,
                     ))
 
-    summary = f"{_branch_primary(git)} {signed_change_counts(git.adds, git.dels)}"
-    return ConsoleInspectorSectionState(rows=tuple(rows), summary=summary)
+    return ConsoleInspectorSectionState(
+        rows=tuple(rows), summary=environment_summary(git)
+    )
 
 
 def pr_summary_text(pr: PrEnvState) -> str:

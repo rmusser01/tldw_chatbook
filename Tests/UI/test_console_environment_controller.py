@@ -95,6 +95,82 @@ def test_three_failures_pause_the_local_tier_until_forced(monkeypatch):
     assert len(fx.dispatched) == dispatched_before
 
 
+def _fail_git(fx, monkeypatch):
+    """Replace the git gatherer with an always-ERROR one that still counts.
+
+    ``Fixture``'s own fake owns ``git_calls``; a bare ``monkeypatch.setattr``
+    lambda silently stops incrementing it, so a test asserting on the count
+    reads 0 and proves nothing about the pause.
+    """
+    def fail_git(path, previous=None):
+        fx.git_calls += 1
+        return GitEnvState(availability=EnvSourceAvailability.ERROR)
+
+    monkeypatch.setattr(env_mod, "gather_git_env", fail_git)
+
+
+def test_forced_refresh_revives_a_paused_local_tier(monkeypatch):
+    """A backed-off LOCAL tier must come back on the Refresh slot (F3a).
+
+    The Refresh tail posts ``request_refresh(include_net=True,
+    force_net=True)``. Before this fix ``force_net`` bypassed only the net
+    tier's counter, so three consecutive local ERRORs left the panel stuck
+    on its error row for the life of the screen -- contradicting both the
+    spec and the shipped user guide ("until manual refresh or scope
+    change").
+    """
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(3):
+        fx.controller.poll_tick()
+    assert fx.git_calls == 3
+    fx.controller.poll_tick()
+    assert fx.git_calls == 3  # paused
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.git_calls == 4  # revived by the explicit refresh
+    # ... and an ordinary poll works again from there (counter really reset,
+    # not merely bypassed for the one forced call).
+    def ok_git(path, previous=None):
+        fx.git_calls += 1
+        return GitEnvState(availability=EnvSourceAvailability.OK,
+                           root=str(path), branch="feat/x")
+
+    monkeypatch.setattr(env_mod, "gather_git_env", ok_git)
+    fx.controller.poll_tick()
+    assert fx.git_calls == 5
+
+
+def test_forced_refresh_revives_a_paused_net_tier_too(monkeypatch):
+    fx = Fixture(monkeypatch)
+
+    def fail_pr(path, branch, runner=None, previous=None):
+        fx.pr_calls += 1
+        return PrEnvState(availability=EnvSourceAvailability.ERROR)
+
+    monkeypatch.setattr(env_mod, "gather_pr_env", fail_pr)
+    for _ in range(3):
+        fx.clock += timedelta(seconds=61)
+        fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 3
+    fx.clock += timedelta(seconds=61)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.pr_calls == 3  # paused
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.pr_calls == 4
+
+
+def test_unforced_refresh_does_not_revive_a_paused_tier(monkeypatch):
+    """Negative control: only the FORCED path clears the counters."""
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(4):
+        fx.controller.poll_tick()
+    assert fx.git_calls == 3
+    fx.controller.request_refresh(include_net=True)  # no force
+    assert fx.git_calls == 3
+
+
 def test_stale_scope_snapshot_is_dropped_when_root_changes_mid_flight(monkeypatch):
     fx = Fixture(monkeypatch)
 

@@ -17,8 +17,12 @@ Two worker tiers:
   cancels an in-flight ``gh`` fetch.
 
 Each tier tracks consecutive failures and pauses itself after
-``_MAX_FAILURES`` in a row, until a workspace-root change resets it (both
-tiers) or, for the net tier only, a ``force_net`` refresh.
+``_MAX_FAILURES`` in a row, until a workspace-root change or an explicit
+user refresh (``force_net``) resets it. Both of those reset BOTH tiers:
+the counters exist to stop an automatic 10s flap loop, not to make a
+deliberate keypress inert, and a local tier that could only be revived by
+switching workspaces left the panel stuck on its error row with a Refresh
+slot that did nothing.
 
 Correctness notes (hardened after a deferred-worker review found these
 only break under REAL async ordering, which the original inline-fake
@@ -133,11 +137,32 @@ class ConsoleEnvironmentController:
     # -- public API -------------------------------------------------------
 
     def request_refresh(self, *, include_net: bool = False, force_net: bool = False) -> None:
-        """Dispatch a local refresh (and optionally a net refresh)."""
+        """Dispatch a local refresh (and optionally a net refresh).
+
+        Args:
+            include_net: Whether the expensive ``gh`` tier is in scope.
+            force_net: This is an EXPLICIT user refresh (the Environment
+                header's "Refresh" slot). It busts the net TTL *and*
+                revives both tiers' backoff pauses -- see below.
+
+        ``force_net`` clears the pause counter for BOTH tiers, not just the
+        net one. The spec and the shipped user guide both promise a paused
+        source stops polling "until manual refresh or scope change", but the
+        force path used to bypass only the net tier's counter: a local tier
+        that had hit 3 consecutive ERRORs (a slow `git status` in a large
+        tree timing out three times) was unrecoverable for the life of the
+        screen unless the workspace root changed, and the panel sat on the
+        ERROR row with a Refresh slot that did nothing. The counters exist
+        to stop a 10s *automatic* flap loop; a deliberate keypress is not
+        that loop.
+        """
         root = self._workspace_root_accessor()
         if root is None or not self._rail_open_accessor():
             return
         scope_root = root
+
+        if force_net:
+            self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
 
         if self._failures[_LOCAL_TIER] < self._MAX_FAILURES:
             self._dispatch_local(scope_root)

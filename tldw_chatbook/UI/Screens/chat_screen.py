@@ -566,6 +566,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
 )
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -770,6 +771,14 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
+# DOM ids of the two Inspect-rail sections the Environment controller paints
+# (`UI/Console_Modules/right_rail.py`), keyed by the `section_id` their rows'
+# messages carry. One map, so the focus re-land and the landing path can
+# never disagree about which widget a `section_id` names.
+CONSOLE_ENVIRONMENT_SECTION_DOM_IDS = {
+    ENVIRONMENT_SECTION_ID: "console-environment-section",
+    TASKS_SECTION_ID: "console-tasks-section",
+}
 # task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
 # used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
 # rewrite `ui_state.toml` synchronously on the event loop, per click. This
@@ -7808,14 +7817,98 @@ class ChatScreen(BaseAppScreen):
             section.sync_state(state)
             section.styles.display = "block" if state.rows else "none"
 
+    def _console_environment_row_is_focused(self, row_id: str) -> bool:
+        """Whether the focused widget IS the Environment/Tasks row ``row_id``.
+
+        Read synchronously at the call site, before anything unmounts, so
+        the answer describes the gesture that is happening rather than
+        whatever focus settled on afterwards.
+
+        Args:
+            row_id: The stable row id being activated.
+
+        Returns:
+            ``True`` when the currently focused widget is that row.
+        """
+        focused = self.focused
+        return (
+            isinstance(focused, ConsoleInspectorSectionRow)
+            and focused.row_id == row_id
+        )
+
+    def _request_console_environment_row_focus(
+        self, section_id: str, row_id: str
+    ) -> None:
+        """Re-focus ``row_id`` once the section's recompose has remounted it.
+
+        Toggling a row's expansion changes the section's structural key, so
+        ``sync_state`` takes the wholesale ``refresh(recompose=True)`` path
+        and UNMOUNTS the focused row. Textual's focus reset then lands the
+        caret on the nearest surviving focusable widget -- the section's own
+        collapse chevron -- so a second Enter collapsed the WHOLE section
+        instead of re-collapsing the row. That violates the spec's rule that
+        no interaction may move focus onto the control that undoes it.
+
+        Scheduled with the SECTION's ``call_next``, deliberately, not the
+        screen's ``call_after_refresh``: ``refresh(recompose=True)`` queues
+        ``_check_recompose`` on the section widget's own message pump via
+        ``call_next``, and ``_flush_next_callbacks`` awaits that queue in
+        order -- so a ``call_next`` issued here is guaranteed to run AFTER
+        the recompose completes. ``call_after_refresh`` posts to the
+        Screen's separate callback list, which carries no ordering
+        guarantee against another pump's recompose; it could fire while the
+        old row widget is still mounted, focus the widget that is about to
+        be removed, and leave the bug in place with a green test.
+
+        The remounted row is found by matching ``row_id`` on the section's
+        row widgets, never by DOM index: the row's DOM id encodes its
+        POSITION (``…-row-{index}``), and expanding a row above it shifts
+        every index below.
+
+        Args:
+            section_id: ``"environment"`` or ``"tasks"``.
+            row_id: The stable row id to restore focus to.
+        """
+        dom_id = CONSOLE_ENVIRONMENT_SECTION_DOM_IDS.get(section_id)
+        if dom_id is None:
+            return
+        try:
+            section = self.query_one(f"#{dom_id}", ConsoleInspectorSection)
+        except (NoMatches, QueryError):
+            return
+        section.call_next(self._focus_console_environment_row, section, row_id)
+
+    def _focus_console_environment_row(
+        self, section: ConsoleInspectorSection, row_id: str
+    ) -> None:
+        """Focus the (possibly just-remounted) row carrying ``row_id``.
+
+        Args:
+            section: The section whose body holds the row.
+            row_id: The stable row id to focus.
+        """
+        if not section.is_mounted:
+            return
+        for widget in section.query(ConsoleInspectorSectionRow):
+            if widget.row_id == row_id and widget.can_focus:
+                widget.focus()
+                return
+
     def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
         """Run one Environment/Tasks row's action.
 
-        Synchronous and focus-neutral by construction: every branch either
-        re-projects the sections, pushes a screen, opens a URL, or inserts
-        composer text -- none of them move the caret (burn-down lesson: a
-        row action that steals focus, especially onto the control that
-        undoes it, is worse than no action).
+        Synchronous and focus-PRESERVING by construction: every branch
+        either re-projects the sections, pushes a screen, opens a URL, or
+        inserts composer text -- none of them move the caret somewhere new
+        (burn-down lesson: a row action that steals focus, especially onto
+        the control that undoes it, is worse than no action).
+
+        "Focus-neutral" was not enough for the expansion branch: doing
+        nothing about focus is not the same as leaving it alone, because
+        the recompose that expansion triggers UNMOUNTS the focused row and
+        Textual then resets focus onto the section's collapse chevron. That
+        branch therefore restores focus to the SAME row explicitly -- see
+        `_request_console_environment_row_focus`.
 
         Args:
             section_id: ``"environment"`` or ``"tasks"``.
@@ -7835,8 +7928,16 @@ class ChatScreen(BaseAppScreen):
 
         snapshot = self._console_environment.snapshot
         if row_id in EXPANDABLE_ENV_ROWS or row_id == TASKS_ROW_HEAD:
+            # Decided SYNCHRONOUSLY, here, before anything moves: was the
+            # row the user just activated the focused widget? (Never a flag
+            # set around `focus()` -- `DescendantFocus` is delivered
+            # asynchronously, so such a flag is already reset by the time
+            # anything reads it. Documented trap.)
+            restore_focus = self._console_environment_row_is_focused(row_id)
             self._console_environment_expanded.symmetric_difference_update({row_id})
             self._land_console_environment(snapshot)
+            if restore_focus:
+                self._request_console_environment_row_focus(section_id, row_id)
             return
         if row_id == "env-changes-review":
             self._open_change_review()
