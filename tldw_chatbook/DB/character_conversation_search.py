@@ -16,6 +16,7 @@ from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationPage,
     CharacterConversationRow,
     CharacterKeywordIndexStatus,
+    CharacterKeywordSnapshot,
     CharacterRepairCandidate,
     CharacterRepairRequest,
     CharacterRepairResult,
@@ -116,7 +117,10 @@ AFTER INSERT ON character_conversation_search_documents BEGIN
   VALUES(new.document_id, new.character_label, new.title, new.body);
 END;
 CREATE TRIGGER character_conversation_search_documents_au
-AFTER UPDATE ON character_conversation_search_documents BEGIN
+AFTER UPDATE ON character_conversation_search_documents
+WHEN old.character_label IS NOT new.character_label
+  OR old.title IS NOT new.title OR old.body IS NOT new.body
+BEGIN
   INSERT INTO character_conversation_fts(
     character_conversation_fts, rowid, character_label, title, body
   ) VALUES('delete', old.document_id, old.character_label, old.title, old.body);
@@ -652,22 +656,25 @@ class CharacterConversationSearchRepository:
             revision = self._revision(connection)
             generation = connection.execute(
                 """
-                SELECT generation_id
+                SELECT generation_id, policy_version, source_revision, completed_at
                   FROM character_conversation_search_generations
                  WHERE data_authority_id = ? AND status = 'ready'
-                   AND policy_version = ? AND source_revision = ?
+                   AND policy_version <= ? AND source_revision <= ?
+                   AND DATETIME(completed_at) IS NOT NULL
                  LIMIT 1
                 """,
                 (self._authority, self._POLICY_VERSION, revision),
             ).fetchone()
             if generation is None:
                 status = self._keyword_status_for_revision(connection, revision)
+                if status is CharacterKeywordIndexStatus.READY:
+                    status = CharacterKeywordIndexStatus.FAILED
                 return CharacterConversationPage((), 0, None, revision, status)
             search_params = (
                 match_query,
                 self._authority,
                 generation["generation_id"],
-                revision,
+                generation["source_revision"],
                 character.character_id if character is not None else None,
                 character.character_id if character is not None else None,
             )
@@ -685,6 +692,12 @@ class CharacterConversationSearchRepository:
                        AND d.source_revision = ?
                        AND (? IS NULL OR d.character_id = ?)
                        AND d.eligibility_digest = d.validated_eligibility_digest
+                       AND NOT EXISTS (
+                           SELECT 1 FROM character_conversation_search_dirty AS dirty
+                            WHERE dirty.conversation_id = d.conversation_id
+                              AND dirty.data_authority_id = d.data_authority_id
+                              AND dirty.source_revision > d.source_revision
+                       )
                        AND c.deleted = 0 AND card.deleted = 0
                        AND c.runtime_backend = 'local'
                        AND c.assistant_kind = 'character'
@@ -741,6 +754,12 @@ class CharacterConversationSearchRepository:
                 None,
                 revision,
                 CharacterKeywordIndexStatus.READY,
+                CharacterKeywordSnapshot(
+                    str(generation["generation_id"]),
+                    int(generation["policy_version"]),
+                    int(generation["source_revision"]),
+                    str(generation["completed_at"]),
+                ),
             )
 
     @staticmethod
@@ -772,6 +791,12 @@ class CharacterConversationSearchRepository:
                AND d.source_revision = ?
                AND (? IS NULL OR d.character_id = ?)
                AND d.eligibility_digest = d.validated_eligibility_digest
+               AND NOT EXISTS (
+                   SELECT 1 FROM character_conversation_search_dirty AS dirty
+                    WHERE dirty.conversation_id = d.conversation_id
+                      AND dirty.data_authority_id = d.data_authority_id
+                      AND dirty.source_revision > d.source_revision
+               )
                AND c.deleted = 0 AND card.deleted = 0
                AND c.runtime_backend = 'local'
                AND c.assistant_kind = 'character'
@@ -950,10 +975,22 @@ class CharacterConversationSearchRepository:
                 "WHERE singleton_id = 1",
                 (self._authority, self._POLICY_VERSION),
             )
+            active_build = connection.execute(
+                "SELECT 1 FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND status = 'building' "
+                "AND lease_expires_at > CURRENT_TIMESTAMP LIMIT 1",
+                (self._authority,),
+            ).fetchone()
+            if active_build is not None:
+                return CharacterKeywordIndexStatus.BUILDING
+            connection.execute(
+                "DELETE FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND status = 'building'",
+                (self._authority,),
+            )
             current = connection.execute(
                 """
-                SELECT generation_id, status,
-                       lease_expires_at > CURRENT_TIMESTAMP AS lease_valid
+                SELECT generation_id, status
                   FROM character_conversation_search_generations
                  WHERE data_authority_id = ? AND policy_version = ?
                    AND source_revision = ?
@@ -963,12 +1000,6 @@ class CharacterConversationSearchRepository:
             ).fetchone()
             if current is not None and current["status"] == "ready":
                 return CharacterKeywordIndexStatus.READY
-            if (
-                current is not None
-                and current["status"] == "building"
-                and bool(current["lease_valid"])
-            ):
-                return CharacterKeywordIndexStatus.BUILDING
             if current is not None:
                 connection.execute(
                     "DELETE FROM character_conversation_search_generations "
@@ -985,29 +1016,27 @@ class CharacterConversationSearchRepository:
                 reconcile_generation = str(ready["generation_id"])
             else:
                 reconcile_generation = None
+                generation_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO character_conversation_search_generations(
+                        generation_id, data_authority_id, status,
+                        policy_version, source_revision, lease_expires_at
+                    ) VALUES(?, ?, 'building', ?, ?, DATETIME('now', '+5 minutes'))
+                    """,
+                    (
+                        generation_id,
+                        self._authority,
+                        self._POLICY_VERSION,
+                        revision,
+                    ),
+                )
+
         if reconcile_generation is not None:
             maintained = self._apply_dirty_generation(reconcile_generation)
             if maintained is not None:
                 return maintained
             return self._reconcile_generation(reconcile_generation)
-
-        with self._database.transaction(immediate=True) as connection:
-            revision = self._revision(connection)
-            generation_id = str(uuid.uuid4())
-            connection.execute(
-                """
-                INSERT INTO character_conversation_search_generations(
-                    generation_id, data_authority_id, status,
-                    policy_version, source_revision, lease_expires_at
-                ) VALUES(?, ?, 'building', ?, ?, DATETIME('now', '+5 minutes'))
-                """,
-                (
-                    generation_id,
-                    self._authority,
-                    self._POLICY_VERSION,
-                    revision,
-                ),
-            )
 
         try:
             processed = 0
@@ -1066,6 +1095,7 @@ class CharacterConversationSearchRepository:
                     generation_id, tuple(documents), processed=processed
                 )
             with self._database.transaction(immediate=True) as connection:
+                self._require_build_ownership(connection, generation_id)
                 if self._revision(connection) != revision:
                     connection.execute(
                         "UPDATE character_conversation_search_generations "
@@ -1082,16 +1112,20 @@ class CharacterConversationSearchRepository:
                     return CharacterKeywordIndexStatus.FAILED
                 connection.execute(
                     "DELETE FROM character_conversation_search_generations "
-                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    "WHERE data_authority_id = ? AND generation_id != ? "
+                    "AND status IN ('ready', 'failed')",
                     (self._authority, generation_id),
                 )
-                connection.execute(
+                promoted = connection.execute(
                     "UPDATE character_conversation_search_generations "
                     "SET status = 'ready', processed_conversations = ?, "
                     "completed_at = CURRENT_TIMESTAMP, lease_expires_at = NULL, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ?",
+                    "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ? "
+                    "AND status = 'building'",
                     (processed, generation_id),
                 )
+                if promoted.rowcount != 1:
+                    raise RuntimeError("Keyword build lost its promotion claim")
                 connection.execute(
                     "DELETE FROM character_conversation_search_dirty "
                     "WHERE data_authority_id = ?",
@@ -1100,19 +1134,51 @@ class CharacterConversationSearchRepository:
             return CharacterKeywordIndexStatus.READY
         except Exception:  # noqa: BLE001 - persist a typed failed generation for callers
             with self._database.transaction(immediate=True) as connection:
-                connection.execute(
+                failed = connection.execute(
                     "UPDATE character_conversation_search_generations "
                     "SET status = 'failed', error_code = 'build_failed', "
                     "lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP "
-                    "WHERE generation_id = ?",
+                    "WHERE generation_id = ? AND status = 'building'",
                     (generation_id,),
                 )
-                connection.execute(
-                    "DELETE FROM character_conversation_search_documents "
-                    "WHERE generation_id = ?",
-                    (generation_id,),
-                )
+                if failed.rowcount == 1:
+                    connection.execute(
+                        "DELETE FROM character_conversation_search_documents "
+                        "WHERE generation_id = ?",
+                        (generation_id,),
+                    )
             return CharacterKeywordIndexStatus.FAILED
+
+    def _require_build_ownership(
+        self, connection: sqlite3.Connection, generation_id: str
+    ) -> None:
+        """Fence writes and promotion by the live SQLite generation claim."""
+
+        owned = connection.execute(
+            "SELECT 1 FROM character_conversation_search_generations "
+            "WHERE generation_id = ? AND data_authority_id = ? "
+            "AND policy_version = ? AND status = 'building' "
+            "AND lease_expires_at > CURRENT_TIMESTAMP",
+            (generation_id, self._authority, self._POLICY_VERSION),
+        ).fetchone()
+        if owned is None:
+            raise RuntimeError("Keyword build claim expired or was superseded")
+
+    def _require_ready_ownership(
+        self, connection: sqlite3.Connection, generation_id: str
+    ) -> None:
+        """Do not maintain a replaced ready generation or race a rebuild."""
+
+        owned = connection.execute(
+            "SELECT 1 FROM character_conversation_search_generations "
+            "WHERE generation_id = ? AND data_authority_id = ? "
+            "AND policy_version = ? AND status = 'ready' "
+            "AND NOT EXISTS (SELECT 1 FROM character_conversation_search_generations "
+            "WHERE data_authority_id = ? AND status = 'building')",
+            (generation_id, self._authority, self._POLICY_VERSION, self._authority),
+        ).fetchone()
+        if owned is None:
+            raise RuntimeError("Keyword ready generation was superseded")
 
     def keyword_index_status(self) -> CharacterKeywordIndexStatus:
         """Return status for the current authority, policy, and source revision."""
@@ -1170,6 +1236,7 @@ class CharacterConversationSearchRepository:
 
         try:
             with self._database.transaction(immediate=True) as connection:
+                self._require_ready_ownership(connection, generation_id)
                 revision = self._revision(connection)
                 dirty_exists = connection.execute(
                     "SELECT 1 FROM character_conversation_search_dirty "
@@ -1219,7 +1286,8 @@ class CharacterConversationSearchRepository:
                 connection.execute(
                     "UPDATE character_conversation_search_generations "
                     "SET source_revision = ?, processed_conversations = "
-                    "processed_conversations + ?, updated_at = CURRENT_TIMESTAMP "
+                    "processed_conversations + ?, completed_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP "
                     "WHERE generation_id = ? AND status = 'ready'",
                     (revision, processed, generation_id),
                 )
@@ -1230,7 +1298,8 @@ class CharacterConversationSearchRepository:
                 )
                 connection.execute(
                     "DELETE FROM character_conversation_search_generations "
-                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    "WHERE data_authority_id = ? AND generation_id != ? "
+                    "AND status = 'failed'",
                     (self._authority, generation_id),
                 )
             return CharacterKeywordIndexStatus.READY
@@ -1240,6 +1309,7 @@ class CharacterConversationSearchRepository:
     def _reconcile_generation(self, generation_id: str) -> CharacterKeywordIndexStatus:
         try:
             with self._database.transaction(immediate=True) as connection:
+                self._require_ready_ownership(connection, generation_id)
                 revision = self._revision(connection)
                 processed = 0
                 last_id = ""
@@ -1292,6 +1362,7 @@ class CharacterConversationSearchRepository:
                 connection.execute(
                     "UPDATE character_conversation_search_generations "
                     "SET source_revision = ?, processed_conversations = ?, "
+                    "completed_at = CURRENT_TIMESTAMP, "
                     "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ?",
                     (revision, processed, generation_id),
                 )
@@ -1302,7 +1373,8 @@ class CharacterConversationSearchRepository:
                 )
                 connection.execute(
                     "DELETE FROM character_conversation_search_generations "
-                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    "WHERE data_authority_id = ? AND generation_id != ? "
+                    "AND status = 'failed'",
                     (self._authority, generation_id),
                 )
             return CharacterKeywordIndexStatus.READY
@@ -1317,6 +1389,7 @@ class CharacterConversationSearchRepository:
         processed: int,
     ) -> None:
         with self._database.transaction(immediate=True) as connection:
+            self._require_build_ownership(connection, generation_id)
             for document in documents:
                 self._upsert_document(connection, generation_id, document)
             connection.execute(

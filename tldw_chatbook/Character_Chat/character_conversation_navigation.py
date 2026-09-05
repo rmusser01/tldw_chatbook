@@ -264,12 +264,23 @@ class EligibleConversationDocument:
 
 
 @dataclass(frozen=True)
+class CharacterKeywordSnapshot:
+    """Captured identity and completion time of the queried ready corpus."""
+
+    generation_id: str
+    policy_version: int
+    source_revision: int
+    completed_at: str
+
+
+@dataclass(frozen=True)
 class CharacterConversationPage:
     rows: tuple[CharacterConversationRow, ...]
     total: int
     next_cursor: CharacterConversationCursor | None
     data_revision: int
     keyword_status: CharacterKeywordIndexStatus | None = None
+    keyword_snapshot: CharacterKeywordSnapshot | None = None
 
 
 class CharacterKeywordIndexStatus(StrEnum):

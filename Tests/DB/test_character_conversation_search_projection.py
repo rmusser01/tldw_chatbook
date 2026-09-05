@@ -1,5 +1,8 @@
 import importlib
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Barrier, local
 
 import pytest
 
@@ -490,9 +493,11 @@ def test_keyword_search_is_local_only_and_revalidates_data_revision(
 
     db.increment_character_conversation_search_revision()
     stale = service.keyword_search("LOCAL_KEYWORD_CANARY")
-    assert stale.rows == ()
+    assert stale.rows == local.rows
     assert stale.data_revision == local.data_revision + 1
-    assert stale.keyword_status is CharacterKeywordIndexStatus.ABSENT
+    assert stale.keyword_status is CharacterKeywordIndexStatus.READY
+    assert stale.keyword_snapshot == local.keyword_snapshot
+    assert stale.keyword_snapshot.source_revision == local.data_revision
 
 
 def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> None:
@@ -525,9 +530,10 @@ def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> No
     )
     db.set_conversation_active_leaf("maintained", "appended")
     assert service.keyword_index_status() is CharacterKeywordIndexStatus.ABSENT
-    assert service.keyword_search("APPENDED_TERM").keyword_status is (
-        CharacterKeywordIndexStatus.ABSENT
-    )
+    pending = service.keyword_search("APPENDED_TERM")
+    assert pending.keyword_status is CharacterKeywordIndexStatus.READY
+    assert pending.rows == ()
+    assert pending.keyword_snapshot.source_revision < pending.data_revision
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
     assert service.keyword_search("APPENDED_TERM").total == 1
 
@@ -769,7 +775,8 @@ def test_keyword_search_fences_writer_during_snapshot_projection(
 
     assert result.rows == ()
     assert result.total == 0
-    assert result.keyword_status is CharacterKeywordIndexStatus.ABSENT
+    assert result.keyword_status is CharacterKeywordIndexStatus.READY
+    assert result.keyword_snapshot.source_revision < result.data_revision
 
 
 def test_keyword_search_fences_writer_after_snapshot_before_return(
@@ -815,7 +822,8 @@ def test_keyword_search_fences_writer_after_snapshot_before_return(
 
     assert result.rows == ()
     assert result.total == 0
-    assert result.keyword_status is CharacterKeywordIndexStatus.ABSENT
+    assert result.keyword_status is CharacterKeywordIndexStatus.READY
+    assert result.keyword_snapshot.source_revision < result.data_revision
 
 
 def test_keyword_search_refills_after_snapshot_revalidation_rejects_candidate(
@@ -1260,3 +1268,260 @@ def test_explicit_keyword_retry_rebuilds_failed_current_generation(
     retry = CharacterConversationNavigationService(db)
     assert retry.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
     assert retry.keyword_search("retry content").total == 128
+
+
+@pytest.mark.parametrize("change", ["deleted", "ineligible"])
+@pytest.mark.parametrize("fail_replacement", [False, True])
+def test_keyword_prior_snapshot_remains_queryable_during_replacement(
+    tmp_path: Path, monkeypatch, change: str, fail_replacement: bool
+) -> None:
+    db = CharactersRAGDB(tmp_path / "prior-ready.sqlite", client_id="snapshot")
+    character_id = _card(db, "Snapshot")
+    for name in ("A", "B"):
+        _chat(
+            db,
+            conversation_id=name,
+            character_id=character_id,
+            title=name,
+            content="SNAPSHOT_TERM",
+            modified="2026-09-03T10:00:00Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    original = service.keyword_search("SNAPSHOT_TERM")
+    with db.transaction() as connection:
+        if change == "deleted":
+            connection.execute("UPDATE conversations SET deleted = 1 WHERE id = 'A'")
+    if change == "ineligible":
+        assert db.soft_delete_message("message-A", expected_version=1)
+    advanced = service.keyword_search("SNAPSHOT_TERM")
+    assert [row.title for row in advanced.rows] == ["B"]
+    assert advanced.total == 1
+    assert advanced.keyword_snapshot == original.keyword_snapshot
+    assert advanced.keyword_snapshot.completed_at
+    assert advanced.keyword_snapshot.source_revision < advanced.data_revision
+    replacement = CharacterConversationNavigationService(db)
+    monkeypatch.setattr(replacement._repository, "_POLICY_VERSION", 2)
+    store = replacement._repository._replace_documents
+    observed = []
+
+    def hold_replacement(*args, **kwargs):
+        page = replacement.keyword_search("SNAPSHOT_TERM")
+        observed.append(page)
+        assert [row.title for row in page.rows] == ["B"]
+        assert page.keyword_snapshot == original.keyword_snapshot
+        assert (
+            replacement.keyword_index_status() is CharacterKeywordIndexStatus.BUILDING
+        )
+        if fail_replacement:
+            raise RuntimeError("replacement failed")
+        store(*args, **kwargs)
+
+    monkeypatch.setattr(replacement._repository, "_replace_documents", hold_replacement)
+    status = replacement.ensure_keyword_index()
+    assert observed
+    assert status is (
+        CharacterKeywordIndexStatus.FAILED
+        if fail_replacement
+        else CharacterKeywordIndexStatus.READY
+    )
+    final = replacement.keyword_search("SNAPSHOT_TERM")
+    assert [row.title for row in final.rows] == ["B"]
+    if fail_replacement:
+        assert final.keyword_snapshot == original.keyword_snapshot
+    else:
+        assert (
+            final.keyword_snapshot.generation_id
+            != original.keyword_snapshot.generation_id
+        )
+        assert final.keyword_snapshot.policy_version == 2
+        assert final.keyword_snapshot.source_revision == final.data_revision
+
+
+@pytest.mark.parametrize(
+    "corruption", ["generation_revision", "document_revision", "timestamp"]
+)
+def test_keyword_rejects_inconsistent_snapshot_metadata(
+    tmp_path: Path, corruption: str
+) -> None:
+    db = CharactersRAGDB(tmp_path / "snapshot-corrupt.sqlite", client_id="corrupt")
+    card = _card(db, "Corrupt")
+    _chat(
+        db,
+        conversation_id="A",
+        character_id=card,
+        title="A",
+        content="CORRUPT_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    with db.transaction() as connection:
+        if corruption == "generation_revision":
+            connection.execute(
+                "UPDATE character_conversation_search_generations SET source_revision = source_revision + 1"
+            )
+        elif corruption == "document_revision":
+            connection.execute(
+                "UPDATE character_conversation_search_documents SET source_revision = source_revision + 1"
+            )
+        else:
+            connection.execute(
+                "UPDATE character_conversation_search_generations SET completed_at = NULL"
+            )
+    page = service.keyword_search("CORRUPT_TERM")
+    assert page.rows == ()
+    assert page.total == 0
+    if corruption == "timestamp":
+        assert page.keyword_status is CharacterKeywordIndexStatus.FAILED
+
+
+def test_keyword_competing_builders_claim_one_sqlite_owner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "builders.sqlite", client_id="builders")
+    services = [CharacterConversationNavigationService(db) for _ in range(2)]
+    transaction = db.transaction
+    first_commits = Barrier(2)
+    old_insert_commits = Barrier(2)
+    counters = local()
+
+    @contextmanager
+    def interleaved_transaction(*args, **kwargs):
+        counters.count = getattr(counters, "count", 0) + 1
+        count = counters.count
+        statements = []
+        db.get_connection().set_trace_callback(statements.append)
+        try:
+            with transaction(*args, **kwargs) as connection:
+                yield connection
+        finally:
+            db.get_connection().set_trace_callback(None)
+        if count == 1:
+            first_commits.wait(timeout=5)
+        elif count == 2 and any(
+            "INSERT INTO character_conversation_search_generations" in sql
+            for sql in statements
+        ):
+            old_insert_commits.wait(timeout=5)
+
+    monkeypatch.setattr(db, "transaction", interleaved_transaction)
+
+    def build(service):
+        try:
+            return service.ensure_keyword_index()
+        finally:
+            db.close_connection()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(build, service) for service in services]
+        statuses = [future.result(timeout=10) for future in futures]
+    monkeypatch.setattr(db, "transaction", transaction)
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT generation_id, status FROM character_conversation_search_generations"
+        )
+        .fetchall()
+    )
+    assert sorted(status.value for status in statuses) == ["building", "ready"]
+    assert len(rows) == 1 and rows[0]["status"] == "ready"
+
+
+@pytest.mark.parametrize("supersede", ["expired", "deleted"])
+def test_keyword_superseded_builder_cannot_remove_new_ready_generation(
+    tmp_path: Path, monkeypatch, supersede: str
+) -> None:
+    db = CharactersRAGDB(tmp_path / "superseded.sqlite", client_id="superseded")
+    card = _card(db, "Superseded")
+    _chat(
+        db,
+        conversation_id="A",
+        character_id=card,
+        title="A",
+        content="SURVIVING_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    old = CharacterConversationNavigationService(db)
+    replacement = CharacterConversationNavigationService(db)
+    store = old._repository._replace_documents
+    ready_ids = []
+
+    def supersede_after_store(generation_id, *args, **kwargs):
+        store(generation_id, *args, **kwargs)
+        with db.transaction() as connection:
+            if supersede == "expired":
+                connection.execute(
+                    "UPDATE character_conversation_search_generations "
+                    "SET lease_expires_at = '2000-01-01' WHERE generation_id = ?",
+                    (generation_id,),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM character_conversation_search_generations WHERE generation_id = ?",
+                    (generation_id,),
+                )
+        assert replacement.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        ready_ids.append(
+            db.get_connection()
+            .execute(
+                "SELECT generation_id FROM character_conversation_search_generations WHERE status = 'ready'"
+            )
+            .fetchone()[0]
+        )
+
+    monkeypatch.setattr(old._repository, "_replace_documents", supersede_after_store)
+    assert old.ensure_keyword_index() is CharacterKeywordIndexStatus.FAILED
+    remaining = (
+        db.get_connection()
+        .execute(
+            "SELECT generation_id FROM character_conversation_search_generations WHERE status = 'ready'"
+        )
+        .fetchall()
+    )
+    assert [row[0] for row in remaining] == ready_ids
+    assert replacement.keyword_search("SURVIVING_TERM").total == 1
+
+
+def test_keyword_metadata_updates_do_not_reindex_unrelated_text(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "fts-work.sqlite", client_id="fts-work")
+    card = _card(db, "FTS work")
+    for name in ("A", "B", "C"):
+        _chat(
+            db,
+            conversation_id=name,
+            character_id=card,
+            title=name,
+            content="BEFORE_TERM",
+            modified="2026-09-03T10:00:00Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    reindexed = []
+    connection = db.get_connection()
+    connection.create_function("record_fts_update", 1, reindexed.append)
+    trigger = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'character_conversation_search_documents_au'"
+    ).fetchone()[0]
+    connection.execute("DROP TRIGGER character_conversation_search_documents_au")
+    connection.execute(
+        trigger.replace(
+            "BEGIN", "BEGIN SELECT record_fts_update(new.conversation_id);", 1
+        )
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE conversations SET last_modified = '2026-09-04' WHERE id = 'A'"
+        )
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert reindexed == []
+    assert db.update_message(
+        "message-A",
+        {"content": "AFTER_TERM"},
+        expected_version=1,
+        preserve_descendants=True,
+    )
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert reindexed == ["A"]
+    assert service.keyword_search("AFTER_TERM").total == 1
+    assert service.keyword_search("BEFORE_TERM").total == 2
