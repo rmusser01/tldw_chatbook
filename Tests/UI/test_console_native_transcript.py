@@ -1902,7 +1902,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Fork Retry ---> More…"
+    assert action_row == "Copy Edit Fork Retry More…"
     assert len(action_row) <= 48
 
 
@@ -2362,7 +2362,7 @@ async def test_console_more_focus_falls_back_to_composer_after_row_removal():
                 status="failed",
                 id="row-failed",
             ),
-            ("copy", "edit", "fork", "retry", "continue", "more"),
+            ("copy", "edit", "fork", "retry", "more"),
         ),
         (
             ConsoleChatMessage(
@@ -4267,6 +4267,7 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
     pins in test_master_shell_navigation.py.
     """
     from pathlib import Path
+    import re
 
     for source, css in (
         (
@@ -4277,11 +4278,15 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
         ),
         ("generated app stylesheets", app_css_text()),
     ):
-        panel_rule = css.split(".console-transcript-empty-panel {", 1)[1].split("}", 1)[
-            0
-        ]
+        # Match the base selector, not a scoped compact-mode rule whose
+        # selector merely ends with the same class and only adjusts padding.
+        panel_rule = "\n".join(
+            re.findall(r"(?m)^\.console-transcript-empty-panel\s*\{([^}]*)\}", css)
+        )
         assert "align: center middle" in panel_rule, source
-        body_rule = css.split(".console-transcript-empty-body {", 1)[1].split("}", 1)[0]
+        body_rule = "\n".join(
+            re.findall(r"(?m)^\.console-transcript-empty-body\s*\{([^}]*)\}", css)
+        )
         assert "text-align: center" in body_rule, source
 
 
