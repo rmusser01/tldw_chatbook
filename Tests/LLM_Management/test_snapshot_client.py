@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 from collections.abc import Callable
 from typing import Self
@@ -104,7 +105,9 @@ async def test_readiness_uses_exact_get_routes_and_projects_only_documented_fiel
         ("GET", "/props"),
         ("GET", "/slots"),
     ]
-    assert all(request.headers["authorization"] == "Bearer test-token" for request in requests)
+    assert all(
+        request.headers["authorization"] == "Bearer test-token" for request in requests
+    )
     assert observation.build_info == "build-427291b"
     assert observation.model_path == "/models/test.gguf"
     assert observation.runtime_values == ()
@@ -388,7 +391,9 @@ async def test_probe_deadline_is_independent_from_slow_valid_mutation(
 
     monkeypatch.setattr(module, "PROBE_SECONDS", 0.01)
     monkeypatch.setattr(module, "MUTATION_SECONDS", 0.2)
-    client = module.SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    client = module.SnapshotClient(
+        _descriptor(), transport=httpx.MockTransport(handler)
+    )
     receipt = await client.save(0, "owned.bin")
     await client.aclose()
 
@@ -412,7 +417,9 @@ async def test_probe_timeout_is_fixed_and_pre_submission(
     import tldw_chatbook.LLM_Management.snapshot_client as module
 
     monkeypatch.setattr(module, "PROBE_SECONDS", 0.01)
-    client = module.SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    client = module.SnapshotClient(
+        _descriptor(), transport=httpx.MockTransport(handler)
+    )
     with pytest.raises(SnapshotError) as raised:
         await client.slots()
     release.set()
@@ -437,7 +444,9 @@ async def test_readiness_has_one_aggregate_probe_deadline(
     import tldw_chatbook.LLM_Management.snapshot_client as module
 
     monkeypatch.setattr(module, "PROBE_SECONDS", 0.02)
-    client = module.SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    client = module.SnapshotClient(
+        _descriptor(), transport=httpx.MockTransport(handler)
+    )
     with pytest.raises(SnapshotError) as raised:
         await client.readiness()
     await client.aclose()
@@ -465,7 +474,9 @@ async def test_mutation_timeout_after_dispatch_is_unknown_and_never_retried(
     import tldw_chatbook.LLM_Management.snapshot_client as module
 
     monkeypatch.setattr(module, "MUTATION_SECONDS", 0.01)
-    client = module.SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    client = module.SnapshotClient(
+        _descriptor(), transport=httpx.MockTransport(handler)
+    )
     with pytest.raises(SnapshotError) as raised:
         await client.save(0, "owned.bin")
     release.set()
@@ -475,7 +486,9 @@ async def test_mutation_timeout_after_dispatch_is_unknown_and_never_retried(
     assert requests == 1
     assert raised.value.code == "outcome_unknown"
     assert raised.value.submission_possible is True
-    assert not any(isinstance(value, BaseException) for value in client.__dict__.values())
+    assert not any(
+        isinstance(value, BaseException) for value in client.__dict__.values()
+    )
 
 
 @pytest.mark.asyncio
@@ -498,7 +511,9 @@ async def test_connect_failure_is_pre_submission_and_never_retried() -> None:
     assert raised.value.code == "connection_failed"
     assert raised.value.submission_possible is False
     assert "raw transport canary" not in _exception_graph_text(raised.value)
-    assert not any(isinstance(value, BaseException) for value in client.__dict__.values())
+    assert not any(
+        isinstance(value, BaseException) for value in client.__dict__.values()
+    )
 
 
 @pytest.mark.asyncio
@@ -526,12 +541,129 @@ class _CloseTrackingStream(httpx.AsyncByteStream):
     def __init__(self, body: bytes) -> None:
         self.body = body
         self.closed = False
+        self.read = False
 
     async def __aiter__(self):
+        self.read = True
         yield self.body
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["slots", "save"])
+async def test_requests_negotiate_identity_encoding(operation: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        payload = (
+            []
+            if operation == "slots"
+            else {"id_slot": 0, "filename": "owned.bin", "n_saved": 1, "n_written": 2}
+        )
+        return httpx.Response(
+            200, headers={"Content-Encoding": "identity"}, json=payload
+        )
+
+    from tldw_chatbook.LLM_Management.snapshot_client import SnapshotClient
+
+    client = SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    try:
+        if operation == "slots":
+            assert await client.slots() == ()
+        else:
+            assert (await client.save(0, "owned.bin")).bytes == 2
+    finally:
+        await client.aclose()
+
+    assert len(requests) == 1
+    assert requests[0].headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["slots", "save"])
+@pytest.mark.parametrize(
+    ("encoding", "body"),
+    [
+        ("gzip", b"corrupt-gzip-secret-canary"),
+        ("gzip", gzip.compress(b"x" * (2 * 1024 * 1024))),
+        ("unknown-encoding-secret-canary", b"[]"),
+    ],
+    ids=["corrupt-gzip", "inflating-gzip", "unknown-encoding"],
+)
+async def test_unexpected_encoding_is_rejected_before_reading_or_decoding(
+    operation: str,
+    encoding: str,
+    body: bytes,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stream = _CloseTrackingStream(body)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, headers={"Content-Encoding": encoding}, stream=stream
+        )
+
+    from tldw_chatbook.LLM_Management.snapshot_client import SnapshotClient
+
+    client = SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(SnapshotError) as raised:
+            if operation == "slots":
+                await client.slots()
+            else:
+                await client.save(0, "owned.bin")
+    finally:
+        await client.aclose()
+
+    assert len(requests) == 1
+    assert stream.read is False
+    assert stream.closed is True
+    assert raised.value.code == (
+        "invalid_response" if operation == "slots" else "outcome_unknown"
+    )
+    assert raised.value.submission_possible is (operation == "save")
+    assert "secret-canary" not in _exception_graph_text(raised.value) + caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["slots", "save"])
+async def test_deeply_nested_json_has_safe_error_classification(
+    operation: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stream = _CloseTrackingStream(
+        b"[" * 50000 + b'"nested-json-secret-canary"' + b"]" * 50000
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, stream=stream)
+
+    from tldw_chatbook.LLM_Management.snapshot_client import SnapshotClient
+
+    client = SnapshotClient(_descriptor(), transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(SnapshotError) as raised:
+            if operation == "slots":
+                await client.slots()
+            else:
+                await client.save(0, "owned.bin")
+    finally:
+        await client.aclose()
+
+    assert len(requests) == 1
+    assert stream.closed is True
+    assert raised.value.code == (
+        "invalid_response" if operation == "slots" else "outcome_unknown"
+    )
+    assert raised.value.submission_possible is (operation == "save")
+    assert "secret-canary" not in _exception_graph_text(raised.value) + caplog.text
 
 
 class _CloseTrackingTransport(httpx.AsyncBaseTransport):
@@ -647,7 +779,9 @@ async def test_redirect_never_reaches_decoy_or_forwards_credentials() -> None:
         async with real:
             from tldw_chatbook.LLM_Management.snapshot_client import SnapshotClient
 
-            client = SnapshotClient(_descriptor(real.base_url, token="credential-canary"))
+            client = SnapshotClient(
+                _descriptor(real.base_url, token="credential-canary")
+            )
             with pytest.raises(SnapshotError) as raised:
                 await client.slots()
             await client.aclose()
