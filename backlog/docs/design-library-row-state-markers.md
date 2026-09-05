@@ -1,6 +1,6 @@
 # Design note: row state markers for Library ▸ Media (task-31278)
 
-Status: DRAFT — awaiting user approval (task-31278 AC#2). No implementation until approved.
+Status: APPROVED 2026-09-04 (Option A; see §5). Implementation: fix wave 5 row-markers PR (tasks 28008/28009).
 Implements: task-28008 (analysis presence on rows), task-28009 (read/reviewed markers).
 Author's note: the absence of these markers is my own earlier decision (review sets shipped with set-local done marks; the summary-contract bump was parked twice as "invasive, own PR"). This note is the proposal I owe for it.
 
@@ -62,4 +62,4 @@ A `MediaReadState` row per item (read/unread independent of sets). Solves "have 
 
 ## 5. Approval
 
-- [ ] User approved Option ___ with decisions 2-4 as: ___ (record date and any changes here).
+- [x] User approved **Option A** on 2026-09-04 (critique #5 close, AskUserQuestion): decision 2 = `reviewed` from the active review set only (v1); decision 3 = `✓`/`·` in the row's leading state slot (select mode's `☑/☐` replaces it while active) and the word `analysed` on the secondary line, plus the matched keyword when a hit came from keywords rather than the title (critique #5 P2); decision 4 = one PR inside fix wave 5 (contract + projection + validator + fakes helper + row rendering + painted tests at 38 cols), no batch Analyze in it (shipped separately by PR #2400).
