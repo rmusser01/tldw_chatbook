@@ -61,6 +61,9 @@ POST_DEFAULTS = {
     "format_chunks": {"template": "{chunk}"},
 }
 
+MAX_RECIPE_BYTES = 2097152
+MAX_OPERATIONS = 16
+
 
 def current_local_runtime() -> RuntimeIdentity:
     """Identify the pinned engine and stdlib-only qualified execution paths."""
@@ -139,6 +142,8 @@ def prepare_recipe(body: dict, *, runtime: RuntimeIdentity) -> PreparedRecipe:
         raise PreviewUnsupportedError(
             "template", "Only finite JSON values are supported"
         ) from exc
+    if len(authored_json.encode("utf-8")) > MAX_RECIPE_BYTES:
+        raise PreviewUnsupportedError("resource.recipe", "Recipe exceeds 2 MiB")
     _keys(
         body,
         {"preprocessing", "chunking", "postprocessing", "classifier", "metadata"},
@@ -184,6 +189,13 @@ def prepare_recipe(body: dict, *, runtime: RuntimeIdentity) -> PreparedRecipe:
             "chunking.config.overlap", "Must be smaller than max_size"
         )
     effective = {"chunking": {"method": method, "config": config}}
+    if (
+        sum(len(body.get(stage, [])) for stage in ("preprocessing", "postprocessing"))
+        > MAX_OPERATIONS
+    ):
+        raise PreviewUnsupportedError(
+            "resource.operations", "At most 16 pre/post operations are qualified"
+        )
     registry = registered_template_operations()
     for stage, defaults in (
         ("preprocessing", PRE_DEFAULTS),
@@ -242,6 +254,10 @@ def prepare_recipe(body: dict, *, runtime: RuntimeIdentity) -> PreparedRecipe:
                     )
             effective[stage].append({"operation": name, "config": options})
     effective_json = canonical_json(effective)
+    if len(effective_json.encode("utf-8")) > MAX_RECIPE_BYTES:
+        raise PreviewUnsupportedError(
+            "resource.recipe", "Effective recipe exceeds 2 MiB"
+        )
     identity = canonical_json(
         {
             "authored": body,

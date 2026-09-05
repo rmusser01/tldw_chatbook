@@ -29,6 +29,26 @@ and persisted IDs, and verify both request-context and settled-spend ownership.
 
 ---
 
+## Measure child lifetime RSS after final serialization, not before it
+
+**TASK-31425, 2026-09-04.** The first Chunking Lab worker diagnostic sampled
+`getrusage(RUSAGE_SELF).ru_maxrss` immediately after the engine returned. Its
+repeated-format stress run still had to validate, copy, and serialize the complete
+RunResult afterward, so that diagnostic omitted the expensive publication path.
+On the macOS qualification host, collecting the reaped child's lifetime usage
+with `os.wait4` measured 480,313,344 bytes RSS for an admitted formatter whose
+conservative working-payload estimate was 32,468,700 bytes. A regression child
+allocated and freed 150 MB but reported an early peak of 1 byte; only the reaping
+owner's metric passed the check. CPU rlimit application succeeded on this host;
+address-space rlimit application did not.
+
+**What to do.** Include serialization and IPC in the lifetime being measured.
+Where a child-reaping usage API is available, collect its observation rather than
+treating an earlier self-report as the lifetime peak. State the tested OS and
+distinguish payload estimates, measured RSS, and successfully applied OS limits.
+
+---
+
 ## Coalesced state equality does not prove that no content mutation occurred
 
 **TASK-31424, 2026-09-04.** Chunking Lab initially expired Undo restore by
