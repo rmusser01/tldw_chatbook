@@ -750,6 +750,13 @@ _ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
 # analyze_outcome`` (``library_ingest_state.py``) reads this to paint
 # "already analyzed" instead of the generic "analyzed" receipt.
 _ANALYZE_AUTO_SKIP_REASON = "already analyzed"
+# task-31220 (Qodo review round, PR #2412 #3): the copy each Trash mutation
+# releases its controller claim with. Named once because both the worker
+# body's own pre-commit failure and the claim seam's rollback (a fence or
+# ``run_worker`` that refused before any worker ran) mean the same thing to
+# the person looking at the row: nothing happened to it.
+_TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
+_TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -15646,7 +15653,10 @@ class LibraryScreen(BaseAppScreen):
         return (None, *self._library_media_browse_controller.type_options)
 
     def _claim_library_media_mutation(
-        self, work: Coroutine[Any, Any, None]
+        self,
+        work: Coroutine[Any, Any, None],
+        *,
+        on_failure: Callable[[], object] | None = None,
     ) -> None:
         """Claim the shared write interlock, fence reads, and schedule ``work``.
 
@@ -15662,6 +15672,15 @@ class LibraryScreen(BaseAppScreen):
 
         Args:
             work: The mutation coroutine to run under the interlock.
+            on_failure: Roll back a SURFACE-level claim the caller took
+                before this seam (Qodo on #2412: both Trash handlers claim
+                their controller -- generation advanced,
+                ``mutation_pending=True`` published -- before calling here,
+                and releasing only the shared flag left Trash's own
+                controls disabled and its refreshes dropped for the rest of
+                the session). Runs after the shared release, mirroring the
+                worker bodies' own ``finally`` order, and can never replace
+                the fence/scheduling error the caller needs.
 
         Returns:
             None.
@@ -15684,6 +15703,9 @@ class LibraryScreen(BaseAppScreen):
             # not replace the fence/scheduling error the caller needs.
             with suppress(Exception):
                 self._complete_library_media_mutation()
+            if on_failure is not None:
+                with suppress(Exception):
+                    on_failure()
             raise
 
     def _begin_library_media_mutation(self) -> MediaBrowseScope:
@@ -25115,7 +25137,10 @@ class LibraryScreen(BaseAppScreen):
         if claim is None or claim.target != captured:
             return
         self._claim_library_media_mutation(
-            self._permanently_delete_library_media_from_trash(claim)
+            self._permanently_delete_library_media_from_trash(claim),
+            on_failure=lambda: controller.finish_mutation_failure(
+                claim, _TRASH_PERMANENT_DELETE_FAILURE_COPY
+            ),
         )
 
     async def _permanently_delete_library_media_from_trash(
@@ -25147,7 +25172,7 @@ class LibraryScreen(BaseAppScreen):
                 result,
                 media_id=target.backing_media_id,
             ):
-                failure_copy = "Could not delete this media item permanently."
+                failure_copy = _TRASH_PERMANENT_DELETE_FAILURE_COPY
                 return
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
@@ -25201,11 +25226,15 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_media_bulk_delete_in_flight:
             return
-        claim = self._library_media_trash_browse_controller.claim_mutation()
+        controller = self._library_media_trash_browse_controller
+        claim = controller.claim_mutation()
         if claim is None:
             return
         self._claim_library_media_mutation(
-            self._restore_library_media_from_trash(claim)
+            self._restore_library_media_from_trash(claim),
+            on_failure=lambda: controller.finish_mutation_failure(
+                claim, _TRASH_RESTORE_FAILURE_COPY
+            ),
         )
 
     async def _restore_library_media_from_trash(
@@ -25264,7 +25293,7 @@ class LibraryScreen(BaseAppScreen):
                         type(exc).__name__,
                     )
             if restored_record is None:
-                failure_copy = "Could not restore this media item."
+                failure_copy = _TRASH_RESTORE_FAILURE_COPY
                 return
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)

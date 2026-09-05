@@ -19,11 +19,11 @@ import sqlite3
 
 import pytest
 from loguru import logger
+from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LibraryHarness,
@@ -31,7 +31,6 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
 )
-from textual.widgets import Button, Static
 
 
 def _seed(db: MediaDatabase, count: int) -> list[int]:
@@ -195,9 +194,15 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
     house DEFERRED ``BEGIN``, and SQLite cannot park a read transaction
     waiting to upgrade to a writer (it would deadlock), so the promotion
     returns ``SQLITE_BUSY`` at once rather than honouring ``busy_timeout``.
+
+    Qodo on #2412: the writer slot is reserved through the project's own
+    ``transaction(immediate=True)`` on a SECOND independent
+    ``MediaDatabase`` -- the contention a user actually hits is between two
+    app instances, not between the app and a hand-rolled connection, and
+    the context manager's exit releases the lock on every path.
     """
     host, screen, db, db_path = _real_media_host(tmp_path, items=2)
-    other = sqlite3.connect(db_path, isolation_level=None)
+    other = MediaDatabase(db_path=db_path, client_id="other-instance")
     warnings: list[dict] = []
     sink = logger.add(
         lambda message: warnings.append(dict(message.record)),
@@ -205,34 +210,42 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
         filter=lambda record: record["name"].endswith("library_screen"),
     )
     try:
-        other.execute("BEGIN IMMEDIATE")
-        async with host.run_test(size=(235, 52)) as pilot:
-            await _browse_media(screen, pilot)
-            ids = screen_media_ids(screen)
-            target = ids[0]
+        with other.transaction(immediate=True) as held:
+            # The lock is genuinely held, not merely requested: only the
+            # IMMEDIATE begin reserves the writer slot (control run: with
+            # ``immediate=False`` the app's delete succeeds and paints
+            # ``('local:media:2',)``).
+            assert held.in_transaction is True
+            async with host.run_test(size=(235, 52)) as pilot:
+                await _browse_media(screen, pilot)
+                ids = screen_media_ids(screen)
+                target = ids[0]
 
-            await _run_bulk_delete(screen, (target,))
-            await pilot.pause()
+                await _run_bulk_delete(screen, (target,))
+                await pilot.pause()
 
-            assert screen._library_media_delete_receipt_ids == ()
-            assert screen._library_media_bulk_delete_in_flight is False
-            assert _fresh_is_trash(db_path, _backing(target)) == 0
-            notified = host.app_instance.library_media_notifications
-            assert [message for message, _ in notified] == [
-                "Could not delete 1 of 1 selected media item."
-            ]
-            assert all(kwargs.get("severity") == "warning" for _, kwargs in notified)
-            # The per-item failure itself, not just its aggregate side
-            # effects: the delete loop's own warning must have been raised.
-            assert "Failed to delete Library media item in bulk delete." in [
-                record["message"] for record in warnings
-            ]
+                assert screen._library_media_delete_receipt_ids == ()
+                assert screen._library_media_bulk_delete_in_flight is False
+                assert _fresh_is_trash(db_path, _backing(target)) == 0
+                notified = host.app_instance.library_media_notifications
+                assert [message for message, _ in notified] == [
+                    "Could not delete 1 of 1 selected media item."
+                ]
+                assert all(
+                    kwargs.get("severity") == "warning" for _, kwargs in notified
+                )
+                # The per-item failure itself, not just its aggregate side
+                # effects: the delete loop's own warning must have been raised.
+                assert "Failed to delete Library media item in bulk delete." in [
+                    record["message"] for record in warnings
+                ]
+        # The interlock the contention raised is released with the lock: a
+        # fresh writer succeeds where the contended one was refused.
+        with other.transaction(immediate=True):
+            pass
     finally:
         logger.remove(sink)
-        try:
-            other.execute("ROLLBACK")
-        finally:
-            other.close()
+        other.close_connection()
         db.close_connection()
 
 
