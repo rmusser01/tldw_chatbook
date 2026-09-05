@@ -82,11 +82,9 @@ class SnapshotClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        headers = (
-            {"Authorization": f"Bearer {descriptor.bearer_token}"}
-            if descriptor.bearer_token
-            else {}
-        )
+        headers = {"Accept-Encoding": "identity"}
+        if descriptor.bearer_token:
+            headers["Authorization"] = f"Bearer {descriptor.bearer_token}"
         self._client = httpx.AsyncClient(
             base_url=descriptor.base_url,
             headers=headers,
@@ -175,6 +173,12 @@ class SnapshotClient:
             json=json_body,
         ) as response:
             _check_status(response.status_code)
+            # Reject compression before httpx can inflate a chunk beyond our cap.
+            if (
+                response.headers.get("content-encoding", "identity").strip().lower()
+                != "identity"
+            ):
+                raise _error("invalid_response")
             body = bytearray()
             async for chunk in response.aiter_bytes():
                 if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
@@ -182,7 +186,7 @@ class SnapshotClient:
                 body.extend(chunk)
         try:
             return json.loads(body)
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, RecursionError):
             pass
         raise _error("invalid_response")
 
@@ -282,9 +286,7 @@ class SnapshotClient:
         if not isinstance(payload, dict):
             raise _error("invalid_receipt")
         token_field, byte_field = (
-            ("n_saved", "n_written")
-            if action == "save"
-            else ("n_restored", "n_read")
+            ("n_saved", "n_written") if action == "save" else ("n_restored", "n_read")
         )
         try:
             receipt = SlotReceipt(
