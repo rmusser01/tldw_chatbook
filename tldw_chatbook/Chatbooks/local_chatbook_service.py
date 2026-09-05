@@ -25,8 +25,6 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
-from .chatbook_creator import ChatbookCreator
-from .chatbook_importer import ChatbookImporter
 from .chatbook_models import ContentType
 from .conflict_resolver import ConflictResolution
 
@@ -36,6 +34,22 @@ _SAFE_PROVENANCE_ERROR = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
 _STALE_OWNER_REQUEST_REASONS = frozenset(
     {"artifact_owner_request_invalid", "fingerprint_key_unavailable"}
 )
+
+
+def ChatbookCreator(*args: Any, **kwargs: Any) -> Any:
+    """Construct the archive creator on first export while retaining the patch seam."""
+
+    from .chatbook_creator import ChatbookCreator as Creator
+
+    return Creator(*args, **kwargs)
+
+
+def ChatbookImporter(*args: Any, **kwargs: Any) -> Any:
+    """Construct the archive importer on first preview/import."""
+
+    from .chatbook_importer import ChatbookImporter as Importer
+
+    return Importer(*args, **kwargs)
 
 
 def _registry_lock(path: Path) -> threading.RLock:

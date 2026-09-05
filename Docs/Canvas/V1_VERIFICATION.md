@@ -62,8 +62,46 @@ All six Canvas indexes now have census entries. Four read indexes have explicit
 no-`sqlite_stat1` query plans in the real repository fixture; two composite UNIQUE
 indexes enforce foreign-key parent/hint ownership rather than read optimization.
 The isolated plan case passed; the four-module repository/Canvas privacy/Settings/
-runtime selection passed **62 tests, 1 warning, 18.32s**. Latest-dev rebase and
-post-rebase preflight remain pending; this evidence does not certify PR checks.
+runtime selection passed **62 tests, 1 warning, 18.32s**.
+
+The 110 feature commits were rebased onto `7aa0487907ba4166b5797149a03de8e86e173c7e`;
+the recoverable `codex/canvas-v1-pre-rebase-20260905` ref retains
+`ff2f18d81bdedb3c4a450784c7f5623d49eabdb4`. Conflict resolution preserves dev's
+endpoint policy and Persona Buddy mounting as well as Canvas lifecycle startup.
+The diagnostic inventory was regenerated from the combined source. All repository
+preflight checks passed on the rebased tree, including 276 indexed declarations,
+276 census rows, 61 pinned plans, 108 allowlisted DB tables, and 3,325 unique,
+portable task paths. Follow-up `b65a69309` removes duplicated imports and updates
+four test doubles to current selection-generation and meeting-owner contracts.
+Independent static review passed; no production guard was relaxed.
+
+- Initial restricted-executor selection: **88 failed, 1,429 passed, 1 skipped**.
+  Of the failures, 84 were numeric loopback-bind permission denials; four were
+  the corrected fixture mismatches. Unchanged gateway tests pass all **72** with
+  local-listener permission. This was not a missing-marker problem.
+- Definitive affected selection at `b65a69309`, with local-listener permission:
+  **1,517 passed, 1 skipped, 7 warnings, 236.52s**. The optional runtime archive
+  rebuild lacks its configured cache. Warnings are the existing Requests version
+  mismatch and six legacy invalid-escape warnings; no FD-growth warning recurred.
+- The native, served and zero-egress browser files: **89 passed, 2 skipped,
+  1 warning, 171.82s**. Mandatory Chromium passed; optional Firefox/WebKit are not
+  installed. This is targeted evidence, not a full-suite or all-browser claim.
+- Additional startup guards exposed an integration blocker: **990 modules at
+  first paint versus the unchanged 972 ratchet**. An untouched tracked-source
+  archive of the exact dev base passes at **972**, reproduced twice. A diagnostic
+  wrapper around the repository's isolated pytest census observes 18 additional
+  residents and none removed: 16 Canvas-related modules plus the existing
+  scheduler heartbeat/emergency-stop first-tick modules. The latter are not
+  candidates for weakening or deferral.
+- The other startup measurements pass before repair: app import **646/660**,
+  CSS **787,764/804,000 bytes**, pre-import pass **496/500 modules**,
+  **365,641/378,740 LOC**, largest route **112,023/123,319 LOC**.
+
+TASK-31741 remains in progress for the first-paint blocker under ADR-097. No
+budget/snapshot increase, scheduler safety change, PR, push or merge has occurred.
+`origin/dev` has meanwhile advanced; another exact-base check remains required
+before publishing the merge candidate. First-use deferral tests and corrections
+must preserve concrete Canvas lifecycle ownership and first-create auto-open.
 
 ## Earlier V1 checkpoints
 
