@@ -652,6 +652,24 @@ DOM behaviors, not harmless waivers. The authorized pass is exhausted; retain
 the worktree/evidence and request a specifically scoped DOM-only continuation.
 TASK-31232 AC3 is now checked; AC9 and AC10 remain open.
 
+### User-authorized DOM-only correction
+
+The user explicitly approved one DOM-only correction and scoped rereview after
+the two remaining I2 cases. No quota/repair reopening, baseline repairs, broad
+review, full sweep, merge or cleanup is authorized.
+
+ADR required: no new ADR; existing ADR-115 applies.
+ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+Reason: correct supported DOM reconstruction under the existing bounded runtime.
+
+- [ ] Restore explicit select values after their options exist, including a
+  non-first option and empty/no-match selection, preserving default-only state.
+- [ ] Reconstruct mixed-presence subtrees without duplicate native IDs when a
+  new or live child joins an absent parent; preserve attachments and limits.
+- [ ] Add actual-renderer failing regressions, verify final targeted tests and
+  asset integrity with owned browser cleanup, and obtain one scoped rereview
+  from the previously reviewed HEAD `648530ac6`.
+
 ## Execution Handoff
 
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.

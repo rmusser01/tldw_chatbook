@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 17:28'
+updated_date: '2026-09-05 18:17'
 labels:
   - canvas
   - settings
@@ -57,4 +57,5 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 8. Implement ADR-115 selection-intent amendment: fence original browser epoch and expected child conversation/Canvas/revision/generation before mutation; preserve generation through capability/bootstrap round trips and reject missing served expectations. Verify delayed old commands after different-revision and same-revision pin cannot mutate, while passive polling and explicit current navigation retain their distinct behavior.
 9. Apply one consolidated final-review correction wave under existing ADR-115: enforce production staging admission, preserve virtual DOM move identity, keep ordinary non-opt-in continuations byte-compatible, remove synchronous transcript compatibility compilation, and retain historical pins on ordinary publication. Correct helper limit validation and explicit Close versus Hide wording. Add exact failing regressions before each fix, run affected targeted checks/statics, and obtain one scoped rereview; do not fix unrelated baseline failures or weaken runtime/security contracts.
 10. User-authorized additional focused pass: enforce the distinct default 8 MiB temporary-session ceiling across committed and concurrently staged history; support detached edits/restructuring and exact empty/false form-state reconstruction; fence late compile-refusal repair against disable, owner/session and exact source-block changes. Write failing production-path/browser regressions, implement under existing ADR-115, run affected targeted checks and one scoped rereview. Prior I3/I5/M1/M2 closures and unrelated baseline scope remain unchanged.
+11. User-approved DOM-only correction: restore explicit select values after rebuilt options and handle mixed-presence descendants without duplicate native IDs. Add actual-renderer RED/GREEN cases for non-first/empty selections and new/live children under detached parents; preserve default controls, identity, cycles and limits. Verify targeted DOM/assets/statics and owned browser cleanup, then one scoped rereview from 648530ac6 under existing ADR-115. No unrelated baseline work or full sweep.
 <!-- SECTION:PLAN:END -->

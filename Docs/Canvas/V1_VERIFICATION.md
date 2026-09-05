@@ -10,6 +10,9 @@ open for select-value restoration order and mixed-presence subtree identities.
 TASK-31232 remains In Progress with AC9 and AC10 open. Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
+The user has now authorized one DOM-only correction and scoped rereview of
+those two I2 cases. Implementation and review evidence are pending; this does
+not waive AC9's six characterized baseline failures or authorize a full sweep.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
 create-triggered native opening, exact card/replacement-session coverage and
