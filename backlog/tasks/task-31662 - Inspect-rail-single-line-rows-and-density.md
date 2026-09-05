@@ -2,7 +2,7 @@
 id: TASK-31662
 title: >-
   Inspect rail density: single-line rows, right-aligned secondaries, redundancy removal
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, ux, critique-2026-09-05]
