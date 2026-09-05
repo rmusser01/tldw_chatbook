@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
 
 from .compiler import compile_canvas_document
 from .limits import (
+    MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     CanvasLimitError,
     CanvasRepositoryLimits,
     sha256_utf8,
@@ -28,8 +29,6 @@ from .models import (
     CanvasRenderPlan,
     CanvasRevisionInfo,
 )
-
-MAX_TEMPORARY_STAGED_SOURCE_BYTES_PER_SESSION = 8 * 1024 * 1024
 
 
 class CanvasStagingError(RuntimeError):
@@ -192,7 +191,7 @@ class CanvasStagingStore:
         *,
         compiler: Callable[[str], CanvasRenderPlan] = compile_canvas_document,
         repository_limits: CanvasRepositoryLimits | None = None,
-        max_staged_source_bytes: int = MAX_TEMPORARY_STAGED_SOURCE_BYTES_PER_SESSION,
+        max_staged_source_bytes: int = MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     ) -> None:
         if not callable(compiler):
             raise TypeError("compiler must be callable")

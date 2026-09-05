@@ -970,6 +970,11 @@ class ConsoleRuntime:
 
         return self._canvas_enabled()
 
+    def canvas_authority_is_current(self, authority: Any) -> bool:
+        """Return whether *authority* still owns enabled Canvas effects."""
+
+        return self._canvas_enabled() and self._canvas_native_authority is authority
+
     def latch_canvas_disabled(self) -> None:
         """Synchronously accept a disable before asynchronous cleanup begins."""
 

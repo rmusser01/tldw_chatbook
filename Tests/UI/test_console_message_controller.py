@@ -22,6 +22,8 @@ see the extraction report's delegation table).
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -540,6 +542,80 @@ async def test_production_message_controller_prefills_canvas_repair_without_sour
     assert "self-contained Canvas V1" in repair
     assert "example.test" not in repair
     assert screen._message._last_console_action.target_content is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidate", ["disable", "session-owner", "source"])
+async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
+    monkeypatch, invalidate
+):
+    """A refused import may repair only the exact authority/source it captured."""
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def paused_refusal(_source):
+        started.set()
+        if not release.wait(2):
+            raise AssertionError("paused compiler was not released")
+        raise CanvasCompileError(
+            (
+                CanvasCompatibilityIssue(
+                    code="external-resource",
+                    message="External resources are unavailable.",
+                ),
+            )
+        )
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    screen._is_mounted = True
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas stale repair")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<p>captured</p>\n```",
+    )
+    store.set_session_draft(session.id, "unchanged draft")
+    composer = Mock()
+    screen._console_composer_or_none = Mock(return_value=composer)
+    runtime = screen._console_runtime()
+    runtime._canvas_enabled_reader = lambda: True
+    runtime._canvas_disabled_latched = False
+    runtime.canvas_controller.activate_session(session.id)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document",
+        paused_refusal,
+    )
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-stale-repair",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    action = asyncio.create_task(screen.handle_console_message_action(event))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        if invalidate == "disable":
+            runtime._canvas_enabled_reader = lambda: False
+            assert runtime.canvas_enabled() is False
+            runtime._canvas_enabled_reader = lambda: True
+            assert runtime.canvas_enabled() is False
+        elif invalidate == "session-owner":
+            runtime.canvas_controller.activate_session(session.id)
+        else:
+            store.update_message_content(message.id, "```html\n<p>replacement</p>\n```")
+    finally:
+        release.set()
+    result = (await asyncio.gather(action, return_exceptions=True))[0]
+
+    assert isinstance(result, RuntimeError)
+    assert store.session_draft(session.id) == "unchanged draft"
+    composer.load_draft.assert_not_called()
 
 
 @pytest.mark.asyncio

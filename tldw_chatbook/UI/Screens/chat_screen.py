@@ -19594,6 +19594,7 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Canvas.compiler import CanvasCompileError
         from tldw_chatbook.Chat.console_message_actions import (
             canvas_block_origin_turn_id,
+            resolve_canvas_html_block,
         )
 
         store = self._ensure_console_chat_store()
@@ -19608,6 +19609,14 @@ class ChatScreen(BaseAppScreen):
         message = store.get_message(message_id)
         authority = self._console_canvas_authority()
         runtime = self._console_runtime()
+        captured_scope = self._console_canvas_scope(session_id)
+        canvas_controller = runtime.canvas_controller
+        if canvas_controller is None:
+            raise RuntimeError("Canvas source message is no longer current")
+        temporary = captured_scope.conversation_id == captured_scope.session_id
+        captured_owner = canvas_controller.capture_interactive_owner(
+            captured_scope, temporary=temporary
+        )
         try:
             info = await authority.import_html_async(
                 session_id=session_id,
@@ -19625,13 +19634,25 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
         except CanvasCompileError:
-            if (
+            stale = (
                 not self.is_mounted
                 or self._console_runtime() is not runtime
+                or not runtime.canvas_authority_is_current(authority)
+                or runtime.canvas_controller is not canvas_controller
                 or store.active_session_id != session_id
                 or store.session_id_for_message(message_id) != session_id
                 or message_id not in store.active_path_message_ids(session_id)
-            ):
+            )
+            try:
+                canvas_controller.validate_interactive_owner(
+                    captured_scope, captured_owner, temporary=temporary
+                )
+                current_message = store.get_message(message_id)
+                current_block = resolve_canvas_html_block(current_message, reference)
+                stale = stale or current_block is None or current_block.html != source
+            except Exception:  # noqa: BLE001 - stale repair effects fail closed
+                stale = True
+            if stale:
                 raise RuntimeError(
                     "Canvas source message is no longer current"
                 ) from None

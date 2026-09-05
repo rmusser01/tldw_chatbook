@@ -498,6 +498,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   state.patches = makeList();
   state.bridges = makeList();
   state.poison = null;
+  state.detachedPatches = 0;
   state.now = 0;
 
   function poison(code) {
@@ -516,8 +517,35 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     return count;
   }
   function emit(patch) {
-    if (state.patches.length >= MAX.patches) poison("patch-limit");
+    if (state.patches.length + state.detachedPatches >= MAX.patches) poison("patch-limit");
     push(state.patches, patch);
+  }
+  function emitForPresent(node, patch) {
+    if (node.__rendererPresent) {
+      emit(patch);
+      return;
+    }
+    if (state.patches.length + state.detachedPatches >= MAX.patches) poison("patch-limit");
+    state.detachedPatches += 1;
+  }
+  function markPropertyOverride(node, name) {
+    if (!listIncludes(node.__propertyOverrides, name)) push(node.__propertyOverrides, name);
+  }
+  function rendererPropertySupported(node, name) {
+    if (node.namespaceURI !== HTML || node.nodeType !== 1) return false;
+    if (name === "checked") return node.localName === "input";
+    if (name === "selected") return node.localName === "option";
+    if (name === "disabled") {
+      return node.localName === "button" || node.localName === "fieldset" ||
+        node.localName === "input" || node.localName === "optgroup" ||
+        node.localName === "option" || node.localName === "select" ||
+        node.localName === "textarea";
+    }
+    return name === "value" && (
+      node.localName === "button" || node.localName === "input" ||
+      node.localName === "option" || node.localName === "select" ||
+      node.localName === "textarea"
+    );
   }
   function cloneJson(value, depth = 0, seen = makeList(), maxDepth = MAX.jsonDepth) {
     if (depth > maxDepth) throw new RangeError("Canvas bridge value exceeds its depth limit");
@@ -572,7 +600,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       name = String(name).toLowerCase(); value = String(value);
       if (!styleProperties.has(name) || name.startsWith("--") || utf8Length(value) > 16384) throw new TypeError("Style is outside Canvas V1");
       this.values.set(name, value);
-      emit({op: "set-style", node_id: this.owner.__id, name, value});
+      emitForPresent(this.owner, {op: "set-style", node_id: this.owner.__id, name, value});
     }
     getPropertyValue(name) { return this.values.get(String(name).toLowerCase()) || ""; }
     removeProperty(name) {
@@ -580,7 +608,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       if (!styleProperties.has(name)) throw new TypeError("Style is outside Canvas V1");
       const previous = this.values.get(name) || "";
       this.values.delete(name);
-      emit({op: "remove-style", node_id: this.owner.__id, name});
+      emitForPresent(this.owner, {op: "remove-style", node_id: this.owner.__id, name});
       return previous;
     }
   }
@@ -616,6 +644,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       this.childNodes = []; this.attributes = new Map(); this.listeners = new Map();
       this.__text = text; this.__value = ""; this.__checked = false;
       this.__disabled = false; this.__selected = false; this.__rendererPresent = true;
+      this.__propertyOverrides = makeList();
       this.style = styleProxy(this);
     }
     get tagName() { return this.nodeType === 1 ? (this.namespaceURI === HTML ? this.localName.toUpperCase() : this.localName) : undefined; }
@@ -624,13 +653,13 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     get className() { return this.getAttribute("class") || ""; }
     set className(value) { this.setAttribute("class", String(value)); }
     get value() { return this.__value; }
-    set value(value) { this.__value = String(value); emit({op: "set-property", node_id: this.__id, name: "value", value: this.__value}); }
+    set value(value) { this.__value = String(value); markPropertyOverride(this, "value"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "value", value: this.__value}); }
     get checked() { return this.__checked; }
-    set checked(value) { this.__checked = Boolean(value); emit({op: "set-property", node_id: this.__id, name: "checked", value: this.__checked}); }
+    set checked(value) { this.__checked = Boolean(value); markPropertyOverride(this, "checked"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "checked", value: this.__checked}); }
     get disabled() { return this.__disabled; }
-    set disabled(value) { this.__disabled = Boolean(value); emit({op: "set-property", node_id: this.__id, name: "disabled", value: this.__disabled}); }
+    set disabled(value) { this.__disabled = Boolean(value); markPropertyOverride(this, "disabled"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "disabled", value: this.__disabled}); }
     get selected() { return this.__selected; }
-    set selected(value) { this.__selected = Boolean(value); emit({op: "set-property", node_id: this.__id, name: "selected", value: this.__selected}); }
+    set selected(value) { this.__selected = Boolean(value); markPropertyOverride(this, "selected"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "selected", value: this.__selected}); }
     get textContent() {
       if (this.nodeType === 3) return this.__text;
       if (this.__text !== null) return this.__text;
@@ -640,7 +669,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       value = String(value); if (utf8Length(value) > 524288) throw new RangeError("Text exceeds Canvas V1");
       for (const child of this.childNodes) child.parentNode = null;
       this.childNodes = []; this.__text = value;
-      emit({op: "set-text", node_id: this.__id, value});
+      emitForPresent(this, {op: "set-text", node_id: this.__id, value});
     }
     getAttribute(name) { name = String(name); return this.attributes.has(name) ? this.attributes.get(name) : null; }
     hasAttribute(name) { return this.attributes.has(String(name)); }
@@ -650,19 +679,19 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       this.attributes.set(name, value);
       if (name === "value") this.__value = value;
       if (["checked", "disabled", "selected"].includes(name)) this["__" + name] = true;
-      emit({op: "set-attribute", node_id: this.__id, name, value});
+      emitForPresent(this, {op: "set-attribute", node_id: this.__id, name, value});
     }
     removeAttribute(name) {
       name = String(name); if (!allowedAttribute(this, name)) throw new TypeError("Attribute is outside Canvas V1");
-      this.attributes.delete(name); emit({op: "remove-attribute", node_id: this.__id, name});
+      this.attributes.delete(name); emitForPresent(this, {op: "remove-attribute", node_id: this.__id, name});
     }
     appendChild(child) {
       if (!(child instanceof VirtualNode) || child === this) throw new TypeError("Invalid child");
       assertNoCycle(this, child);
       if (child.parentNode) child.parentNode.removeChild(child);
-      ensureRendererSubtree(child);
+      if (this.__rendererPresent) ensureRendererSubtree(child);
       child.parentNode = this; this.childNodes.push(child);
-      emit({op: "append-child", node_id: this.__id, child_id: child.__id}); return child;
+      emitForPresent(this, {op: "append-child", node_id: this.__id, child_id: child.__id}); return child;
     }
     insertBefore(child, reference) {
       if (!(child instanceof VirtualNode) || (reference !== null && !(reference instanceof VirtualNode))) throw new TypeError("Invalid child/reference");
@@ -670,15 +699,15 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       if (child === reference) return child;
       assertNoCycle(this, child);
       if (child.parentNode) child.parentNode.removeChild(child);
-      ensureRendererSubtree(child);
+      if (this.__rendererPresent) ensureRendererSubtree(child);
       const index = reference === null ? this.childNodes.length : this.childNodes.indexOf(reference);
       child.parentNode = this; this.childNodes.splice(index, 0, child);
-      emit({op: "insert-before", node_id: this.__id, child_id: child.__id, reference_id: reference ? reference.__id : null}); return child;
+      emitForPresent(this, {op: "insert-before", node_id: this.__id, child_id: child.__id, reference_id: reference ? reference.__id : null}); return child;
     }
     removeChild(child) {
       const index = this.childNodes.indexOf(child); if (index < 0) throw new Error("Node is not a child");
       this.childNodes.splice(index, 1); child.parentNode = null;
-      emit({op: "remove-child", node_id: this.__id, child_id: child.__id}); return child;
+      emitForPresent(this, {op: "remove-child", node_id: this.__id, child_id: child.__id}); return child;
     }
     addEventListener(type, callback, options = false) {
       type = String(type);
@@ -742,9 +771,11 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
         for (const [name, value] of current.style.values) {
           emit({op: "set-style", node_id: current.__id, name, value});
         }
-        if (current.__value !== "") emit({op: "set-property", node_id: current.__id, name: "value", value: current.__value});
-        for (const name of ["checked", "disabled", "selected"]) {
-          if (current["__" + name]) emit({op: "set-property", node_id: current.__id, name, value: true});
+        for (let index = 0; index < current.__propertyOverrides.length; index += 1) {
+          const name = current.__propertyOverrides[index];
+          if (rendererPropertySupported(current, name)) {
+            emit({op: "set-property", node_id: current.__id, name, value: current["__" + name]});
+          }
         }
         work.push({node: current, entered: true});
         for (let index = current.childNodes.length - 1; index >= 0; index -= 1) {
@@ -990,6 +1021,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     state.patches = makeList();
     state.bridges = makeList();
     state.poison = null;
+    state.detachedPatches = 0;
     state.now = safeNumber(now);
   };
   controls.drainTransaction = () => {
@@ -1012,8 +1044,8 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   controls.dispatch = (encoded) => {
     const record = safeJsonParse(encoded);
     const target = nodes.get(record.target_id); if (!target) throw new Error("Unknown event target");
-    if (record.value !== null) target.__value = record.value;
-    if (record.checked !== null) target.__checked = record.checked;
+    if (record.value !== null) { target.__value = record.value; markPropertyOverride(target, "value"); }
+    if (record.checked !== null) { target.__checked = record.checked; markPropertyOverride(target, "checked"); }
     target.dispatchEvent(new VirtualEvent(record.type, {key: record.key}));
   };
   controls.fireTimer = (id, now) => {

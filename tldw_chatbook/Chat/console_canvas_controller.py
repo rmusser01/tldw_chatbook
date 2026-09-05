@@ -16,6 +16,7 @@ from loguru import logger
 from tldw_chatbook.Canvas.compilation import CanvasCompilation
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.limits import (
+    MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     CanvasLimitError,
     CanvasRepositoryLimits,
     sha256_utf8,
@@ -1490,7 +1491,6 @@ class ConsoleCanvasController:
                     and candidate_stage.state is CanvasRunState.COMMITTED
                 )
                 or candidate_stage.temporary is not temporary
-                or candidate_stage.scope.conversation_id != scope.conversation_id
             ):
                 continue
             if temporary and (
@@ -1499,11 +1499,16 @@ class ConsoleCanvasController:
             ):
                 continue
             for row in candidate_stage.revisions:
+                if temporary:
+                    total_source_bytes += row.info.source_bytes
+                if candidate_stage.scope.conversation_id != scope.conversation_id:
+                    continue
                 canvas_ids.add(row.info.canvas_id)
                 revision_counts[row.info.canvas_id] = (
                     revision_counts.get(row.info.canvas_id, 0) + 1
                 )
-                total_source_bytes += row.info.source_bytes
+                if not temporary:
+                    total_source_bytes += row.info.source_bytes
 
         candidate_key = canvas_id
         if creates_document and candidate_key not in canvas_ids:
@@ -1515,8 +1520,18 @@ class ConsoleCanvasController:
         candidate_revision_count = revision_counts.get(candidate_key or "", 0) + 1
         if candidate_revision_count > limits.max_revisions_per_canvas:
             raise CanvasLimitError("revision_count_limit")
-        if total_source_bytes + source_bytes > limits.max_source_bytes_per_conversation:
-            raise CanvasLimitError("conversation_source_bytes_limit")
+        aggregate_source_limit = limits.max_source_bytes_per_conversation
+        if temporary:
+            aggregate_source_limit = min(
+                aggregate_source_limit, MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION
+            )
+        if total_source_bytes + source_bytes > aggregate_source_limit:
+            code = (
+                "session_source_bytes_limit"
+                if temporary
+                else "conversation_source_bytes_limit"
+            )
+            raise CanvasLimitError(code)
 
     @staticmethod
     def _replay(

@@ -844,11 +844,15 @@ def test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds(
     try:
         expect = importlib.import_module("playwright.sync_api").expect
         source = """<!doctype html><html><body>
-<div id="left"><section id="moving"><button id="inside">inside</button><span id="descendant">descendant</span></section></div>
+<div id="left"><section id="moving" data-state="initial"><button id="inside">inside</button><span id="descendant">descendant</span>
+<div id="detached-children"><span id="first-child">first</span><span id="second-child">second</span></div>
+<input id="text-input" value="initial" disabled><input id="check-input" type="checkbox" checked>
+<select><option id="selected-option" selected>selected</option><option id="fallback-option">fallback</option></select>
+</section></div>
 <div id="right"><span id="marker">marker</span></div>
 <button id="move">move</button><button id="detach">detach</button>
-<button id="reinsert">reinsert</button><button id="remount">remount</button><button id="same">same</button>
-<button id="cycle">cycle</button><output id="count">0</output>
+<button id="edit-detached">edit detached</button><button id="reinsert">reinsert</button><button id="remount">remount</button><button id="same">same</button>
+<button id="cycle">cycle</button><button id="detached-quota">detached quota</button><output id="count">0</output>
 <output id="result">ready</output>
 <script>
 const left = document.getElementById("left");
@@ -861,6 +865,17 @@ let clicks = 0;
 document.getElementById("inside").addEventListener("click", () => { count.textContent = String(++clicks); });
 document.getElementById("move").addEventListener("click", () => { right.insertBefore(moving, marker); });
 document.getElementById("detach").addEventListener("click", () => { moving.parentNode.removeChild(moving); });
+document.getElementById("edit-detached").addEventListener("click", () => {
+  document.getElementById("descendant").textContent = "changed while detached";
+  moving.setAttribute("data-state", "changed"); moving.style.color = "red";
+  document.getElementById("text-input").value = "";
+  document.getElementById("text-input").disabled = false;
+  document.getElementById("check-input").checked = false;
+  document.getElementById("selected-option").selected = false;
+  document.getElementById("fallback-option").selected = true;
+  const children = document.getElementById("detached-children");
+  children.appendChild(document.getElementById("first-child"));
+});
 document.getElementById("reinsert").addEventListener("click", () => { left.appendChild(moving); });
 document.getElementById("remount").addEventListener("click", () => {
   right.appendChild(moving); left.appendChild(moving); right.insertBefore(moving, marker);
@@ -869,6 +884,9 @@ document.getElementById("same").addEventListener("click", () => { moving.parentN
 document.getElementById("cycle").addEventListener("click", () => {
   try { moving.appendChild(left); result.textContent = "cycle-mutated"; }
   catch (_) { result.textContent = "cycle-refused"; }
+});
+document.getElementById("detached-quota").addEventListener("click", () => {
+  for (let index = 0; index < 501; index += 1) moving.setAttribute("data-step", String(index));
 });
 </script></body></html>"""
         status = _load(page, _wire_plan(source), recorder)
@@ -893,6 +911,28 @@ document.getElementById("cycle").addEventListener("click", () => {
 
         frame.locator("#detach").click()
         frame.locator("#moving").wait_for(state="detached")
+        frame.locator("#edit-detached").click()
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        frame.locator("#reinsert").click()
+        expect(frame.locator("#left > #moving")).to_have_count(1)
+        assert frame.locator("#descendant").text_content() == "changed while detached"
+        assert frame.locator("#moving").get_attribute("data-state") == "changed"
+        assert frame.locator("#moving").evaluate("node => node.style.color") == "red"
+        assert frame.locator("#detached-children > *").evaluate_all(
+            "nodes => nodes.map(node => node.id)"
+        ) == ["second-child", "first-child"]
+        assert frame.locator("#text-input").input_value() == ""
+        assert frame.locator("#text-input").is_disabled() is False
+        assert frame.locator("#check-input").is_checked() is False
+        assert (
+            frame.locator("#selected-option").evaluate("node => node.selected") is False
+        )
+        assert (
+            frame.locator("#fallback-option").evaluate("node => node.selected") is True
+        )
+
+        frame.locator("#detach").click()
+        frame.locator("#moving").wait_for(state="detached")
         frame.locator("#remount").click()
         expect(frame.locator("#right > #moving")).to_have_count(1)
         assert frame.locator("#right > *").evaluate_all(
@@ -908,7 +948,7 @@ document.getElementById("cycle").addEventListener("click", () => {
             frame.locator("#moving").wait_for(state="detached")
             frame.locator("#reinsert").click()
             frame.locator("#moving").wait_for(state="attached")
-        assert frame.locator("#descendant").text_content() == "descendant"
+        assert frame.locator("#descendant").text_content() == "changed while detached"
         frame.locator("#inside").click()
         expect(frame.locator("#count")).to_have_text("2")
         assert frame.locator("#count").text_content() == "2"
@@ -921,6 +961,14 @@ document.getElementById("cycle").addEventListener("click", () => {
         assert frame.locator("#result").text_content() == "cycle-refused"
         assert frame.locator("#left > #moving").count() == 1
         assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        frame.locator("#detach").click()
+        frame.locator("#moving").wait_for(state="detached")
+        frame.locator("#detached-quota").click(no_wait_after=True)
+        page.wait_for_function(
+            "window.__canvasHarness.status.state === 'failed'", timeout=10_000
+        )
+        status = page.evaluate("window.__canvasHarness.status")
+        assert status["code"] == "patch-limit"
         _assert_zero_generated_egress(recorder, egress_server)
     finally:
         context.close()

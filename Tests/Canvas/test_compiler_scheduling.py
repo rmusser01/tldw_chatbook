@@ -411,11 +411,15 @@ async def test_chat_screen_html_import_yields_and_checks_view_before_apply(
         opened.append(selection)
         return selection
 
-    runtime = object()
+    runtime = SimpleNamespace(
+        canvas_controller=controller,
+        canvas_authority_is_current=lambda candidate: candidate is authority,
+    )
     screen = SimpleNamespace(
         is_mounted=True,
         _ensure_console_chat_store=lambda: store,
         _console_canvas_authority=lambda: authority,
+        _console_canvas_scope=lambda _session_id: live["scope"],
         _console_runtime=lambda: runtime,
         _open_console_canvas_selection=open_selection,
     )

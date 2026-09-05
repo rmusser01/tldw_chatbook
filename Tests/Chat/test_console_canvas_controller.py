@@ -9,7 +9,10 @@ from tldw_chatbook.Canvas.limits import CanvasLimitError, CanvasRepositoryLimits
 from tldw_chatbook.Canvas.models import (
     CanvasConflictResult,
     CanvasQuotaUsage,
+    CanvasRenderPlan,
     CanvasScope,
+    CanvasSourceIdentity,
+    RenderNode,
 )
 from tldw_chatbook.Chat.console_canvas_controller import (
     CanvasRunState,
@@ -51,6 +54,16 @@ def _controller() -> ConsoleCanvasController:
         _scope(), assistant_message_id=ASSISTANT_ID, temporary=False
     )
     return controller
+
+
+def _synthetic_plan(source: str) -> CanvasRenderPlan:
+    """Build a source-exact inert plan so admission tests isolate ownership."""
+
+    return CanvasRenderPlan(
+        runtime_profile="canvas-v1",
+        source_identity=CanvasSourceIdentity.from_source(source),
+        root=RenderNode("synthetic-root", "html"),
+    )
 
 
 def test_successful_finalization_exposes_one_source_private_contribution() -> None:
@@ -151,6 +164,112 @@ def test_production_owner_counts_concurrent_bytes_and_abort_releases_them() -> N
     assert controller.abort_settlement("run-1", "cancelled") is True
     runs[2].create_canvas(scopes[2], tool_call_id="third", title="Third", html="x")
     assert controller.run_revision_count("run-2") == 1
+
+
+def test_temporary_owner_enforces_exact_default_session_bytes_across_scopes(
+    monkeypatch,
+) -> None:
+    """The default 8 MiB ceiling spans one temporary session incarnation."""
+
+    source = "x" * (512 * 1024)
+    plan = _synthetic_plan(source)
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+
+    first_scope = _scope(
+        run_id="import-first",
+        conversation_id="temporary-conversation-a",
+        active_message_ids=("message-a-0",),
+    )
+    first = controller.interactive_create_canvas(
+        first_scope,
+        origin_message_id="message-a-0",
+        title="Imported",
+        html=source,
+        temporary=True,
+        _prepared_plan=plan,
+    )
+    renamed = controller.interactive_rename_canvas(
+        replace(
+            first_scope,
+            run_id="rename-first",
+            active_message_ids=("message-a-0", "message-a-1"),
+            selected_canvas_id=first.revision.canvas_id,
+            selected_revision_id=first.revision.revision_id,
+        ),
+        origin_message_id="message-a-1",
+        canvas_id=first.revision.canvas_id,
+        expected_parent_revision_id=first.revision.revision_id,
+        title="Renamed",
+        temporary=True,
+    )
+    assert renamed.revision.sequence == 2
+
+    for index in range(8):
+        message_id = f"message-a-{index + 2}"
+        controller.interactive_create_canvas(
+            _scope(
+                run_id=f"import-a-{index}",
+                conversation_id="temporary-conversation-a",
+                active_message_ids=(message_id,),
+            ),
+            origin_message_id=message_id,
+            title=f"Imported A {index}",
+            html=source,
+            temporary=True,
+            _prepared_plan=plan,
+        )
+
+    for index in range(5):
+        message_id = f"message-b-{index}"
+        controller.interactive_create_canvas(
+            _scope(
+                run_id=f"import-b-{index}",
+                conversation_id="temporary-conversation-b",
+                active_message_ids=(message_id,),
+            ),
+            origin_message_id=message_id,
+            title=f"Imported B {index}",
+            html=source,
+            temporary=True,
+            _prepared_plan=plan,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document",
+        _synthetic_plan,
+    )
+    exact_scope = _scope(
+        run_id="reserved-exact-boundary",
+        conversation_id="temporary-conversation-b",
+        active_message_ids=("reserved-message",),
+    )
+    exact = controller.register_run(
+        exact_scope, assistant_message_id="reserved-message", temporary=True
+    )
+    exact.create_canvas(
+        exact_scope, tool_call_id="exact", title="Exact boundary", html=source
+    )
+
+    overflow_scope = replace(
+        exact_scope,
+        run_id="reserved-overflow",
+        active_message_ids=("overflow-message",),
+    )
+    overflow = controller.register_run(
+        overflow_scope, assistant_message_id="overflow-message", temporary=True
+    )
+    with pytest.raises(CanvasLimitError, match="session_source_bytes_limit"):
+        overflow.create_canvas(
+            overflow_scope, tool_call_id="overflow", title="Overflow", html="x"
+        )
+    assert controller.run_revision_count("reserved-overflow") == 0
+
+    assert controller.abort_settlement("reserved-exact-boundary", "cancelled") is True
+    admitted = overflow.create_canvas(
+        overflow_scope, tool_call_id="overflow", title="Overflow", html="x"
+    )
+    assert admitted.revision.source_bytes == 1
 
 
 def test_durable_committed_stage_is_not_double_counted_after_persistence() -> None:
