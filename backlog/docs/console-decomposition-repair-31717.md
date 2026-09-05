@@ -90,5 +90,5 @@ and verifies its current provider-equivalent seeded-greeting projection. The ful
 settings file initially passed 415 tests with one unchanged wall-clock teardown
 overrun, which passed isolated; a final full-file rerun remains in progress.
 The native flow file passed 345 tests with three timing-sensitive journey fixture
-failures, all passing isolated; TASK-31710 owns their explicit phase synchronization.
+failures, all passing isolated; TASK-31769 owns their explicit phase synchronization.
 These results do not claim that the full sweep is green.

@@ -2262,7 +2262,6 @@ class LibraryScreen(BaseAppScreen):
         from ..Library_Modules.library_skill_import_controller import (
             ensure_library_skill_import_coordinator,
         )
-        from ..Library_Modules.library_skills_controller import LibrarySkillsController
 
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)

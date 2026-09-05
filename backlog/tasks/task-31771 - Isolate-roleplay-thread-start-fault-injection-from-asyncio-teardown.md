@@ -1,5 +1,5 @@
 ---
-id: TASK-31712
+id: TASK-31771
 title: Isolate roleplay thread-start fault injection from asyncio teardown
 status: Done
 assignee:
