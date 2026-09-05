@@ -1,8 +1,8 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 779320,
+  "total": 779365,
   "per_source": {
-    "screen_agentic_console.tcss": 100248,
+    "screen_agentic_console.tcss": 100293,
     "screen_css_scoped.tcss": 15216,
     "screen_css_self.tcss": 2769,
     "tldw_cli_modular.tcss": 457208,
@@ -10,7 +10,7 @@
     "widget_defaults_self.tcss": 103102
   },
   "per_segment": {
-    "screen_agentic_console.tcss::(whole file)": 100248,
+    "screen_agentic_console.tcss::(whole file)": 100293,
     "screen_css_scoped.tcss::(header)": 455,
     "screen_css_scoped.tcss::ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py)": 1246,
     "screen_css_scoped.tcss::ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py)": 1355,

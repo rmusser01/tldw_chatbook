@@ -20,8 +20,9 @@ _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 # TASK-25812/TASK-24459: the build now emits the bundle PLUS per-screen
 # sheets split from the screen-owned modules (agentic terminal, evals,
 # scheduling). "Reaches the generated output" means the union -- a rule in
-# a split sheet is exactly as live as one in the bundle (the app loads it
-# via the owning screen's CSS_PATH).
+# a split sheet is exactly as live as one in the bundle (agentic sheets
+# load via the owning screens' CSS_PATH / the boot path; the feature
+# sheets load via TldwCli._SCREEN_OWNED_ROUTE_CSS on first navigation).
 _GENERATED_SHEETS = (
     _BUNDLED_STYLESHEET,
     _CSS_ROOT / "screen_agentic_console.tcss",
@@ -928,45 +929,125 @@ def test_cross_split_selector_overlap_refuses_to_build(
     css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
 
 
-def test_screen_owned_sheets_are_wired_to_their_screens() -> None:
-    """Each new sheet exists and is what the owning screen's CSS_PATH loads.
+def test_screen_owned_sheets_are_wired_to_app_routes() -> None:
+    """Every non-agentic split sheet is app-loaded by some route.
 
-    A split whose sheet no screen declares is dead CSS from the user's
-    point of view: the bundle no longer carries the rules and nothing ever
-    parses the sheet.
+    A split whose sheet no route loads is dead CSS from the user's point
+    of view: the bundle no longer carries the rules and nothing ever
+    parses the sheet. Deliberately the APP's route map, not the screens'
+    ``CSS_PATH``: Textual loads ``CSS_PATH`` under any app, including the
+    UI-test harnesses that model the unstyled tier, and shipping the moved
+    half of a module into those harnesses flipped three destination-shell
+    geometry tests (2026-09-04). See ``TldwCli._ensure_screen_owned_css``.
     """
-    wirings = [
-        (
-            "features/_scheduling.tcss",
-            "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
-            "SchedulesWorkbench",
-        ),
-        (
-            "features/_scheduling.tcss",
-            "tldw_chatbook.UI.Screens.scheduling.workbench_host_screen",
-            "WorkbenchHostScreen",
-        ),
-        (
-            "features/_evals.tcss",
-            "tldw_chatbook.UI.Screens.evals_screen",
-            "EvalsScreen",
-        ),
-    ]
+    from tldw_chatbook.app import TldwCli
+
+    app_loaded = {
+        name
+        for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values()
+        for name in names
+    }
+    for split in css_builder.SCREEN_OWNED_SPLITS:
+        if split.module == css_builder.AGENTIC_SPLIT_MODULE:
+            continue  # TASK-25812 wiring predates the app seam
+        for sheet_name in split.sheets.values():
+            assert (_CSS_ROOT / sheet_name).is_file(), (
+                f"{sheet_name} missing from css/"
+            )
+            assert sheet_name in app_loaded, (
+                f"{sheet_name} is split off the bundle but no route in "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS loads it -- the moved "
+                "rules would never parse. Screens must NOT take it onto "
+                "CSS_PATH instead (harness-tier contract; see this test's "
+                "docstring)."
+            )
+    # And the inverse: the map names only sheets the build actually emits.
+    emitted = {
+        filename
+        for split in css_builder.SCREEN_OWNED_SPLITS
+        for filename in split.sheets.values()
+    }
+    for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values():
+        for name in names:
+            assert name in emitted, (
+                f"_SCREEN_OWNED_ROUTE_CSS names {name}, which no split emits"
+            )
+
+
+def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
+    """The harness-tier regression cannot quietly come back via CSS_PATH."""
     import importlib
 
-    for module, screen_module, screen_name in wirings:
-        spec = _split_spec(module)
-        (sheet_name,) = set(spec.sheets.values())
-        sheet_path = _CSS_ROOT / sheet_name
-        assert sheet_path.is_file(), f"{sheet_name} missing from css/"
+    for screen_module, screen_name in [
+        ("tldw_chatbook.UI.Screens.scheduling.schedules_workbench", "SchedulesWorkbench"),
+        ("tldw_chatbook.UI.Screens.scheduling.workbench_host_screen", "WorkbenchHostScreen"),
+        ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+    ]:
         try:
-            screen_cls = getattr(
-                importlib.import_module(screen_module), screen_name
-            )
+            screen_cls = getattr(importlib.import_module(screen_module), screen_name)
         except ImportError as exc:  # optional-deps environments
             pytest.skip(f"{screen_module} unavailable here: {exc}")
-        css_paths = [Path(entry) for entry in screen_cls.CSS_PATH]
-        assert sheet_path.resolve() in [p.resolve() for p in css_paths], (
-            f"{screen_name}.CSS_PATH does not load {sheet_name} -- the "
-            "moved rules would never parse"
+        css_path = getattr(screen_cls, "CSS_PATH", None) or []
+        for entry in css_path:
+            assert "screen_feature_" not in str(entry), (
+                f"{screen_name}.CSS_PATH loads {entry}: harnesses would "
+                "style themselves with the moved half of the module (the "
+                "2026-09-04 destination-shell flip); load via "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS instead"
+            )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_visit_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """First navigation to Schedules parses the split sheet; boot does not.
+
+    The functional half of the app-seam contract: the sheet is absent from
+    the app stylesheet at `_ui_ready` (that absence IS the boot-CSS win)
+    and present after arriving at the route.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert not app.stylesheet.has_source(sheet, ""), (
+            "the scheduling sheet must NOT ride the boot parse -- that "
+            "deferral is the entire TASK-24459 byte win"
+        )
+        await pilot.press("ctrl+7")
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while asyncio.get_running_loop().time() < deadline:
+            await pilot.pause()
+            if type(app.screen).__name__ == "SchedulesWorkbench":
+                break
+        assert type(app.screen).__name__ == "SchedulesWorkbench"
+        assert app.stylesheet.has_source(sheet, ""), (
+            "arriving at Schedules must load the split sheet, or the moved "
+            "rules never style the real app"
         )

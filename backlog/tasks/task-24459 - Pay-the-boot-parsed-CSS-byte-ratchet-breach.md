@@ -1,7 +1,7 @@
 ---
 id: TASK-24459
 title: Pay the boot parsed CSS byte ratchet breach
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-29'
 labels:
@@ -28,10 +28,10 @@ Per ADR-097 the constant must not be raised.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `test_boot_parsed_css_bytes_stay_within_budget` passes on a pristine checkout
-- [ ] #2 `MAX_BOOT_PARSED_CSS_BYTES` is not raised
-- [ ] #3 The bytes are shed by deferring CSS off the first-paint path or by removing redundant rules, not by moving the measurement
-- [ ] #4 The CSS bundle regenerates from its sources with no drift
+- [x] #1 `test_boot_parsed_css_bytes_stay_within_budget` passes on a pristine checkout
+- [x] #2 `MAX_BOOT_PARSED_CSS_BYTES` is not raised (TIGHTENED 806,000 -> 804,000)
+- [x] #3 The bytes are shed by deferring CSS off the first-paint path or by removing redundant rules, not by moving the measurement
+- [x] #4 The CSS bundle regenerates from its sources with no drift
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -113,3 +113,76 @@ Two consequences for whoever picks this up:
 5. Extend the css-build integrity tests to the new sheets; unit-test the
    generalized splitter (multi-prefix move, non-owner-token keep, synthetic
    cross-split collision) and mutation-test the new guards.
+## Implementation Notes
+
+Generalized the TASK-25812 agentic split into a table of screen-owned
+splits (`SCREEN_OWNED_SPLITS` in `css/build_css.py`: a frozen
+`ScreenOwnedSplit` spec per module -- owner prefixes, sheet filenames,
+pinned tokens). Two modules joined the agentic one:
+
+- `features/_evals.tcss`: 39,695 of 40,518 B is `evals-*`-pure ->
+  `screen_feature_evals.tcss`, loaded via `EvalsScreen.CSS_PATH`. Owner
+  audit: every selector consumer lives under `UI/Evals/` or
+  `UI/Screens/evals_screen.py` (repo-relative-path greps, then re-checked
+  with the comment-stripping classifier -- a bare-token grep also "found"
+  `lab-rail`/`ds-*` tokens that were comment prose, the #2281 audit trap
+  in a new costume).
+- `features/_scheduling.tcss`: only the `scheduling-*`/`schedules-*`-pure
+  half (7,936 B) moves -> `screen_feature_scheduling.tcss` on
+  `SchedulesWorkbench.CSS_PATH` (+ `WorkbenchHostScreen`, belt-and-braces).
+  Helper classes (`pane-hidden`, `detail-value-row-*`, bare status
+  classes) stay in the bundle by the conservative classifier -- no pin
+  list needed. A WHOLESALE move was rejected: `TaskDetail` is a type
+  selector and Evals composes a same-named widget class, and
+  `.needs-attention` is set by `library_notes_canvas`.
+
+Safety at build time: per-module demotion pass (later-module seeding via
+the parameterized `_later_module_selectors`), per-module variables
+preamble, and a cross-split moved-selector disjointness guard in
+`build_screen_owned_sheets` -- structurally unreachable today because the
+demotion pass fires first (verified by writing the natural-path test and
+watching it not raise; the guard is a documented backstop, tested at its
+own level). Measured zero selector collisions for both modules against
+all later bundle modules and all generated post-bundle sheets.
+
+Census: 826,956 (BREACHED vs 806,000) -> 779,365 on the rebased tree.
+Ratchet TIGHTENED to 804,000 (measured + standard 25,000 slack, ADR-097;
+lowering needs no ledger row). `test_boot_css_byte_budget.py` JOINED
+`perf-guard.yml`'s ratchet step -- the exclusion comment now records the
+join and forbids removal as the response to a future red.
+
+Verified: css-build integrity 25 passed (exact-rebuild contract
+mutation-tested red on a hand-edited sheet); bundle-sync check green with
+the new sheets enrolled; full perf-guard suite 26 passed (destination
+tour visits Schedules; both new sheets parse under the app's theme
+variables); boot budget snapshots refreshed via the script (CSS snapshot
+only -- the module-census snapshots were deliberately reverted, their
+drift belongs to dev). Evals/scheduling UI selection run as paired arms
+against the pristine merge base (see PR body for counts).
+
+**The incident this task minted (also in lessons-testing-evidence.md):
+Screen.CSS_PATH loads under EVERY app, including the unstyled-tier
+harnesses.** The first wiring put the sheets on the owning screens'
+`CSS_PATH` (the TASK-25812 library/settings pattern); the paired arm then
+flipped three destination-shell geometry tests, and the probe showed why:
+`ConsolidatedCSSApp` harnesses load no app bundle, so harness-mounted
+workbenches got ONLY the moved half of the module -- a hybrid of the two
+tiers where the automation-detail overlay covered the follow button.
+Rewired to an app-owned seam (`TldwCli._SCREEN_OWNED_ROUTE_CSS` +
+`_ensure_screen_owned_css`, mirroring Textual's `_load_screen_css`) so
+real-app behavior is identical and harnesses keep their tier contract;
+two guards pin the seam (map completeness + a CSS_PATH ban on the owning
+screens) and a functional test proves boot-absent/visit-present. The
+production-CSS harnesses' hard-coded sheet list (already bitten once by
+25812) now derives from `APP_STYLESHEETS`. After the rework the four
+affected UI files show an IDENTICAL 16-failure set to pristine dev
+(paired arms, zero divergence).
+
+Files: `css/build_css.py`, `css/check_bundle_sync.py`, `app.py` (rebuild
+staleness list), `UI/Screens/evals_screen.py`,
+`UI/Screens/scheduling/schedules_workbench.py`,
+`UI/Screens/scheduling/workbench_host_screen.py`, generated sheets +
+bundle, `Tests/UI/test_css_build_integrity.py` (4 new contracts),
+`Tests/UI/consolidated_css.py`, `Tests/Performance/test_boot_css_byte_
+budget.py`, `boot_budget_snapshots/boot_css_bytes.json`,
+`.github/workflows/perf-guard.yml`.
