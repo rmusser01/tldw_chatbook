@@ -520,7 +520,7 @@
     },
     {
       "call_count": 62,
-      "diagnostic_digest": "bf97499e28fc3888acd7",
+      "diagnostic_digest": "7856d35bc2e08b746e9c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chatbooks/chatbook_importer.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3019,7 +3019,7 @@
     },
     {
       "call_count": 59,
-      "diagnostic_digest": "9b5958413db094e57961",
+      "diagnostic_digest": "0f859154e79adaa7bbf1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/settings_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4624,7 +4624,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "9ab6efe290063508",
+          "call_digest": "81e64768a3e59ed7",
           "method": "info",
           "path_expressions": [
             "chatbook_path"
@@ -4633,7 +4633,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "a4e7c8f6d14d4223",
+          "call_digest": "9ab6efe290063508",
           "method": "info",
           "path_expressions": [
             "chatbook_path"

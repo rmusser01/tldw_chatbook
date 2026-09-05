@@ -429,7 +429,7 @@ def validate_json_value(value: JsonValue, *, max_depth: int, field_name: str) ->
 
     Args:
         value: JSON-compatible value to validate.
-        max_depth: Maximum accepted container depth.
+        max_depth: Maximum accepted value depth, with the root at zero.
         field_name: Safe field label used in failures.
 
     Returns:

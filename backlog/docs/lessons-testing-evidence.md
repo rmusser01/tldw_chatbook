@@ -129,6 +129,23 @@ registered SQLite handles or that a larger warning threshold repairs a leak.
 Conversely, do not require immediate process-baseline return for every individual
 SQLite close; another live connection can legitimately retain inode reuse FDs.
 
+## Capture queued UI ownership in the row, not only in the event
+
+**PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
+combined an old Canvas ID with the current conversation. Adding a session to
+the event and row signature fixed ordinary clicks, but delayed construction
+still rebuilt an A-owned row with mutable transcript session B. The row
+reconciler can await removal/mount work before construction. A deterministic
+test projecting under A, switching to B, then building the retained row failed
+with B; storing the session in the row itself made that test and the real
+same-key mounted session-switch control pass. The receiver also rejects stale
+or missing ownership instead of switching conversations.
+
+**What to do.** Carry originating identity through every deferred projection,
+cache and event boundary; a cache signature alone is not the payload. Pair a
+mounted switch test with delayed old-projection construction, and preserve
+rejection at the final authority boundary.
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker

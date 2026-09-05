@@ -223,6 +223,62 @@ remain valid; this is not a new containment or symlink policy. RED4failed/
 formatter/diff checks; legacy Ruff statistics remain64/26. Independent scoped
 spec and quality review passes.
 
+Qodo3942123875 repository reads are corrected in89d62fb2d: all four reads
+materialize inside the shared deferred transaction and close their cursor;
+native/managed caller transactions retain completion ownership. New manager
+admission errors become fixed storage_failure without displayed exception
+chaining. Existing tracked cursors already protected read quiescence: this is
+managed-operation/cleanup consistency, not a claim of previously unprotected
+maintenance access. Repaired RED8failed/8passed5.75s followed an initial test
+patch that caused four teardown errors; scoping that patch restored cleanup.
+Repository/service/Canvas archive GREEN: **140 passed, 1 Requests warning,
+44.25s**. Final16-case ownership/admission matrix after a style-only adjustment:
+**16 passed, 1 warning, 5.24s**. Both-file Ruff/format/diff checks and independent
+spec/quality review pass; SQL and immediate-write authority are unchanged.
+
+Qodo3942123876 shared-wire correction060a90e6d introduces the shared strict
+Pydantic envelope on first decode only; existing Canvas semantic limits and
+immutable domain construction remain authoritative. Valid non-dict mappings
+remain accepted, and overfull envelopes are rejected before copying or detailed
+validation. The prior manual decoder was already strict: this is boundary
+consistency, not a newly demonstrated permissive-wire vulnerability. Final RED
+8failed1.36s; a subsequent Mapping compatibility failure prompted a bounded-copy
+correction. The width regression's RED demonstrated missing classification, not
+observed allocation. Final six-file boundary/limits/gateway/native/startup/census
+selection: **176 passed, 2 warnings, 12.37s**, census969/972. Shared-validator
+legacy Ruff statistics remain seven; focused lint and formatter checks pass.
+Models and limits tests retain preexisting whole-file formatter drift (both
+baseline and candidate fail those whole-file checks); no broad reformat was
+made. Independent shared-wire spec and quality review passes.
+
+Qodo3942123877 environment precedence correction0a75bdbaf adds only the two
+documented true/false overrides, shared by full policy and cheap execution reads.
+Malformed tables remain disabled; Settings failure recovery explicitly ignores
+environment enablement, and accepted process disable remains latched. RED:
+**7 failed, 33 passed, 1 warning, 5.93s**. Full Canvas config, first-use,
+Settings, kill-switch, diagnostic privacy and census selection: **71 passed,
+2 warnings, 17.12s**, census969/972. Three test files pass Ruff and formatter;
+production legacy Ruff statistics match their baseline (config160, Settings114).
+Operator documentation and both TOML templates explain effective precedence.
+Independent scoped spec and quality review passes; its warning-label correction
+was applied to the retained implementation report.
+
+Qodo3942123878/3880/3881 corrections7288c27bc document public limit helpers,
+retain lazy archive compatibility aliases over snake-case factories, and add
+only host-owned bounded attempt context to the two Canvas reconciliation error
+records. Diagnostic RED: **2 failed, 1 warning, 1.31s**; combined limits/privacy/
+lazy-import/local-service/Settings GREEN: **66 passed, 1 warning, 8.28s**.
+Focused lint passes; local-service legacy findings remain nine. The independent
+review passes both gates with one prose correction (maximum value, not container,
+depth), applied without changing validation behavior. Source-private logging,
+alias call/patch seams, and all fixed runtime limits remain unchanged.
+
+Diagnostic inventory audit before regeneration found exactly two owner digests:
+archive import's two info statements only moved/re-indented (no text change),
+and Settings replaced its two fixed errors with fixed text plus owned attempt
+integers. Counts and sink topology are unchanged. The archive's existing path
+privacy candidates remain explicitly legacy/unreviewed, not newly approved.
+
 ## Earlier V1 checkpoints
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
