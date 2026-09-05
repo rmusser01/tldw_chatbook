@@ -747,6 +747,41 @@ isolation incident records and the nonblocking stale-comment observation.
 
 ## Execution Handoff
 
+### User-authorized integration and V2 handoff (2026-09-05)
+
+The user now authorizes investigation of the descriptor warning, a PR against
+`dev`, rebasing onto latest `dev`, addressing all Qodo issues/comments once
+posted, merging the reviewed PR, and then starting V2. This supersedes earlier
+integration exclusions, not the sandbox, isolation or targeted-test policy.
+
+ADR required: no new ADR for integration or direct cleanup repairs.
+ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+Reason: preserve the approved V1 boundary; V2 library/runtime decisions require
+their own design and ADR check before implementation.
+
+- [ ] Complete TASK-31732: reproduce/classify the FD-growth signal, correct a
+  proven in-scope leak if present, verify and independently review the result.
+- [ ] Preserve a recoverable pre-rebase ref, fetch latest `origin/dev`, inspect
+  exact feature ancestry, and rebase only the feature range. Resolve conflicts
+  without losing either side's unrelated work; recheck schema/ADR/task-ID and
+  derived-artifact collisions. Prefer rebasing before the first public push.
+- [ ] Run preflight and affected verification on the rebased tree. No full
+  repository sweep without explicit approval. Create the PR against `dev`,
+  with the retained verification and warning qualifications.
+- [ ] Wait for Qodo through the app's recurring follow-up mechanism if needed.
+  Read review bodies, inline threads, issue comments and suggestions; maintain
+  an item-by-item resolution ledger. Verify suggestions technically, implement
+  valid corrections with tests, and reply with evidence to each applicable
+  thread. Do not treat silence as a clean review or bypass protected checks.
+- [ ] Recheck current PR head/base, completed Qodo feedback and required CI,
+  update from `dev` and retest affected conflicts if necessary, then merge via
+  the repository's allowed method without an admin/protection bypass. Verify
+  merged state and commit identity. Retain the worktree/evidence; do not touch
+  the user's main checkout or delete branches as an implied cleanup step.
+- [ ] Only after merge, begin V2 brainstorming: a small offline bundled library
+  catalog under the existing zero-egress guarantee. Do not silently add network,
+  filesystem, cookies or multi-file VFS; settle design and ADR before coding.
+
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.
 
 Choose one execution mode when implementation begins:
