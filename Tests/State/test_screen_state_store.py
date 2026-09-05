@@ -124,7 +124,12 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
     )
 
     def bare_screen(store: ConsoleChatStore) -> ChatScreen:
+        from tldw_chatbook.UI.Console_Modules.wiring import (
+            build_console_settings_controllers,
+        )
+
         screen = ChatScreen.__new__(ChatScreen)
+        build_console_settings_controllers(screen)
         image_state = SimpleNamespace(
             prune=lambda _ids: None,
             serialize=lambda: {},
