@@ -1,5 +1,10 @@
 # Chunking Lab Runtime Boundary Follow-up Implementation Plan
 
+Status: Both tasks implemented and independently reviewed; final combined gate
+473 passed, 2 known warnings in106.29s. TASK-31428 AC15 is complete. Checklists
+below retain planning history; current evidence and limits are in
+[verification](../../Chunking_Lab_Verification.md). No merge or push performed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 
 **Goal:** Resolve TASK-31428 AC15's two reproducible architecture-guard failures without changing Lab execution or resource-admission semantics.

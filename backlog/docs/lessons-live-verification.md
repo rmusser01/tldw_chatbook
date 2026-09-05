@@ -2045,3 +2045,25 @@ from the current PR tree: older live evidence can exercise a superseded host.
 **The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
 
 **What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
+
+## A manually mounted test screen must claim initial-screen ownership (TASK-31428)
+
+**Incident, 2026-09-04.** Chunking Lab's combined verification passed 470 tests but
+failed its narrow workflow after `pilot.click` found ChatScreen instead of the Lab.
+Both local fixtures constructed the real app and tests directly pushed their own
+Lab screen. The factory's settings patch ended before Textual `compose`, so the
+real seven-second splash remained enabled. When it closed, the still-unclaimed
+initial-screen callback pushed Chat over the Lab. The isolated workflow passed
+before seven seconds; that pass did not disprove the slower combined failure.
+
+An isolated diagnostic with a 0.5-second enabled splash observed the actual
+Lab-to-Chat push. Keeping that setup but claiming `_initial_screen_pushed`
+preserved the Lab. Permanent regressions then called the real startup callback
+directly: both local fixtures failed before the ownership flag and passed after it.
+No production startup, shared factory, timer, or splash-setting change was needed.
+
+**What to do.** A fixture that deliberately supplies its own initial screen must
+also establish the matching startup-ownership state. Keep this scoped to that
+fixture; tests of automatic startup must instead await the real startup boundary.
+Exercise the late callback deterministically, rather than assuming a fast pass or
+increasing sleeps proves that deferred startup cannot take over the screen.

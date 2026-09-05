@@ -1,11 +1,11 @@
 ---
 id: TASK-31428
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 06:27'
+updated_date: '2026-09-05 06:42'
 labels:
   - chunking
   - chunking-lab
@@ -44,7 +44,7 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #12 Users can explicitly inspect current and retained Previous output per candidate, including after failed or pending reruns, without substituting old output into current comparisons.
 - [x] #13 Unfinished raw tag input survives ordinary renders and reopening, and deliberate save produces the intended separate tags.
 - [x] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
-- [ ] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
+- [x] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -87,4 +87,6 @@ Status stays In Progress and AC9–14 remain unchecked until the controller's sc
 independent final re-review. Earlier pending-review statements above are chronology.
 
 Final scoped re-review at 5d0df113ff accepted all seven Important and five Minor corrections, with no new breakage in that fix diff. AC9-14 are verified; status remains In Progress because the controller final targeted gate found 466 passes and two branch-introduced runtime mapper/import guard failures. Exact two-node rerun reproduces both failures. Task5 lab_runner.py:225 imports TemplateProcessor for resource admission outside the existing guard allowlist; it is not a second flat mapper, but the runtime-seam/guard contract is unresolved and must not be waived as baseline. No second final fix wave was dispatched. ADR118 and ADR078 remain applicable; final-rereview.md, controller-final-targeted.xml and controller-final-guard-repro.xml retain evidence. Docs/Chunking_Lab_Verification.md records current readiness. No Done, merge or push claim.
+
+Final acceptance: runtime admission now calls narrow template_runtime preprocessing/sanitation adapters (9c3f69bd98) without vendor imports in the runner, widened guards, changed budgets or new policy. Independent Task1 review approved. The combined gate then exposed a separate local test-fixture startup-ownership race; measured enabled-splash Lab-to-Chat takeover was corrected only in the two manual-screen fixtures with real callback RED2/GREEN2 regressions (a89f14d6d3), independently reviewed. Final combined targeted feature/compatibility gate: 473 passed, zero failures/errors/skips, 2 known warnings in106.29s. Complete follow-up final review approved with no issues. Scoped lint/format/compile and whole-branch whitespace checks passed; legacy runtime lint debt and Requests/vendor warnings remain explicitly qualified. ADR078 and ADR118 apply; no new ADR for test-only setup. Docs/Chunking_Lab_Verification.md and follow-up plan record exact evidence/history/limits; lessons-live-verification.md records the measured manual-screen ownership incident. AC1-15 complete. No full sweep, production startup/shared factory change, vendor/dependency edit, merge or push. Historical pending notes above are superseded by this acceptance; earlier failures and privacy/platform/resource qualifications remain retained.
 <!-- SECTION:NOTES:END -->

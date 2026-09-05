@@ -13,9 +13,10 @@ screen integration is `c1b320d11b`; its reviewed edit-drain correction is
 `cd3e13926a`. Whole-branch review at `462e5cc30e` found seven Important gaps and
 five bounded refinements. The single final correction commit `5d0df113ff` received
 scoped independent re-review: all twelve findings addressed, no new breakage in
-that fix diff. TASK-31428 remains In Progress despite verified AC9–14 because the
-controller's final targeted gate found the two unresolved architecture guards
-described below (AC15). No merge or push
+that fix diff. The user-requested runtime-boundary and test-fixture follow-up
+also passed independent task and final review. TASK-31428 is complete with AC1–15
+verified; the final targeted gate is **473 passed, 2 known warnings in 106.29s**.
+No merge or push
 has been performed. The original working checkout was not used for implementation.
 
 Verification used the existing Python3.12.11 virtual environment with Textual8.2.8
@@ -63,9 +64,42 @@ passed; legacy interop lint uses its existing narrowed rule selection.
 This is targeted correction evidence, not a replacement for the original non-green
 integration run or a new startup/platform qualification. Earlier task notes that say
 In Progress/pending review are chronological records; tasks 31421–31427 have since
-received their task-level reviews and remain Done. Final branch acceptance is pending.
+received their task-level reviews and remain Done. Final targeted acceptance is
+recorded below; integration into dev still requires the user's choice.
 
-## Final controller gate: not green
+## Final acceptance after the requested follow-up
+
+The [bounded follow-up plan](superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md)
+resolved the import guards at commit `9c3f69bd98`: the runner now calls narrow
+runtime-owned preprocessing and sanitation adapters. Vendor access stays inside
+the existing runtime seam, while runner limits, prescan ordering, resource
+accounting and actual full-pipeline execution remain unchanged. Neither the guard
+allowlist nor the vendor tree was modified.
+
+The first combined follow-up gate produced470 passes and one narrow workflow
+failure. Instrumentation proved that deferred splash startup could push Chat over
+the tests' manually mounted Lab. Commit `a89f14d6d3` corrects only the two local
+Lab fixtures' initial-screen ownership and adds real callback RED2/GREEN2
+regressions. Production startup, the shared app factory and splash timers remain
+unchanged; this does not qualify automatic startup or general cold-start behavior.
+
+At that final code/test commit, the combined feature/compatibility selection
+passed **473 tests with zero failures, errors or skips, and 2 known warnings in
+106.29s**. It is the earlier468-case selection plus three real runtime-adapter
+tests and two fixture regressions. Both tasks and the complete follow-up received
+independent review; the final reviewer found no issues and independently parsed
+the genuine XML. Scoped lint, formatting, compilation and whole-branch whitespace
+checks passed, with previously documented legacy runtime lint exclusions.
+
+Exact command/output, the intermediate failed run, diagnosis and reviews are in
+`.superpowers/sdd/2026-09-04-chunking-lab-runtime-boundary-followup/`:
+`controller-final-verification.md`, `final-targeted.xml`,
+`final-targeted-after-fixture.xml`, `lab-startup-race-diagnosis.md`, and
+`final-review.md`. The two remaining warnings are Requests dependency
+compatibility and vendored datetime deprecation; no dependencies were upgraded
+or warnings suppressed. This is a targeted gate, not a full repository sweep.
+
+## Historical controller gate before the follow-up: not green
 
 At correction commit `5d0df113ff`, the combined targeted feature/compatibility
 selection produced **466 passed, 2 failed, 9 warnings in 100.58s**. Both failures
@@ -76,19 +110,20 @@ are in `Tests/Chunking/test_template_runtime.py::TestEnumerationGuards`:
 
 An exact two-node rerun reproduced both failures in 1.02s. The import census
 detects `lab_runner.py:225`, introduced by this branch's Task5 commit `1a26e51827`:
-`_child_admission` imports and uses the vendored `TemplateProcessor` for bounded
+`_child_admission` then imported and used the vendored `TemplateProcessor` for bounded
 preprocessing/resource admission. It does not construct a second flat-template
 mapper, but the existing guard permits vendor-template consumers only in
 `template_runtime` and `auto_selection`. This is a branch-introduced integration
 gap, **not a proven baseline failure** and not waived by the clean final-fix review.
-The runtime-seam/guard contract under ADR-078/ADR-118 still needs reconciliation;
-mechanically broadening the allowlist has not been authorized or performed.
+The runtime-seam/guard contract under ADR-078/ADR-118 still needed reconciliation
+at that checkpoint; the later follow-up resolved it without widening the allowlist.
 
 The final scoped reviewer recorded this outside its correction diff, without
-waiving branch readiness. The single final correction wave is exhausted; no
-second wave was dispatched and no source fix was made by the controller.
-TASK-31428 stays In Progress with AC15 unchecked. Branch/worktree/evidence remain
-preserved; no merge or push is ready to claim.
+waiving branch readiness. The original single final correction wave was exhausted;
+no second wave was dispatched in that pass and no source fix was made by the
+controller. TASK-31428 remained In Progress until the user requested continuation
+and the separately reviewed follow-up above completed AC15. The failed evidence
+and branch/worktree are preserved; no merge or push has occurred.
 
 Genuine XML: `controller-final-targeted.xml` and
 `controller-final-guard-repro.xml`; exact commands and diagnosis:
@@ -135,7 +170,9 @@ Actual execution evidence is macOS/arm64 Python3.12. Windows preview is explicit
 refused; Linux has not been qualified here. macOS applied a61-second CPU limit but
 rejected the attempted1GiB address-space limit. The32MiB working-payload admission
 estimate is **not an RSS cap**: an admitted formatter fixture reached480,313,344
-bytes peak RSS (about458MiB). Fixtures are not universal memory guarantees, and
+bytes peak RSS (about458MiB). The final follow-up run's formatter fixture reached
+481,935,360 bytes (about460MiB), with the61-second CPU limit recorded as applied.
+These are measured fixtures, not universal memory guarantees, and
 OS reaping latency is not a portable hard deadline.
 
 Full samples/results are local recovery data and are included in exports. Private

@@ -1,6 +1,6 @@
 # ADR-118: Chunking Lab local execution, authoring, and recovery
 
-- Status: Accepted and implemented; final correction review passed, final acceptance pending runtime import-guard reconciliation
+- Status: Accepted and implemented; final targeted acceptance and independent follow-up review complete
 - Date: 2026-09-04
 - Spec: [Chunking Lab design](../../Docs/superpowers/specs/2026-09-04-chunking-lab-design.md)
 - Plan: [Chunking Lab implementation](../../Docs/superpowers/plans/2026-09-04-chunking-lab.md)
@@ -122,8 +122,10 @@ TASK-24404 was archived as superseded. The final correction wave directly implem
 this ADR: exact in-transaction catalog acknowledgments, validated replacement
 inspection, readable historical evidence, explicit Previous selection, and lossless
 raw tags. It introduces no store, schema, runtime, or policy owner.
-Scoped independent re-review accepted all twelve corrections. TASK-31428 remains
-In Progress because the controller's final targeted gate has two branch-introduced
-runtime import-guard failures requiring reconciliation with ADR-078. The original
+Scoped independent re-review accepted all twelve corrections. The user-requested
+follow-up reconciled runtime admission with ADR-078 without widening guards, and
+corrected only the local Lab fixtures' manual initial-screen ownership. Final
+targeted verification passed473 tests; independent follow-up review found no issues.
+TASK-31428 is complete. The original
 non-green integration evidence and platform/privacy limits remain in
 [Chunking Lab verification](../../Docs/Chunking_Lab_Verification.md).

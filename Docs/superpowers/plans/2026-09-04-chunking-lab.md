@@ -3,10 +3,12 @@
 Current status: the eight implementation slices and task-level reviews are complete.
 The original checklist below is retained as planning history, not a current progress
 board. The single final correction wave passed scoped independent re-review;
-AC9–14 are verified. TASK-31428 remains In Progress with AC15 unchecked because
-the controller final targeted gate has two unresolved runtime import-guard failures.
-No second final fix wave was dispatched. TASK-31421–31427
-retain their task-level Done status. See [verification](../../Chunking_Lab_Verification.md)
+AC9–14 are verified. The user-requested runtime-boundary follow-up resolved AC15,
+including a separately diagnosed test-fixture ownership race; final targeted
+verification passed473 tests and independent follow-up review found no issues.
+TASK-31421–31428 are Done. The separate
+[follow-up plan](2026-09-04-chunking-lab-runtime-boundary-followup.md) preserves
+that work and its evidence. See [verification](../../Chunking_Lab_Verification.md)
 and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md` for the correction
 evidence. No merge or push is authorized by this handoff.
 
