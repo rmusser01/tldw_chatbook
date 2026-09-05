@@ -147,6 +147,14 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             self._snapshot.entries[0].entry_id if self._snapshot.entries else None
         )
         self._editing_entry_id: str | None = None
+        #: The queued text as it was when the edit began (TASK-31701, Qodo
+        #: #2425 finding 2): the dirtiness baseline when the CURRENT queue
+        #: text cannot be re-read -- queue processing can move the
+        #: revision, claim, or remove the entry while the modal is open,
+        #: and a failed read must not make a genuinely modified edit look
+        #: clean (navigation would discard text the save path also
+        #: refuses, leaving the user no copy).
+        self._editing_baseline_text: str | None = None
         self._reviewed_context_epoch: int | None = None
         self._render_key: tuple[Any, ...] | None = None
 
@@ -489,13 +497,17 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         dismisses pushed screens before switching, which would silently
         discard the typed text. Only a REAL divergence counts: an edit
         view showing the entry's current text loses nothing when
-        dismissed, and an entry that changed or vanished under the edit
-        has nothing recoverable to protect (the modal's own save path
-        already refuses it with a feedback line).
+        dismissed. When the current queue text cannot be re-read (queue
+        processing moved the revision, claimed, or removed the entry
+        while the modal was open -- Qodo #2425 finding 2), dirtiness is
+        judged against the baseline captured when the edit began: the
+        save path refuses those states too, so navigation is the user's
+        ONLY copy of the modified text.
 
         Returns:
             ``True`` when an edit is open and its text differs from the
-            queued entry's current text.
+            queued entry's current text (or, when that is unreadable,
+            from the edit's opening baseline).
         """
         if self._editing_entry_id is None:
             return False
@@ -508,9 +520,13 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             self._editing_entry_id,
             expected_revision=self._revision,
         )
-        if result.status is not QueueMutationStatus.APPLIED or result.text is None:
-            return False
-        return edit.text != result.text
+        if result.status is QueueMutationStatus.APPLIED and result.text is not None:
+            return edit.text != result.text
+        if self._editing_baseline_text is not None:
+            return edit.text != self._editing_baseline_text
+        # No readable current text and no baseline (defensive; _begin_edit
+        # always records one): protect any typed text rather than lose it.
+        return bool(edit.text)
 
     def _begin_edit(self) -> None:
         entry_id = self._selected_entry_id
@@ -530,6 +546,7 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         edit = self.query_one("#console-prompt-queue-edit-input", TextArea)
         self._editing_entry_id = entry_id
+        self._editing_baseline_text = result.text
         edit.text = result.text
         edit.add_class("-visible")
         self.query_one("#console-prompt-queue-save", Button).disabled = False
@@ -560,6 +577,7 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             QueueMutationStatus.UNCHANGED,
         }:
             self._editing_entry_id = None
+            self._editing_baseline_text = None
             edit.text = ""
             edit.remove_class("-visible")
         self._accept_mutation(result)

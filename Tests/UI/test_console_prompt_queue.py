@@ -631,3 +631,138 @@ async def test_dirty_queue_edit_vetoes_navigation_and_preserves_text() -> None:
         assert console.flush_pending_work() is True, (
             "a saved edit loses nothing; navigation must be allowed again"
         )
+
+
+def _bare_modal_for_dirty_check(
+    *, editing: str | None, edit_text: str, baseline: str | None, read_result
+):
+    """A ConsolePromptQueueModal with only the dirty-check's seams stubbed.
+
+    Args:
+        editing: Value for ``_editing_entry_id``.
+        edit_text: Text the stubbed edit TextArea reports.
+        baseline: Value for ``_editing_baseline_text``.
+        read_result: What the stubbed controller's ``read_waiting_text``
+            returns.
+
+    Returns:
+        The bare modal instance.
+    """
+    modal = ConsolePromptQueueModal.__new__(ConsolePromptQueueModal)
+    modal._editing_entry_id = editing
+    modal._editing_baseline_text = baseline
+    modal._revision = 7
+    modal.session_id = "session-1"
+    modal._queue_controller = SimpleNamespace(
+        read_waiting_text=lambda *args, **kwargs: read_result
+    )
+    modal.query_one = lambda selector, widget_type=None: SimpleNamespace(
+        text=edit_text
+    )
+    return modal
+
+
+def test_has_unsaved_edit_unit_states() -> None:
+    """Isolated decision table for the dirty check (Qodo #2425).
+
+    The race states (STALE_REVISION / LOCKED / NOT_FOUND) must judge
+    against the edit-time baseline: the save path refuses them too, so
+    the veto is the user's only copy of the modified text.
+    """
+    from tldw_chatbook.Chat.console_prompt_queue import QueueMutationStatus
+
+    applied = SimpleNamespace(status=QueueMutationStatus.APPLIED, text="queued")
+
+    # No edit open: never dirty.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing=None, edit_text="anything", baseline=None, read_result=applied
+        ).has_unsaved_edit()
+        is False
+    )
+    # Edit open, text matches the current queue: clean.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="queued", baseline="queued", read_result=applied
+        ).has_unsaved_edit()
+        is False
+    )
+    # Edit open, text diverges from the current queue: dirty.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="typed", baseline="queued", read_result=applied
+        ).has_unsaved_edit()
+        is True
+    )
+    # Race states: current unreadable -> judge against the baseline.
+    for status in (
+        QueueMutationStatus.STALE_REVISION,
+        QueueMutationStatus.LOCKED,
+        QueueMutationStatus.NOT_FOUND,
+    ):
+        raced = SimpleNamespace(status=status, text=None)
+        assert (
+            _bare_modal_for_dirty_check(
+                editing="e1", edit_text="typed", baseline="queued", read_result=raced
+            ).has_unsaved_edit()
+            is True
+        ), f"{status}: modified text must stay protected through the race"
+        assert (
+            _bare_modal_for_dirty_check(
+                editing="e1", edit_text="queued", baseline="queued", read_result=raced
+            ).has_unsaved_edit()
+            is False
+        ), f"{status}: an unmodified edit protects nothing"
+    # Defensive: no baseline at all -> any typed text is protected.
+    raced = SimpleNamespace(status=QueueMutationStatus.NOT_FOUND, text=None)
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="typed", baseline=None, read_result=raced
+        ).has_unsaved_edit()
+        is True
+    )
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="", baseline=None, read_result=raced
+        ).has_unsaved_edit()
+        is False
+    )
+
+
+def test_flush_pending_work_unit_stack_walk() -> None:
+    """Isolated contract for the screen hook (Qodo #2425).
+
+    Vetoes (with one warning notification) when any stacked screen
+    reports an unsaved edit; allows when none does or none provides the
+    probe.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    class _App:
+        def __init__(self, stack):
+            self.screen_stack = stack
+
+    class _Host(ChatScreen):
+        # Textual's `app` is a read-only property; the bare unit needs a
+        # stubbed stack, so the subclass overrides the lookup.
+        _stub_app = None
+
+        @property
+        def app(self):
+            return self._stub_app
+
+    screen = _Host.__new__(_Host)
+    notes: list[str] = []
+    screen.notify = lambda message, **kwargs: notes.append(str(message))
+
+    plain = SimpleNamespace()  # no has_unsaved_edit at all
+    clean = SimpleNamespace(has_unsaved_edit=lambda: False)
+    dirty = SimpleNamespace(has_unsaved_edit=lambda: True)
+
+    screen._stub_app = _App([plain, clean])
+    assert ChatScreen.flush_pending_work(screen) is True
+    assert notes == []
+
+    screen._stub_app = _App([plain, clean, dirty])
+    assert ChatScreen.flush_pending_work(screen) is False
+    assert len(notes) == 1 and "Unsaved queue edit" in notes[0]
