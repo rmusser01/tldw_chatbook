@@ -91,6 +91,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
+from textual.events import AppFocus
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -370,6 +371,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 # (app.py has no `from __future__ import annotations`, and PEP 526
 # annotations on attribute targets ARE evaluated at runtime).
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundlePortabilityService,
     )
@@ -1943,6 +1945,11 @@ class LibraryIngestProvider(Provider):
 
     COMMANDS = (
         (
+            "Library: Chunking Lab",
+            "open_chunking_lab",
+            "Compare local chunking recipes and save reusable templates",
+        ),
+        (
             "Library: Import…",
             "open_library_ingest",
             "Open Library and import content",
@@ -1978,6 +1985,14 @@ class LibraryIngestProvider(Provider):
     def handle_library_ingest_action(self, action_id: str) -> None:
         """Handle Library ingest actions."""
         try:
+            if action_id == "open_chunking_lab":
+                _navigate_via_screen(
+                    self.app,
+                    "chunking_lab",
+                    "Opened local Chunking Lab",
+                    {"return_route": getattr(self.screen, "screen_name", "library")},
+                )
+                return
             if action_id == "open_library_ingest":
                 _navigate_via_screen(
                     self.app,
@@ -13066,14 +13081,16 @@ class TldwCli(
                 return False
 
         # TASK-1143 (F5): give the outgoing screen one awaited chance to
-        # ASK before it (and whatever it owns) is torn down -- e.g. Console
-        # unmounting cancels every in-flight run and denies every pending/
-        # parked approval round for its ConsoleChatController (see
-        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
-        # the flush-veto seam immediately above: False keeps the outgoing
-        # screen mounted exactly like a flush veto, only here the decision
-        # comes from a user-facing confirmation dialog rather than an
-        # unresolved save conflict.
+        # ASK before navigation proceeds. Mirrors the flush-veto seam
+        # immediately above: False keeps the outgoing screen in place,
+        # only here the decision comes from a user-facing confirmation
+        # dialog rather than an unresolved save conflict. TASK-31520 note:
+        # for REUSABLE routes leaving suspends rather than tears down, so
+        # a screen whose only stake was "leaving destroys my work" should
+        # return True unconditionally once flagged reusable (Console's
+        # does -- its runs and approvals survive navigation now); the seam
+        # itself stays for non-reusable screens and for hooks that gate on
+        # something other than teardown.
         confirm_navigation = getattr(current_screen, "confirm_navigation", None)
         if callable(confirm_navigation):
             try:
@@ -15587,6 +15604,19 @@ class TldwCli(
         self._ensure_screen_owned_css(resolved_tab)
 
         new_screen = screen_class(self)
+        # TASK-31520: retain the initial screen exactly like a navigated-to
+        # one. Without this, a reusable initial tab (chat is the default!)
+        # built here was never installed, so the first navigation away
+        # unmounted it and the first RETURN paid one full re-mint -- the
+        # exact cost reuse exists to retire, on the app's most common
+        # route, for every user.
+        initial_route = resolve_screen_route(resolved_screen_name)
+        if initial_route is not None and initial_route.reusable:
+            self._retain_reusable_navigation_screen(
+                resolved_tab,
+                self._current_runtime_identity(),
+                new_screen,
+            )
 
         # A configured default tab that is itself a legacy alias route (e.g.
         # "search"/"prompts"/"skills" -> Library) carries the same nav-context
@@ -16857,6 +16887,40 @@ class TldwCli(
             return self._stts_handler
         return await self._initialize_stts_service()
 
+    def on_app_focus(self, event: AppFocus) -> None:
+        """Forward a terminal focus regain to the active screen that wants it.
+
+        ``AppFocus`` is declared ``bubble=False`` and the driver posts it ONLY
+        to the App -- and events travel UP the DOM, never down, so a
+        screen-level ``@on(AppFocus)`` handler can never fire. (task-13 review
+        C1: one shipped as dead code precisely because its test called the
+        handler method directly instead of posting the real event.) The App is
+        therefore the only place this can be observed, and forwarding is the
+        only way a screen can react to it.
+
+        Duck-typed rather than isinstance-checked against ChatScreen: this
+        stays a one-line opt-in for any future screen, and avoids importing a
+        screen module into the app's hot import path. Never raises -- a focus
+        event must not be able to take the app down.
+
+        Args:
+            event: The focus-regained event; not consumed, so Textual's own
+                ``App._on_app_focus`` still runs (both the private framework
+                handler and this public one are dispatched, from different
+                classes in the MRO).
+        """
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            return
+        notify = getattr(screen, "notify_terminal_focus_regained", None)
+        if notify is None:
+            return
+        try:
+            notify()
+        except Exception:  # noqa: BLE001 -- a focus nudge must never crash the app
+            logger.warning("app: terminal-focus-regained forwarding failed")
+
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
 
@@ -17177,8 +17241,66 @@ class TldwCli(
             return
         await owner.close_and_drain()
 
+    def on_chunking_templates_changed(self, event) -> None:
+        """Refresh local ingest consumers without changing their selection/defaults."""
+        from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+            LibraryIngestCanvas,
+        )
+
+        event.stop()
+        for screen in self.screen_stack:
+            for canvas in screen.query(LibraryIngestCanvas):
+                canvas.invalidate_chunk_templates()
+
+    async def get_chunking_lab_coordinator(self) -> "LabCoordinator":
+        """Load one local profile owner; failed reads never grant write authority."""
+        from tldw_chatbook import config as lab_config
+        from tldw_chatbook.Chunking.lab_autosave import AutosaveWriter
+        from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
+        from tldw_chatbook.Chunking.lab_runner import LocalPreviewRunner, PreviewLimits
+        from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
+
+        lock = getattr(self, "_chunking_lab_owner_lock", None)
+        if lock is None:
+            lock = self._chunking_lab_owner_lock = asyncio.Lock()
+        async with lock:
+            directory = await asyncio.to_thread(lab_config.get_user_data_dir)
+            profile_key = str(directory)
+            owner = getattr(self, "_chunking_lab_coordinator", None)
+            if owner is not None and owner.session.profile_key == profile_key:
+                return owner
+            if owner is not None:
+                # Retain the owner if close fails, including its export/retry authority.
+                await owner.close()
+                self._chunking_lab_coordinator = None
+            writer = AutosaveWriter(
+                CheckpointStore(directory / "chunking_lab.sqlite3", profile_key)
+            )
+            runner = LocalPreviewRunner(PreviewLimits())
+            try:
+                owner = await LabCoordinator.load(profile_key, writer, runner)
+            except BaseException:
+                try:
+                    await writer.close()
+                except Exception as cleanup_error:  # noqa: BLE001 - retain the original load failure after releasing writer resources.
+                    logger.debug(
+                        "Chunking Lab writer cleanup failed: {}",
+                        type(cleanup_error).__name__,
+                    )
+                await runner.close()
+                raise
+            self._chunking_lab_coordinator = owner
+            return owner
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        lab_owner = getattr(self, "_chunking_lab_coordinator", None)
+        lab_error = None
+        if lab_owner is not None:
+            try:
+                await lab_owner.close()
+            except Exception as exc:  # noqa: BLE001 - complete unrelated lifecycle cleanup before re-raising.
+                lab_error = exc
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
@@ -17202,6 +17324,8 @@ class TldwCli(
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
+        if lab_error is not None:
+            raise lab_error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""

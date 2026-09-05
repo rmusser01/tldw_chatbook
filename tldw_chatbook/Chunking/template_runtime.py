@@ -21,13 +21,16 @@ production module constructs the fenced classes.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from loguru import logger
 
 from .Chunk_Lib import _synthesize_flat_offsets
+from .engine.chunker import Chunker
 from .engine.exceptions import TemplateError
 from .engine.templates import ChunkingTemplate, TemplateProcessor, TemplateStage
+from .lab_models import ExecutionReport, PreparedRecipe
 
 if TYPE_CHECKING:  # runtime import is lazy (circular with auto_selection)
     from .auto_selection import AutoDecision
@@ -39,6 +42,7 @@ __all__ = [
     "resolve_for_rechunk",
     "materialize_template_chunk_options",
     "apply_template",
+    "execute_prepared",
     "TemplateResolutionError",
 ]
 
@@ -510,9 +514,8 @@ def apply_template(
     """Run a template (pre + chunk + post) and synthesize the flat chunk
     contract (spec §6.4).
 
-    The vendored processor returns ``{'text': c, 'metadata': {}}`` on every
-    path — offsets, indices, and counts do not exist unless supplied here.
-    This function reconstructs them:
+    Shares structured execution with Lab, retaining engine metadata and
+    provenance. This legacy adapter reconstructs its established flat fields:
 
     1. The preprocessing stage runs FIRST and separately, so the transformed
        text the chunks actually come from is captured, along with which
@@ -537,6 +540,7 @@ def apply_template(
     Returns:
         Flat chunk dicts: ``text``, ``word_count``, ``chunk_index``,
         ``total_chunks``, ``metadata`` (always containing ``offset_basis``),
+        structured ``provenance``,
         and ``start_char``/``end_char`` when synthesizable.
 
     Raises:
@@ -545,48 +549,19 @@ def apply_template(
     if not isinstance(text, str) or not text.strip():
         return []
 
-    mapped = template_from_record(template)
-    opts = dict(options or {})
-    processor = TemplateProcessor()
-    final_options = {**mapped.default_options, **opts}
-
-    pre_stage = next((s for s in mapped.stages if s.name == "preprocess"), None)
-    chunk_stage = next(s for s in mapped.stages if s.name == "chunk")
-    post_stage = next((s for s in mapped.stages if s.name == "postprocess"), None)
-
-    # 1. Pre-stage separately: capture the transformed text and the basis.
-    pre_text = text
-    offset_basis = _SOURCE_BASIS
-    if pre_stage is not None:
-        pre_text, offset_basis = _run_pre_operations(
-            processor, pre_stage.operations, text, final_options
+    report, offset_basis, unchanged = _execute_report(template, text, options)
+    # Compatibility adapter: legacy consumers use whitespace-tolerant offsets.
+    # Reports carry only exact verified spans and never inherit these guesses.
+    offsets = (
+        _synthesize_flat_offsets(
+            report.transformed_text, [c["text"] for c in report.chunks]
         )
-
-    # 2. Chunk (+ postprocess) on the transformed text.
-    exec_stages = [chunk_stage] + ([post_stage] if post_stage is not None else [])
-    processed = processor.process_template(
-        pre_text, _with_stages(mapped, exec_stages), **opts
+        if unchanged
+        else None
     )
-    final_texts = [_chunk_text_of(chunk) for chunk in processed]
-
-    # 3. Offsets against the transformed text — only when postprocessing
-    #    left the chunk list untouched. Any rewrite/deletion/merge loses the
-    #    mapping, so the keys are omitted (never emitted as None).
-    offsets = None
-    if post_stage is None or not post_stage.operations:
-        offsets = _synthesize_flat_offsets(pre_text, final_texts)
-    else:
-        chunk_only = processor.process_template(
-            pre_text, _with_stages(mapped, [chunk_stage]), **opts
-        )
-        if [_chunk_text_of(chunk) for chunk in chunk_only] == final_texts:
-            offsets = _synthesize_flat_offsets(pre_text, final_texts)
-
-    # 4. Normalize to the flat contract (the one place guaranteeing no
-    #    present-but-None offset).
-    total = len(final_texts)
+    total = len(report.chunks)
     output: List[Dict[str, Any]] = []
-    for index, chunk in enumerate(processed):
+    for index, chunk in enumerate(report.chunks):
         chunk_text = _chunk_text_of(chunk)
         metadata = dict(chunk.get("metadata") or {})
         metadata["offset_basis"] = offset_basis
@@ -596,6 +571,7 @@ def apply_template(
             "chunk_index": index,
             "total_chunks": total,
             "metadata": metadata,
+            "provenance": deepcopy(chunk["provenance"]),
         }
         if offsets is not None:
             span = offsets[index]
@@ -608,25 +584,297 @@ def apply_template(
     return output
 
 
-def _with_stages(
-    template: ChunkingTemplate, stages: List[TemplateStage]
-) -> ChunkingTemplate:
-    """Copy ``template`` with its stages replaced by ``stages``."""
-    return ChunkingTemplate(
-        name=template.name,
-        description=template.description,
-        base_method=template.base_method,
-        stages=stages,
-        default_options=template.default_options,
-        metadata=template.metadata,
+def execute_prepared(recipe: PreparedRecipe, text: str) -> ExecutionReport:
+    """Execute a validated immutable Lab snapshot using the saved-apply seam.
+
+    Call inside the bounded preview worker, never on Textual's event loop.
+    Restored/tampered snapshots and changed runtime identities must be prepared
+    again before execution; the effective document alone grants no admission.
+    """
+    from .lab_preflight import PreviewUnsupportedError, prepare_recipe
+
+    checked = prepare_recipe(json.loads(recipe.authored_json), runtime=recipe.runtime)
+    if checked != recipe:
+        raise PreviewUnsupportedError(
+            "snapshot",
+            "Prepared snapshot does not match its authored recipe and runtime",
+        )
+    if not isinstance(text, str):
+        raise TypeError("Sample text must be a string")
+    report, _, _ = _execute_report(json.loads(recipe.effective_json), text)
+    return report
+
+
+def registered_template_operations() -> frozenset[str]:
+    """Expose live operation names without exporting the vendor mapper types."""
+    return frozenset(TemplateProcessor()._operations)
+
+
+def run_template_preprocessing_operation(
+    text: str, operation: str, config: dict[str, Any]
+) -> str | dict[str, Any]:
+    """Run one already-preflighted preprocessing operation for Lab admission.
+
+    Args:
+        text: Current preprocessing text.
+        operation: Registered preprocessing operation name.
+        config: Preflighted effective operation configuration.
+
+    Returns:
+        The vendor operation's unchanged string or structured result.
+    """
+    return TemplateProcessor()._operations[operation](text, config)
+
+
+class _ReportingChunker(Chunker):
+    """Observe the engine's actual sanitation without copying its algorithm."""
+
+    sanitized_text: str | None = None
+    resolved_method: str | None = None
+
+    def _sanitize_input(self, text: str, **kwargs: Any) -> str:
+        result = super()._sanitize_input(text, **kwargs)
+        if self.sanitized_text is None:
+            self.sanitized_text = result
+        return result
+
+    def _resolve_method(
+        self, method: Any, language: str | None, options: dict | None = None
+    ) -> str:
+        result = super()._resolve_method(method, language, options)
+        self.resolved_method = result
+        return result
+
+
+def sanitize_template_input(text: str) -> str:
+    """Apply the engine's real input sanitation without a security event.
+
+    Args:
+        text: Preprocessed template input.
+
+    Returns:
+        The engine-sanitized text used for resource admission.
+    """
+    return _ReportingChunker()._sanitize_input(text, suppress_security_log=True)
+
+
+def _execute_report(
+    template: dict, text: str, options: dict | None = None
+) -> tuple[ExecutionReport, str, bool]:
+    mapped = template_from_record(template)
+    chunker = _ReportingChunker()
+    processor = TemplateProcessor(chunker=chunker)
+    final_options = {**mapped.default_options, **(options or {})}
+    pre_stage = next((s for s in mapped.stages if s.name == "preprocess"), None)
+    chunk_stage = next(s for s in mapped.stages if s.name == "chunk")
+    post_stage = next((s for s in mapped.stages if s.name == "postprocess"), None)
+    pre_text, basis, pre_events = _run_pre_operations(
+        processor, pre_stage.operations if pre_stage else [], text, final_options
     )
+    data = processor._run_chunk_stage(
+        {"text": pre_text, "chunks": [], "metadata": {}},
+        chunk_stage,
+        final_options,
+        mapped.base_method,
+    )
+    transformed = (
+        chunker.sanitized_text if chunker.sanitized_text is not None else pre_text
+    )
+    if transformed != pre_text:
+        if basis == _SOURCE_BASIS:
+            basis = "preprocessed:engine_sanitize"
+        pre_events.append(
+            {"operation": "engine_sanitize", "changed_text": True, "metadata": {}}
+        )
+    word_spacing_changed = (
+        chunker.resolved_method == "words"
+        and " ".join(transformed.split()) != transformed
+    )
+    records = []
+    for index, raw in enumerate(data.get("chunks", [])):
+        raw = {"text": raw, "metadata": {}} if isinstance(raw, str) else deepcopy(raw)
+        chunk_text = _chunk_text_of(raw)
+        metadata = raw.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise TemplateError("Engine chunk metadata must be an object")
+        contributor = {
+            "index": index,
+            "metadata": metadata,
+            "fields": {k: v for k, v in raw.items() if k not in ("text", "metadata")},
+        }
+        record = {
+            "text": chunk_text,
+            "metadata": metadata,
+            "provenance": {
+                "contributors": [contributor],
+                "preprocessing": pre_events,
+                "operations": [],
+            },
+        }
+        # Word normalization can make one window equal a different source window.
+        # Until the processor exposes originating windows, refuse these maps even
+        # when the normalized output has one exact match elsewhere in the source.
+        start = (
+            transformed.find(chunk_text)
+            if chunk_text and not word_spacing_changed
+            else -1
+        )
+        if start >= 0 and transformed.find(chunk_text, start + 1) < 0:
+            record["span"] = {
+                "start": start,
+                "end": start + len(chunk_text),
+                "coordinate_space": "source" if transformed == text else "transformed",
+            }
+            record["provenance"]["mapping"] = {"status": "exact"}
+        else:
+            record["provenance"]["mapping"] = {
+                "status": "unavailable",
+                "reason": (
+                    "Word chunking normalizes source whitespace; originating windows are unavailable"
+                    if word_spacing_changed
+                    else "Output is not a unique exact substring of processed text"
+                ),
+            }
+        records.append(record)
+    original_texts = [record["text"] for record in records]
+    for stage_index, operation in enumerate(
+        post_stage.operations if post_stage else []
+    ):
+        records = _run_post_operation(
+            processor, records, operation, final_options, stage_index
+        )
+    for index, record in enumerate(records):
+        record["provenance"].update(
+            chunk_index=index,
+            total_chunks=len(records),
+            word_count=len(record["text"].split()),
+        )
+    report = ExecutionReport(
+        chunks=tuple(records),
+        transformed_text=transformed,
+        diagnostics=({"kind": "preprocessing", "operations": pre_events},),
+    )
+    return report, basis, original_texts == [record["text"] for record in records]
+
+
+def _run_post_operation(
+    processor: TemplateProcessor,
+    records: list[dict],
+    operation: dict,
+    options: dict,
+    stage_index: int,
+) -> list[dict]:
+    """Execute the original text operation and attribute its structured effects.
+
+    Attribution checks output against ordered inputs; it does not implement the
+    operation's splitting, filtering, formatting, or merge threshold algorithm.
+    """
+    name = operation.get("type") or operation.get("operation")
+    func = processor._operations.get(name)
+    if func is None:
+        return records  # legacy apply keeps parity's tolerant admission policy
+    params = operation.get("params")
+    config = {
+        **options,
+        **((operation.get("config") if params is None else params) or {}),
+    }
+    texts = func([record["text"] for record in records], config)
+    if not isinstance(texts, list) or any(not isinstance(item, str) for item in texts):
+        raise TemplateError(f"postprocessing.{name}: expected a list of text chunks")
+    output = []
+    cursor = 0
+    for index, text in enumerate(texts):
+        if name == "filter_empty":
+            while cursor < len(records) and records[cursor]["text"] != text:
+                cursor += 1
+            if cursor >= len(records):
+                raise TemplateError(
+                    "postprocessing.filter_empty: cannot attribute output"
+                )
+            sources = [records[cursor]]
+            cursor += 1
+        elif name == "merge_small":
+            start = cursor
+            joined = ""
+            while cursor < len(records):
+                joined = (
+                    joined + config.get("separator", "\n\n") if cursor > start else ""
+                ) + records[cursor]["text"]
+                cursor += 1
+                if joined == text:
+                    break
+            if joined != text:
+                raise TemplateError(
+                    "postprocessing.merge_small: cannot attribute output without losing records"
+                )
+            sources = records[start:cursor]
+        elif name in ("add_overlap", "add_metadata", "format_chunks") and len(
+            texts
+        ) == len(records):
+            sources = (
+                [records[index - 1], records[index]]
+                if name == "add_overlap" and index > 0 and config.get("size", 50) > 0
+                else [records[index]]
+            )
+        else:
+            raise TemplateError(
+                f"postprocessing.{name}: structured attribution unavailable"
+            )
+        primary = sources[-1] if name == "add_overlap" else sources[0]
+        record = deepcopy(primary)
+        record["text"] = text
+        if len(sources) > 1:
+            contributors = {
+                item["index"]: item
+                for source in sources
+                for item in source["provenance"]["contributors"]
+            }
+            record["provenance"]["contributors"] = list(contributors.values())
+            if name == "merge_small":
+                record["metadata"] = {}  # each contributor retains its own metadata
+            history = {
+                (event["stage_index"], event["output_index"]): event
+                for source in sources
+                for event in source["provenance"]["operations"]
+            }
+            record["provenance"]["operations"] = [
+                deepcopy(history[key]) for key in sorted(history)
+            ]
+        event = {
+            "operation": name,
+            "config": deepcopy(config),
+            "stage_index": stage_index,
+            "output_index": index,
+            "input_indices": [
+                item["index"]
+                for source in sources
+                for item in source["provenance"]["contributors"]
+            ],
+        }
+        if name == "add_overlap" and len(sources) > 1:
+            event["inserted_text"] = (
+                text[: -len(primary["text"])] if primary["text"] else text
+            )
+        record["provenance"]["operations"].append(event)
+        if len(sources) > 1 or text != primary["text"]:
+            record.pop("span", None)
+            record["provenance"]["mapping"] = {
+                "status": "unavailable",
+                "reason": f"postprocessing.{name} changed or combined text",
+            }
+        output.append(record)
+    return output
 
 
 def _chunk_text_of(chunk: Any) -> str:
     """Extract the text of a processor chunk (dict or bare string)."""
     if isinstance(chunk, dict):
-        return str(chunk.get("text", ""))
-    return str(chunk)
+        chunk = chunk.get("text")
+    if not isinstance(chunk, str):
+        raise TemplateError(
+            "Engine chunk text must be a string; structured chunks cannot be stringified"
+        )
+    return chunk
 
 
 def _run_pre_operations(
@@ -634,11 +882,8 @@ def _run_pre_operations(
     operations: List[Dict[str, Any]],
     text: str,
     base_options: Dict[str, Any],
-) -> tuple[str, str]:
-    """Run preprocessing operations individually to capture (a) the fully
-    transformed text and (b) the name of the first operation that rewrote
-    it — the two facts ``TemplateProcessor.process_template`` does not
-    surface (it only returns chunks).
+) -> tuple[str, str, list[dict]]:
+    """Capture transformed text, first rewrite, and each operation's metadata.
 
     Reuses the processor's own operation registry (``processor._operations``,
     the seam this module owns) and mirrors ``_run_preprocess_stage``'s
@@ -647,11 +892,12 @@ def _run_pre_operations(
     detection added. Unknown operations are skipped, exactly as upstream does.
 
     Returns:
-        ``(transformed_text, offset_basis)`` where ``offset_basis`` is
+        ``(transformed_text, offset_basis, events)`` where ``offset_basis`` is
         ``"source"`` or ``"preprocessed:<first-rewriting-op>"``.
     """
     transformed = text
     basis = _SOURCE_BASIS
+    events = []
     for operation in operations or []:
         if not isinstance(operation, dict):
             continue
@@ -672,5 +918,14 @@ def _run_pre_operations(
             new_text = transformed
         if basis == _SOURCE_BASIS and new_text != transformed:
             basis = f"preprocessed:{op_name}"
+        events.append(
+            {
+                "operation": op_name,
+                "changed_text": new_text != transformed,
+                "metadata": deepcopy(result.get("metadata", {}))
+                if isinstance(result, dict)
+                else {},
+            }
+        )
         transformed = new_text
-    return transformed, basis
+    return transformed, basis, events

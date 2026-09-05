@@ -64,6 +64,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
             "search",
             "conversation",
             "study",
+            "chunking_lab",
             "prompts",
             "skills",
             "writing",
@@ -200,6 +201,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
 )
 
 _ROUTABLE_LEGACY_ROUTES = {
+    "chunking_lab",
     "chat",
     "notes",
     "media",

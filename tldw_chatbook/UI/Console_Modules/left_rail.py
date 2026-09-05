@@ -86,10 +86,6 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
-from ...Widgets.Console.console_inspector_section import (
-    ConsoleInspectorSection,
-    ConsoleInspectorSectionState,
-)
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -101,7 +97,6 @@ from ...Workspaces.conversation_browser_state import (
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import (
     CONSOLE_AGENT_CANCEL_ALL_ID,
-    CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
 )
 from .frame import frame_console_region
@@ -338,7 +333,6 @@ class ConsoleLeftRail(Vertical):
         fleet_line: str,
         agent_status_line: str,
         agent_steps_text: str,
-        agent_fleet_section_state: ConsoleInspectorSectionState,
         agent_drilldown_active: bool,
         agent_full_log_available: bool,
         agent_steering_state: ConsoleAgentSteeringState | None = None,
@@ -380,14 +374,6 @@ class ConsoleLeftRail(Vertical):
             fleet_line: The pinned fleet-summary line text; empty hides it.
             agent_status_line: Agent section status text.
             agent_steps_text: Agent section step list text.
-            agent_fleet_section_state: Rows + header summary (PR2b Task 4,
-                spec §7 states 1/2) for the ``ConsoleInspectorSection`` that
-                renders the conversation's own sub-agent fleet -- computed
-                by ``ConsoleAgentController._console_agent_fleet_section_
-                state``. Empty rows/summary hides the section entirely
-                (nothing to show, or a sub-agent drill-down is active and
-                the status/steps Statics already carry that one child's
-                own detail -- state 3, unchanged).
             agent_drilldown_active: Whether a sub-agent drill-down is
                 active, driving the "Back" button's visibility.
             agent_full_log_available: Whether the "View full log" button
@@ -459,7 +445,6 @@ class ConsoleLeftRail(Vertical):
         self._fleet_line = fleet_line
         self._agent_status_line = agent_status_line
         self._agent_steps_text = agent_steps_text
-        self._agent_fleet_section_state = agent_fleet_section_state
         self._agent_drilldown_active = agent_drilldown_active
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
@@ -2221,7 +2206,11 @@ class ConsoleLeftRail(Vertical):
 
             # Agent (run inspector -- the watch-and-drill surface
             # for the live/most-recent agent run and its historical
-            # sub-agent runs).
+            # sub-agent runs). task-10: the fleet mini-section listing
+            # those sub-agent runs moved to the right (Inspector) rail
+            # (`#console-agent-section-subagents`, right_rail.py); this
+            # section keeps the status/steps Statics, the drilldown
+            # controls, and the steering bar.
             yield self._section_header(
                 "agent",
                 rail_state.agent_open,
@@ -2242,20 +2231,6 @@ class ConsoleLeftRail(Vertical):
                 id="console-agent-section-steps",
                 classes="console-agent-section-steps",
                 markup=False,
-            )
-            # This nested fleet subsection remains ordinary Agent content; only
-            # the direct Agent wrapper below owns a bounded viewport.
-            fleet_section = ConsoleInspectorSection(
-                title="Sub-agents",
-                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
-                rows=self._agent_fleet_section_state.rows,
-                summary=self._agent_fleet_section_state.summary,
-                collapsible=True,
-                open=False,
-                id="console-agent-section-subagents",
-            )
-            fleet_section.styles.display = (
-                "block" if self._agent_fleet_section_state.rows else "none"
             )
             cancel_all_button = Button(
                 "Cancel all agents",
@@ -2301,7 +2276,6 @@ class ConsoleLeftRail(Vertical):
                 rail_state.agent_open,
                 agent_status,
                 agent_steps,
-                fleet_section,
                 cancel_all_button,
                 steering_bar,
                 back_button,

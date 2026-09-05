@@ -797,7 +797,8 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert not list(rail.query("#console-staged-context-tray"))
 
         # Project-instruction status is the one-line Inspector preamble;
-        # staged context starts the scroll body below pinned authority.
+        # staged context starts the scroll body below pinned authority and
+        # the task-9 Environment/Tasks sections.
         tray = console.query_one("#console-staged-context-tray")
         project_status = console.query_one("#console-project-instruction-status")
         inspector_rail = console.query_one("#console-right-rail")
@@ -812,7 +813,11 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert project_status.parent is inspector_rail
         assert tray.parent is rail_body
         children = list(rail_body.children)
-        assert children[0] is tray
+        # task-9: Environment and Tasks sections are mounted first now,
+        # ahead of the staged-context tray.
+        assert children[0].id == "console-environment-section"
+        assert children[1].id == "console-tasks-section"
+        assert children[2] is tray
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work_section = console.query_one("#console-live-work-section")
         assert live_work_section in readiness.ancestors

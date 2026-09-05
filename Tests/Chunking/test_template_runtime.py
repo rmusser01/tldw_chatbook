@@ -135,6 +135,29 @@ class TestTemplateFromRecord:
 
 
 class TestApplyTemplate:
+    @pytest.mark.parametrize("options", [None, {"method": None}, {"method": " WORDS "}])
+    def test_saved_apply_does_not_claim_exact_mapping_for_normalized_repetitions(
+        self, options
+    ):
+        template = {
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}}
+        }
+        output = tr.apply_template(template, "one  two one two", options)
+        assert [chunk["text"] for chunk in output] == ["one two", "one two"]
+        assert all(
+            chunk["provenance"]["mapping"]["status"] == "unavailable"
+            for chunk in output
+        )
+
+    def test_legacy_apply_does_not_use_strict_lab_admission(self):
+        template = {
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+            "preprocessing": [{"operation": "unknown_operation"}],
+        }
+        assert [
+            chunk["text"] for chunk in tr.apply_template(template, "one two three")
+        ] == ["one two", "three"]
+
     def test_apply_runs_pre_and_post_pinned_exact_output(self):
         # AC 10: preprocessing AND postprocessing both run; the output is an
         # exact pinned value that differs from the chunking stage alone.
@@ -233,6 +256,42 @@ class TestApplyTemplate:
     def test_apply_rejects_template_missing_chunking(self):
         with pytest.raises(TemplateError, match="chunking"):
             tr.apply_template({"preprocessing": []}, "some text")
+
+
+# ---------------------------------------------------------------------------
+# Bounded Lab admission adapters — real vendor behavior stays runtime-owned
+# ---------------------------------------------------------------------------
+
+
+class TestAdmissionRuntimeAdapters:
+    def test_operation_preserves_string_output(self):
+        assert (
+            tr.run_template_preprocessing_operation(
+                "alpha   beta", "normalize_whitespace", {}
+            )
+            == "alpha beta"
+        )
+
+    def test_operation_preserves_structured_metadata(self):
+        text = "# Intro\nbody"
+        assert tr.run_template_preprocessing_operation(
+            text,
+            "extract_sections",
+            {"pattern": r"^#+\s+(.+)$"},
+        ) == {
+            "text": text,
+            "metadata": {"sections": [{"title": "Intro", "position": 0}]},
+        }
+
+    @pytest.mark.production_path
+    def test_sanitize_matches_engine_without_security_event(self):
+        from tldw_chatbook.Chunking.engine.security_logger import get_security_logger
+
+        security_logger = get_security_logger()
+        before = list(security_logger.get_events(limit=100_000))
+
+        assert tr.sanitize_template_input("alpha\x00 beta") == "alpha  beta"
+        assert security_logger.get_events(limit=100_000) == before
 
 
 # ---------------------------------------------------------------------------

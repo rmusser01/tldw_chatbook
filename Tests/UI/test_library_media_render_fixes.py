@@ -49,8 +49,11 @@ from Tests.UI.test_library_shell import (
     LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
     _open_media_find,
+    _painted_cells,
+    _row_is_painted_focused,
     _seed_conversations,
     _submit_content_search_query,
+    _top_border_row,
     _two_conversations,
     _wait_for_condition,
     _wait_for_selector,
@@ -1182,6 +1185,8 @@ async def test_f6_content_stop_is_visible_and_content_still_paints():
     scroller, but nothing on screen said so. The cue must be the EXISTING
     border, never an outline: the app-global ``*:focus`` outline paints
     OVER the outermost rows, which is why this asserts painted text too.
+    task-31634 upgraded the tint to a heavy border (glyphs, not colour
+    alone); the sibling test below diffs the painted border row.
     """
     host = _global_key_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -1207,10 +1212,11 @@ async def test_f6_content_stop_is_visible_and_content_still_paints():
 
         box = screen.query_one("#library-media-viewer-content")
         focused_border = box.styles.border_top
-        assert focused_border[0] == unfocused[0] == "solid", (
-            focused_border,
-            unfocused,
-        )
+        # task-31634: the cue is now the GLYPHS as well as the colour --
+        # heavy when focused, the unchanged solid otherwise. Still a
+        # one-cell border either way, so no reading row moves.
+        assert unfocused[0] == "solid", unfocused
+        assert focused_border[0] == "heavy", focused_border
         assert focused_border[1] != unfocused[1], (focused_border, unfocused)
         painted = _painted(host, box.region)
         assert "product demo video walks through" in painted.lower(), painted
@@ -1966,3 +1972,177 @@ async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatc
         assert generate.disabled is False
         assert str(generate.label) == "Generate"
         assert generate.tooltip is None
+
+
+# ---------------------------------------------------------------------------
+# task-31631: select mode is reachable by keyboard, and "Done" leaves the
+# "sort:" slot. Critique #5 P1: from the rail, "s" entered select mode but
+# F6, Down and Space all no-opped with no focus painted anywhere -- only a
+# mouse click on the one-cell "☐" seeded focus. Painted on purpose (the
+# task-31221 lesson): the row's focus cue is a STYLE (focus background +
+# bold underline, ``outline: none``), so a region assertion cannot tell a
+# focused row from an unfocused one.
+# ---------------------------------------------------------------------------
+
+
+async def _enter_media_select_mode(screen, pilot):
+    """Stand on the rail row, press "s", and wait for select mode to settle."""
+    screen.set_focus(screen.query_one("#library-row-browse-media", Button))
+    await pilot.pause()
+    await pilot.press("s")
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_media_select_mode,
+        message="Select mode never engaged after 's'.",
+    )
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
+    """task-31631 AC#1/AC#4: "s" from the rail lands a painted focus cue on a
+    ROW -- and keeps it there when a background worker's recompose rebuilds
+    the rows -- so Down and Space work immediately, as the footer promises."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+
+        focused = screen.focused
+        assert focused is not None, "nothing is focused after entering select mode"
+        assert focused.has_class("library-media-row"), (
+            f"focus landed on {focused!r}, not a media row"
+        )
+        assert _row_is_painted_focused(host, focused), _painted(host, focused.region)
+        # The cue is the row's own, not something every row paints.
+        other = screen.query_one("#library-media-row-1", Button)
+        assert not any(
+            style.underline for _text, style in _painted_cells(host, other.region)
+        ), _painted(host, other.region)
+
+        # Any of the screen's background workers ends in its own whole-screen
+        # recompose, which rebuilds the row Buttons. A one-shot focus dies
+        # with the widget it was set on; the armed entry-focus request does
+        # not. (The Reader's general case is task-31567's.)
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        focused_after = screen.focused
+        assert (
+            focused_after is not None
+            and focused_after.has_class("library-media-row")
+            and _row_is_painted_focused(host, focused_after)
+        ), f"focus was {focused_after!r} after a background recompose"
+
+        # ...and the keys the footer promises work immediately.
+        await pilot.press("down")
+        await pilot.press("space")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_row_selection.count == 1,
+            message="Down then Space did not select a row.",
+        )
+        await pilot.pause()
+        canvas = screen.query_one("#library-media-canvas")
+        assert "1 selected" in _painted(host, canvas.region)
+
+
+_BROWSE_TOOLBAR_SLOTS = (
+    "#library-media-type-filter",
+    "#library-media-sort",
+    "#library-media-export",
+    "#library-media-trash-open",
+    "#library-media-review",
+)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_done_does_not_take_the_sort_slot(size):
+    """task-31631 AC#3: "Done" must not land where "sort:" sat in browse mode.
+
+    The habitual click on the sort chooser otherwise silently becomes "leave
+    select mode and discard the selection" -- so the pin covers every browse
+    toolbar slot, not only sort's: trading sort's cells for Export…'s would
+    be the same bug wearing a different label.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        browse_slots = {}
+        for selector in _BROWSE_TOOLBAR_SLOTS:
+            region = screen.query_one(selector, Button).region
+            assert region.width > 0, selector
+            browse_slots[selector] = region
+
+        await _enter_media_select_mode(screen, pilot)
+        done = screen.query_one("#library-media-select-toggle", Button)
+        assert str(done.label) == "Done"
+        assert done.region.width > 0
+        for selector, region in browse_slots.items():
+            overlaps = not (
+                done.region.right <= region.x
+                or done.region.x >= region.right
+                or done.region.bottom <= region.y
+                or done.region.y >= region.bottom
+            )
+            assert not overlaps, (
+                f"Done at {done.region} overlaps the browse-mode {selector} "
+                f"slot {region}"
+            )
+        # Still a whole word, painted inside the pane.
+        canvas = screen.query_one("#library-media-canvas")
+        assert "Done" in _painted(host, canvas.region)
+        assert done.region.right <= canvas.region.right
+
+
+# ---------------------------------------------------------------------------
+# task-31634: the Reader pane's focus must not be colour-only. Critique #5
+# measured its top border recolouring 1.01:1 -> 6.96:1 with BYTE-IDENTICAL
+# glyphs, so a monochrome or colour-blind reader gets no signal that F6
+# landed. Buttons on the same screen already change glyphs (heavy outline).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reader_focus_changes_border_glyphs_not_only_colour():
+    """task-31634 AC#1/AC#2: the focused Reader box paints a HEAVY border.
+
+    Plain text on purpose (the AC is "visible in a plain-text capture"):
+    the previous cue was a recolour of the same ``─`` glyphs, which a
+    plain capture cannot tell apart at all.
+    """
+    host = _global_key_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        box = screen.query_one("#library-media-viewer-content")
+        screen.query_one("#library-search-input", Input).focus()
+        await pilot.pause()
+        unfocused = _top_border_row(host, box)
+
+        for _ in range(6):
+            await pilot.press("f6")
+            await pilot.pause()
+            if str(getattr(screen.focused, "id", "")) in {
+                "library-media-viewer-content-text",
+                "library-media-viewer-content",
+            }:
+                break
+        assert str(getattr(screen.focused, "id", "")) in {
+            "library-media-viewer-content-text",
+            "library-media-viewer-content",
+        }, screen.focused
+        focused = _top_border_row(host, screen.query_one(
+            "#library-media-viewer-content"
+        ))
+
+        assert focused != unfocused, (
+            f"focus is colour-only: {unfocused!r} == {focused!r}"
+        )
+        assert unfocused.startswith("┌") and "─" in unfocused, unfocused
+        assert focused.startswith("┏") and "━" in focused, focused
+        assert "─" not in focused, focused

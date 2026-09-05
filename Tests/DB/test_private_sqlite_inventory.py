@@ -589,10 +589,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; C52 is the encrypted
         # Personal Context repository's private local database. C53 is the
         # encrypted local-only Personal Context interview draft database.
+        # C54 is the dedicated profile-local Chunking Lab recovery owner.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 54)
+        for number in range(1, 55)
         if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [
@@ -954,6 +955,14 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
     assert "notes.sync_state" not in {
         backup_row["owner_id"] for backup_row in _inventory_rows("B")
     }
+
+
+def test_chunking_lab_recovery_is_a_private_non_backup_owner() -> None:
+    row = next(row for row in _inventory_rows("C") if row["id"] == "C54")
+    assert row["owner_id"] == "db.chunking_lab"
+    policy = SQLITE_OWNER_REGISTRY[row["owner_id"]]
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.centralized_backup_allowed is False
 
 
 def test_connection_and_backup_rows_record_completed_helper_migrations() -> None:

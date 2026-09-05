@@ -22,6 +22,12 @@ from tldw_chatbook.Constants import (
 from tldw_chatbook.app import TabNavigationProvider
 
 
+def test_chunking_lab_is_a_separate_library_tool_command():
+    from tldw_chatbook.app import LibraryIngestProvider
+    assert any(command[1] == "open_chunking_lab" for command in LibraryIngestProvider.COMMANDS)
+    assert "chunking_lab" not in TabNavigationProvider.command_palette_tab_ids()
+
+
 def test_tab_navigation_provider_routes_settings_and_mcp_separately():
     assert TabNavigationProvider.route_for_tab(TAB_SETTINGS) == "settings"
     assert TabNavigationProvider.route_for_tab(TAB_MCP) == "mcp"
