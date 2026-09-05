@@ -12036,10 +12036,104 @@ class TldwCli(
         before it (executed: ``Docs/superpowers/plans/2026-08-14-headless-
         wake-task-0-report.md``, P3b). Screens still die on navigation;
         only the runtime survives.
+
+        Second documented exception, since TASK-24452: routes whose
+        ``ScreenRoute.reusable`` flag is set bypass this constructor on
+        warm visits entirely (``_reusable_navigation_screen``). That reuse
+        is safe ONLY because the instance is INSTALLED: Textual's
+        ``_replace_screen`` suspends an installed screen instead of
+        removing it, so the teardown race above never starts -- the
+        2026-07-11 freeze requires an unmount to be in flight, and an
+        installed screen is never unmounted mid-session.
         """
         if screen_name == TAB_RESEARCH_WORKSPACE:
             return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
+
+    def _reusable_navigation_screen(
+        self,
+        current_tab_value: str,
+        runtime_identity: "RuntimeIdentity",
+    ) -> Any | None:
+        """Return the cached installed instance for a reusable route, if any.
+
+        TASK-24452. The cache is keyed by canonical route id and scoped to
+        the runtime identity that built the instance: an identity change
+        (the same scope ``ScreenStateStore`` keys its snapshots by) drops
+        and uninstalls the cached screen rather than leaking one identity's
+        live widget state into another's session.
+
+        Args:
+            current_tab_value: Canonical route id for the destination.
+            runtime_identity: The current snapshot scope.
+
+        Returns:
+            The still-valid installed instance, or ``None`` when the route
+            has not been visited yet (or its instance was invalidated).
+        """
+        cache = getattr(self, "_reusable_screen_instances", None)
+        if cache is None:
+            return None
+        entry = cache.get(current_tab_value)
+        if entry is None:
+            return None
+        cached_identity, screen = entry
+        if cached_identity == runtime_identity:
+            return screen
+        # Identity flipped (local <-> server): the cached instance carries
+        # the OLD identity's live widget state and must not be resumed under
+        # the new one. Drop it from the cache first -- that alone guarantees
+        # it is never reused -- then best-effort dispose. A screen still in
+        # the stack cannot be uninstalled (Textual raises); it stays
+        # installed-and-suspended until app exit: a bounded leak of one
+        # instance per identity flip, preferred over a teardown race on the
+        # rare path.
+        cache.pop(current_tab_value, None)
+        try:
+            if all(screen not in stack for stack in self._screen_stacks.values()):
+                self.uninstall_screen(screen)
+                screen.remove()
+        except Exception:
+            logger.debug(
+                "Could not dispose stale reusable screen (route=%s).",
+                current_tab_value,
+            )
+        return None
+
+    def _retain_reusable_navigation_screen(
+        self,
+        current_tab_value: str,
+        runtime_identity: "RuntimeIdentity",
+        screen: Any,
+    ) -> None:
+        """Install and cache a freshly built reusable screen (TASK-24452).
+
+        Installing is the load-bearing half: only installed screens survive
+        ``switch_screen`` without being unmounted. A failure to install
+        falls back silently to the fresh-instance lifecycle -- the screen
+        simply is not cached, and the next visit constructs again.
+        """
+        try:
+            # id() in the name: a stale same-route instance can legitimately
+            # outlive its cache entry (see the bounded-leak note in
+            # `_reusable_navigation_screen`), and `install_screen` raises on
+            # a duplicate name -- a lingering install must never block the
+            # replacement's.
+            self.install_screen(
+                screen, name=f"tldw-reusable:{current_tab_value}:{id(screen)}"
+            )
+        except Exception:
+            logger.warning(
+                "Could not install reusable screen; falling back to "
+                "per-visit construction (route=%s).",
+                current_tab_value,
+            )
+            return
+        cache = getattr(self, "_reusable_screen_instances", None)
+        if cache is None:
+            cache = {}
+            self._reusable_screen_instances = cache
+        cache[current_tab_value] = (runtime_identity, screen)
 
     def prepare_personal_context_interview_request(
         self,
@@ -13160,43 +13254,73 @@ class TldwCli(
                 )
 
         if screen_class:
-            try:
-                new_screen = self._create_navigation_screen(screen_name, screen_class)
-            except Exception as exc:
-                # A destination that cannot even be constructed is a broken
-                # destination, never a dead app. This ran unguarded until
-                # 2026-07-28: the MCP canvases read `Select.NULL` (Textual 8+)
-                # at construction time, so on an older Textual the
-                # AttributeError escaped this handler and Textual exited the
-                # whole app rather than the user simply failing to reach MCP.
-                logger.opt(exception=True).error(
-                    "Screen construction failed (route={}, exception_category={}).",
-                    screen_name,
-                    type(exc).__name__,
-                )
-                self._notify_navigation_failure(screen_name)
-                return False
-
-            restored_state = self.screen_state_store.restore(
-                current_tab_value,
-                runtime_identity,
+            # TASK-24452: a reusable route's screen survives navigation as an
+            # installed (suspended, never unmounted) instance; warm visits
+            # skip construction, mount, and snapshot-restore entirely.
+            route = resolve_screen_route(screen_name)
+            reusable_route = bool(route is not None and route.reusable)
+            new_screen = (
+                self._reusable_navigation_screen(current_tab_value, runtime_identity)
+                if reusable_route
+                else None
             )
-            restore_state = getattr(new_screen, "restore_state", None)
-            if restored_state is not None and callable(restore_state):
+            screen_reused = new_screen is not None
+            if new_screen is None:
                 try:
-                    restore_state(restored_state)
-                    logger.debug(
-                        "Restored screen snapshot for canonical route: %s",
-                        current_tab_value,
+                    new_screen = self._create_navigation_screen(
+                        screen_name, screen_class
                     )
                 except Exception as exc:
-                    self.screen_state_store.discard(current_tab_value)
-                    logger.warning(
-                        "Screen snapshot restore failed "
-                        "(route=%s, exception_category=%s).",
-                        current_tab_value,
+                    # A destination that cannot even be constructed is a broken
+                    # destination, never a dead app. This ran unguarded until
+                    # 2026-07-28: the MCP canvases read `Select.NULL` (Textual 8+)
+                    # at construction time, so on an older Textual the
+                    # AttributeError escaped this handler and Textual exited the
+                    # whole app rather than the user simply failing to reach MCP.
+                    logger.opt(exception=True).error(
+                        "Screen construction failed (route={}, exception_category={}).",
+                        screen_name,
                         type(exc).__name__,
                     )
+                    self._notify_navigation_failure(screen_name)
+                    return False
+                if reusable_route:
+                    self._retain_reusable_navigation_screen(
+                        current_tab_value, runtime_identity, new_screen
+                    )
+
+            if screen_reused:
+                # The live instance IS the state -- restoring an older
+                # snapshot over it would regress whatever the user last did
+                # there. The snapshot machinery still runs for the OUTGOING
+                # side above (projections published from `save_state` have
+                # consumers beyond restore).
+                logger.debug(
+                    "Reusing installed screen instance for canonical "
+                    "route: %s",
+                    current_tab_value,
+                )
+            else:
+                restored_state = self.screen_state_store.restore(
+                    current_tab_value,
+                    runtime_identity,
+                )
+                restore_state = getattr(new_screen, "restore_state", None)
+                if restored_state is not None and callable(restore_state):
+                    try:
+                        restore_state(restored_state)
+                        logger.debug(
+                            "Restored screen snapshot for canonical route: %s",
+                            current_tab_value,
+                        )
+                    except Exception as exc:
+                        self.screen_state_store.discard(current_tab_value)
+                        logger.warning(
+                            "Screen snapshot restore failed "
+                            "(route=%s, exception_category=%s).",
+                            current_tab_value,
+                            type(exc).__name__,
+                        )
 
             navigation_context = getattr(message, "screen_context", {}) or {}
             if not navigation_context:

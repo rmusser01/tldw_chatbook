@@ -364,6 +364,20 @@ class HomeScreen(BaseAppScreen):
         self._refresh_home_content_snapshot()
         self._refresh_home_active_work_cache()
 
+    def on_screen_resume(self) -> None:
+        # No super().on_screen_resume(): same MRO contract as on_mount --
+        # Textual invokes BaseAppScreen's handler separately for this event.
+        #
+        # TASK-24452: Home is a reusable route (`ScreenRoute.reusable`), so
+        # `on_mount` fires once per app run and THIS hook is the per-visit
+        # seam -- without it, revisits would show the previous visit's
+        # dashboard. All three refreshers are `exclusive=True` worker
+        # groups, so the first visit's mount+resume double-fire coalesces
+        # instead of doing the work twice.
+        self._refresh_home_chatbook_artifact_snapshot()
+        self._refresh_home_content_snapshot()
+        self._refresh_home_active_work_cache()
+
     @work(exclusive=True, group="home-refresh-chatbook-artifact-snapshot", thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
