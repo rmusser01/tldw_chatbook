@@ -98,3 +98,14 @@ ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
 # (a shared wire_bypass_ingest_controller(screen) helper call inserted at
 # each affected site) -- mechanical seeding, not new logic.
 68a896993e2c28e5026e1671452ca37563a62d68
+
+# Wave-5 task 3: ingest cleanup (ingest series 3/3). Screen shim block
+# deleted; 37 screen-side + 297 test-side flat-name occurrences
+# retargeted to self._ingest_state.<field>/<receiver>._ingest_state.
+# <field> (a mechanical receiver swap, no assertion values changed); 6
+# dead screen delegators and 9 dead imports removed; docstring/
+# census-listing corrections in library_ingest_controller.py -- every
+# per-line change is a mechanical receiver swap, a removal, or a comment
+# fix, not new logic, same shape as the export/collections/search+RAG/
+# skills series' own closing commits above.
+e6148e29acf10fe1b74f6098bf8775136e1234e6
