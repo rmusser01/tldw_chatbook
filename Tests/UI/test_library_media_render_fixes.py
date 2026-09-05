@@ -523,10 +523,72 @@ async def test_analyze_overwrite_choice_paints_both_options():
         await pilot.pause()
         assert receipt.region.width <= _items_pane_width(screen)
         painted = _painted(host, receipt.region)
-        assert "1 of 2 already analysed" in painted, painted
+        assert "1 of 2 already analyzed" in painted, painted
         assert "—" not in painted, painted  # R3: no dangling dash
         assert "Skip them" in painted, painted
         assert "Overwrite" in painted, painted
+        # (final review, I-1) A THIRD button did not fit the Items pane at
+        # its 36-cell floor: the row painted "Skip them  Overwrite  Dism".
+        # "Skip them" already IS the change-nothing outcome and retires the
+        # card, so the choice state offers no Dismiss at all.
+        assert "Dism" not in painted, painted
+        assert not screen.query("#library-media-analyze-receipt-dismiss")
+
+
+@pytest.mark.asyncio
+async def test_a_scope_change_clears_the_armed_analyze_choice():
+    """(final review, I-1/M-3) The choice is a PENDING action over a
+    snapshot of ids, armed after select mode already exited -- so nothing
+    used to invalidate it. Changing the browse scope (here: the filter)
+    must retire it rather than keep offering "Overwrite" over ids the user
+    can no longer see."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_choice = (
+            ("local:media:1", "local:media:2"),
+            ("local:media:2",),
+        )
+        _sync_library_canvas(screen, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
+
+        screen._request_library_media_filter("beta")
+        await pilot.pause()
+        assert screen._library_media_analyze_choice is None
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+
+
+@pytest.mark.asyncio
+async def test_an_import_origin_run_paints_no_receipt_on_the_media_canvas():
+    """(final review, I-2) An "Analyze N skipped" run drives the SAME
+    screen-owned counters, so its progress used to render as a Media
+    receipt on a canvas the user never started it from -- whose "Retry
+    failed" would then re-run those ids as a media run, leaving the Import
+    rows saying "analysis failed" forever. The Import surface has its own
+    per-row receipts; the Media canvas must show nothing for that run,
+    while it runs and after it settles."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_origin = "import"
+        screen._library_media_analyze_running = True
+        screen._library_media_analyze_total = 3
+        screen._library_media_analyze_done = 1
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+
+        screen._library_media_analyze_running = False
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+        assert not screen.query("#library-media-analyze-retry")
 
 
 @pytest.mark.asyncio

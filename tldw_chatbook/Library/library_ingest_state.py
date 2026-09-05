@@ -2494,6 +2494,7 @@ def build_library_ingest_state(
     last_submission_available: bool = False,
     retry_confirm_armed: bool = False,
     analyze_outcomes: Mapping[str, tuple[bool, str]] | None = None,
+    analyze_skipped_media_ids: tuple[str, ...] | None = None,
     analysis_action_ready: bool = False,
     analyze_running: bool = False,
 ) -> LibraryIngestCanvasState:
@@ -2509,6 +2510,14 @@ def build_library_ingest_state(
             has recorded so far, via its ``on_item_done`` callback. Overlays
             each outcome onto its own row's progress line and excludes a
             successfully-fixed id from ``analyze_skipped_media_ids``.
+        analyze_skipped_media_ids: (final review, M-7) The caller's own
+            already-computed ``library_ingest_analyze_skipped_ids(jobs,
+            analyze_outcomes)`` -- the screen resolves it once to gate the
+            "Analyze N skipped" button, and this lets that same tuple carry
+            straight into the state instead of a second, redundant call
+            here. ``None`` (every unit test, and any caller with nothing
+            handy) falls back to computing it fresh from ``jobs`` and
+            ``analyze_outcomes``, so passing it is a pure optimisation.
         analysis_action_ready: Whether the analysis provider is callable
             right now (Task 1's resolver reason is ``""``). Resolved ONCE
             by the caller (it can do I/O) -- never per row.
@@ -2596,9 +2605,10 @@ def build_library_ingest_state(
         for job in jobs
     )
     queue_groups, latest_batch_line = build_ingest_queue_groups(jobs)
-    analyze_skipped_media_ids = library_ingest_analyze_skipped_ids(
-        jobs, resolved_analyze_outcomes
-    )
+    if analyze_skipped_media_ids is None:
+        analyze_skipped_media_ids = library_ingest_analyze_skipped_ids(
+            jobs, resolved_analyze_outcomes
+        )
     show_analyze_skipped = bool(analyze_skipped_media_ids) and bool(
         analysis_action_ready
     )

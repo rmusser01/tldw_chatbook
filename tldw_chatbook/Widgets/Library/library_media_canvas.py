@@ -972,7 +972,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # so a trailing "— " pointed at nothing. ``analyze_total``
                 # is the pressed selection's own size on this path.
                 analyze_copy = (
-                    f"{analyze_choice} of {analyze_total} already analysed"
+                    f"{analyze_choice} of {analyze_total} already analyzed"
                 )
             elif analyze_running:
                 # 1-based position of the item being analyzed right now.
@@ -1028,11 +1028,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             compact=True,
                         )
                         yield self._gate_stale_action(retry, "Retry failed")
-                    if not analyze_running:
+                    if not analyze_running and not analyze_choice:
                         # A run in flight has nothing to dismiss yet: the
                         # counts are still moving and Dismiss would either
                         # lie (the run continues) or imply a cancel this
                         # gesture does not offer.
+                        #
+                        # (final review, I-1) The armed CHOICE has no
+                        # Dismiss either: three 13-cell buttons overflow
+                        # the Items pane at its 36-cell floor (the row
+                        # painted "Skip them  Overwrite  Dism", the same
+                        # clipping task-31270 fixed for "Und"), and
+                        # "Skip them" already IS the change-nothing
+                        # outcome -- it retires the card when there is
+                        # nothing left to run.
                         analyze_dismiss = Button(
                             "Dismiss",
                             id="library-media-analyze-receipt-dismiss",

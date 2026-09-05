@@ -21,7 +21,6 @@ import pytest
 from textual.widgets import Button
 from textual.worker import WorkerState
 
-import tldw_chatbook.app as app_module
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -29,6 +28,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from Tests.Library.test_library_ingest_state import _skipped_job
 from Tests.UI.test_library_ingest_retry_last import _ingest_screen, _pilot_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -36,34 +36,6 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_selector,
 )
-
-
-def _skipped_job(**overrides) -> LibraryIngestJob:
-    """A DONE job whose ``progress`` was built by the REAL producer.
-
-    (fix round 1, M-5) See the identical fixture/rationale in
-    ``Tests/Library/test_library_ingest_state.py`` -- nothing used to tie
-    the hand-written ``progress={"analysis_skipped": ...}`` to
-    ``app._library_ingest_done_progress``, so renaming that key would have
-    broken the feature in production behind a fully green suite.
-    """
-    source_path = overrides.get("source_path", "/tmp/notes.txt")
-    progress = overrides.pop("progress", None) or app_module._library_ingest_done_progress(
-        source_path,
-        was_duplicate=False,
-        payload={"analysis_skipped_reason": "no analysis provider is configured"},
-    )
-    defaults = dict(
-        job_id="ingest-job-1",
-        source_path=source_path,
-        state=IngestJobState.DONE,
-        media_id=7,
-        submitted_at=100.0,
-        finished_at=101.0,
-        progress=progress,
-    )
-    defaults.update(overrides)
-    return LibraryIngestJob(**defaults)
 
 
 def _ready_provider(monkeypatch) -> None:
@@ -415,7 +387,7 @@ async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
         )
         assert not screen.query("#library-media-analyze-skip")
         assert any(
-            message == "1 already analysed · skipped" for message, _ in notices
+            message == "1 already analyzed · skipped" for message, _ in notices
         ), notices
 
 
@@ -461,7 +433,7 @@ async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_not
         assert analyzed == []
         assert screen._library_media_analyze_choice is None
         assert not screen.query("#library-media-analyze-skip")
-        assert any(message == "Nothing left to analyse" for message, _ in notices), (
+        assert any(message == "Nothing left to analyze" for message, _ in notices), (
             notices
         )
 
@@ -586,3 +558,44 @@ async def test_import_run_that_dies_with_the_screen_names_the_import_run(
             "Analyze N skipped to continue"
         ), notices
         assert notices[0][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_a_structural_change_during_a_no_fallback_repaint_still_repaints(
+    monkeypatch,
+):
+    """(Task 3 re-review, N-1) The run's ``finally`` repaint passes
+    ``allow_screen_fallback=False`` so an unmount mid-run cannot schedule a
+    whole-screen recompose on a dying screen. When the state ALSO changed
+    structurally in that same window (a pre-flight result landing, the
+    media DB going away), the barred branch returned having only stored
+    ``canvas.state`` -- a plain attribute, not a reactive -- so nothing
+    repainted at all and "Analyze N skipped" stayed disabled until some
+    unrelated later tick. The fallback being barred must degrade to the
+    TARGETED repaint, not to no repaint."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore([_skipped_job()], next_id=2)
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+        screen._library_media_analyze_running = True
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        assert button.disabled is True
+
+        # Exactly what the run's ``finally`` does -- except a structural
+        # change (``unavailable_line``) landed in the same window.
+        screen._library_media_analyze_running = False
+        app.media_db = None
+        screen._update_library_ingest_dynamic_regions(allow_screen_fallback=False)
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            screen.query_one("#library-ingest-analyze-skipped", Button).disabled
+            is False
+        ), "the action must re-enable within the run's own settling sync"
+

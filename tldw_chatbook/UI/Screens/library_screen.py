@@ -2632,8 +2632,8 @@ class LibraryScreen(BaseAppScreen):
         # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run. One
         # in-flight flag (a second press is refused with a notice), the
         # receipt's own counts, the failed ids Retry re-runs, and the
-        # armed "N already analysed — Skip them | Overwrite" choice
-        # (all_ids, unanalysed_ids) that AC#3 requires before anything is
+        # armed "N already analyzed — Skip them | Overwrite" choice
+        # (all_ids, unanalyzed_ids) that AC#3 requires before anything is
         # overwritten. ``_library_media_analyze_reason_cache`` memoises
         # the provider reason for the whole select-mode session: resolving
         # it is not free (Anthropic claude_subscription readiness shells
@@ -9708,7 +9708,7 @@ class LibraryScreen(BaseAppScreen):
             # stopped BEFORE any await below, while the counts are still
             # true -- the cancelled worker cannot resume until this handler
             # yields. Finished items persisted; the rest simply never ran,
-            # and a fresh run skips what is already analysed.
+            # and a fresh run skips what is already analyzed.
             #
             # (task-28007 Task 3, N1) ``_library_media_analyze_total`` is
             # only stamped once the AC#3 partition pass resolves -- an
@@ -15607,11 +15607,29 @@ class LibraryScreen(BaseAppScreen):
         return receipt[1] if receipt is not None else ""
 
     def _library_media_analyze_receipt_fields(self) -> dict[str, Any]:
-        """Canvas inputs for the bulk-Analyze receipt (task-28007 AC#3/AC#4)."""
+        """Canvas inputs for the bulk-Analyze receipt (task-28007 AC#3/AC#4).
+
+        (final review, I-2) An Import-origin run ("Analyze N skipped")
+        drives the SAME screen-owned counters, so without this guard its
+        progress rendered as a Media receipt on a canvas the user never
+        started it from -- and that receipt's "Retry failed" re-ran those
+        ids as a MEDIA run, leaving the Import rows still saying
+        "analysis failed" and still counting in ``N``. The Import surface
+        reports itself, per row, with its own disabled action for
+        progress; the Media canvas shows nothing for that run.
+        """
+        if getattr(self, "_library_media_analyze_origin", "media") == "import":
+            return {
+                "analyze_receipt_total": 0,
+                "analyze_receipt_done": 0,
+                "analyze_receipt_failed": 0,
+                "analyze_receipt_running": False,
+                "analyze_choice_count": 0,
+            }
         choice = self._library_media_analyze_choice
         return {
             # On the armed-choice path the total IS the pressed selection
-            # ("N of M already analysed"); no run has set a total yet.
+            # ("N of M already analyzed"); no run has set a total yet.
             "analyze_receipt_total": (
                 len(choice[0])
                 if choice is not None
@@ -16217,9 +16235,14 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_row_selection.count > 0
             or self._library_media_confirming_bulk_delete
         )
+        # (final review, I-1/M-3) Unconditional: with an empty selection
+        # this is a no-op for everything BUT the armed Skip/Overwrite
+        # choice, which is armed precisely when select mode is already off
+        # -- so the old ``changed`` guard skipped the one thing a scope
+        # change has to retire. Only the notice stays behind the guard.
+        self._exit_library_media_select_mode(announce_discard=False)
         if not changed:
             return
-        self._exit_library_media_select_mode(announce_discard=False)
         self._library_media_selection_notice = "Selection cleared."
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
@@ -21148,6 +21171,14 @@ class LibraryScreen(BaseAppScreen):
                 already torn down, so ``query_one`` raises ``NoMatches``
                 here -- scheduling a whole-screen recompose on a dying
                 screen at that point is both useless and unsafe.
+                (Task 3 re-review, N-1) It is part of the STRUCTURAL
+                branch's condition, not a check inside it: barring the
+                fallback must degrade to the targeted repaint below, never
+                to no repaint at all. ``canvas.state`` is a plain
+                attribute, so returning after assigning it painted
+                nothing -- which is exactly the stuck-disabled
+                "Analyze N skipped" button the run's ``finally`` repaint
+                exists to prevent.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             # (task-2043 review) A late worker result while a DIFFERENT
@@ -21172,9 +21203,8 @@ class LibraryScreen(BaseAppScreen):
             or new_state.unavailable_line != old_state.unavailable_line
         )
         canvas.state = new_state
-        if structural and allow_structural_recompose:
-            if allow_screen_fallback:
-                self._refresh_library_ingest_canvas_preserving_context()
+        if structural and allow_structural_recompose and allow_screen_fallback:
+            self._refresh_library_ingest_canvas_preserving_context()
             return
         summary.state = new_state
         queue.state = new_state
@@ -21360,6 +21390,10 @@ class LibraryScreen(BaseAppScreen):
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
             analysis_unready_hint=analysis_unready_hint,
+            # (final review, M-7) Already resolved above for the gate --
+            # passing it lets ``build_library_ingest_state`` skip a second,
+            # redundant ``library_ingest_analyze_skipped_ids`` call.
+            analyze_skipped_media_ids=analyze_skipped_ids,
             # (task-3314/3313) ``getattr`` quiet-degrade: several test
             # suites build this screen via ``object.__new__`` and seed only
             # the fields they exercise (the Clear-finished armed_at read
@@ -24521,12 +24555,23 @@ class LibraryScreen(BaseAppScreen):
         bulk-delete confirmation (task-2853 AC4).
 
         Shared by every path that leaves select mode -- the "Done" toggle
-        and the type-filter cycle (which resets select mode as a side
-        effect) -- so neither can strand
+        and the scope changes (filter/query, page, type) that reset select
+        mode as a side effect -- so neither can strand
         ``_library_media_confirming_bulk_delete`` in a stale ``True``
         state. Announces the discard ("copy states it", AC4) only when
         ``announce_discard`` and the selection being cleared is non-empty;
         an already-empty selection has nothing to discard.
+
+        (final review, I-1/M-3) It is also the one invalidation boundary
+        for the armed Skip/Overwrite choice. That card is a PENDING action
+        over a snapshot of ids, armed AFTER select mode already exited, so
+        nothing used to retire it: it survived re-entering and leaving
+        select mode, a filter change and a page change, still offering
+        "Overwrite" over ids the user could no longer see. Every scope
+        change reaches this method (see
+        ``_clear_library_media_selection_for_scope_change``, which now
+        always calls it), so clearing it here covers all four paths
+        without a fifth call site.
 
         Args:
             announce_discard: Whether to surface the "Selection discarded"
@@ -24537,6 +24582,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_selection_discarded(discarded)
         self._library_media_select_mode = False
         self._library_media_confirming_bulk_delete = False
+        self._library_media_analyze_choice = None
         self._library_media_row_selection.clear()
 
     def _notify_library_media_selection_discarded(self, count: int) -> None:
@@ -42475,7 +42521,10 @@ class LibraryScreen(BaseAppScreen):
         The selection is snapshotted from the RENDERED rows, not from
         ``RowSelection.ids``: that is a frozenset and carries no order,
         while the run has to follow the browse order the user is looking
-        at (task-31233's "Review selected" made the same call).
+        at. ("Review selected" reaches the same order the other way round
+        -- it hands the unordered ids to ``_review_selected_worker`` and
+        re-derives their order in there -- but a run that reports
+        "Analyzing 3 of 40" as it goes needs the order before it starts.)
 
         Args:
             event: The Select-mode "Analyze" bulk-action button press.
@@ -42490,7 +42539,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-analyze-skip")
     def handle_library_media_analyze_skip(self, event: Button.Pressed) -> None:
-        """Run the armed choice over the un-analysed items only (AC#3).
+        """Run the armed choice over the un-analyzed items only (AC#3).
 
         Args:
             event: The receipt row's "Skip them" press.
@@ -42654,13 +42703,13 @@ class LibraryScreen(BaseAppScreen):
         (``on_item_done is None``) gets NOTHING run -- the Skip/Overwrite
         choice is armed in the receipt instead (AC#3). An Import-run caller
         (``on_item_done`` given) has no such card to show, so it auto-skips
-        the already-analysed ids instead and says so (fix round 1, C-1) --
+        the already-analyzed ids instead and says so (fix round 1, C-1) --
         see the docstring on the branch below.
 
         Args:
             media_ids: Ids to analyze, in browse order.
             resolution: The ready resolution the gesture already checked.
-            overwrite: Whether analysed items are included.
+            overwrite: Whether analyzed items are included.
             on_item_done: See ``_start_library_media_analyze``. Its mere
                 presence also selects the C-1 auto-skip behavior above.
         """
@@ -42675,17 +42724,17 @@ class LibraryScreen(BaseAppScreen):
                     # Skip/Overwrite card to arm -- doing so here left an
                     # Import-started run with NOTHING visible: no
                     # receipts, no notice, the button just re-enabled with
-                    # its count unchanged. Auto-skip the already-analysed
+                    # its count unchanged. Auto-skip the already-analyzed
                     # ids and say so instead; if that leaves nothing to
                     # run, say THAT and stop -- still no silent no-op.
                     notify = getattr(self.app_instance, "notify", None)
                     if not unanalyzed:
                         if callable(notify):
-                            notify("Nothing left to analyse")
+                            notify("Nothing left to analyze")
                         return
                     if callable(notify):
-                        already_analysed = len(media_ids) - len(unanalyzed)
-                        notify(f"{already_analysed} already analysed · skipped")
+                        already_analyzed = len(media_ids) - len(unanalyzed)
+                        notify(f"{already_analyzed} already analyzed · skipped")
                 media_ids = unanalyzed
             self._library_media_analyze_total = len(media_ids)
             _sync_library_canvas(self, "media", allow_screen_fallback=False)
@@ -42785,14 +42834,14 @@ class LibraryScreen(BaseAppScreen):
         analysis text decides this (``detail_analysis_text``, the same rule
         the Reader's Analysis tab uses), and pulling every document's body
         just to answer it would be the expensive way to ask. An unreadable
-        item counts as un-analysed: the run attempts it and reports its
+        item counts as un-analyzed: the run attempts it and reports its
         own failure rather than silently skipping it.
 
         Args:
             media_ids: The ids the gesture snapshotted.
 
         Returns:
-            Those ids, in the same order, minus the already-analysed ones.
+            Those ids, in the same order, minus the already-analyzed ones.
         """
         unanalyzed: list[str] = []
         for media_id in media_ids:
@@ -42818,7 +42867,7 @@ class LibraryScreen(BaseAppScreen):
         Args:
             media_id: The canonical media id.
             include_content: Whether the document body is needed (the
-                analysed/not-analysed pass does not need it).
+                analyzed/not-analyzed pass does not need it).
 
         Returns:
             The detail mapping, or None when the service is unavailable or

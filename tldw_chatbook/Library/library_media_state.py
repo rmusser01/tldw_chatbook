@@ -783,7 +783,7 @@ class LibraryMediaCanvasState:
     # receipt. While ``analyze_receipt_running`` the copy is "Analyzing 3
     # of 40 · 2 failed"; once it settles, "✓ analyzed · 38 of 40 · 2
     # failed" with Retry failed/Dismiss. ``analyze_choice_count`` is the
-    # AC#3 arming instead: "N already analysed — Skip them | Overwrite",
+    # AC#3 arming instead: "N already analyzed — Skip them | Overwrite",
     # which runs nothing until the user picks. All-zero means no receipt.
     analyze_receipt_total: int = 0
     analyze_receipt_done: int = 0
