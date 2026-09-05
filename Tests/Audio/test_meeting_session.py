@@ -1,0 +1,325 @@
+"""Task 7: MeetingSession segment windows, sinks, Library submit kwargs."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from tldw_chatbook.Audio.meeting_capture import SpeechRun
+from tldw_chatbook.Audio.meeting_session import (
+    LocalMeetingSink,
+    MeetingMeta,
+    MeetingSession,
+    format_clock,
+    read_meeting_json,
+    render_markdown,
+)
+
+pytestmark = pytest.mark.unit
+
+
+class FakeCapture:
+    def __init__(self, mode="call"):
+        self.mode = mode
+        self.audio_position_s = 0.0
+        self.last_speech_position_s = 0.0
+        self.runs: list[SpeechRun] = []
+        self.labels: dict[tuple[float, float], str] = {}
+        self.default_label = "you"
+        self.stops = 0
+        self.paused = False
+        self.fault = None
+
+    def closed_runs_after(self, t):
+        return [r for r in self.runs if r.end_s is not None and r.end_s > t]
+
+    def dominant_source(self, a, b):
+        return self.labels.get((round(a, 2), round(b, 2)), self.default_label)
+
+    def stop_recording(self):
+        self.stops += 1
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+
+
+class FakeDictation:
+    MAX_NON_STREAMING_SEGMENT_SECONDS = 30.0
+
+    def __init__(self, capture):
+        self.capture = capture
+        self.privacy_settings = {"auto_clear_buffer": False, "local_only": True}
+        self.callbacks: dict[str, Any] = {}
+        self.stopped = 0
+        self.complete = True
+
+    def start_dictation(self, **callbacks):
+        self.callbacks = callbacks
+        return True
+
+    def stop_dictation(self):
+        self.stopped += 1
+        return SimpleNamespace(transcription_complete=self.complete)
+
+
+class RecordingSink:
+    def __init__(self):
+        self.calls: list[tuple[str, Any]] = []
+
+    def on_started(self, meta):
+        self.calls.append(("started", meta))
+
+    def on_partial(self, text, label):
+        self.calls.append(("partial", (text, label)))
+
+    def on_segment(self, segment):
+        self.calls.append(("segment", segment))
+
+    def on_stopped(self, result):
+        self.calls.append(("stopped", result))
+
+
+def _meta(tmp_path, mode="call") -> MeetingMeta:
+    return MeetingMeta(
+        folder=tmp_path, mode=mode, started_at="2026-09-04T14:30:00",
+        mic_device="MacBook Pro Microphone", system_source="Native (macOS tap)",
+        provider="faster-whisper", model="base.en",
+    )
+
+
+def _session(tmp_path, mode="call", sinks=None):
+    capture = FakeCapture(mode)
+    built: list[FakeDictation] = []
+
+    def factory(cap):
+        built.append(FakeDictation(cap))
+        return built[-1]
+
+    ticks = iter(range(1000, 2000))
+    session = MeetingSession(
+        meta=_meta(tmp_path, mode), capture=capture, dictation_factory=factory,
+        sinks=sinks or [], clock=lambda: float(next(ticks)),
+    )
+    return session, capture, built
+
+
+def test_start_configures_service_and_writes_meeting_json(tmp_path):
+    sink = RecordingSink()
+    session, capture, built = _session(tmp_path, sinks=[sink])
+    assert session.start() is True
+    service = built[0]
+    assert service.capture is capture
+    assert service.privacy_settings["auto_clear_buffer"] is True
+    assert service.MAX_NON_STREAMING_SEGMENT_SECONDS == 10.0
+    assert "on_command" not in service.callbacks
+    assert set(service.callbacks) == {
+        "on_partial_transcript", "on_final_transcript", "on_state_change", "on_error",
+        "on_segment_transcribing", "on_speech_resumed", "on_segment_no_final",
+    }
+    assert session.state == "recording"
+    assert sink.calls[0][0] == "started"
+    payload = read_meeting_json(tmp_path)
+    assert payload["mode"] == "call" and payload["started_at"] == "2026-09-04T14:30:00"
+    assert payload["schema"] == 1
+
+
+def test_final_uses_contiguous_window_and_closed_run_end(tmp_path):
+    sink = RecordingSink()
+    session, capture, built = _session(tmp_path, sinks=[sink])
+    session.start()
+    cb = built[0].callbacks
+    capture.runs = [SpeechRun(0.5, 3.0)]
+    capture.audio_position_s = 5.0
+    capture.last_speech_position_s = 4.8      # next speaker already talking
+    capture.labels[(0.0, 3.0)] = "others"
+    cb["on_final_transcript"]("hello there")
+    seg = session.segments[0]
+    assert (seg.t_audio_start, seg.t_audio_end) == (0.0, 3.0)
+    assert seg.label == "others" and seg.text == "hello there" and seg.seq == 0
+    assert seg.t_wall_end - seg.t_wall_start == pytest.approx(3.0)
+    assert sink.calls[-1] == ("segment", seg)
+
+
+def test_final_without_closed_run_uses_last_speech_position(tmp_path):
+    session, capture, built = _session(tmp_path)
+    session.start()
+    cb = built[0].callbacks
+    capture.last_speech_position_s = 2.2
+    capture.audio_position_s = 2.5
+    cb["on_final_transcript"]("first")
+    capture.runs = [SpeechRun(2.3, 6.0)]
+    capture.last_speech_position_s = 6.0
+    cb["on_final_transcript"]("second")
+    assert [(s.t_audio_start, s.t_audio_end) for s in session.segments] == [(0.0, 2.2), (2.2, 6.0)]
+
+
+def test_one_final_spanning_two_runs_and_a_cap_split(tmp_path):
+    session, capture, built = _session(tmp_path)
+    session.start()
+    cb = built[0].callbacks
+    capture.runs = [SpeechRun(0.0, 1.0), SpeechRun(1.5, 4.0)]
+    capture.last_speech_position_s = 4.0
+    cb["on_final_transcript"]("spans two runs")
+    assert session.segments[0].t_audio_end == 4.0
+    # 10 s cap split: a second final arrives while the run is still open
+    capture.last_speech_position_s = 12.0
+    cb["on_final_transcript"]("cap split part")
+    assert (session.segments[1].t_audio_start, session.segments[1].t_audio_end) == (4.0, 12.0)
+
+
+def test_room_mode_has_no_labels(tmp_path):
+    session, capture, built = _session(tmp_path, mode="room")
+    session.start()
+    capture.last_speech_position_s = 1.0
+    built[0].callbacks["on_final_transcript"]("hi")
+    built[0].callbacks["on_partial_transcript"]("h")
+    assert session.segments[0].label is None
+
+
+def test_partial_and_transcribing_and_error_events_reach_listeners(tmp_path):
+    session, capture, built = _session(tmp_path)
+    events: list[tuple[str, Any]] = []
+    session.subscribe(lambda kind, payload: events.append((kind, payload)))
+    session.start()
+    cb = built[0].callbacks
+    capture.audio_position_s = 3.0
+    capture.labels[(2.0, 3.0)] = "others"
+    cb["on_partial_transcript"]("par")
+    cb["on_segment_transcribing"](False)
+    cb["on_segment_transcribing"](True)
+    cb["on_error"](RuntimeError("boom"))
+    assert ("partial", ("par", "others")) in events
+    assert ("transcribing", True) in events and ("transcribing", False) in events
+    assert ("error", "boom") in events and session.failed_segments == 1
+
+
+def test_blank_final_is_ignored(tmp_path):
+    session, capture, built = _session(tmp_path)
+    session.start()
+    built[0].callbacks["on_final_transcript"]("   ")
+    assert session.segments == []
+
+
+def test_pause_resume_forward_and_change_state(tmp_path):
+    session, capture, _ = _session(tmp_path)
+    session.start()
+    session.pause()
+    assert capture.paused and session.state == "paused"
+    session.resume()
+    assert not capture.paused and session.state == "recording"
+
+
+def test_stop_returns_result_and_finalises_files(tmp_path):
+    sink = RecordingSink()
+    session, capture, built = _session(tmp_path, sinks=[sink])
+    session.start()
+    capture.last_speech_position_s = 2.0
+    built[0].callbacks["on_final_transcript"]("one")
+    capture.audio_position_s = 7.5
+    built[0].complete = False
+    result = session.stop(reason="user")
+    assert built[0].stopped == 1 and capture.stops == 1
+    assert result.segment_count == 1 and result.duration_s == 7.5
+    assert result.transcription_complete is False and result.stop_reason == "user"
+    assert session.state == "stopped" and sink.calls[-1][0] == "stopped"
+    payload = read_meeting_json(tmp_path)
+    assert payload["ended_at"] and payload["segment_count"] == 1 and payload["stop_reason"] == "user"
+
+
+def test_stop_twice_is_a_no_op(tmp_path):
+    session, capture, built = _session(tmp_path)
+    session.start()
+    first = session.stop()
+    second = session.stop()
+    assert first is second and capture.stops == 1
+
+
+def test_start_failure_sets_error_state(tmp_path):
+    session, capture, built = _session(tmp_path)
+    FakeDictation.start_dictation = lambda self, **cb: False  # type: ignore[assignment]
+    try:
+        assert session.start() is False and session.state == "error"
+    finally:
+        del FakeDictation.start_dictation
+
+
+# ---- LocalMeetingSink ----------------------------------------------------
+
+def _run_meeting(tmp_path, sink, mode="call"):
+    session, capture, built = _session(tmp_path, mode=mode, sinks=[sink])
+    session.start()
+    capture.runs = [SpeechRun(0.0, 2.0)]
+    capture.last_speech_position_s = 2.0
+    capture.labels[(0.0, 2.0)] = "you"
+    built[0].callbacks["on_final_transcript"]("hello")
+    capture.runs.append(SpeechRun(2.5, 4.0))
+    capture.last_speech_position_s = 4.0
+    capture.labels[(2.0, 4.0)] = "others"
+    built[0].callbacks["on_final_transcript"]("hi back")
+    capture.audio_position_s = 4.0
+    return session.stop()
+
+
+def test_local_sink_writes_jsonl_and_submits_audio_with_diarization(tmp_path):
+    calls: list[dict] = []
+
+    def submit(**kwargs):
+        calls.append(kwargs)
+        return "ingest-job-7"
+
+    sink = LocalMeetingSink(tmp_path, submit=submit, post_transcribe=True, post_diarize=True)
+    _run_meeting(tmp_path, sink)
+    lines = [json.loads(l) for l in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    assert [l["label"] for l in lines] == ["you", "others"]
+    assert lines[0] == {
+        "seq": 0, "t_audio_start": 0.0, "t_audio_end": 2.0,
+        "t_wall_start": lines[0]["t_wall_start"], "t_wall_end": lines[0]["t_wall_end"],
+        "label": "you", "text": "hello",
+    }
+    assert calls == [{
+        "source_path": str(tmp_path / "mixed.wav"),
+        "title": "Meeting 2026-09-04 14:30",
+        "keywords": ("meeting",),
+        "detected_type": "audio",
+        "ingest_options": {"diarization": True},
+    }]
+    assert sink.job_id == "ingest-job-7"
+    assert read_meeting_json(tmp_path)["ingest_job_id"] == "ingest-job-7"
+
+
+def test_local_sink_without_post_transcribe_submits_markdown(tmp_path):
+    calls: list[dict] = []
+    sink = LocalMeetingSink(tmp_path, submit=lambda **kw: calls.append(kw) or "j1", post_transcribe=False)
+    _run_meeting(tmp_path, sink)
+    md = (tmp_path / "transcript.md").read_text()
+    assert "# Meeting 2026-09-04 14:30" in md and "mixed.wav" in md
+    assert "[00:00:00] **You:** hello" in md and "[00:00:02] **Others:** hi back" in md
+    assert calls[0]["source_path"] == str(tmp_path / "transcript.md")
+    assert calls[0]["detected_type"] == "document" and calls[0]["ingest_options"] == {}
+
+
+def test_local_sink_records_submit_failure(tmp_path):
+    def submit(**kwargs):
+        raise RuntimeError("registry refused")
+
+    sink = LocalMeetingSink(tmp_path, submit=submit)
+    _run_meeting(tmp_path, sink)
+    assert sink.job_id is None and "registry refused" in sink.last_submit_error
+    assert read_meeting_json(tmp_path)["ingest_error"] == "registry refused"
+
+
+def test_render_markdown_room_mode_omits_labels(tmp_path):
+    sink = LocalMeetingSink(tmp_path, submit=lambda **kw: None, post_transcribe=False)
+    _run_meeting(tmp_path, sink, mode="room")
+    md = (tmp_path / "transcript.md").read_text()
+    assert "[00:00:00] hello" in md and "**You:**" not in md
+
+
+def test_format_clock():
+    assert format_clock(0) == "00:00:00" and format_clock(3725.9) == "01:02:05"

@@ -187,6 +187,7 @@ class MeetingCapture:
         self.last_speech_position_s = 0.0
         self.fault: Exception | None = None
         self._gate_carry = bytearray()
+        self._stopped = False
 
     # ---- recorder surface -------------------------------------------------
     def start_recording(self, callback=None, save_to_file=None) -> bool:
@@ -205,6 +206,9 @@ class MeetingCapture:
         return bool(self._mic.start_recording(callback=self._on_mic_frame))
 
     def stop_recording(self) -> None:
+        if self._stopped:
+            return None
+        self._stopped = True
         self._running = False
         if self._mic is not None:
             try:
