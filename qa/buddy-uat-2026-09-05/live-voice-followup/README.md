@@ -81,3 +81,11 @@ none added. Those repaired-run receipts follow the fix and include matching
 production hashes plus independent post-exit SQLite verification.
 
 The successful after-text Stop persisted `assistant_generation_state=stopped` and removed its dispatch checkpoint; its system stop marker existed only in memory. See [retained database observations](stop-persistence-observations.json). Four deterministic regressions cover both direct and agent execution, before and after the dispatch CAS commits, repeated Stop, and preservation of another running session. They verify terminal state through an independent SQLite connection after the transaction thread finishes. This repair follows existing [ADR-079](../../../backlog/decisions/079-console-library-conversation-authority.md).
+
+Rebased onto dev `c14dadd77`: production and regression patches are range-diff
+equivalent; both independent testing-lesson additions were retained. The same
+eight durability/recovery modules passed **120 tests**, with the three documented
+baseline failures deselected. The dependency warning and fixture file-descriptor
+growth warning remain. Independent review found no actionable cancellation or
+ownership issue. Live receipts identify their original source base; they are
+not a claim that provider/audio UAT was repeated after rebase.
