@@ -263,8 +263,7 @@ class LlamaCppSnapshotService:
         if generation.operation_id is not None:
             raise _error("operation_in_progress")
         preferences = load_snapshot_preferences()
-        if not preferences.enabled:
-            raise _error("snapshots_disabled")
+        # Attachment captures this launch's opt-in; only retention changes live.
         self._eligible(generation, slot_id)
         operation_id = uuid4().hex
         generation.operation_id = operation_id
@@ -323,6 +322,15 @@ class LlamaCppSnapshotService:
                 working.source_record.compatibility, descriptor.compatibility
             ):
                 raise _error("compatibility_mismatch")
+            if snapshot_id is not None:
+                destination = next(
+                    slot for slot in generation.slots if slot.slot_id == slot_id
+                )
+                if (
+                    destination.context_size is None
+                    or working.source_record.tokens > destination.context_size
+                ):
+                    raise _error("destination_context_too_small")
             await self._file(store.set_operation_state, working, "unknown")
             self._eligible(generation, slot_id)
             self._phase(generation, "awaiting_ack")

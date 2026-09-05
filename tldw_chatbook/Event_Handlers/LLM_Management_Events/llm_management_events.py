@@ -230,6 +230,13 @@ def _settle_source_preparation(
 
 def _gguf_server_source_failure_message(error: BaseException) -> str:
     """Map ordered external failures before the shared managed taxonomy."""
+    from tldw_chatbook.LLM_Management.snapshot_models import SnapshotError
+
+    if isinstance(error, SnapshotError) and error.code == "snapshot_owned_options":
+        return (
+            "Snapshot management owns the slot options. Remove custom slot flags "
+            "and slot environment settings, or disable snapshots for this launch."
+        )
     if isinstance(error, GGUFSourceChangedError):
         return "The selected external GGUF changed during validation. Retry."
     if isinstance(error, GGUFPathError):
@@ -285,11 +292,22 @@ def _prepare_snapshot_launch(app, command, claim):
 
     if not load_snapshot_preferences().enabled:
         return command, {}
+    environment = dict(os.environ)
+    if any(
+        token.split("=", 1)[0] in {"--slots", "--no-slots", "--slot-save-path"}
+        for token in command[1:]
+    ) or any(
+        key in environment
+        for key in ("LLAMA_ARG_SLOT_SAVE_PATH", "LLAMA_ARG_ENDPOINT_SLOTS")
+    ):
+        raise SnapshotError("snapshot_owned_options", submission_possible=False)
+    descriptor = prepare_launch(tuple(command), environment, claim, uuid4().hex)
+    if descriptor.disabled_reason:
+        # Retain safe guidance, but leave the ordinary child and its transport alone.
+        claim._snapshot_context = SnapshotLaunchContext(descriptor, None)
+        return command, {}
     if owner.store is None:
         raise SnapshotError("snapshot_storage_preparing", submission_possible=False)
-    descriptor = prepare_launch(tuple(command), dict(os.environ), claim, uuid4().hex)
-    if descriptor.disabled_reason:
-        raise SnapshotError("snapshot_launch_unavailable", submission_possible=False)
     if _snapshot_listener_exists(descriptor.base_url):
         raise SnapshotError("snapshot_endpoint_in_use", submission_possible=False)
     directory = owner.store.prepare_launch_directory(descriptor.launch_id)

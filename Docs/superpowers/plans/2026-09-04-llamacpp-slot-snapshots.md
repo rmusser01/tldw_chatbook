@@ -29,6 +29,7 @@ Reason: existing accepted decision covers the new private file lifecycle, retent
 - Beside Save: "Keeps the newest 10 across all models", with the effective count substituted.
 - No automatic conversation binding, chat-payload changes, imports, exports, renaming, pinning, remote/router management, or in-memory Erase action.
 - No implicit `--swa-full`; no alteration to ordinary launches when snapshots are off.
+- TLS, custom API-prefix, router, and non-loopback configurations remain valid ordinary launches with snapshot management disabled and specific guidance; do not strip advanced arguments. Conflicting owned slot flags still cause explicit preflight failure when snapshots are enabled.
 - Missing slot token counts mean Unknown, not zero. Compatibility unknown disables Save/Restore, not catalog browsing/deletion.
 - Five-second readiness/observation deadlines. Mutation timeouts: connection/pool 5 seconds, write 30 seconds, read inactivity and overall submission deadline 600 seconds.
 - No retry after possible submission; an unknown outcome keeps Save/Restore disabled for that launch until acknowledged completion or confirmed stop.
