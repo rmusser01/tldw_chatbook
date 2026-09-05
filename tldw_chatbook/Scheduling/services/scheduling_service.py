@@ -388,27 +388,36 @@ class SchedulingService:
         task-3 (schedules UAT remediation ruling 4): reuses the
         capabilities handshake's own round trip (`SchedulingServerClient.
         get_capabilities`, ruling 5) as the reachability probe rather than
-        a second one -- any response (capabilities present OR a clean
-        "route absent" answer) proves the server is actually there; only
-        an exception (timeout, connection refused, 5xx, or no client
-        configured at all) means it is not. Cheap to call repeatedly: the
-        underlying probe is itself cached per connection, so this mostly
-        just re-reads that cache except right after a reconnect.
+        a second one -- any response (capabilities present, a clean
+        "route absent" answer, OR a 4xx refusal) proves the server is
+        actually there; only an exception that never got an HTTP answer
+        at all (timeout, connection refused, 5xx, or no client configured)
+        means it is not. The probe always bypasses the capabilities cache
+        (`force=True`) so a server that dies after an earlier successful
+        probe is caught on the next explicit check instead of answering
+        forever from a stale cached verdict (Qodo fix round, finding 1
+        pin (a)).
 
-        Final review finding 7: `get_capabilities` is `_enforce`-gated on
-        the AUTOMATIONS list permission (`scheduler.automations.list.
-        server`), a permission unrelated to reminder transfer -- treating
-        a `ServerClientPolicyError` (a local runtime-policy gate refusing
-        BEFORE any network attempt) or a `ServerClientValidationError`
-        that is really a 401/403 (the server responded and refused,
-        which is itself proof of reachability, not evidence against it)
-        as "unreachable" conflated a permission problem with a network
-        one, and additionally blocked an unrelated feature on a
-        permission gate that has nothing to do with it. Neither branch
-        establishes anything new about the network, so `server_
-        reachable` is left AT WHATEVER IT ALREADY WAS rather than
-        overwritten to `False` -- `server_permission_denied` records the
-        distinct signal for honest, separate copy.
+        Qodo fix round (finding 1, HIGH -- ruling reversal over the prior
+        "final review finding 7" text below): `get_capabilities` is
+        `_enforce`-gated on the AUTOMATIONS list permission (`scheduler.
+        automations.list.server`), a permission unrelated to reminder
+        transfer. Two distinct failure shapes hit this gate differently:
+
+        * `ServerClientPolicyError` -- a local runtime-policy gate that
+          refuses BEFORE any network attempt. No round trip happened, so
+          this establishes nothing new either way; `server_reachable` is
+          left AT WHATEVER IT ALREADY WAS.
+        * `ServerClientValidationError` (a genuine 401/403/4xx) -- the
+          server ACTUALLY ANSWERED and refused. That answer IS proof of
+          network reachability (a reminder transfer needs no
+          automations-list permission at all -- the scenario that
+          reversed this call), so `server_reachable` is set `True`
+          outright, even overriding a prior `False`/`None` (pin (b)).
+
+        Either way `server_permission_denied` records the distinct
+        signal, so per-action copy can refuse with permission wording
+        instead of misreporting "server not reachable".
 
         Returns:
             The freshly probed reachability, also cached on ``self`` for
@@ -422,10 +431,14 @@ class SchedulingService:
             self._server_permission_denied = False
             return False
         try:
-            await self.server_client.get_capabilities()
-        except (ServerClientPolicyError, ServerClientValidationError):
+            await self.server_client.get_capabilities(force=True)
+        except ServerClientPolicyError:
             self._server_permission_denied = True
             return bool(self._server_reachable)
+        except ServerClientValidationError:
+            self._server_reachable = True
+            self._server_permission_denied = True
+            return True
         except Exception:  # noqa: BLE001
             self._server_reachable = False
             self._server_permission_denied = False

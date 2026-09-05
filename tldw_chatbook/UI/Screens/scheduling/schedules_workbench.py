@@ -321,6 +321,12 @@ class _QueueFilterInput(Input):
     BINDINGS = [Binding("escape", "blur_filter", "Unfocus filter", show=False)]
 
     def action_blur_filter(self) -> None:
+        """Unfocus the search filter.
+
+        Bound to escape (see `BINDINGS` above) so single-letter chip keys
+        (`f`, `1`-`4`) route to their bindings again instead of being
+        swallowed as literal text while the filter still has focus.
+        """
         self.blur()
 
 
@@ -4341,16 +4347,38 @@ class SchedulesWorkbench(BaseAppScreen):
         orphaned_transfer_mutations` treats that as "every still-pending
         transfer_to_server mutation is orphaned", which is exactly right
         (nothing configured means nothing it could still be valid for).
+
+        Qodo fix round (finding 2, MEDIUM): this used to run the local DB
+        work inline and synchronously from `on_mount`, blocking mount on
+        it. Deferred onto the same fire-and-forget worker path
+        `SchedulingService.recover_inflight_transfers` rides at app
+        startup -- `on_mount` kicks it and returns immediately; the
+        sweep's own idempotence (a rerun is a no-op once every row has
+        settled) makes the exact ordering against other mount-time work
+        forgiving.
         """
         service = self._service()
         if service is None:
             return
         active_server_id = self._active_server_id()
         target_owner = f"server:{active_server_id}" if active_server_id else None
-        try:
-            service.sync_engine._settle_orphaned_transfer_mutations(target_owner)
-        except Exception:  # noqa: BLE001
-            logger.exception("Orphaned-transfer sweep failed at mount")
+
+        async def _settle() -> None:
+            try:
+                service.sync_engine._settle_orphaned_transfer_mutations(target_owner)
+            except Exception:  # noqa: BLE001
+                # Qodo fix round (finding 3, LOW): name the active target
+                # and owner this sweep was settling against -- never the
+                # mutation payload, which carries the user's own reminder/
+                # definition text on this path.
+                logger.exception(
+                    "Orphaned-transfer sweep failed at mount "
+                    "(target_owner={target_owner}, owner_id={owner_id})",
+                    target_owner=target_owner,
+                    owner_id=service.owner_id,
+                )
+
+        self.run_worker(_settle, exclusive=True, group="schedules-orphan-sweep")
 
     def _refresh_server_reachability(self) -> None:
         """Kick a background probe of server reachability (task-3, ruling 4).
