@@ -41,6 +41,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _wait_for_library_shell,
     _wait_for_selector,
+    wire_bypass_ingest_controller,
 )
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
 from tldw_chatbook.Library.ingest_types import PreflightResult
@@ -1662,6 +1663,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = MagicMock()
     screen._library_ingest_form = LibraryIngestFormState(
         type_options={
@@ -2069,6 +2071,7 @@ async def test_library_screen_ingest_layout_contains_metadata_and_start_for_loca
 def test_external_override_defers_submit_until_preparation_finishes() -> None:
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     submit = MagicMock()
     source_service = MagicMock()
     screen.app_instance = SimpleNamespace(
@@ -2177,6 +2180,7 @@ def test_external_prepare_retains_before_enqueue(
     )
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     # task-15470: the actual write moved into a `@work(thread=True)`
     # instance method (`_save_library_ingest_options`), which needs a real
     # running app to dispatch through `run_worker` -- `fake_app` above is a
@@ -2244,6 +2248,7 @@ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2290,6 +2295,7 @@ def test_external_vad_plan_rejects_any_non_vad_entry(
     service = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=MagicMock(),
         _ensure_parakeet_source_service=lambda: service,
@@ -2327,6 +2333,7 @@ def test_stale_external_result_releases_scope_without_enqueue(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2358,6 +2365,7 @@ def test_external_validation_failure_releases_and_preserves_form(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2401,6 +2409,7 @@ def test_external_submit_exception_releases_before_any_registry_job(
     submit = MagicMock(side_effect=RuntimeError("submit failed"))
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2437,6 +2446,7 @@ def test_external_override_is_not_prepared_for_server_backend() -> None:
     service = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2472,6 +2482,7 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2539,6 +2550,7 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2620,6 +2632,7 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2657,6 +2670,7 @@ def test_vad_install_failure_has_exact_zero_job_copy_and_recovery() -> None:
     submit = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2699,6 +2713,7 @@ def test_external_invalidation_clears_busy_status_and_shared_vad_progress() -> N
     worker = MagicMock(is_finished=False)
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         _ensure_parakeet_source_service=lambda: service,
     )
@@ -2728,6 +2743,7 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
     worker = MagicMock(is_finished=False)
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(
         _ensure_parakeet_source_service=lambda: service,
     )
@@ -2766,6 +2782,7 @@ def test_external_vad_progress_is_generation_fenced_and_labeled() -> None:
     progress = MagicMock()
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     screen.app_instance = SimpleNamespace(_resolve_ingest_backend=lambda: "local")
     screen._library_external_submit_generation = 7
     screen._library_external_submit_scope_id = "library-external-progress"

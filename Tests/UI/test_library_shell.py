@@ -150,6 +150,9 @@ from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.library_ingest_controller import (
+    LibraryIngestController,
+)
 from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
     NotesWorkSessionPhase,
 )
@@ -24126,6 +24129,133 @@ async def test_library_shell_search_result_without_provenance_has_no_open_button
 
 _INGEST_POLL_ATTEMPTS = 500
 _INGEST_POLL_INTERVAL = 0.02
+
+
+def wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
+    """Seed ``screen._ingest_controller`` for an ``object.__new__`` bypass.
+
+    Wave-5 task 2 (ingest controller PR): a `LibraryScreen` built via
+    ``object.__new__(LibraryScreen)``/``LibraryScreen.__new__(LibraryScreen)``
+    skips ``__init__`` entirely, so ``self._ingest_controller`` -- the
+    attribute ``__init__`` builds -- was never constructed. Any ingest
+    method whose SCREEN-side delegator now reaches through
+    ``self._ingest_controller`` (every mover this series moved) raises
+    ``AttributeError`` on such a bypass screen -- including indirectly, when
+    an EXCLUDED (still screen-resident) method's own body calls a mover
+    internally (e.g. ``_do_submit_ingest`` -> ``_enqueue_library_ingest_
+    snapshot`` -> ``_current_library_ingest_start_consent``, a mover). This
+    is the controller-level instance of recipe §3's "seventh bypass shape"
+    (task 1's own state-PR precedent, `screen._ingest_state =
+    LibraryIngestState()`), fixed the same way: one seed CALL, right after
+    the bypassing construction, mirroring ``LibraryScreen.__init__``'s own
+    construction of ``self._ingest_controller`` verbatim (every dependency a
+    late-binding lambda closing over THIS screen, exactly like production --
+    so a test's own ``screen.<name> = Mock()`` override elsewhere keeps
+    being observed).
+    """
+    screen._ingest_controller = LibraryIngestController(
+        screen,
+        ingest_state_accessor=lambda: screen._ingest_state,
+        apply_library_notes_stage_visibility=(
+            lambda *a, **k: screen._apply_library_notes_stage_visibility(*a, **k)
+        ),
+        focus_library_hub_entry=lambda: screen._focus_library_hub_entry(),
+        invalidate_library_external_submission=(
+            lambda *a, **k: screen._invalidate_library_external_submission(*a, **k)
+        ),
+        library_landing_attention_action=(
+            lambda *a, **k: screen._library_landing_attention_action(*a, **k)
+        ),
+        open_job_in_library=lambda *a, **k: screen._open_job_in_library(*a, **k),
+        open_library_external_media_detail=(
+            lambda *a, **k: screen._open_library_external_media_detail(*a, **k)
+        ),
+        open_transcribe_cpp_gguf_picker=(
+            lambda *a, **k: screen._open_transcribe_cpp_gguf_picker(*a, **k)
+        ),
+        refresh_local_source_snapshot=(
+            lambda *a, **k: screen._refresh_local_source_snapshot(*a, **k)
+        ),
+        safe_text=lambda *a, **k: screen._safe_text(*a, **k),
+        select_library_rail_row=(
+            lambda *a, **k: screen._select_library_rail_row(*a, **k)
+        ),
+        server_binding_is_shipped_placeholder=(
+            lambda *a, **k: screen._server_binding_is_shipped_placeholder(*a, **k)
+        ),
+        sync_library_emergency_guard_presentation=(
+            lambda *a, **k: screen._sync_library_emergency_guard_presentation(
+                *a, **k
+            )
+        ),
+        sync_library_landing_lifecycle_presentation=(
+            lambda *a, **k: screen._sync_library_landing_lifecycle_presentation(
+                *a, **k
+            )
+        ),
+        library_selected_row_id_accessor=lambda: screen._library_selected_row_id,
+        transcribe_cpp_configured_accessor=(
+            lambda: screen._transcribe_cpp_configured
+        ),
+        footer_shortcut_registration_accessor=(
+            lambda: screen._footer_shortcut_registration
+        ),
+        library_rail_collapsed_accessor=lambda: screen._library_rail_collapsed,
+        set_library_rail_collapsed=(
+            lambda value: setattr(screen, "_library_rail_collapsed", value)
+        ),
+        library_landing_attention_signature_accessor=(
+            lambda: screen._library_landing_attention_signature
+        ),
+        set_library_landing_attention_signature=(
+            lambda value: setattr(
+                screen, "_library_landing_attention_signature", value
+            )
+        ),
+        library_canvas_projection_depth_accessor=(
+            lambda: screen._library_canvas_projection_depth
+        ),
+        library_canvas_resync_pending_accessor=(
+            lambda: screen._library_canvas_resync_pending
+        ),
+        set_library_canvas_resync_pending=(
+            lambda value: setattr(screen, "_library_canvas_resync_pending", value)
+        ),
+        build_ingest_options_snapshot=(
+            lambda *a, **k: screen._build_ingest_options_snapshot(*a, **k)
+        ),
+        build_library_ingest_state=(
+            lambda: screen._build_library_ingest_state()
+        ),
+        do_submit_ingest=lambda *a, **k: screen._do_submit_ingest(*a, **k),
+        library_ingest_browse_location=(
+            lambda *a, **k: screen._library_ingest_browse_location(*a, **k)
+        ),
+        library_ingest_job_by_id=(
+            lambda *a, **k: screen._library_ingest_job_by_id(*a, **k)
+        ),
+        notify_library_ingest_warning=(
+            lambda *a, **k: screen._notify_library_ingest_warning(*a, **k)
+        ),
+        persist_library_ingest_location=(
+            lambda *a, **k: screen._persist_library_ingest_location(*a, **k)
+        ),
+        refresh_library_ingest_canvas_preserving_context=(
+            lambda: screen._refresh_library_ingest_canvas_preserving_context()
+        ),
+        run_debounced_library_ingest_preflight=(
+            lambda *a, **k: screen._run_debounced_library_ingest_preflight(*a, **k)
+        ),
+        run_library_ingest_preflight=(
+            lambda *a, **k: screen._run_library_ingest_preflight(*a, **k)
+        ),
+        update_library_ingest_dynamic_regions=(
+            lambda *a, **k: screen._update_library_ingest_dynamic_regions(*a, **k)
+        ),
+        update_library_ingest_gate=(
+            lambda *a, **k: screen._update_library_ingest_gate(*a, **k)
+        ),
+    )
 
 
 class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):

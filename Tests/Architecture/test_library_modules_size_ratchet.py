@@ -138,6 +138,15 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
+    # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
+    # 37-parameter constructor (self + screen + 35 named dependencies; see
+    # the module's own docstring for the full 78-candidate/21-exclusion
+    # derivation, including 6 instance-attribute-monkeypatch exclusions
+    # found only by running the battery) pinned at its exact measured line
+    # count.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2510,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

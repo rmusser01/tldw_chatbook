@@ -39,6 +39,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
+    wire_bypass_ingest_controller,
 )
 
 
@@ -127,6 +128,7 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
 
     screen = object.__new__(LibraryScreen)
     screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     form = LibraryIngestFormState(path="/tmp/talk.mp3")
     form.title = "My title"
     form.author = "An author"

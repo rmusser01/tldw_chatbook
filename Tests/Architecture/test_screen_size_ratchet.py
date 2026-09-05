@@ -398,8 +398,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # literal or a no-argument factory call, unlike every prior series'
     # entangled reader-preferences trio) plus a generated single-prefix shim
     # loop; methods unchanged (pure field move, zero FunctionDefs touched).
-    # 41574/1302 -> 41520/1302.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41520, 1302),
+    # 41574/1302 -> 41520/1302 (task 1, state PR).
+    # Task 2 (controller PR, ingest series 2/3): 57 of 78 "ingest"-named
+    # method candidates moved to `LibraryIngestController` (21 excluded: 4
+    # `@work` framework-decorator hazard, 2 module-globals-coupling, 9
+    # unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-
+    # monkeypatch -- all 6 found only by running the full battery, not the
+    # static census); each moved body replaced by a one-line delegator
+    # (method count unchanged -- pure move, 57 `FunctionDef`s stay, bodies
+    # shrink; 3 dead class-level constants also deleted, their sole
+    # consumers all moved). 41520/1302 -> 40096/1302.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40096, 1302),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

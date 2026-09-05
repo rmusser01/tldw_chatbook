@@ -47,6 +47,7 @@ from tldw_chatbook.runtime_policy.server_event_scope import (
 from tldw_chatbook.UI.Screens.library_screen import LibraryIngestState, LibraryScreen
 from tldw_chatbook.app import TldwCli
 import tldw_chatbook.app as app_module
+from Tests.UI.test_library_shell import wire_bypass_ingest_controller
 
 
 def _minimal_app(media_db: Any = None) -> TldwCli:
@@ -1745,6 +1746,7 @@ class TestIngestJobOptions:
         where the field is absent."""
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
+        wire_bypass_ingest_controller(screen)
         screen._library_ingest_form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
 
@@ -2093,6 +2095,7 @@ class TestIngestJobOptions:
     ) -> None:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
+        wire_bypass_ingest_controller(screen)
         screen._library_ingest_form = LibraryIngestFormState()
         screen._library_ingest_form.type_options["audio_video"] = {
             "transcription_provider": "faster-whisper",
@@ -2138,6 +2141,7 @@ class TestIngestJobOptions:
         )
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
+        wire_bypass_ingest_controller(screen)
         screen._library_ingest_form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
         submitted_audio_options = snapshot.get("audio_video", {})
@@ -2379,6 +2383,7 @@ class TestIngestJobOptionsWiring:
 
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
+        wire_bypass_ingest_controller(screen)
         screen._library_ingest_form = LibraryIngestFormState()
         snapshot = screen._build_ingest_options_snapshot()
 
@@ -2396,6 +2401,7 @@ class TestIngestJobOptionsWiring:
     def test_fresh_snapshot_seeds_shared_generic_schema_defaults(self) -> None:
         screen = object.__new__(LibraryScreen)
         screen._ingest_state = LibraryIngestState()
+        wire_bypass_ingest_controller(screen)
         screen._library_ingest_form = LibraryIngestFormState()
 
         snapshot = screen._build_ingest_options_snapshot()
