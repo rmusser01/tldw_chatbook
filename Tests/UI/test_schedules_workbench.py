@@ -68,6 +68,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB as _MockSchedulingDB,
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
+    painted_glyphs_at,
     rendered_row_cells,
     settle_schedules_workbench,
 )
@@ -490,6 +491,39 @@ async def test_repeat_row_editor_opens_with_current_preset_preselected():
 
 
 @pytest.mark.asyncio
+async def test_repeat_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a): the test
+    above only proved ``editor.value`` -- a stored attribute the widget
+    can carry correctly while showing nothing at all. Uncompacted, a
+    `Select`'s own `border: tall` (3 rows) is clipped to 1 row by
+    `DetailValueRow`'s fixed-height line container
+    (`.detail-value-row-line { height: 1 }`), and the surviving row is
+    the border's TOP EDGE, not the label -- `editor.value` still reads
+    "monday" while the compositor paints only border glyphs. Fails
+    against the unfixed code (bare `Select(...)`, no `compact=True`) --
+    see the task-1 report's revert-check."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+        assert editor.has_class("-textual-compact"), (
+            "the Repeat row's Select editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "Every Monday" in painted, (
+            f"the Repeat editor's own value is not painted: {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_at_row_editor_opens_with_current_run_at_preselected():
     """A one-time reminder's At row opens an Input preloaded with the
     task's own `run_at.isoformat()` -- the same prefill shape the
@@ -514,6 +548,43 @@ async def test_at_row_editor_opens_with_current_run_at_preselected():
 
         editor = at_row.query_one(Input)
         assert editor.value == run_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_at_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a): an
+    uncompacted `Input`'s DEFAULT_CSS is `height: 3` (border + content +
+    border), clipped to 1 row by the same `.detail-value-row-line`
+    container -- the surviving row is the top border, so `editor.value`
+    reads the ISO timestamp correctly while the compositor paints only
+    border glyphs. Fails against the unfixed code (bare `Input(...)`, no
+    `compact=True`)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        run_at = datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc)
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=run_at,
+            )
+        )
+        await pilot.pause()
+
+        at_row = detail._at_row
+        await pilot.click(at_row)
+        await pilot.pause()
+
+        editor = at_row.query_one(Input)
+        assert editor.value == run_at.isoformat()
+        assert editor.has_class("-textual-compact"), (
+            "the At row's Input editor was constructed without compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert run_at.isoformat() in painted, (
+            f"the At editor's own value is not painted: {painted!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -1099,6 +1170,34 @@ async def test_model_row_editor_preselects_provider_slash_model_and_is_blank_whe
 
 
 @pytest.mark.asyncio
+async def test_model_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a), the
+    `DefinitionDetail` twin of `test_at_row_editor_paints_its_current_
+    value_when_focused` -- same `.detail-value-row-line { height: 1 }`
+    clip, a different pane class entirely, so the fix (`compact=True` at
+    this construction site) is pinned independently of `TaskDetail`'s
+    own."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == "openai/gpt-5"
+        assert editor.has_class("-textual-compact"), (
+            "the Model row's Input editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "openai/gpt-5" in painted, (
+            f"the Model editor's own value is not painted: {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_generation_row_editor_preselects_current_value_defaulting_to_optional():
     async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
         detail = pilot.app.query_one(DefinitionDetail)
@@ -1121,6 +1220,30 @@ async def test_generation_row_editor_preselects_current_value_defaulting_to_opti
         await pilot.pause()
         editor = row.query_one(Select)
         assert editor.value == "optional"
+
+
+@pytest.mark.asyncio
+async def test_generation_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a) -- the
+    `Select` case for `DefinitionDetail`, mirroring `TaskDetail`'s Repeat
+    row pin."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # generation_mode="required"
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "required"
+        assert editor.has_class("-textual-compact"), (
+            "the Generation row's Select editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "Always generate a draft" in painted, (
+            f"the Generation editor's own value is not painted: {painted!r}"
+        )
 
 
 @pytest.mark.asyncio

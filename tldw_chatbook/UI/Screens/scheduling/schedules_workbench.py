@@ -300,6 +300,21 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
     return f"{row.schedule_summary} · {next_text}"
 
 
+class _QueueFilterInput(Input):
+    """The rail search box -- `escape` blurs it (UAT Minor 21) instead of
+    falling through to `SchedulesWorkbench`'s own `escape` -> clear_marks
+    binding. Textual checks a focused widget's own BINDINGS before its
+    ancestors' (`App._check_bindings` walks the focus chain closest-first),
+    so this in-area binding wins without touching the screen's binding at
+    all; unblurred, the filter kept focus and swallowed the single-letter
+    chip keys (`f`, `1`-`4`) as literal text instead of routing them."""
+
+    BINDINGS = [Binding("escape", "blur_filter", "Unfocus filter", show=False)]
+
+    def action_blur_filter(self) -> None:
+        self.blur()
+
+
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs.
 
@@ -612,7 +627,7 @@ class SchedulesWorkbench(BaseAppScreen):
                             id="scheduling-chip-cycle",
                             tooltip="Cycle the queue filter (f).",
                         )
-                    yield Input(
+                    yield _QueueFilterInput(
                         # Says what ruling 5's search actually
                         # matches -- title + question/body (final
                         # review F6: the Type/Status columns are
@@ -621,6 +636,15 @@ class SchedulesWorkbench(BaseAppScreen):
                         # already documents).
                         placeholder="Filter: title or question…",
                         id="scheduling-queue-filter",
+                        # UAT display blocker (finding 1b): a 1-row Input
+                        # from app CSS height never carries Textual's own
+                        # `.-textual-compact` class, so the existing
+                        # `Input.-textual-compact:focus` outline opt-out
+                        # (TASK-17961) missed it -- `*:focus`'s outline
+                        # painted over the only content row, hiding
+                        # whatever was typed. `compact=True` joins that
+                        # family instead of adding a bespoke opt-out.
+                        compact=True,
                     )
                     yield DataTable(
                         id="scheduling-task-table", cursor_type="row"
