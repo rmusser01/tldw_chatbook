@@ -696,15 +696,25 @@ permission, provider or runtime boundaries. The later ADR-097 accepted spec and
 TASK-23113.2 AC8 explicitly require retained semantic bytes on soft deletion;
 do not restore older ADR-090 sidecar clearing to make a stale assertion pass.
 
-- [ ] Reproduce all six exact IDs and classify product defects versus fixture
+- [x] Reproduce all six exact IDs and classify product defects versus fixture
   drift using current governing contracts, without weakening mutation guards.
-- [ ] Repair image-only send preparation, MCP exclusion coverage, legacy
+- [x] Repair image-only send preparation, MCP exclusion coverage, legacy
   promotion-double fidelity, guarded future-thinking export setup, soft-delete
   retention coverage and Settings navigation readiness as diagnosis requires.
-- [ ] Run exact RED/GREEN plus directly affected targeted tests/statics, review
+- [x] Run exact RED/GREEN plus directly affected targeted tests/statics, review
   the repair diff independently, and record any new or unresolved failure.
-- [ ] Reconcile AC9 against the selected-suite evidence without presenting
+- [x] Reconcile AC9 against the selected-suite evidence without presenting
   focused passes as a newly executed full matrix or waiving outstanding checks.
+
+Implementation `11ea68221`, scoped review through `610adcbaf`: all six repairs
+pass spec and quality review, with one nonblocking adjacent stale-comment nit.
+The exact six cases pass; wider affected coverage is 737 passed / 2 failed.
+Those two Canvas retry cases also fail at pre-repair `c8a1211e5`; they are not
+introduced by this repair, but remain acceptance blockers. AC9 is still open;
+the task is not Done. See `Docs/Canvas/V1_VERIFICATION.md` for exact comparison,
+isolation incident, static-debt and resource-warning qualifications. Preserve
+the worktree and seek separate direction on the newly identified retry cases;
+do not infer a full sweep, integration or another repair scope from this review.
 
 ## Execution Handoff
 

@@ -20,7 +20,7 @@ the scoped verdict passed. This does not waive AC9's six characterized
 baseline failures or authorize a full sweep.
 The user subsequently approved repair of those six baseline failures. Diagnosis
 reproduced all six in one isolated pytest run (6 failed, 1 warning, 5.94 s).
-The original six repaired cases now pass; independent review is pending and
+The original six repaired cases now pass; independent review passed and
 two additional failures keep AC9 open. The scope is
 those causes and directly affected regressions, not a full repository sweep.
 
@@ -123,6 +123,15 @@ No formatter diff overlaps changed ranges after normalizing the new constructor;
 four files retain pre-existing whole-file format debt. `compileall` for all six
 and `git diff --check` returned zero. No application imports were used for these
 static checks. AC9 remains unchecked pending the newly identified retry failures.
+
+Independent static scoped review of `85e7f36f4..610adcbaf` passed the spec and
+quality gates for all six repairs, with no new Critical/Important fix-diff
+regression identified. One nonblocking prose remnant remains at
+`Chat/console_chat_controller.py:496`: the adjacent comment still mentions an
+obsolete “18-tool contract.” It is recorded, not treated as functional failure
+or silently fixed outside the reviewed diff. The two newly identified retry
+failures remain unresolved; TASK-31232 is not Done. No full sweep or integration
+is authorized by the scoped review.
 
 ## DOM-only correction evidence (`981b1f8c1`)
 
