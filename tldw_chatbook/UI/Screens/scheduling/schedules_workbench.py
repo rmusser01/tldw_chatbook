@@ -507,7 +507,48 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @staticmethod
     def _server_available(service: Any, active_server_id: str | None) -> bool:
-        """Return whether Schedules can switch ownership to a live server."""
+        """Return whether Schedules can switch ownership to a live server.
+
+        task-3 (schedules UAT remediation ruling 4): `service.
+        server_reachable` is `refresh_server_reachability`'s actual probe
+        result, not mere configuredness (root-causes.md #5's bug -- the
+        three checks this method used to stop at never contacted
+        anything). Until a probe has succeeded this reads `False` (the
+        real service's own default), so a fresh workbench never offers a
+        server destination before anything has confirmed it is there.
+        Read via `getattr(..., True)` rather than a direct attribute
+        access: many test doubles across this test suite model "a
+        connected service" without also modeling reachability, and were
+        never meant to exercise this NEW gate -- they get the old
+        available-if-configured behavior; a fake that wants to test the
+        unreachable case sets `server_reachable = False` explicitly.
+        """
+        return (
+            service is not None
+            and bool(active_server_id)
+            and service.server_client.notifications_service is not None
+            and getattr(service, "server_reachable", True)
+        )
+
+    @staticmethod
+    def _server_configured(service: Any, active_server_id: str | None) -> bool:
+        """Return whether a server identity is merely CONFIGURED.
+
+        Unlike `_server_available`, this does NOT require `refresh_
+        server_reachability`'s probe to have succeeded -- it is
+        `_server_available`'s OLD body, pre-task-3, kept for call sites
+        that only need "is there anything to even attempt a network call
+        against" (starting the SSE observer, scheduling a catch-up pull,
+        deciding whether to also fetch server automations for the Queue
+        list), not "should this be offered as a confirmed-live transfer/
+        switch destination" (`_server_available`'s job, ruling 4). Those
+        call sites run at `on_mount`, synchronously, before `_refresh_
+        server_reachability`'s background probe has had a chance to
+        resolve -- gating them on `_server_available` made every fresh
+        mount silently skip its first catch-up pull/observer start (a
+        real regression this method exists to avoid, caught by this
+        task's own test suite, not merely a fixture-compat concern).
+        """
         return (
             service is not None
             and bool(active_server_id)
@@ -717,6 +758,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
+        self._refresh_server_reachability()
         self._refresh_conflicts_badge()
         self._refresh_results_badge()
         self._sync_chip_cycle_label()
@@ -771,13 +813,19 @@ class SchedulesWorkbench(BaseAppScreen):
         `ServerNotificationEventObserver.observe()` --
         `NotificationsScopeService.observe_server_feed_events` has existed
         since 18940 slice 3 with nothing invoking it (survey §3).
+
+        `_server_configured`, not `_server_available`: this runs at
+        `on_mount`, synchronously, before `_refresh_server_reachability`'s
+        background probe has had any chance to resolve -- gating a
+        mount-time start on the reachability verdict raced it and
+        silently skipped starting the observer on every fresh mount.
         """
         service = self._service()
         scope_service = getattr(self.app_instance, "notifications_scope_service", None)
         if (
             service is None
             or scope_service is None
-            or not self._server_available(service, self._active_server_id())
+            or not self._server_configured(service, self._active_server_id())
         ):
             return
         self._notification_cancel_event = asyncio.Event()
@@ -916,9 +964,11 @@ class SchedulesWorkbench(BaseAppScreen):
         pull. Gated on a configured server for the same reason
         `_start_server_notification_observer` is: with no server there is
         nothing to pull and `_run_phase` would only record a sync error.
+        `_server_configured`, not `_server_available`, for the same
+        mount-time-race reason that method's own docstring gives.
         """
         service = self._service()
-        if service is None or not self._server_available(
+        if service is None or not self._server_configured(
             service, self._active_server_id()
         ):
             return
@@ -1304,7 +1354,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._queue_local_definitions = local_rows
         local_items = self._device_only_automations(local_rows)
         server_client = getattr(service, "server_client", None)
-        server_available = server_client is not None and self._server_available(
+        # `_server_configured`, not `_server_available`: this runs from
+        # `_request_tasks_refresh`'s worker, kicked at `on_mount` roughly
+        # alongside `_refresh_server_reachability`'s own probe -- gating
+        # on the reachability verdict raced it and could silently skip
+        # merging server automations into the FIRST Queue-list load.
+        server_available = server_client is not None and self._server_configured(
             service, self._active_server_id()
         )
         if not server_available:
@@ -3082,6 +3137,18 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable; cannot start a transfer."
             )
             return
+        # task-3 (ruling 4): re-probe right before deciding, rather than
+        # trust whatever the mount-time background probe last cached --
+        # `refresh_server_reachability`'s own probe is itself cached
+        # per-connection, so this is a no-op round trip once a verdict is
+        # already known and only actually re-checks a genuinely stale
+        # (errored) prior attempt. Guarded with getattr, same reasoning as
+        # `_refresh_server_reachability`: a test double that models
+        # `transfer_refusal` but not this newer probe method must not
+        # crash the worker over a method it was never asked to implement.
+        refresh_reachability = getattr(service, "refresh_server_reachability", None)
+        if refresh_reachability is not None:
+            await refresh_reachability()
         reason = service.transfer_refusal(row_dict, direction)
         if reason is not None:
             row.show_error(reason)
@@ -4216,11 +4283,51 @@ class SchedulesWorkbench(BaseAppScreen):
                 "error", f"{count} sync error{'s' if count != 1 else ''}"
             )
         elif not server_available:
-            self._sync_header_status("empty", "Local only — no server connection")
+            # task-3 (ruling 4): distinct copy for "nothing configured" vs
+            # "configured but the reachability probe hasn't succeeded" --
+            # the header must not assert a server as a fact it hasn't
+            # confirmed (UAT leg A defect, root-causes.md #5).
+            if active_server_id:
+                self._sync_header_status(
+                    "empty", "Server configured but not reachable"
+                )
+            else:
+                self._sync_header_status(
+                    "empty", "Local only — no server connection"
+                )
         elif service.owner_id.startswith("server:"):
             self._sync_header_status("ready", "Synced with server")
         else:
             self._sync_header_status("ready", "Local schedules")
+
+    def _refresh_server_reachability(self) -> None:
+        """Kick a background probe of server reachability (task-3, ruling 4).
+
+        `_server_available`/`transfer_refusal` read `service.
+        server_reachable`, which defaults `False` until a probe succeeds
+        -- this is what actually runs one, then repaints the header/owner
+        state so the honest answer appears as soon as it's known rather
+        than only at the next unrelated refresh.
+
+        A no-op for a test double that doesn't implement `refresh_
+        server_reachability` at all (`_server_available`'s own `getattr`
+        fallback already reads such a fake as available) -- there is
+        nothing to probe and no worker crash to risk over it.
+        """
+        service = self._service()
+        if service is None:
+            return
+        probe = getattr(service, "refresh_server_reachability", None)
+        if probe is None:
+            return
+
+        async def _probe() -> None:
+            await probe()
+            self._refresh_owner_select()
+
+        self.run_worker(
+            _probe, exclusive=True, group="schedules-server-reachability"
+        )
 
     def _sync_header_status(self, status: WorkbenchStatus, label: str) -> None:
         """Reflect real sync health in the destination header chip."""

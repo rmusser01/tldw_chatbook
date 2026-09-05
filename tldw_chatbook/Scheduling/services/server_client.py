@@ -58,6 +58,12 @@ class ServerClientConfig:
     retry_delay: float = 1.0
 
 
+#: Sentinel distinguishing "capabilities never probed this connection"
+#: from a probed-and-absent (``None``) result -- `get_capabilities`'s
+#: caching discipline (task-3, schedules UAT remediation ruling 5).
+_CAPABILITIES_UNSET = object()
+
+
 class SchedulingServerClient:
     """Async client that delegates scheduling operations to a notifications service.
 
@@ -82,6 +88,9 @@ class SchedulingServerClient:
         """
         self.notifications_service = notifications_service
         self.config = config or ServerClientConfig()
+        self._capabilities_cache: dict[str, Any] | None | object = (
+            _CAPABILITIES_UNSET
+        )
 
     def set_notifications_service(self, notifications_service: Any | None) -> None:
         """Inject or refresh the underlying notifications service.
@@ -91,6 +100,42 @@ class SchedulingServerClient:
                 operations, or ``None`` to disconnect the server.
         """
         self.notifications_service = notifications_service
+        # A reconnect (or a switch to a different server) may answer the
+        # capabilities probe differently -- never carry a stale verdict
+        # across it (task-3 handshake caching discipline).
+        self._capabilities_cache = _CAPABILITIES_UNSET
+
+    async def get_capabilities(self) -> dict[str, Any] | None:
+        """Probe Scheduled Tasks automation capabilities, cached per connection.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities handshake
+        -- mirrors `client.py`'s `/sync/capabilities` probe-and-cache shape
+        (`get_sync_v2_capabilities`). Fetched at most once per connection
+        (reset by `set_notifications_service`), so repeated callers (every
+        sync cycle) don't re-probe.
+
+        Returns:
+            The parsed capabilities dict once fetched successfully (cached
+            from then on), or ``None`` when the server does not expose the
+            capabilities route at all -- a server old enough to predate
+            Scheduled Tasks automation entirely, degraded honestly here
+            instead of raised (root-causes.md #7). A transient failure
+            (timeout/5xx/other) is deliberately NOT cached and re-raises
+            (same error-mapping contract as every other method on this
+            class) -- a blip must never be permanently misread as "this
+            server is too old".
+        """
+        if self._capabilities_cache is not _CAPABILITIES_UNSET:
+            return self._capabilities_cache  # type: ignore[return-value]
+        try:
+            result = await self._call_with_retry(
+                "get_scheduled_automation_capabilities", is_read=True
+            )
+        except ServerClientNotFoundError:
+            self._capabilities_cache = None
+            return None
+        self._capabilities_cache = result
+        return result
 
     @staticmethod
     def _strip_local_only_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:

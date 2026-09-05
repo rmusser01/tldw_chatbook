@@ -361,6 +361,52 @@ class SchedulingService:
         #: the periodic ~30-minute reload (task-18937). Kept optional and
         #: exception-guarded: a broken callback must never fail the mutation.
         self.on_queue_changed = on_queue_changed
+        #: task-3 (schedules UAT remediation ruling 4): whether the last
+        #: `refresh_server_reachability` probe actually reached the
+        #: configured server. Defaults `False` -- "until a probe has
+        #: succeeded, the option must not be offered" (root-causes.md #5)
+        #: -- so a fresh service never asserts a server is usable before
+        #: anything has confirmed it. `_server_available`/`transfer_
+        #: refusal` read this instead of merely checking that a client
+        #: object was constructed (the bug root-causes.md #5 found: none
+        #: of the old checks ever contacted anything).
+        self._server_reachable = False
+
+    async def refresh_server_reachability(self) -> bool:
+        """Probe the configured server for actual reachability.
+
+        task-3 (schedules UAT remediation ruling 4): reuses the
+        capabilities handshake's own round trip (`SchedulingServerClient.
+        get_capabilities`, ruling 5) as the reachability probe rather than
+        a second one -- any response (capabilities present OR a clean
+        "route absent" answer) proves the server is actually there; only
+        an exception (timeout, connection refused, 5xx, or no client
+        configured at all) means it is not. Cheap to call repeatedly: the
+        underlying probe is itself cached per connection, so this mostly
+        just re-reads that cache except right after a reconnect.
+
+        Returns:
+            The freshly probed reachability, also cached on ``self`` for
+            `_server_available`/`transfer_refusal` (sync callers) to read.
+        """
+        if (
+            self.server_client is None
+            or getattr(self.server_client, "notifications_service", None) is None
+        ):
+            self._server_reachable = False
+            return False
+        try:
+            await self.server_client.get_capabilities()
+        except Exception:  # noqa: BLE001
+            self._server_reachable = False
+            return False
+        self._server_reachable = True
+        return True
+
+    @property
+    def server_reachable(self) -> bool:
+        """The last `refresh_server_reachability` probe's answer."""
+        return self._server_reachable
 
     def _notify_queue_changed(self) -> None:
         """Invoke the queue-changed callback, tolerating a broken one.
@@ -1114,6 +1160,15 @@ class SchedulingService:
             or getattr(self.server_client, "notifications_service", None) is None
         ):
             return "No server connection is configured."
+        # task-3 (schedules UAT remediation ruling 4): the check above is
+        # CONFIGUREDNESS, not connectivity -- it passes for any
+        # syntactically valid server profile whether or not anything ever
+        # answered it (root-causes.md #5's exact bug). `server_reachable`
+        # is the actual probe's answer (`refresh_server_reachability`);
+        # a configured-but-unreachable server gets its OWN reason, distinct
+        # from "not configured at all" (ruling 4's UX-grammar note).
+        if not self.server_reachable:
+            return "The configured server is not reachable right now."
 
         owner_id = str(row.get("owner_id") or "")
         if direction == "to_server":
