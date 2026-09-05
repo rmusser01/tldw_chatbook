@@ -4,7 +4,7 @@ title: Environment 10s poll silently resets rail focus when the file set changes
 status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
-updated_date: '2026-09-05 18:44'
+updated_date: '2026-09-05 19:17'
 labels:
   - console
   - inspector
@@ -113,4 +113,84 @@ never touches (git diff --stat shows zero CSS files changed).
 Files: tldw_chatbook/UI/Screens/chat_screen.py,
 Tests/UI/test_console_environment_wiring.py. Full report:
 .superpowers/sdd/2026-09-05-inspect-rail-critique-burndown/task-31661-report.md
+
+--- Round-1 review fixes (2026-09-05) ---
+
+Review found two Importants (both probe-verified) plus ride-alongs against
+the original implementation:
+
+I1 (AC#2 gap): UNBOUND/ERROR/PENDING/"No git workspace" Environment
+projections (task-31660) render a row explaining the state but never a
+clickable one, so when the row set collapses into one of those and the
+previously-focused row is gone, the nearest-survivor search had nothing
+to land on and fell through to the defect widget. Fixed:
+`_focus_console_environment_row_after_sync` now falls back to the
+section's own collapse chevron (`_focus_console_environment_section_
+toggle`) -- a real focusable Button -- as the last resort. Pinned with
+two tests (UNBOUND + ERROR variants); confirmed RED without the fallback.
+
+I2 (guard at the wrong window): the original docstring claimed the
+synchronous pre-sync capture protected against a mid-flight user click,
+but `sync_state`'s own recompose (unmount, then remount) is two awaits,
+so real time -- and real input -- passes between `call_next` scheduling
+the restore and it actually running. Probe: click the composer in that
+window -> focus got silently stolen back to the rail row. Fixed: the
+restore now checks, AT CALLBACK TIME, whether focus has left the rail
+body (`_console_environment_focus_left_the_rail`, using the same
+`owner in focused.ancestors_with_self` idiom already used elsewhere in
+this file) and yields immediately if so. Pinned with two tests (a
+same-tick move via a direct focus() call before any await, and a
+one-tick-later move injected after draining `asyncio.sleep(0)` cycles
+until Textual's own unmount reset has fired but this task's restore has
+not yet run -- both confirmed RED with the guard disabled).
+
+M4 (fallback wasn't genuinely nearest): the original 3-candidate ladder
+(same index, index-1, first row) could overshoot a much closer surviving
+neighbor straight to a distant row whenever more than one row vanished
+at once. Replaced with `_nearest_surviving_console_environment_row_id`,
+which walks OUTWARD from the removed row's old index (distance 1, 2, 3,
+...) for the first id still present. Updated the removal test's expected
+outcome from "env-changes" (distance 5) to the true nearest survivor
+"env-branch" (distance 3) -- pins the outward walk against a regression
+to a fixed "always land on row 0" shortcut.
+
+M5 (skip no-op syncs): `_land_console_environment` now also captures each
+section's pre-sync rows/summary and skips scheduling a restore entirely
+when the new state is identical (matching `sync_state`'s own early-return
+condition) -- one less redundant `call_next` on a landing that didn't
+change that section at all.
+
+#3 (docstring correction): removed the false "never in response to a
+user gesture" claim (`_handle_console_environment_row`'s row-expansion
+branch also calls this method) and documented the resulting benign
+double-schedule (two `call_next` restores queued for the same row when
+that path also calls `_request_console_environment_row_focus`) as a
+deliberate, harmless redundancy rather than fixing it away.
+
+M7 (test-only): `Tests/UI/test_console_inspector_section.py`'s CSS-bundle
+guard hard-coded `tldw_cli_modular.tcss`, but the CSS build's
+screen-owned split (`build_css.py`) moved every
+`.console-inspector-section*` rule out of that monolithic bundle into
+`screen_agentic_console.tcss` (loaded directly by app.py/chat_screen.py)
+-- 0 matches vs 17, the exact pre-existing red this task's original
+report baselined. Repointed the check at the bundle that actually ships
+the rules; verified it goes green now and red again when a rule is
+removed from that file (temporary local mutation + restore, no diff
+left behind).
+
+BOOKKEEPING: appended AC#13 to task-31665 flagging that the fleet
+section's `_sync_console_agent_section` has the same focus-stealing
+defect (its rows ARE focusable) -- out of this task's scope, filed as a
+follow-up per the review.
+
+Files: tldw_chatbook/UI/Screens/chat_screen.py,
+Tests/UI/test_console_environment_wiring.py (2 new tests + 2 existing
+ones' expected outcomes corrected),
+Tests/UI/test_console_inspector_section.py (M7 path fix).
+Full suite: Tests/UI/test_console_environment_wiring.py (35 passed),
+Tests/UI/test_console_environment_controller.py,
+Tests/UI/test_console_environment_section.py,
+Tests/Chat/test_console_environment_state.py,
+Tests/UI/test_console_right_rail.py, Tests/UI/test_console_inspector_
+section.py -- all green together; ./scripts/preflight.sh clean.
 <!-- SECTION:NOTES:END -->

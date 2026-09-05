@@ -19,11 +19,13 @@ persisted default -- closed). Data is always a CANNED
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import pytest
 from textual.app import App
 from textual.events import AppFocus
+from textual.widgets import Button
 
 from Tests.UI.test_console_fleet_panel import _FleetBridge
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -36,6 +38,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Console_Modules.environment import UNKNOWN_ROOT
 from tldw_chatbook.Chat.console_environment_state import (
+    ENV_ROW_BRANCH,
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS_FIX,
     ENV_ROW_COMMIT_PUSH,
@@ -445,18 +448,25 @@ async def test_poll_landing_that_adds_a_row_keeps_focus_on_the_same_row_id():
 
 @pytest.mark.asyncio
 async def test_poll_landing_that_removes_the_focused_row_lands_on_the_nearest_survivor():
-    """TASK-31661 AC#1/#2: removing the focused row falls back to its neighbor.
+    """TASK-31661 AC#1/#2 (round-1 review M4): the fallback is genuinely nearest.
 
     Focus is parked on "Open in browser" (``env-pr-open``, clickable/
     focusable) inside the expanded PR row. A poll lands a snapshot where
     the PR has disappeared entirely (closed/merged and no longer
     reported) -- the whole PR sub-tree (``env-pr``, ``env-pr-title``,
     ``env-pr-open``, ``env-pr-add``) is gone, so the exact row_id cannot
-    be restored. The candidate ladder (same index, then index-1, then the
-    first row) all overshoot the now-3-row list, so this exercises the
-    final "first row" rung -- the restore must still land on a row with
-    a real focus indicator, never on whatever Textual's unmount-triggered
-    reset happened to pick.
+    be restored.
+
+    Previous order: env-changes(0), env-local(1), env-branch(2), env-pr(3),
+    env-pr-title(4), env-pr-open(5, REMOVED), env-pr-add(6). New order:
+    env-changes(0), env-local(1), env-branch(2). Walking OUTWARD from the
+    removed row's old index (5) -- 4, 6, 3, (7 OOB), 2 -- the first
+    survivor is "env-branch" at distance 3, NOT "env-changes" at distance
+    5. This pins the true nearest-neighbor search (M4): a naive fallback
+    ladder of fixed candidates (e.g. same-index/index-1/first-row) would
+    overshoot straight past "env-branch" to "env-changes" here, so
+    replacing the search with a hard-coded ``(0,)`` (first row, always)
+    would make this assertion fail.
 
     File rows (``env-file-N``) are deliberately NOT used for this
     scenario: they are not ``clickable``, so they can never actually hold
@@ -509,9 +519,104 @@ async def test_poll_landing_that_removes_the_focused_row_lands_on_the_nearest_su
         focused = screen.focused
         assert isinstance(focused, ConsoleInspectorSectionRow)
         assert focused.section_id == "environment"
-        # Neighborhood ladder overshoots (previous index 5, new list has 3
-        # rows) -- falls all the way back to the first row.
-        assert focused.row_id == ENV_ROW_CHANGES
+        # True nearest survivor (distance 3), not the first row
+        # (distance 5) -- see the docstring's outward-walk trace.
+        assert focused.row_id == ENV_ROW_BRANCH
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_with_no_focusable_row_falls_back_to_the_section_toggle():
+    """TASK-31661 AC#2 (round-1 review I1): no row at all may be focusable.
+
+    Focus is parked on "Changes" (``env-changes``, clickable). A poll then
+    lands ``unbound_snapshot()`` -- the workspace unbinding entirely. The
+    Environment section still renders rows (``env-unbound``,
+    ``env-unbound-note``), so it is never hidden, but NEITHER row is
+    ``clickable`` (task-31660's UNBOUND projection is a bare
+    explanation, not an action) -- the nearest-survivor search has
+    nothing to land on. AC #2 ("focus never lands on a widget with no
+    visible indication") still has to hold: the fallback is the
+    section's own collapse chevron, a real focusable ``Button``, not
+    whatever Textual's unmount reset already picked.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        bound = _snapshot(files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),))
+        screen._console_environment.snapshot = bound
+        screen._land_console_environment(bound)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+
+        def _changes_row():
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == ENV_ROW_CHANGES
+            )
+
+        _changes_row().focus()
+        await pilot.pause()
+        assert screen.focused is _changes_row()
+
+        unbound = unbound_snapshot()
+        screen._console_environment.snapshot = unbound
+        screen._land_console_environment(unbound)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not any(row.clickable for row in section.rows)
+        focused = screen.focused
+        assert isinstance(focused, Button)
+        assert focused.id == "console-inspector-section-environment-toggle"
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_error_state_also_falls_back_to_the_section_toggle():
+    """TASK-31661 (round-1 review I1, ERROR variant): same fallback, ERROR tier.
+
+    Cheap variant of the UNBOUND case above: the ERROR projection
+    (`ENV_ROW_ERROR`, "Environment unavailable — Refresh to retry") is
+    also never clickable.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        bound = _snapshot(files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),))
+        screen._console_environment.snapshot = bound
+        screen._land_console_environment(bound)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+
+        def _changes_row():
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == ENV_ROW_CHANGES
+            )
+
+        _changes_row().focus()
+        await pilot.pause()
+        assert screen.focused is _changes_row()
+
+        errored = EnvironmentSnapshot(
+            git=GitEnvState(availability=EnvSourceAvailability.ERROR),
+        )
+        screen._console_environment.snapshot = errored
+        screen._land_console_environment(errored)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not any(row.clickable for row in section.rows)
+        focused = screen.focused
+        assert isinstance(focused, Button)
+        assert focused.id == "console-inspector-section-environment-toggle"
 
 
 @pytest.mark.asyncio
@@ -556,6 +661,148 @@ async def test_poll_landing_never_hijacks_focus_outside_the_rail():
 
         assert "env-file-1" in _row_ids(section)
         assert screen.focused is focused_before
+
+
+def _pr_removal_setup(*, with_pr):
+    """Shared snapshot pair for the I2 race tests below.
+
+    Mirrors `test_poll_landing_that_removes_the_focused_row_lands_on_the_
+    nearest_survivor`'s scenario (a whole PR sub-tree, including the
+    focused row, disappearing) -- picked because it is a genuine
+    structural change (a real recompose, not an in-place patch), so the
+    restore is actually scheduled and there is a real window for a race.
+    """
+    return _snapshot(
+        pr=PrEnvState(
+            availability=EnvSourceAvailability.OK,
+            number=7,
+            title="Add feature",
+            state="OPEN",
+            url="https://x/pull/7",
+        )
+    ) if with_pr else _snapshot()
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_yields_to_a_same_tick_focus_move():
+    """TASK-31661 (round-1 review I2, variant 1): a same-tick user move wins.
+
+    Probe-verified defect (pre-fix): the restore in
+    `_focus_console_environment_row_after_sync` re-focused the rail row
+    unconditionally, so a user gesture that moved focus to the composer
+    in the SAME synchronous tick as the landing (before any
+    `pilot.pause()` at all) got silently overridden back onto the rail --
+    the reviewer's own probe: "their next Enter would push Change
+    Review."
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        with_pr = _pr_removal_setup(with_pr=True)
+        screen._console_environment.snapshot = with_pr
+        screen._land_console_environment(with_pr)
+        await pilot.pause()
+        screen._handle_console_environment_row("environment", ENV_ROW_PR)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+
+        def _row(row_id):
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == row_id
+            )
+
+        _row(ENV_ROW_PR_OPEN).focus()
+        await pilot.pause()
+        assert screen.focused is _row(ENV_ROW_PR_OPEN)
+
+        composer = screen.query_one("#console-native-composer")
+
+        without_pr = _pr_removal_setup(with_pr=False)
+        screen._console_environment.snapshot = without_pr
+        screen._land_console_environment(without_pr)
+        # SAME TICK: no `await` has happened yet -- the click is issued
+        # before this task's own restore, or even Textual's own unmount
+        # reset, has run at all. `Widget.focus()` itself defers via
+        # `app.call_later` (never synchronous -- confirmed by reading
+        # Textual's own source), so the assertion below can only pass by
+        # the click's own deferred focus-set surviving whatever the
+        # restore does after it, not by reading `screen.focused` early.
+        screen._focus_console_workbench_target("console-native-composer")
+
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is composer
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_yields_to_a_one_tick_later_focus_move():
+    """TASK-31661 (round-1 review I2, variant 2): a slightly-later move also wins.
+
+    Narrower window than the same-tick variant: the click lands AFTER
+    Textual's own unmount-triggered focus reset has already fired (focus
+    is transiently on `_InspectorOuterBody`, the defect widget) but
+    BEFORE this task's `call_next`-scheduled restore callback has run --
+    confirmed empirically (`asyncio.sleep(0)` yields one scheduler turn
+    at a time, unlike `pilot.pause()`, which drains the whole
+    recompose-then-restore chain in one shot). The restore must still
+    see the click and yield.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        with_pr = _pr_removal_setup(with_pr=True)
+        screen._console_environment.snapshot = with_pr
+        screen._land_console_environment(with_pr)
+        await pilot.pause()
+        screen._handle_console_environment_row("environment", ENV_ROW_PR)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+
+        def _row(row_id):
+            return next(
+                widget
+                for widget in section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == row_id
+            )
+
+        _row(ENV_ROW_PR_OPEN).focus()
+        await pilot.pause()
+        assert screen.focused is _row(ENV_ROW_PR_OPEN)
+        focused_row = _row(ENV_ROW_PR_OPEN)
+
+        without_pr = _pr_removal_setup(with_pr=False)
+        screen._console_environment.snapshot = without_pr
+        screen._land_console_environment(without_pr)
+
+        # Drain scheduler turns one at a time until Textual's OWN
+        # unmount reset has fired (focus is no longer the just-removed
+        # row) -- still strictly before this task's own restore, which
+        # is queued behind it on the SAME `call_next` queue and only
+        # actually runs once the whole chain is later drained by
+        # `pilot.pause()` below.
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if screen.focused is not focused_row:
+                break
+        assert screen.focused is not focused_row  # reset fired
+        assert not isinstance(screen.focused, ConsoleInspectorSectionRow)
+
+        composer = screen.query_one("#console-native-composer")
+        screen._focus_console_workbench_target("console-native-composer")
+
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is composer
 
 
 # ---------------------------------------------------------------------------

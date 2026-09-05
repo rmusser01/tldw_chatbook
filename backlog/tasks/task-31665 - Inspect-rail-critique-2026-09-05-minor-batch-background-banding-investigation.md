@@ -1,13 +1,18 @@
 ---
 id: TASK-31665
 title: >-
-  Inspect rail critique 2026-09-05: minor batch + background banding investigation
+  Inspect rail critique 2026-09-05: minor batch + background banding
+  investigation
 status: To Do
 assignee: []
 created_date: '2026-09-05 07:00'
-labels: [console, inspector, critique-2026-09-05]
-priority: low
+updated_date: '2026-09-05 19:16'
+labels:
+  - console
+  - inspector
+  - critique-2026-09-05
 dependencies: []
+priority: low
 ---
 
 ## Description
@@ -22,7 +27,6 @@ secondary-contrast finding (the class DOES render in the right rail).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 Left-rail background bleed diagnosed and fixed (or documented as intended with the contrast implications resolved)
 - [ ] #2 Task rows show the frontmatter title, not the filename slug (the frontmatter is already read in the same bounded head-read)
@@ -36,4 +40,5 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [ ] #10 A bound→bound workspace switch must not transiently render the new root's branch/counts beside the OLD root's PR/checks while the deferred gh fetch is in flight (per-field replace in the non-UNBOUND landing branch; review finding, TASK-31660 round 1)
 - [ ] #11 A persistent UNKNOWN root (no chat controller / no active session) must not sit on "Checking workspace…" with an inert Refresh indefinitely (31660 re-review obs — the AC#4 situation one state over)
 - [ ] #12 test_unknown_root_never_paints_the_unbound_copy asserts the rail is open after its toggle (vacuity guard); empty-state docs table and environment.py module docstring updated for the UNKNOWN state
+- [ ] #13 The fleet section's periodic _sync_console_agent_section recompose steals focus the same way the Environment poll did (its rows ARE focusable) -- apply the 31661 capture/restore + outside-rail guard there (review finding, 31661 round 1)
 <!-- AC:END -->

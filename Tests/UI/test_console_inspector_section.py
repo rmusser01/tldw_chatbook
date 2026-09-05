@@ -773,10 +773,24 @@ async def test_view_all_tail_posts_view_all_requested_for_this_section():
 def test_inspector_section_css_is_styled_in_source_and_bundle():
     """Regression guard against a hand-edit-only-the-bundle desync
     (TASK-395's failure mode) -- both the source module and the generated
-    bundle must carry the new grammar's rules."""
+    bundle must carry the new grammar's rules.
+
+    Round-1 review M7 (TASK-31661): the CSS build's screen-owned split
+    (`build_css.py`'s `split_agentic_terminal`/`split_owned_module`) moved
+    every `.console-inspector-section*` rule OUT of the monolithic
+    `tldw_cli_modular.tcss` and into the Console screen's own generated
+    sheet, `screen_agentic_console.tcss` (loaded directly by `app.py` and
+    `chat_screen.py`) -- these selectors are owned by that screen, not
+    shared, so the split moves them wholesale rather than duplicating
+    them. Checking the old monolithic bundle here was baselined as a
+    pre-existing red for that reason: it was asserting against a file
+    that no longer carries these rules at all, not detecting a real
+    desync. Pointing this guard at the bundle that actually ships them
+    restores its purpose.
+    """
     for path in (
         Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
     ):
         text = path.read_text(encoding="utf-8")
         for class_name in (

@@ -8075,35 +8075,55 @@ class ChatScreen(BaseAppScreen):
     def _land_console_environment(self, snapshot: EnvironmentSnapshot) -> None:
         """Repaint the Environment/Tasks sections from a landed snapshot.
 
-        Runs on the UI thread (the controller marshals every landing through
-        ``app.call_from_thread``), on the 10s poll's own schedule -- never in
-        response to a user gesture. Both sections are resolved BEFORE either
-        is written, so a rail that is mid-recompose or not mounted at all
-        leaves the pair consistent rather than half-applied.
+        Runs on the UI thread. The controller's 10s poll marshals its calls
+        through ``app.call_from_thread``, but this is also called directly
+        and synchronously from ``_handle_console_environment_row``'s
+        row-expansion branch (after toggling
+        ``_console_environment_expanded``) -- so "a landing" below covers
+        both callers, not just the timer. When that activation path ALSO
+        restores focus to the same row via
+        ``_request_console_environment_row_focus``, the two restores race
+        harmlessly on the section's own ``call_next`` queue: whichever
+        runs first wins, and the second is a no-op re-focus of the same
+        already-focused widget. Deliberately left as a documented
+        redundancy rather than special-cased away (round-1 review #3).
+
+        Both sections are resolved BEFORE either is written, so a rail
+        that is mid-recompose or not mounted at all leaves the pair
+        consistent rather than half-applied.
 
         TASK-31661: an external change (a new commit, a PR closing) can
-        change either section's row SET between polls while focus is
+        change either section's row SET between landings while focus is
         parked on one of that section's rows -- e.g. "Review in Change
         Review" while an agent commits in the background. That is a
         structural change (``ConsoleInspectorSection._structural_key``),
         so ``sync_state`` recomposes and unmounts the focused row; Textual's
-        own focus-reset then lands the caret on the nearest ancestor with no
-        visible indication (the rail's outer body), two Tabs from recovery.
-        Each section's currently-focused row_id (if any) is therefore read
-        synchronously BEFORE ``sync_state`` mutates anything -- the same
-        capture-before-mutate discipline ``_console_environment_row_is_
-        focused``/``_handle_console_environment_row`` use for the
-        activation path, which is what keeps this safe from a mid-flight
-        user click: nothing between the capture below and the
-        ``call_next`` restore it schedules yields to the event loop, so
-        there is no window for a click to land and then get overridden.
-        Restoring is skipped entirely when focus was never inside a given
-        section (the common case) -- zero extra work, and the composer (or
-        any other widget) is never fought for focus it legitimately holds.
+        own focus-reset then lands the caret on the rail's outer body
+        (``_InspectorOuterBody``) or a section's own collapse chevron --
+        neither carries a visible indication of what the user was just
+        doing, and it takes two Tabs to recover.
+
+        Each section's currently-focused row_id (if any) is read
+        synchronously BEFORE ``sync_state`` mutates anything. That is
+        NOT what guards against a mid-flight user click (round-1 review
+        finding I2): ``sync_state``'s own recompose is an unmount +
+        remount, both of which ``await`` and so yield to the event loop,
+        which leaves a real window, between this capture and the
+        ``call_next`` restore callback actually running, for a user
+        gesture to land first. That guard lives in
+        ``_focus_console_environment_row_after_sync`` itself, checked at
+        CALLBACK time. The synchronous read here exists only because
+        Textual delivers ``DescendantFocus`` asynchronously, so reading
+        focus any other way would already be stale by the time anything
+        looked at it. Restoring is skipped entirely when focus was never
+        inside a given section (the common case) or when the sync turned
+        out to be a no-op for it (M5) -- zero extra work, and the
+        composer (or any other widget) is never fought for focus it
+        legitimately holds.
 
         The Agent fleet section is NOT covered here: it syncs through
-        ``_sync_console_agent_section`` on its own tick, a separate path
-        out of this task's scope.
+        ``_sync_console_agent_section`` on its own separate tick, tracked
+        as a follow-up (task-31665 #13) rather than folded in here.
 
         Args:
             snapshot: The controller's newly landed environment snapshot.
@@ -8130,22 +8150,32 @@ class ChatScreen(BaseAppScreen):
             (TASKS_SECTION_ID, tasks_section, tasks_state),
         )
         # Capture -- synchronously, before any `sync_state` call below can
-        # unmount anything -- which section (if any) currently owns focus.
-        pending_focus_restores: list[
-            tuple[ConsoleInspectorSection, str, tuple[str, ...]]
-        ] = []
+        # unmount anything -- which section (if any) currently owns focus,
+        # plus that section's pre-sync rows/summary (M5: skip a no-op
+        # sync) and row_id order (M4: the nearest-survivor search below
+        # needs the OLD order, not just the OLD row_id).
+        captured: dict[
+            str, tuple[str, tuple[str, ...], tuple[object, ...], str]
+        ] = {}
         for section_id, section, _state in sections:
             row_id = self._console_environment_focused_row_in_section(section_id)
             if row_id is not None:
-                pending_focus_restores.append(
-                    (section, row_id, tuple(row.row_id for row in section.rows))
+                captured[section_id] = (
+                    row_id,
+                    tuple(row.row_id for row in section.rows),
+                    section.rows,
+                    section.summary,
                 )
 
-        for _section_id, section, state in sections:
+        for section_id, section, state in sections:
             section.sync_state(state)
             section.styles.display = "block" if state.rows else "none"
-
-        for section, row_id, previous_row_ids in pending_focus_restores:
+            capture = captured.get(section_id)
+            if capture is None:
+                continue
+            row_id, previous_row_ids, previous_rows, previous_summary = capture
+            if tuple(state.rows) == previous_rows and state.summary == previous_summary:
+                continue  # M5: sync_state was a no-op here -- nothing to restore
             section.call_next(
                 self._focus_console_environment_row_after_sync,
                 section,
@@ -8284,22 +8314,34 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Restore focus after a poll-driven `_land_console_environment` sync.
 
-        TASK-31661. Scheduled via the section's own ``call_next`` from
-        `_land_console_environment`, which guarantees this runs after any
-        recompose `sync_state` queued (same ordering argument as
-        `_request_console_environment_row_focus`'s docstring, which this
-        mirrors).
+        TASK-31661, extended by round-1 review findings I1/I2/M4. Scheduled
+        via the section's own ``call_next`` from `_land_console_environment`,
+        which guarantees this runs after any recompose `sync_state` queued
+        (same ordering argument as `_request_console_environment_row_focus`'s
+        docstring, which this mirrors).
 
-        ``row_id`` is tried first -- when the row survived the sync (an
-        in-place patch, or a recompose that happened to keep it), this is
-        the whole job, identical to the activation path. When the row is
-        genuinely gone (the section's row SET changed shape and dropped
-        it), AC #2 still requires landing on a row with a real focus
-        indicator rather than wherever Textual's unmount reset happened to
-        fall: the nearest surviving row is tried next, preferring the same
-        index the removed row held, then one before it, then the section's
-        first row -- deliberately just those three candidates, not a
-        widening search, to keep the fallback simple and predictable.
+        I2 first: `sync_state`'s recompose (unmount + remount) is itself two
+        awaits, so real time -- and real user input -- can pass between
+        `_land_console_environment` scheduling this callback and it actually
+        running. A user who moved focus in that window (e.g. clicked the
+        composer) must win; bail immediately when focus has left the rail
+        (`_console_environment_focus_left_the_rail`) rather than fight them
+        for it.
+
+        Otherwise: ``row_id`` is tried first -- when the row survived the
+        sync (an in-place patch, or a recompose that happened to keep it),
+        this is the whole job, identical to the activation path. When the
+        row is genuinely gone (the section's row SET changed shape and
+        dropped it), M4's nearest-surviving-row search
+        (`_nearest_surviving_console_environment_row_id`) walks OUTWARD from
+        the removed row's old position for the closest id that is still
+        present. I1: some reachable projections (UNBOUND/ERROR/PENDING/the
+        "No git workspace" empty state -- task-31660) render a row saying
+        so but never a *clickable* one, so no row anywhere in the section
+        may qualify; the section's own collapse chevron is a real,
+        focusable control and is the last resort, rather than leaving focus
+        wherever Textual's unmount reset already put it (the defect widget
+        itself).
 
         Args:
             section: The section whose body held the focused row.
@@ -8309,18 +8351,122 @@ class ChatScreen(BaseAppScreen):
         """
         if not section.is_mounted:
             return
+        if self._console_environment_focus_left_the_rail():
+            return  # I2: a human moved focus during the recompose window
         if self._focus_console_environment_row_by_id(section, row_id):
             return
         current_row_ids = [row.row_id for row in section.rows]
+        nearest_row_id = self._nearest_surviving_console_environment_row_id(
+            row_id, previous_row_ids, current_row_ids
+        )
+        if nearest_row_id is not None and self._focus_console_environment_row_by_id(
+            section, nearest_row_id
+        ):
+            return
+        self._focus_console_environment_section_toggle(section)  # I1
+
+    def _console_environment_focus_left_the_rail(self) -> bool:
+        """Whether focus is currently OUTSIDE the Inspect rail's row body.
+
+        Round-1 review finding I2. `_focus_console_environment_row_after_
+        sync` runs on a `call_next` scheduled well before `sync_state`'s own
+        recompose (an unmount, then a remount -- both `await`) actually
+        completes, so a user gesture dispatched in that window can land
+        BEFORE this callback runs; that gesture must win. Textual's own
+        unmount-triggered focus reset only ever lands INSIDE the rail's
+        outer body (`#console-inspector-rail-body`) -- on the body itself,
+        or on a section's own collapse chevron (also a descendant of that
+        body, and this task's own I1 fallback target) -- never outside it.
+        So "focus is currently outside that body" is a sound signal that a
+        human moved it, not Textual's reset.
+
+        Probe-verified (review): without this check, a click into the
+        composer landing in that window got silently overridden back onto
+        the rail row.
+
+        Returns:
+            ``True`` when focus has left the rail body (a human's move
+            should win, so the restore must not run); ``False`` when it is
+            still inside (including still on a row, or nowhere yet reset
+            at all) and the restore should proceed.
+        """
+        focused = self.focused
+        if focused is None:
+            return True
         try:
-            previous_index = previous_row_ids.index(row_id)
+            rail_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            return True
+        return rail_body not in focused.ancestors_with_self
+
+    @staticmethod
+    def _nearest_surviving_console_environment_row_id(
+        row_id: str,
+        previous_row_ids: tuple[str, ...],
+        current_row_ids: list[str],
+    ) -> str | None:
+        """Find the closest still-present row to a removed row's old spot.
+
+        Round-1 review finding M4. Walks OUTWARD from ``row_id``'s own
+        index in ``previous_row_ids`` -- one step back, one step forward,
+        two back, two forward, ... -- returning the first id that also
+        exists in ``current_row_ids``. This is genuinely "nearest" by edit
+        distance in the OLD ordering: a fixed same-index/index-1/first-row
+        ladder can overshoot straight past a much closer neighbor to a
+        distant row whenever more than one row disappears at once (e.g. a
+        whole PR sub-tree closing while focus was on a deeply-nested row).
+
+        Args:
+            row_id: The row_id that no longer exists in the new state.
+            previous_row_ids: That section's full row_id order before the
+                sync.
+            current_row_ids: That section's row_id order after the sync.
+
+        Returns:
+            The nearest surviving row_id, or ``None`` when ``row_id`` was
+            not found in ``previous_row_ids`` at all, or nothing in
+            ``previous_row_ids`` survived into ``current_row_ids``.
+        """
+        try:
+            removed_index = previous_row_ids.index(row_id)
         except ValueError:
-            previous_index = 0
-        for candidate_index in (previous_index, previous_index - 1, 0):
-            if 0 <= candidate_index < len(current_row_ids):
-                candidate_id = current_row_ids[candidate_index]
-                if self._focus_console_environment_row_by_id(section, candidate_id):
-                    return
+            return None
+        current_row_id_set = set(current_row_ids)
+        last_index = len(previous_row_ids) - 1
+        for distance in range(1, len(previous_row_ids)):
+            for candidate_index in (removed_index - distance, removed_index + distance):
+                if 0 <= candidate_index <= last_index:
+                    candidate_id = previous_row_ids[candidate_index]
+                    if candidate_id in current_row_id_set:
+                        return candidate_id
+        return None
+
+    @staticmethod
+    def _focus_console_environment_section_toggle(
+        section: ConsoleInspectorSection,
+    ) -> None:
+        """Focus ``section``'s own collapse chevron -- the I1 last resort.
+
+        Used only when no row in the section is focusable at all: the
+        UNBOUND/ERROR/PENDING/"No git workspace" Environment projections
+        (task-31660) each render exactly one explanatory row, and none of
+        them are ever ``clickable``. The chevron is a real, focusable
+        ``Button`` (every section here is built ``collapsible=True``), so
+        landing on it still satisfies AC #2 ("focus never lands on a
+        widget with no visible indication") even in states that have no
+        row to land on.
+
+        Args:
+            section: The section whose header chevron should be focused.
+        """
+        try:
+            toggle = section.query_one(
+                f"#console-inspector-section-{section.section_id}-toggle", Button
+            )
+        except (NoMatches, QueryError):
+            return
+        if toggle.can_focus:
+            toggle.focus()
 
     def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
         """Run one Environment/Tasks row's action.
