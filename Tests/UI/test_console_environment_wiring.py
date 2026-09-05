@@ -529,8 +529,24 @@ async def test_environment_workers_cannot_panic_the_app():
         captured: list[dict] = []
         screen.run_worker = lambda job, **kw: captured.append(kw)
         screen._console_environment._dispatch_local("/w/one")
-        assert captured and captured[0]["exit_on_error"] is False
-        assert captured[0]["thread"] is True and captured[0]["exclusive"] is True
+        # The network tier dispatches only for a landed local root. No
+        # captured job runs here: this tests the real screen scheduler seam.
+        screen._console_environment._landed_root = "/w/one"
+        screen._console_environment._dispatch_net("/w/one", force_net=True)
+        assert captured == [
+            {
+                "exit_on_error": False,
+                "thread": True,
+                "exclusive": True,
+                "group": screen._console_environment.LOCAL_WORKER_GROUP,
+            },
+            {
+                "exit_on_error": False,
+                "thread": True,
+                "exclusive": True,
+                "group": screen._console_environment.NET_WORKER_GROUP,
+            },
+        ]
 
 
 @pytest.mark.asyncio
