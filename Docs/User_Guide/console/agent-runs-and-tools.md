@@ -372,7 +372,8 @@ marker stays the durable pointer to what finished.
   a question — while you are on **another screen** (Library, Settings, …) or
   Console has not been opened this launch rings the terminal bell once, and
   the **Console** entry in the top navigation carries a `◆` badge until the
-  round resolves. `[console] interrupt_bell = false` silences the bell; the
+  round resolves. `[console] interrupt_bell = false` (or the
+  `TLDW_CONSOLE_INTERRUPT_BELL` environment variable) silences the bell; the
   badge stays. A round raised while Console is in front rings nothing.
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."

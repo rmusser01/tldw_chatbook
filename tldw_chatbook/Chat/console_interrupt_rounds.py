@@ -275,7 +275,11 @@ class InterruptRoundHost:
         app.call_from_thread(_apply)
 
     def pending_total(self) -> int:
-        """How many rounds of every kind are registered right now."""
+        """How many rounds of every kind are registered right now.
+
+        Returns:
+            The number of registered interrupt rounds across all kinds.
+        """
         with self.lock:
             return sum(len(rounds) for rounds in self.registries.values())
 
@@ -292,8 +296,14 @@ class InterruptRoundHost:
             raised: Whether this is the arm (True) or the teardown (False).
         """
         hook = getattr(self._seams, "on_pending_rounds_changed", None)
-        if hook is not None:
+        if hook is None:
+            return
+        try:
             hook(self.pending_total(), kind, raised)
+        except Exception:  # noqa: BLE001 -- attention is best-effort; the round and its teardown are not
+            logger.opt(exception=True).debug(
+                f"Pending-round attention hook failed for {kind}"
+            )
 
     def revoke_for_run(
         self,
@@ -466,7 +476,16 @@ class InterruptRoundHost:
                 setter = self._setter(kind)
                 if app is not None and setter is not None:
                     app.call_from_thread(setter, payload)
-            self._note_pending(kind, raised=True)
+            # A sweep can revoke and pop the round between registration and
+            # here; a round that is no longer registered never announces
+            # itself (no bell for a dead round, no zero-total "raised").
+            with self.lock:
+                still_live = (
+                    self.registries[kind].get(round_id) is state
+                    and not bool(state.get("revoked"))
+                )
+            if still_live:
+                self._note_pending(kind, raised=True)
             outcome = "decided"
             wait_cm = (
                 use_human_input_wait(human_wait_run_id)
