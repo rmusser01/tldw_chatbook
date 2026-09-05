@@ -922,10 +922,10 @@ def test_stale_candidate_modal_callback_cannot_target_a_new_package(monkeypatch)
     pushed: dict[str, object] = {}
     workers: list[object] = []
     fake = SimpleNamespace(
+        _skills_state=SimpleNamespace(choice_presented_generation=-1),
         is_mounted=True,
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skill_import_coordinator=coordinator,
-        _library_skill_choice_presented_generation=-1,
     )
     fake.app = SimpleNamespace(
         screen=fake,
@@ -981,10 +981,10 @@ def test_replaced_library_screen_fences_stale_choice_callback(
 
     def screen():
         return SimpleNamespace(
+            _skills_state=SimpleNamespace(choice_presented_generation=-1),
             is_mounted=True,
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
             _library_skill_import_coordinator=coordinator,
-            _library_skill_choice_presented_generation=-1,
         )
 
     def run_worker(coroutine, **kwargs):

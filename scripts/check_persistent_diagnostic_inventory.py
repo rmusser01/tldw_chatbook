@@ -1047,7 +1047,19 @@ def build_inventory() -> dict[str, Any]:
     path_privacy_candidates: list[dict[str, Any]] = []
     # Path ordering is case-folded on Windows. Sort by the serialized POSIX
     # spelling so every host produces the same ordered inventory lists.
-    for path in sorted(PACKAGE_ROOT.rglob("*.py"), key=_inventory_path_sort_key):
+    sources: list[Path] = []
+    for directory, subdirectories, filenames in os.walk(PACKAGE_ROOT):
+        # Installed dependencies under a virtualenv are not application owners.
+        # Detect the environment marker rather than assuming a directory name.
+        if "pyvenv.cfg" in filenames:
+            subdirectories.clear()
+            continue
+        sources.extend(
+            Path(directory) / filename
+            for filename in filenames
+            if filename.endswith(".py")
+        )
+    for path in sorted(sources, key=_inventory_path_sort_key):
         relative = path.relative_to(REPO_ROOT).as_posix()
         diagnostics, sinks, candidates = _scan_file(path)
         if diagnostics:

@@ -278,6 +278,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
         PersonaBuddyWidget,
     )
     from tldw_chatbook.css import build_css
+    from tldw_chatbook.app import TldwCli
 
     if preferences_path.exists():
         raw = json.loads(preferences_path.read_text(encoding="utf-8"))
@@ -368,6 +369,20 @@ def _child(preferences_path: Path, report_path: Path) -> int:
     screen_scoped, screen_self = build_css.screen_css_paths(css_dir)
 
     class ProbeApp(App):
+        reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+        _start_persona_buddy_overlay = TldwCli._start_persona_buddy_overlay
+        _schedule_persona_buddy_overlay = TldwCli._schedule_persona_buddy_overlay
+        _notify_persona_buddy_changed = TldwCli._notify_persona_buddy_changed
+        on_persona_buddy_changed = TldwCli.on_persona_buddy_changed
+        on_base_app_screen_contents_rebuilt = (
+            TldwCli.on_base_app_screen_contents_rebuilt
+        )
+        _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
+        is_persona_buddy_confirmed_unavailable = (
+            TldwCli.is_persona_buddy_confirmed_unavailable
+        )
+        confirm_persona_buddy_unavailable = TldwCli.confirm_persona_buddy_unavailable
+
         CSS_PATH = [
             str(screen_scoped),
             str(css_dir / "tldw_cli_modular.tcss"),
@@ -386,7 +401,9 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             self.persona_buddy_controller = PersonaBuddyController(
                 preferences=preferences,
                 preference_writer=write_preferences,
+                on_change=self._notify_persona_buddy_changed,
             )
+            self._persona_buddy_unavailable_authority = None
 
             self.resolution_calls = 0
 
@@ -446,12 +463,8 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 build_css.widget_defaults_sources(css_dir) + super()._get_default_css()
             )
 
-        async def reconcile_persona_buddy_view(self) -> None:
-            screen = self.screen
-            if isinstance(screen, BaseAppScreen) and screen.is_active:
-                await screen.reconcile_persona_buddy_view()
-
         async def on_mount(self) -> None:
+            self._start_persona_buddy_overlay()
             await self.push_screen(ProbeScreen(self, "first"))
             asyncio.get_running_loop().add_signal_handler(
                 signal.SIGUSR1,
@@ -735,7 +748,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 ),
                 "view_present": buddy is not None,
                 "viewport": {"width": self.size.width, "height": self.size.height},
-                "screen_generation": screen.persona_buddy_view_generation,
+                "screen_generation": self._persona_buddy_overlay.generation,
                 "viewport_clamped": (
                     region is not None
                     and region.x >= 0

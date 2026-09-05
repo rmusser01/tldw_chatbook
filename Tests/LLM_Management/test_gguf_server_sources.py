@@ -601,7 +601,7 @@ async def test_missing_executable_is_rejected_before_claim_or_worker(
 
 
 @pytest.mark.asyncio
-async def test_vllm_command_snapshot_is_unchanged() -> None:
+async def test_retired_vllm_launcher_cannot_spawn_unmanaged_command() -> None:
     widgets: dict[str, object] = {
         "#vllm-python-path": _InputWidget(value="python3"),
         "#vllm-model-path": _InputWidget(value="org/model"),
@@ -620,24 +620,9 @@ async def test_vllm_command_snapshot_is_unchanged() -> None:
         Button.Pressed(Button("Start")),
     )
 
-    assert len(app.workers) == 1
-    work, _options = app.workers[0]
-    assert getattr(work, "args")[1] == [
-        "python3",
-        "-m",
-        "vllm.entrypoints.api_server",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8124",
-        "--model",
-        "org/model",
-        "--dtype",
-        "float16",
-    ]
-    claim = server_lifecycle.current_server_claim(app, "vllm")
-    assert claim is not None
-    server_lifecycle.release_server_claim(app, "vllm", claim)
+    assert app.workers == []
+    assert server_lifecycle.current_server_claim(app, "vllm") is None
+    assert app.notifications == [("Use Check setup before starting vLLM.", "warning")]
 
 
 @pytest.mark.asyncio

@@ -1957,3 +1957,113 @@ bordered box, per the CSS-collapse entry above) rather than trusting a prior
 session's negative claim about clickability — a screen that cannot render its
 own controls will fail every click for a reason that has nothing to do with
 mouse-event routing.
+## A live report names a SYMPTOM — re-derive the mechanism from code before you fix it (schedules-handoff PR-6 rounds 1-2, 2026-09-02)
+
+**What happened.** A live run is expensive, so its findings arrive with authority: you
+watched the thing fail. That authority attaches to the *symptom*, and PR-6's two fix
+rounds each shipped a wrong mechanism inferred from a correct symptom.
+
+**Mis-diagnosis 1 — results sorted wrong (D4).** The live observation was exact: the
+server emits `2026-09-02T23:25:45.681750Z` while local rows write `+00:00`, and
+`list_automation_results` ordered on the raw string, so `Z` (0x5A) vs `.` (0x2E) inverted
+neighbouring rows. The obvious reading — "the string comparison is the bug, sort by a real
+instant instead" — produced `ORDER BY datetime(created_at)`. That is worse than it looks:
+SQLite's `datetime()` **truncates to whole seconds**, and whole seconds is *precisely* the
+resolution at which a `Z` and a `+00:00` stamp of the same instant can disagree. The fix
+threw away the only information that distinguished the rows, leaving them tied and ordered
+arbitrarily by the UUID tiebreak — and a sync pull mirroring a page of results all stamped
+in the same second is the normal case, not a corner one. The real fix needed sub-second
+precision (`strftime('%Y-%m-%dT%H:%M:%f', …)`, and the docstring records that even `%f` is
+only milliseconds against microsecond local writes). Reading the comparison semantics of
+the function being reached for would have caught it before the round shipped.
+
+**Mis-diagnosis 2 — bracketed content eaten.** Covered in detail in *"The right escape
+function depends on the surface, not the app"* above. Same shape: a correct symptom
+(brackets disappearing), a mechanism generalised from one surface (`Content.from_markup`)
+to a second one it did not describe (`rich.text.Text.from_markup`, lowercase-tag regex),
+and a scope-out justified by "the example I have survives there" rather than by reading
+the second parser. Round 2 found the same bug in the pane the round-1 fix had explicitly
+excluded.
+
+**Why live findings are especially prone to this.** The symptom is vivid and the run was
+costly, so there is real pressure to fix on the spot with the terminal still open. Both
+mis-diagnoses were plausible readings of the evidence actually in hand — the evidence just
+did not reach as far as the mechanism did.
+
+**What to do.**
+
+- Write the symptom and the mechanism as **separate claims**. The live run establishes the
+  symptom; only code establishes the mechanism. A fix round justified by "we saw it fail"
+  has skipped a step.
+- Before reaching for a stdlib/SQL/framework function as the fix, **read what it actually
+  does to your data** — precision, truncation, escaping, ordering. A function that
+  *sounds* like the right abstraction is where these mis-diagnoses land.
+- When a fix is deliberately **scoped out** of a second surface, state the mechanism-level
+  reason ("this parser does not consume that token"), never the example-level one ("the
+  string I tried survives"). An example-level scope-out is exactly how round 1 shipped a
+  fix that round 2 had to make again.
+- Re-derive before re-driving. The cheapest step in a fix round is grepping the call sites
+  of the function you are about to change; the most expensive is a second live gate.
+
+## The theme palette matches "Theme: Switch to Textual Light", not the theme id (TASK-31429, 2026-09-04)
+
+**What happened.** Driving a live theme switch through the command palette
+for the Console-rail colour check: typing `textual-light` (the id every
+config file and test uses) returned zero hits, and the one hit for the
+generic query, "Theme: Change Theme", only posts a notification telling
+you to search — activating it looked like the palette had silently
+dismissed itself (the TASK-397 fast-Down+Enter trap was the first, wrong,
+suspect). `ThemeCommandProvider.search` (app.py) builds each hit as
+`"Theme: Switch to " + name.replace("_"," ").replace("-"," ").title()` and
+fuzzy-matches the QUERY against that Title-Cased string, so the hyphen in
+the id is what killed the match.
+
+**What to do.** Query the palette with the rendered command text — `Switch
+to Textual Light`, `Switch to Apricot` — narrow to one hit, then Down,
+Enter. Two smaller traps from the same session: SGR clicks on the rail's
+section-header toggles registered only on the NEXT input event (the header
+looked untoggled in the capture taken right after the click, then opened
+when the following key arrived), so capture again before concluding a
+click was dead; and Ctrl+Shift+Right (expand every rail section) did
+nothing when sent through tmux — open sections one at a time instead.
+
+## A host out of POSIX semaphores fails every multiprocessing pool with "No space left on device" — and the disk is fine (media wave 4 PR D, 2026-09-04)
+
+**The incident.** The Task 3 implementer's live import run (two text files through the
+Library Import canvas) died with `OSError(28, 'No space left on device')` from
+`multiprocessing.Pool`. The data volume was 84% used with 300 GB free. Reproduced outside
+the app with nothing but `python -c "import multiprocessing as mp; mp.Lock()"` — same
+error. Root cause: macOS's named-semaphore limit was exhausted by 38-40 `pytest`
+processes that four other Claude sessions were running in parallel on the same machine;
+it stayed exhausted for the rest of the evening. Every live import for PR #2400 was
+blocked; the gate, the id set and the per-row receipts were verified in real-screen
+app-tests with a stubbed resolver and generator instead, and the PR body says so.
+
+**What to do.**
+- When a live step dies with ENOSPC on a disk that is not full, run the one-line
+  `mp.Lock()` probe before touching the app; count `pytest` processes with
+  `ps -axo command | grep -c '[p]ytest'`.
+- Do not kill other sessions' runs to free the semaphores. Either wait for them to finish
+  or reboot; until then, substitute app-tests and state the gap in the PR — never report a
+  live verification you could not run.
+
+## Playback cleanup does not prove the Buddy received playback state
+
+**PR #2404 / TASK-31585, 2026-09-05.** After rebasing onto dev, trusted
+readback lifecycle tests passed and real Kokoro drained 128,000 PCM bytes, but
+Migu stayed idle throughout. Manual Speak correctly tracked its own presentation
+while only the realtime loop published Buddy voice leases. Connecting the
+existing trusted playback callbacks to a unique request-owned lease produced
+idle → speaking → idle in the real replay; stale-session terminal tests also
+proved that cleanup preserves another voice owner.
+
+**What to do.** Observe the actual Buddy controller and rendered availability
+alongside audio completion. A successful sink and cleared speaking-message ID
+prove audio ownership, not delivery to a separate visual state consumer. Re-run
+from the current PR tree: older live evidence can exercise a superseded host.
+
+## Two live assessments on one profile reproduce a wedge the app warned you about (media critique #5, 2026-09-04)
+
+**The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
+
+**What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.

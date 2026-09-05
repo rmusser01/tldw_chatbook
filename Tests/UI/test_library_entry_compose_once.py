@@ -686,7 +686,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
             and selector_ready
         )
     if case.name == "skills":
-        return screen._library_skills_trust_posture == "ready" and selector_ready
+        return screen._skills_state.trust_posture == "ready" and selector_ready
     if case.name in {"notes", "pending-notes"}:
         return screen._library_note_load_state == "loaded" and selector_ready
     if case.name in {"media", "pending-media"}:
@@ -1220,7 +1220,7 @@ async def test_skills_rail_starts_trust_posture_after_canvas_mount(
         assert active_screen._library_selected_row_id == (
             LIBRARY_ROW_BROWSE_SKILLS
         )
-        assert active_screen._library_skills_view == "list"
+        assert active_screen._skills_state.view == "list"
         assert observed_owner_state == [True]
 
 
@@ -1253,7 +1253,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header(
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
         await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")
 
-        assert active_screen._library_skills_trust_posture == ""
+        assert active_screen._skills_state.trust_posture == ""
         assert not active_screen.query("#library-skills-trust-header")
 
 
@@ -1324,7 +1324,7 @@ async def test_missing_trust_service_supersedes_in_flight_posture_worker(
 
         assert posture_worker.is_cancelled
         assert projected_postures == []
-        assert active_screen._library_skills_trust_posture == ""
+        assert active_screen._skills_state.trust_posture == ""
         assert not active_screen.query("#library-skills-trust-header")
 
 
@@ -1375,7 +1375,7 @@ async def test_missing_trust_service_already_clear_list_skips_repaint(
         active_screen._refresh_library_skills_trust_posture()
         await pilot.pause()
 
-        assert active_screen._library_skills_trust_posture == ""
+        assert active_screen._skills_state.trust_posture == ""
         assert not active_screen.query("#library-skills-trust-header")
         assert cancelled_groups == ["library_skills_trust_posture"]
         assert sync_calls == []
@@ -3678,7 +3678,7 @@ async def test_library_source_snapshot_missing_skills_repairs_then_equal_is_noop
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        screen._library_skills_view = "list"
+        screen._skills_state.view = "list"
         generation = screen._library_snapshot_state_generation
         route_key = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True

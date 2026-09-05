@@ -25,12 +25,14 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Library.ingest_capabilities import (
+    ANALYSIS_STATE_FIELD,
     TypeGroupCapabilities,
     _is_installed,
     capabilities_for_backend,
     field_disabled_state,
     get_capabilities,
     select_option_label,
+    type_group_state_summary,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -521,6 +523,18 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
+        if state.show_analyze_skipped:
+            # (task-28007 AC#1/AC#2) One run-summary action over every
+            # analysis-skipped id currently in the queue -- the id is
+            # fixed/singular (never job- or batch-suffixed), so this is
+            # the ONLY place it is composed.
+            yield Button(
+                f"Analyze {len(state.analyze_skipped_media_ids)} skipped",
+                id="library-ingest-analyze-skipped",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=state.analyze_skipped_running,
+            )
         # (task-2221) Per-submission group headers: rendered before the
         # first row of each headed group. Rows keep their flat order and
         # identity semantics -- the header is an extra Static, not a
@@ -932,6 +946,10 @@ def build_type_group_title(
             continue
         if value is None or str(value).strip() == "":
             continue
+        if field.name == ANALYSIS_STATE_FIELD:
+            # (task-28007 AC#6) Its state already leads the title via
+            # `type_group_state_summary`; a pair would stutter it.
+            continue
         if not _option_is_default(field, value):
             changed.append(_summarise_option(field, value))
     # Order: the blocker first (nothing in this panel can be committed
@@ -964,9 +982,10 @@ def build_type_group_title(
         shown.append(blocked_clause)
     if len(changed) > len([pair for pair in shown if pair in changed]):
         shown.append("…")
+    label = type_group_state_summary(cap, values)
     if not shown:
-        return cap.label
-    return f"{cap.label} — {', '.join(shown)}"
+        return label
+    return f"{label} — {', '.join(shown)}"
 
 
 def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:

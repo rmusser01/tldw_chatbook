@@ -376,7 +376,32 @@ class SchedulerLoop:
             self._last_tick_dispatch_seconds = max(
                 (self.clock() - now).total_seconds(), 0.0
             )
-            self._record_heartbeat(now, error=tick_error)
+            # TASK-31507: the heartbeat write is blocking file I/O (mkstemp +
+            # rename); it must not run on the event loop. Awaited so a reader
+            # observing the finished tick always sees its heartbeat.
+            heartbeat = asyncio.ensure_future(
+                asyncio.to_thread(self._record_heartbeat, now, error=tick_error)
+            )
+            try:
+                await asyncio.shield(heartbeat)
+            except asyncio.CancelledError:
+                # Shutdown cancels tick() while it awaits the write (Qodo
+                # #2399 finding 2). The thread cannot be cancelled and must
+                # not mutate heartbeat state after the scheduler reports
+                # stopped, so wait for the started write to finish before
+                # propagating -- a reader observing the stopped scheduler
+                # then still sees this tick's heartbeat, not the previous
+                # one. A second cancellation while waiting abandons the
+                # wait: a forced double-cancel outranks the guarantee.
+                try:
+                    await asyncio.wait({heartbeat})
+                    if heartbeat.done() and not heartbeat.cancelled():
+                        heartbeat.exception()  # consume; observation never raises
+                except Exception:  # noqa: BLE001 -- best effort under cancel
+                    pass
+                raise
+            except Exception:  # noqa: BLE001 -- observation never breaks the loop
+                logger.debug("scheduler heartbeat offload failed")
 
     def _record_heartbeat(
         self, tick_at: datetime, *, error: str | None
@@ -407,8 +432,13 @@ class SchedulerLoop:
             ),
         )
 
-    def _emergency_stopped(self) -> bool:
-        """Whether the global emergency stop holds new dispatches (26004)."""
+    async def _emergency_stopped(self) -> bool:
+        """Whether the global emergency stop holds new dispatches (26004).
+
+        The stop-state read is blocking file I/O, so it runs off the event
+        loop (TASK-31507). Fail-safe is preserved: an offload failure reads
+        as stopped, holding work rather than proceeding on doubt.
+        """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook.emergency_stop import (
             default_emergency_stop_path,
@@ -418,7 +448,10 @@ class SchedulerLoop:
         path = getattr(self, "_emergency_stop_path", None) or (
             default_emergency_stop_path()
         )
-        return is_emergency_stopped(path)
+        try:
+            return await asyncio.to_thread(is_emergency_stopped, path)
+        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
+            return True
 
     async def _reconcile_and_prune_run_ledger(self) -> None:
         """Startup maintenance for the TASK-26026 run ledger. Never raises."""
@@ -445,7 +478,7 @@ class SchedulerLoop:
         Fail-safe: an unreadable stop state reads as stopped, so a doubt
         holds work rather than proceeding (AC#4).
         """
-        if self._emergency_stopped():
+        if await self._emergency_stopped():
             logger.debug("scheduler: emergency stop active; holding due dispatches")
             return
         due = self.queue.pop_due(now)

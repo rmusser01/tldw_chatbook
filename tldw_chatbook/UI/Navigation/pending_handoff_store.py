@@ -23,6 +23,7 @@ from .audio_cpp_model_handoff import (
     AudioCppModelLibraryResult,
 )
 from .conversation_settings_navigation import ConversationSettingsReturnIntent
+from .vllm_handoff import VllmConsoleIntent, VllmDefaultIntent
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -102,6 +103,8 @@ class HandoffChannel(StrEnum):
     #: same channel for wake delivery).
     CONSOLE_FLEET_COMPLETION = "console_fleet_completion"
     CONSOLE_FIRST_CHAT = "console_first_chat"
+    VLLM_CONSOLE = "vllm_console"
+    VLLM_DEFAULT = "vllm_default"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
@@ -121,6 +124,10 @@ HandoffClaimStatus: TypeAlias = Literal["ready", "expired"]
 HandoffRevisionStatus: TypeAlias = Literal[
     "pending", "in_flight", "settled", "superseded"
 ]
+HandoffReleaseFailure: TypeAlias = Literal["false", "exception"]
+HandoffReleaseRecoveryResult: TypeAlias = Literal[
+    "released", "pending", "exhausted", "missing"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,10 +144,35 @@ class HandoffClaim(Generic[T]):
             raise ValueError("handoff claim status is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class HandoffReleaseRecovery:
+    """Observable app-owned authority for one failed exact claim release."""
+
+    channel: HandoffChannel
+    revision: int
+    failed_attempts: int
+    automatic_retry_limit: int
+    last_failure: HandoffReleaseFailure
+
+    @property
+    def automatic_retry_exhausted(self) -> bool:
+        """Return whether automatic cleanup reached its configured bound."""
+
+        return self.failed_attempts >= self.automatic_retry_limit
+
+
 @dataclass(slots=True)
 class _InFlight:
     claim: HandoffClaim[Any]
     retained_value: Any
+
+
+@dataclass(slots=True)
+class _ReleaseRecovery:
+    claim: HandoffClaim[Any]
+    failed_attempts: int
+    automatic_retry_limit: int
+    last_failure: HandoffReleaseFailure
 
 
 @dataclass(slots=True)
@@ -165,6 +197,7 @@ class PendingHandoffStore:
         self._monotonic_clock = monotonic_clock
         self._lock = threading.RLock()
         self._slots = {channel: _Slot() for channel in HandoffChannel}
+        self._release_recoveries: dict[HandoffChannel, _ReleaseRecovery] = {}
 
     def stage(self, channel: HandoffChannel, value: Any) -> int:
         """Normalize and replace the latest pending value for a channel."""
@@ -308,6 +341,7 @@ class PendingHandoffStore:
             if current is None or current.claim is not claim:
                 return False
             slot.in_flight = None
+            self._clear_release_recovery(claim)
             slot.reserved_revisions.discard(claim.revision)
             return True
 
@@ -325,6 +359,7 @@ class PendingHandoffStore:
             ):
                 return False
             slot.in_flight = None
+            self._clear_release_recovery(claim)
             slot.reserved_revisions.discard(claim.revision)
             return True
 
@@ -399,6 +434,102 @@ class PendingHandoffStore:
         released, _prompt_status = self._release_claim(claim)
         return released
 
+    def retain_release_recovery(
+        self,
+        claim: HandoffClaim[Any],
+        *,
+        failed_attempts: int,
+        automatic_retry_limit: int,
+        last_failure: HandoffReleaseFailure = "false",
+    ) -> HandoffReleaseRecovery:
+        """Transfer a failed exact release into application-lifetime ownership.
+
+        The claim must still be the exact in-flight object. Consumers may then
+        disappear without losing the only token capable of releasing it.
+        """
+
+        self._assert_owner_thread()
+        if type(failed_attempts) is not int or failed_attempts < 1:
+            raise ValueError("failed release attempts must be a positive integer")
+        if type(automatic_retry_limit) is not int or automatic_retry_limit < 1:
+            raise ValueError("automatic retry limit must be a positive integer")
+        if last_failure not in ("false", "exception"):
+            raise ValueError("release failure category is invalid")
+        with self._lock:
+            slot = self._slot_for_claim(claim)
+            current = slot.in_flight
+            if current is None or current.claim is not claim:
+                raise ValueError("release recovery requires the exact in-flight claim")
+            retained = self._release_recoveries.get(claim.channel)
+            if retained is not None and retained.claim is not claim:
+                raise ValueError("another release recovery owns this channel")
+            if retained is not None:
+                failed_attempts = max(failed_attempts, retained.failed_attempts)
+            recovery = _ReleaseRecovery(
+                claim=claim,
+                failed_attempts=failed_attempts,
+                automatic_retry_limit=automatic_retry_limit,
+                last_failure=last_failure,
+            )
+            self._release_recoveries[claim.channel] = recovery
+            return self._release_recovery_projection(recovery)
+
+    def release_recovery(
+        self,
+        channel: HandoffChannel,
+    ) -> HandoffReleaseRecovery | None:
+        """Return safe lifecycle state without exposing the retained claim."""
+
+        self._assert_owner_thread()
+        with self._lock:
+            recovery = self._release_recoveries.get(self._slot_channel(channel))
+            if recovery is None:
+                return None
+            return self._release_recovery_projection(recovery)
+
+    def retry_release_recovery(
+        self,
+        channel: HandoffChannel,
+        *,
+        automatic: bool,
+    ) -> HandoffReleaseRecoveryResult:
+        """Retry app-owned cleanup, respecting the bound only for automation."""
+
+        self._assert_owner_thread()
+        if type(automatic) is not bool:
+            raise TypeError("automatic release retry flag must be boolean")
+        channel = self._slot_channel(channel)
+        with self._lock:
+            recovery = self._release_recoveries.get(channel)
+            if recovery is None:
+                return "missing"
+            if automatic and (
+                recovery.failed_attempts >= recovery.automatic_retry_limit
+            ):
+                return "exhausted"
+            claim = recovery.claim
+        failure: HandoffReleaseFailure = "false"
+        try:
+            released = self.release(claim) is True
+        except BaseException:
+            released = False
+            failure = "exception"
+        if released:
+            with self._lock:
+                retained = self._release_recoveries.get(channel)
+                if retained is not None and retained.claim is claim:
+                    self._release_recoveries.pop(channel, None)
+            return "released"
+        with self._lock:
+            retained = self._release_recoveries.get(channel)
+            if retained is None or retained.claim is not claim:
+                return "missing"
+            retained.failed_attempts += 1
+            retained.last_failure = failure
+            if retained.failed_attempts >= retained.automatic_retry_limit:
+                return "exhausted"
+            return "pending"
+
     def release_prompt_claim(
         self,
         claim: HandoffClaim[PromptVariableApplication],
@@ -437,6 +568,7 @@ class PendingHandoffStore:
             if current is None or current.claim is not claim:
                 return False, None
             slot.in_flight = None
+            self._clear_release_recovery(claim)
             should_requeue = slot.revision == claim.revision
             prompt_status: HandoffClaimStatus | None = None
             if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
@@ -449,6 +581,27 @@ class PendingHandoffStore:
             else:
                 slot.reserved_revisions.discard(claim.revision)
             return True, prompt_status
+
+    def _clear_release_recovery(self, claim: HandoffClaim[Any]) -> None:
+        recovery = self._release_recoveries.get(claim.channel)
+        if recovery is not None and recovery.claim is claim:
+            self._release_recoveries.pop(claim.channel, None)
+
+    @staticmethod
+    def _release_recovery_projection(
+        recovery: _ReleaseRecovery,
+    ) -> HandoffReleaseRecovery:
+        return HandoffReleaseRecovery(
+            channel=recovery.claim.channel,
+            revision=recovery.claim.revision,
+            failed_attempts=recovery.failed_attempts,
+            automatic_retry_limit=recovery.automatic_retry_limit,
+            last_failure=recovery.last_failure,
+        )
+
+    def _slot_channel(self, channel: HandoffChannel) -> HandoffChannel:
+        self._slot_for(channel)
+        return channel
 
     def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
         try:
@@ -552,6 +705,22 @@ class PendingHandoffStore:
                 settings_revision=value.settings_revision,
                 active_view=value.active_view,
                 focus_control_id=value.focus_control_id,
+            )
+        if channel is HandoffChannel.VLLM_CONSOLE:
+            if type(value) is not VllmConsoleIntent:
+                raise TypeError("vLLM Console handoff must be exact")
+            return VllmConsoleIntent(
+                api_url=value.api_url,
+                model_id=value.model_id,
+                generation=value.generation,
+            )
+        if channel is HandoffChannel.VLLM_DEFAULT:
+            if type(value) is not VllmDefaultIntent:
+                raise TypeError("vLLM Settings handoff must be exact")
+            return VllmDefaultIntent(
+                api_url=value.api_url,
+                model_id=value.model_id,
+                generation=value.generation,
             )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):

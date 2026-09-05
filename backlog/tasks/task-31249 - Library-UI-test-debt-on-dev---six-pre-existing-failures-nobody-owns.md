@@ -28,6 +28,14 @@ Failures (`pytest --tb=line`, Tests/UI):
 - test_library_shell.py::test_library_shell_media_viewer_inplace_search_chrome_paints_above_content -- the content body lays out at `Region(x=83, y=53, height=3)` below the 48-row viewport after a rendered-mode search, so the document heading never paints; plain `LibraryHarness` (no production stylesheet). Its retired 18-row-cap assertion was updated in wave-4 PR A; the layout failure remains
 <!-- SECTION:DESCRIPTION:END -->
 
+Wave 4 (2026-09-04) additions, all confirmed pre-existing on clean dev/base before each PR:
+- test_library_ingest_canvas.py::test_progress_detail_paints_below_row…[size0|size1] -- geometry failures on D base 573a5854cd and every later head (`_QueuePanelHost` mounts only the queue panel)
+- test_library_ingest_retry_last (registry-ticks flake) -- reproduces byte-identically on the base
+- test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False] and ::test_library_note_compact_deep_link_intent_opens_notes_stage[context2-#library-note-body-editor-False] -- fail in the whole-file run on dev 91757b61e9-equivalent head e97b8fa736, pass in isolation (order-dependent)
+- test_library_shell.py test_library_note_* group (11) -- red in whole-file runs, not on this census before (PR #2400 final review)
+- generated_stylesheet test and the notes never-mount class (169 notes tests never mount in whole-file runs) -- carried from PR A's whole-file baseline (226 failing / 825)
+- Test residue to clean: reader-shell colour assertion is satisfied by :hover (bold is the real cue); the Find-position test never asserts "Match 2" after Next; full-row equality in the join test is brittle; the search AC#1 typing stage is not exercised (class set only on submit); decorative assertion test_library_media_trash.py:2615; Docs/superpowers/qa/library-reader-grip-polish-2026-09 README/geometry.json/_capture_grips_impl.py:128 still describe accent end-caps as the shipped focus treatment (add a retirement note)
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each of the six tests passes on dev, or is rewritten/removed with the reason recorded in this task (no bare skip markers)

@@ -461,7 +461,9 @@ async def test_configure_managed_gguf_opens_runtime_and_preselects_exact_ref(
         assert window.active_view == "llamafile"
         assert selection.mode is GGUFSourceMode.MANAGED
         assert selection.managed_ref == REF_B
-        assert window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        assert (
+            window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        )
         assert window.query_one("#llamafile-gguf-managed-select", Select).value == REF_B
         assert current_server_claim(app, "llamafile") is None
     finally:
@@ -497,7 +499,9 @@ async def test_configure_managed_gguf_waits_for_first_runtime_mount(
         )
 
         assert window.active_view == "llamafile"
-        assert window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        assert (
+            window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        )
         assert window.query_one("#llamafile-gguf-managed-select", Select).value == REF_B
         assert current_server_claim(app, "llamafile") is None
     finally:
@@ -528,9 +532,7 @@ async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
             pilot,
             lambda: (
                 window._managed_gguf_inventory_generation > generation
-                and window.query_one(
-                    "#llamacpp-gguf-managed-select", Select
-                ).value
+                and window.query_one("#llamacpp-gguf-managed-select", Select).value
                 == REF_B
             ),
             message="fresh exact managed GGUF was not selected",
@@ -1007,10 +1009,7 @@ async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "view_name", "focus_id"),
-    (
-        ("vllm", "vllm", "vllm-model-path"),
-        ("mlx", "mlx-lm", "mlx-model-path"),
-    ),
+    (("mlx", "mlx-lm", "mlx-model-path"),),
 )
 async def test_non_gguf_lifecycle_sync_preserves_existing_focus(
     monkeypatch: pytest.MonkeyPatch,
@@ -1181,12 +1180,16 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
 async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def load_fixture_profiles(screen: LLMScreen) -> None:
+        screen._accept_vllm_profiles(screen._vllm_profiles)
+
+    monkeypatch.setattr(LLMScreen, "_load_vllm_profiles", load_fixture_profiles)
     long_choice = ManagedGGUFChoice(
         REF_A,
         "A very long managed model name that must not push actions out · "
         "Q4_K_M · 16384.0 MiB · Managed · local integrity recorded",
     )
-    app, pilot, context, _screen, window, _service = await _mount_models(
+    app, pilot, context, screen, window, _service = await _mount_models(
         monkeypatch,
         size=(80, 24),
         choices=(long_choice,),
@@ -1240,25 +1243,63 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         assert "<svg" in svg and "</svg>" in svg
 
         window.active_view = "vllm"
+
+        def vllm_hydration_settled() -> bool:
+            current_view = screen._vllm_view()
+            model_inputs = list(window.query("#vllm-hf-model"))
+            return (
+                window.active_view == "vllm"
+                and screen._vllm_profiles_loaded
+                and current_view is not None
+                and current_view.is_attached
+                and current_view._draft == screen._vllm_draft
+                and len(model_inputs) == 1
+                and not model_inputs[0].disabled
+                and model_inputs[0].value == screen._vllm_draft.model_value
+            )
+
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#vllm-model-path")) == 1,
-            message="vLLM pane did not populate on first selection",
+            vllm_hydration_settled,
+            message="vLLM pane did not finish profile hydration",
         )
-        vllm = window.query_one("#vllm-model-path", Input)
+        vllm = window.query_one("#vllm-hf-model", Input)
+        vllm.value = "org/vllm"
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                screen._vllm_view() is not None
+                and screen._vllm_view()._draft.model_value == "org/vllm"
+                and screen._vllm_draft.model_value == "org/vllm"
+                and window.query_one("#vllm-hf-model", Input).value == "org/vllm"
+            ),
+            message="vLLM model edit did not reach the launch draft",
+        )
         window.active_view = "mlx-lm"
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#mlx-model-path")) == 1,
+            lambda: (
+                window.active_view == "mlx-lm"
+                and len(window.query("#mlx-model-path")) == 1
+            ),
             message="MLX pane did not populate on first selection",
         )
         mlx = window.query_one("#mlx-model-path", Input)
-        vllm.value, mlx.value = "org/vllm", "org/mlx"
+        mlx.value = "org/mlx"
+        await _settle_pilot_until(
+            pilot,
+            lambda: mlx.value == "org/mlx",
+            message="MLX model edit did not settle before leaving the pane",
+        )
         window.active_view = "llama-cpp"
         await pilot.pause()
         mode.value = "managed"
         await pilot.pause()
-        assert (vllm.value, mlx.value) == ("org/vllm", "org/mlx")
+        assert screen._vllm_draft.model_value == "org/vllm"
+        assert (
+            window.query_one("#vllm-hf-model", Input).value,
+            window.query_one("#mlx-model-path", Input).value,
+        ) == ("org/vllm", "org/mlx")
         assert not vllm.disabled and not mlx.disabled
 
         claim = reserve_server_launch(app, "llamacpp", authority="Managed GGUF")
@@ -1309,6 +1350,11 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         executable = tmp_path / f"{provider}-server"
         executable.touch()
         window.query_one(f"#{provider}-exec-path", Input).value = str(executable)
+        await _settle_pilot_until(
+            pilot,
+            lambda: _select_values(managed) == (REF_A,) and not managed.disabled,
+            message=f"{provider} managed inventory did not settle",
+        )
 
         mode.scroll_visible(animate=False)
         mode.focus()
@@ -1330,11 +1376,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         overlay_svg = app.export_screenshot(simplify=True)
         assert "Managed" in overlay_svg and "GGUF" in overlay_svg
         assert "External" in overlay_svg
-        if provider == "llamacpp":
-            await pilot.press("up")
-        else:
+        await pilot.press("home")
+        if provider == "llamafile":
             await pilot.press("down")
-        await pilot.pause()
+        target_index = 0 if provider == "llamacpp" else 1
+        await _settle_pilot_until(
+            pilot,
+            lambda: overlay.highlighted == target_index,
+            message=f"{provider} managed option did not receive keyboard highlight",
+        )
         await pilot.press("enter")
         await _settle_pilot_until(
             pilot,

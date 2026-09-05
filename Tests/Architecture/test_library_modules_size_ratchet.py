@@ -183,6 +183,47 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1898,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+    # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 86 moved methods (byte-for-byte) + a
+    # 40-parameter constructor (self + screen + 38 named dependencies; the
+    # largest single move of the effort; see the module's own docstring
+    # for the full derivation) pinned at its exact measured line count.
+    # 3181 -> 3113 -> 3099 (two fix rounds: 5 methods total reverted to
+    # screen-resident after the battery caught bare-self identity-
+    # comparison regressions -- `_library_screen_is_current(self)` in
+    # four Import-row handlers, and `self.app.screen is self` inline in
+    # `_present_library_skills_import_snapshot`; see the module's own
+    # docstring, exclusion 5) -> 3131 (post-landing-review fix: a SIXTH
+    # bare-self hazard, an unbound-attribute escape via `getattr(self,
+    # "focused", None)` with no corresponding property, silently degraded
+    # the committed-mutation-refresh focus-restore path; fixed by adding
+    # the `focused` framework-service property every sibling controller
+    # already carries -- see the module's own docstring, exclusion 5).
+    #
+    # 2026-09-04, wave-4 task 3 (skills cleanup, series 3/3): comment-only
+    # growth, no method body touched (86 movers unchanged -- cleanup prunes
+    # the SCREEN's delegators, not the controller's own methods, per the
+    # collections/search+RAG precedent). Two moved-docstring-adjacent module
+    # docstring corrections: the "6-match gap is three @property/@x.setter
+    # pairs" arithmetic error (should be SIX -- 2 raw defs - 1 unique name =
+    # 1 gap per name, 6 names = 6 gap; the same error task 2's own report
+    # caught and fixed in its own text (§12c) but missed here) and the
+    # "LibraryScreen keeps one-line delegators under every one of these
+    # original names" claim, now false for 16 of the 86 (this task's own
+    # screen-side prune) -- both fixed in this task, +9 lines. 3131 -> 3140.
+    #
+    # 2026-09-04, wave-4 final review (fix wave): two comment/import-only
+    # changes, no method body touched. (1) Removed the dead
+    # `LIBRARY_SKILLS_IMPORT_WORKER_GROUP` import from `.screen_constants`
+    # (zero in-file uses -- the screen, not this controller, is the one
+    # consumer of that name), -1 line. (2) Reworded the `focused`-property
+    # fix-round docstring paragraph to align its "SIXTH ... distinct in
+    # shape" framing with recipe §3's landed "sixth bypass shape, close
+    # cousin" framing (the getattr/focused escape is that shape's own
+    # sub-case -- the seventh instance counted under it -- not an eighth/
+    # new shape), +3 lines. Net 3140 -> 3142.
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line

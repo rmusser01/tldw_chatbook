@@ -9,6 +9,26 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Spend forecasts must test admitted media and durable recovery IDs
+
+**PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
+attachment, so failed echoes, assistant images, missing attachment bytes, and
+images omitted by a non-vision model all suppressed a valid text estimate.
+The recovery tests also reused one ID for the transient row and its database
+record, hiding a mismatch that counted unfinished recovered turns as Current
+spend. Mounted regressions reproduced the media cases; distinct persisted and
+transient IDs reproduced both accepted and quarantined recovery errors.
+The first media fix then captured full send configuration even for an empty
+chat, pulling RAG imports onto startup: CI and the local census measured 1,030
+modules against the 972 limit while clean dev passed. Checking for admitted
+user attachments before resolving media capabilities removes that eager work.
+
+**What to do.** Reuse the provider's metadata-only admission and image-budget
+projection for display decisions. Give hydrated test rows distinct transient
+and persisted IDs, and verify both request-context and settled-spend ownership.
+
+---
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
@@ -11074,7 +11094,6 @@ the invariant. A newly red old test may be revealing missing state in its
 oracle, not a compatibility regression. Then run a cross-file gate that covers
 both the new invariant and the existing projection tests; the isolated new
 tests alone cannot expose disagreements with older test models.
-
 ---
 
 ## A bundle-only render harness misses the per-screen sheets since the agentic split
@@ -11107,7 +11126,6 @@ the primary, which is the assertion a palette generator needs.
 
 **What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
 generated palettes by hue distance for several primaries, not by eyeballing one.
-
 ## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
 
 **What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
@@ -11207,3 +11225,167 @@ data (recovery, import, migration), also check whether Textual's default
 `exit_on_error=True` means a single unhandled exception there takes down the
 whole app, not just the feature — that raises the cost of an untested edge case
 from "one broken button" to "total data-loss-adjacent crash."
+---
+
+## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
+
+**Incident.** Schedules redesign PR-4, Task 3 (2026-09-04). The task report claimed
+the suite gate was met and quoted a passing count ("292 passed"). The number was
+real, but it came from a **partial glob** over the test files the task had touched —
+not from the gate the plan specified. Two pinned tests outside that glob were red at
+the same moment. Nothing in the report was fabricated; the run simply did not cover
+what the claim covered, and a summarised count carries no evidence of its own scope.
+
+It was caught only because the reviewer re-ran the gate independently instead of
+reading the report's claim. Had the reviewer trusted the number, a red branch would
+have gone up as green — and the two failures were in exactly the pinned tests a
+reviewer would assume the implementer had run.
+
+This is the same failure shape as `A failure list from a suite you have never run
+clean attributes nothing` (above), inverted: there, an unrun suite was used to
+attribute failures; here, a partially-run suite was used to deny them.
+
+**What to do.**
+
+- **Paste the exact tail lines from the FINAL run**, including the invocation that
+  produced them. `pytest ... -q` plus its `N passed, M failed` line is evidence; a
+  count retyped into prose is a claim. The invocation is the load-bearing half —
+  it is what makes the scope auditable.
+- **Never quote a count from a run that is not the gate.** A scoped run while
+  iterating is fine and normal; it just is not the thing you report as the gate.
+- **Reviewers re-run the gates.** Do not adjudicate a green claim from the report.
+  The re-run costs minutes; this one caught a red branch, and it is the only step
+  in the loop that is independent of the implementer's own scoping mistake.
+- If the gate is expensive, that is an argument for naming it precisely in the plan,
+  not for approximating it with a glob.
+
+---
+
+## An assertion that reads back the value the code just wrote confirms nothing — assert on PAINTED output
+
+**Incident (round 1).** Schedules-handoff PR-6, live task 6 (2026-09-02). The Results
+tab's unread badge never rendered. `pane.label = f"Results ({n})"` on a `TabPane` sets
+an **inert attribute** — Textual 8.2.8 stores the title in `_title`, and `TabPane` has
+no `label` reactive at all, so the assignment did nothing to the UI. The regression
+test (`Tests/UI/test_schedules_results_tab.py:408`) passed the entire time, because it
+asserted on `pane.label` — reading back the attribute the code had just set. A test
+shaped that way passes for **any** write to any attribute name; it cannot fail while
+the assignment executes. The badge had also been broken in the Conflicts tab before
+PR-6 copied the pattern, so a green test had been guarding a dead feature for months.
+
+**Incident (round 2), same programme.** The Automations table silently ate its
+`[<server id>]` owner prefix: `DataTable` cells go through
+`rich.text.Text.from_markup`, whose lowercase-tag regex matches `[http://…]`. Here too
+`table.get_cell_at()` returns the **stored** value and passes regardless of whether the
+content survives rendering. The fix migrated the assertions to
+`Tests/UI/schedules_test_helpers.py::rendered_row_cells`, which routes the stored row
+through the widget's own `_get_row_renderables` -> `default_cell_formatter` — the exact
+path where a bracket token is eaten.
+
+**The tell.** Ask of every assertion: *what code path must break for this to fail?* If
+the answer is "the assignment statement two lines above in the production code", the
+test is a self-confirmer. Both of these were written in good faith by someone who had
+just watched the feature not work, and both passed on the broken build.
+
+**What to do.**
+
+- When the point of a test is that something **renders**, assert on the rendered
+  artifact: painted cells (`rendered_row_cells`), compositor strips, `render_line`,
+  `region.width > 0`. Not the stored value, not the attribute you assigned.
+- Treat "framework attribute assignment" as an unverified hypothesis until a painted
+  assertion confirms it. `widget.foo = x` on a non-reactive attribute is a silent
+  no-op in Textual, and the read-back is indistinguishable from success.
+- When a live run finds a feature dead that a green test covers, **read that test
+  first**. It is more often a self-confirmer than a coverage gap, and fixing the
+  feature without fixing the test leaves the next regression unguarded.
+
+---
+
+## Textual projection writes must suppress their own deferred change messages
+
+**TASK-31389, 2026-09-03.** The mounted vLLM generation-fencing test initially
+hung after one model edit and advanced the connection generation thousands of
+times. The view's `_rendering` flag covered the synchronous `Input.value` writes,
+but Textual delivered their `Input.Changed` messages after the flag had already
+been cleared. Because two source controls projected the same draft field, stale
+echoes alternated values and recursively triggered draft invalidation and another
+projection. A timeout traceback finally caught the loop applying state while the
+view was being torn down.
+
+**What to do.** Wrap imperative `Input.value` and `TextArea.text` projection
+writes in the widget's `prevent(...Changed)` context. A synchronous rendering
+flag alone does not suppress a message delivered later. Prove the boundary with
+a mounted test that applies state, performs one user edit, and asserts exactly one
+semantic generation advance.
+
+## Closing a thread-local database on the fixture thread does not close worker-owned handles
+
+**TASK-31392 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
+reported 237 additional file descriptors. File-level bisection isolated the
+growth to mounted Textual tests; `lsof`, GC inspection, and live connection
+registries then showed one `_QuiescentSQLiteConnection` per app instance. The
+real on-mount FTS backfill opened each handle on a worker thread, while fixture
+teardown invoked `close()` only from the main pytest thread. That closed the
+main thread-local handle but could not reach the worker thread's handle. Two
+mounted cases retained 2 SQLite/9 regular descriptors after teardown even
+after GC. Draining the database's process-local quiescence registry reduced
+that to 0 SQLite/3 regular descriptors, and repeated mounts stopped growing
+linearly.
+
+**What to do.** When a database owns thread-local connections and tests run
+real worker-backed startup work, teardown must use the database's all-handle
+quiescence/registry boundary rather than a single-thread `close()`. Diagnose a
+session FD warning by splitting test files, classifying descriptors with
+`lsof`, and inspecting live owners after finalizers; GC or a higher threshold
+cannot establish ownership or fix a registered worker handle.
+
+## Lifecycle relocation tests must include production change notifications
+
+**TASK-21123, 2026-09-04.** Moving Buddy ownership to the app initially passed
+the old mount harness, which manually reconciled state and omitted the new
+controller notification callback. Wiring the production callback exposed tests
+that installed mount gates after enable had already mounted the view, and a
+close/geometry test that sent input after the view had retired. Explicit caller
+cancellation tests now isolate their caller; the merge test gates owner retirement
+while admitting both edits. Independent review also reproduced late mounts after
+shutdown during a geometry flush and reuse of a generation-invalidated view after
+canceled retirement. Both received failing-then-passing regression tests.
+
+**What to do.** Bind production lifecycle notifications in integration harnesses.
+Gate the specific await boundary a race test intends to exercise; a persistence
+writer starting does not prove the originating view is still current. Check
+shutdown and generation authority again after teardown awaits, before reuse/mount.
+
+## `Screen.CSS_PATH` loads under EVERY app — including the unstyled-tier harnesses (TASK-24459, 2026-09-04)
+
+Splitting `features/_scheduling.tcss` off the boot bundle, the first wiring
+put the generated sheet on `SchedulesWorkbench.CSS_PATH` — the same pattern
+TASK-25812 used for the library/settings agentic sheets. The paired
+evals/schedules arm then flipped three destination-shell geometry tests
+that were green on the pristine base. The probe showed the mechanism:
+Textual's `_load_screen_css` fires when ANY app pushes the screen, and the
+`ConsolidatedCSSApp` harnesses deliberately load no app bundle — so a
+harness-mounted workbench now rendered with ONLY the moved half of the
+module, a hybrid of the styled and unstyled tiers that no user ever sees
+(the automation-detail overlay covered `#schedules-follow-in-console`; the
+click landed on the overlay and the mock never fired). The inverse bite
+followed an hour later: harnesses that model the PRODUCTION stylesheet via
+a hard-coded sheet list (`ProductionCSSDestinationHarness`, and
+`test_schedules_responsive_floor`'s `CSS_PATH = BUNDLED_STYLESHEET`) lost
+the moved rules and failed four MORE geometry tests — that list had
+already gone stale once when 25812 landed, and went stale again the day a
+new split shipped.
+
+Rules, each half of the incident:
+- A split-off feature sheet must load from an APP-owned seam
+  (`TldwCli._SCREEN_OWNED_ROUTE_CSS` → `_ensure_screen_owned_css`), never
+  `Screen.CSS_PATH`, unless every harness that mounts the screen has been
+  audited for the hybrid. Guards now pin both directions (map
+  completeness + a CSS_PATH ban on the owning screens).
+- A harness that claims "the production stylesheet set" must DERIVE it
+  from the build authority (`consolidated_css.APP_STYLESHEETS`), not name
+  sheets by hand.
+- The failure set of a paired arm settles attribution only test-by-test:
+  of the eight failures on the branch arm, five were pre-existing, three
+  were real — and the real three were invisible without the pristine-base
+  arm run in the same mode.

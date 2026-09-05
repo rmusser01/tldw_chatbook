@@ -1532,6 +1532,27 @@ class LibraryIngestCanvasState:
     #: transient/environmental blockers (blank path, missing media DB)
     #: where a submit is merely premature, not doomed.
     selection_has_nothing_importable: bool = False
+    #: (task-28007 AC#1/AC#2) Media ids, across the WHOLE visible queue
+    #: (every batch and singleton submission, not one per run), whose
+    #: import completed with analysis skipped and that STILL have no
+    #: analysis (an id the screen's own outcomes map already marked
+    #: ``ok=True`` drops out). Deliberately canvas-scoped rather than one
+    #: set per ``IngestQueueGroup``: the action's id
+    #: (``library-ingest-analyze-skipped``) is fixed, not job/batch-suffixed,
+    #: so more than one group offering it at once would mount the same id
+    #: twice and crash. Non-empty independent of ``analysis_action_ready``,
+    #: so a caller can still resolve "what would this run over" even while
+    #: the action itself is hidden.
+    analyze_skipped_media_ids: tuple[str, ...] = ()
+    #: Whether the "Analyze N skipped" run-summary action should render:
+    #: at least one id above AND the provider is ready right now (Task 1's
+    #: reason is ""). The caller resolves readiness ONCE per render (it can
+    #: do I/O) and passes it in -- never re-resolved per id.
+    show_analyze_skipped: bool = False
+    #: Whether that action should render disabled because a bulk-Analyze
+    #: run (this one or Select mode's) is already in flight. Meaningless
+    #: when ``show_analyze_skipped`` is False.
+    analyze_skipped_running: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -2010,6 +2031,89 @@ def _build_queue_row(
     return row
 
 
+def _apply_analyze_outcome(
+    row: IngestQueueRow,
+    job: LibraryIngestJob,
+    outcomes: Mapping[str, tuple[bool, str]],
+) -> IngestQueueRow:
+    """Overlay a bulk "Analyze N skipped" outcome onto its own row (AC#2).
+
+    Rows ARE individually addressable in the Import queue (each one is its
+    own ``Static`` keyed by ``job_id``), so a completed run reports per item
+    in the SAME place the "analysis skipped: ..." note came from, rather
+    than only in a run summary -- the row's stale skip note is replaced
+    with the receipt grammar, using the same glyphs Task 2's Media-canvas
+    receipt uses (``_GLYPH_DONE``/``_GLYPH_FAILED``).
+
+    Args:
+        row: The row already built for ``job``'s current state.
+        job: The row's source job, for its source basename (the "title"
+            the receipt names).
+        outcomes: media-id-string -> ``(ok, reason)``, recorded by the
+            screen's ``on_item_done`` callback as the run progresses.
+
+    Returns:
+        ``row`` unchanged when ``job`` has no media id or no recorded
+        outcome; otherwise a copy whose progress message is overwritten.
+    """
+    if job.media_id is None:
+        return row
+    outcome = outcomes.get(str(job.media_id))
+    if outcome is None:
+        return row
+    ok, reason = outcome
+    title = _basename(job.source_path)
+    if ok:
+        # (Qodo review round, PR #2400 #3) An id the AC#3 partition pass
+        # auto-skipped (it already carried an analysis) is resolved
+        # through this same hook with a distinguishing reason, so its row
+        # reads as "already analyzed" rather than claiming a fresh
+        # generation that never ran.
+        message = f"{_GLYPH_DONE} {reason} · {title}" if reason else (
+            f"{_GLYPH_DONE} analyzed · {title}"
+        )
+    else:
+        message = f"{_GLYPH_FAILED} analysis failed · {title} · {reason}"
+    new_progress = dict(row.progress or {})
+    new_progress["message"] = message
+    # A stale percent from the import's own progress payload no longer
+    # describes anything once the message is replaced.
+    new_progress.pop("percent", None)
+    return replace(row, progress=new_progress)
+
+
+def library_ingest_analyze_skipped_ids(
+    jobs: Sequence[LibraryIngestJob],
+    outcomes: Mapping[str, tuple[bool, str]],
+) -> tuple[str, ...]:
+    """Media ids across the WHOLE visible queue still needing analysis (AC#1).
+
+    A job counts when its import completed with an analysis-skipped note
+    AND it has not since been given a successful outcome through this same
+    action -- "N is the count of skipped rows that still have no analysis"
+    (an id fixed by this action drops out; a failed re-attempt stays,
+    since it still has no analysis).
+
+    Args:
+        jobs: The registry snapshot, in render order.
+        outcomes: media-id-string -> ``(ok, reason)`` outcomes recorded so
+            far by the screen's ``on_item_done`` callback.
+
+    Returns:
+        Deduplicated media-id strings, in first-seen order.
+    """
+    return tuple(
+        dict.fromkeys(
+            str(job.media_id)
+            for job in jobs
+            if job.state == IngestJobState.DONE
+            and job.media_id is not None
+            and str((job.progress or {}).get("analysis_skipped") or "").strip()
+            and not outcomes.get(str(job.media_id), (False, ""))[0]
+        )
+    )
+
+
 #: (xhigh review round) One ``Failed to <verb> <type> file:`` stage
 #: wrapper, WITHOUT ``_NESTED_FAILURE_PREFIX_RE``'s requirement that
 #: another ``Failed to`` follow it. Stripped for COMPARISON only (never
@@ -2395,6 +2499,10 @@ def build_library_ingest_state(
     start_confirm_line: str = "",
     last_submission_available: bool = False,
     retry_confirm_armed: bool = False,
+    analyze_outcomes: Mapping[str, tuple[bool, str]] | None = None,
+    analyze_skipped_media_ids: tuple[str, ...] | None = None,
+    analysis_action_ready: bool = False,
+    analyze_running: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -2403,6 +2511,24 @@ def build_library_ingest_state(
             typically the registry's own newest-first ``jobs()`` tuple,
             passed straight through into ``queue_rows``).
         form: The current form echo.
+        analyze_outcomes: (task-28007 AC#1/AC#2) media-id-string ->
+            ``(ok, reason)`` outcomes the screen's "Analyze N skipped" run
+            has recorded so far, via its ``on_item_done`` callback. Overlays
+            each outcome onto its own row's progress line and excludes a
+            successfully-fixed id from ``analyze_skipped_media_ids``.
+        analyze_skipped_media_ids: (final review, M-7) The caller's own
+            already-computed ``library_ingest_analyze_skipped_ids(jobs,
+            analyze_outcomes)`` -- the screen resolves it once to gate the
+            "Analyze N skipped" button, and this lets that same tuple carry
+            straight into the state instead of a second, redundant call
+            here. ``None`` (every unit test, and any caller with nothing
+            handy) falls back to computing it fresh from ``jobs`` and
+            ``analyze_outcomes``, so passing it is a pure optimisation.
+        analysis_action_ready: Whether the analysis provider is callable
+            right now (Task 1's resolver reason is ``""``). Resolved ONCE
+            by the caller (it can do I/O) -- never per row.
+        analyze_running: Whether a bulk-Analyze run is already in flight,
+            so the run-summary action should render disabled.
         runtime_source: The Library's active runtime scope (``"local"`` or
             ``"server"``); only affects ``server_quiet_line``, since local
             ingest always targets the local media store regardless of
@@ -2471,15 +2597,27 @@ def build_library_ingest_state(
         unavailable_line = MEDIA_DB_UNAVAILABLE_COPY
     else:
         unavailable_line = ""
+    resolved_analyze_outcomes: Mapping[str, tuple[bool, str]] = analyze_outcomes or {}
     queue_rows = tuple(
-        _build_queue_row(
+        _apply_analyze_outcome(
+            _build_queue_row(
+                job,
+                now=resolved_now,
+                details_expanded=job.job_id in expanded_details,
+            ),
             job,
-            now=resolved_now,
-            details_expanded=job.job_id in expanded_details,
+            resolved_analyze_outcomes,
         )
         for job in jobs
     )
     queue_groups, latest_batch_line = build_ingest_queue_groups(jobs)
+    if analyze_skipped_media_ids is None:
+        analyze_skipped_media_ids = library_ingest_analyze_skipped_ids(
+            jobs, resolved_analyze_outcomes
+        )
+    show_analyze_skipped = bool(analyze_skipped_media_ids) and bool(
+        analysis_action_ready
+    )
     # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
     # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
@@ -2999,6 +3137,9 @@ def build_library_ingest_state(
         selection_has_nothing_importable=bool(
             nothing_importable or nothing_sendable
         ),
+        analyze_skipped_media_ids=analyze_skipped_media_ids,
+        show_analyze_skipped=show_analyze_skipped,
+        analyze_skipped_running=bool(analyze_running),
     )
 
 

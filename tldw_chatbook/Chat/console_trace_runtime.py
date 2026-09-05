@@ -128,8 +128,21 @@ class ConsoleTraceBoundaryFactory:
         )
         if not message_revision_ids:
             raise ValueError("trace_owner_unavailable")
+        active_descriptor_index = -1
+        if route_record.route is ConsoleRequestRoute.DIRECT_PREFILL:
+            if (
+                len(provenance.messages_payload) < 2
+                or not request.messages_payload
+                or request.messages_payload[-1].get("role") != "assistant"
+            ):
+                raise ValueError("trace_prefill_unavailable")
+            # The final provider row is an unsaved response prefill. The
+            # preceding active user revision still owns the durable turn.
+            active_descriptor_index = -2
         active_revision_ids = tuple(
-            _saved_revision_ids(provenance.messages_payload[-1])
+            _saved_revision_ids(
+                provenance.messages_payload[active_descriptor_index]
+            )
         )
         if len(active_revision_ids) != 1:
             raise ValueError("trace_turn_unavailable")

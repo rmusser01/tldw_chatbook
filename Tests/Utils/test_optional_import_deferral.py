@@ -444,10 +444,8 @@ print(json.dumps({"imported": SwarmUIClient is not None}))
 
 # --- 4. Persona Buddy reconcile: no widget/PIL import while disabled -------
 #
-# TASK-21123 (partial). `BaseAppScreen.reconcile_persona_buddy_view` runs on
-# EVERY screen mount, screen resume and screen recompose, as a coroutine on
-# the event loop (`run_worker` with no `thread=True`) right after first
-# paint. Importing `persona_buddy_widget` pulls
+# TASK-21123. The app-owned overlay preserves the disabled import guard
+# originally added to BaseAppScreen. Importing `persona_buddy_widget` pulls
 # `Persona_Buddy.controller` -> `Persona_Visual.repository`/`runtime` ->
 # `PIL`. On routes that do not already carry PIL (Home, Settings) that was a
 # measured ~25 ms of loop-blocking work per process for a feature that is
@@ -459,10 +457,9 @@ import json
 import sys
 import types
 
-# The production import route: a screen module, then the base screen that
-# owns the reconcile. Neither may drag the Buddy widget in on its own.
+# Screen imports and the lightweight app owner must not pull in rendering.
 import tldw_chatbook.UI.Screens.home_screen  # noqa: F401
-from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+from tldw_chatbook.UI.Navigation.persona_buddy_overlay import PersonaBuddyOverlay
 
 BUDDY_WIDGET = "tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget"
 BUDDY_CONTROLLER = "tldw_chatbook.Persona_Buddy.controller"
@@ -488,10 +485,7 @@ class _Screen:
     \"\"\"
 
     def __init__(self, controller):
-        self.app_instance = types.SimpleNamespace(persona_buddy_controller=controller)
-        self._persona_buddy_reconcile_lock = asyncio.Lock()
-        self._persona_buddy_view = None
-        self._persona_buddy_view_generation = 0
+        self.persona_buddy_controller = controller
         self.is_attached = True
         self.synced = 0
 
@@ -525,7 +519,7 @@ async def _main():
     # feature was turned off at runtime.
     for name, controller in (("no_controller", None), ("disabled", _DisabledController())):
         screen = _Screen(controller)
-        returned = await BaseAppScreen.reconcile_persona_buddy_view(screen)
+        returned = await PersonaBuddyOverlay(screen).reconcile()
         results["cases"][name] = {
             "returned": returned,
             "synced": screen.synced,

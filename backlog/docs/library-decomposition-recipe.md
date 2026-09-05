@@ -196,6 +196,91 @@ whichever set of files best expresses the invariant), not deferred to
 cleanup. Cleanup still handles the rest of that subsystem's routing work
 as usual.
 
+**A sixth bypass shape, found by the skills series (wave-4 task 2): bare
+`self` used as an IDENTITY-COMPARED or SCREEN-IDENTITY argument, not
+merely as an attribute-lookup receiver — and its close cousin, an
+unbound-attribute escape that silently takes a `getattr` default.** Every
+prior shape in this section either fails loudly (a real exception) or is
+a test-only bypass safely deferred to cleanup. This shape is neither: it
+is a genuine, silent, PRODUCTION behavior change a pure move introduces,
+found only by running the full battery (a same-name-forwarding regex and
+a byte-for-byte body diff cannot see a semantic identity bug or a
+literal-string `getattr` that never resolves).
+
+- *Identity-compared/screen-identity `self`, three confirmed instances,
+  two exclusion-worthy forms:*
+  - **Form A — a framework API's own identity filter.** Textual's
+    `WorkerManager.cancel_group(node, group)` filters `worker.node ==
+    node` by identity. A moved body calling `self.workers.cancel_group(
+    self, ...)` compares the CONTROLLER against workers actually
+    registered with the SCREEN as their node (since `run_worker` always
+    forwards to `self._screen.run_worker(...)`) — permanently `False`,
+    silently making the cancellation a no-op. Found by reading the
+    framework's own source before moving, not by a test failure.
+  - **Form B — a shared shell helper's own screen-identity check.**
+    `_library_screen_is_current(screen)` (`screen_helpers.py`) does
+    `current_screen = getattr(screen.app, "screen", screen); return
+    current_screen is screen`. A moved body forwarding bare `self` makes
+    this permanently `False` (`real_screen is controller` can never be
+    true), silently no-opping every guarded branch. Found the hard way —
+    a first draft moved four such names, the wiring/ratchet battery
+    stayed green, and two real Pilot-driven UI tests (each pressing a
+    real button and asserting a real DOM mount) failed, confirmed via a
+    paired baseline (both pass on the pre-move tree, fail on the
+    four-moved draft).
+  - **Form C — the identical Form-B shape, inlined instead of routed
+    through the shared helper.** `self.app.screen is self`, found the
+    same way — a SECOND draft moved a method carrying this exact
+    comparison inline; 8 `Tests/Skills/` tests (the wave's own
+    fourth-root trap) failed, confirmed genuine via the same
+    paired-baseline method.
+
+  All three exclude the carrying method(s) entirely (keep them
+  screen-resident, full-bodied, untouched — no accommodation exists,
+  unlike duck-typed attribute access, because identity can never be
+  satisfied by a proxy object). Named late-binding dependencies (the
+  usual binding-kind-2 shape) cover any remaining mover that calls the
+  excluded method.
+
+- *Unbound-attribute escape via `getattr(self, "<literal>", default)` —
+  found by a THIRD draft's own post-landing review, not the move's own
+  battery.* `getattr` with a literal string name and a default is
+  invisible to the recipe's own `self.<attr>` `ast.Attribute` census (the
+  name never appears as a literal `self.<name>` expression) AND produces
+  no exception when unbound — it just silently returns the default,
+  forever. A controller missing the corresponding framework-service
+  property (here, `focused`) degrades a real behavior — permanently,
+  quietly — with no red test anywhere in the standard battery, because
+  `has_focus`-shaped DOM assertions can be satisfied by an UNRELATED
+  Textual default-focus fallback landing on the same widget by
+  coincidence (confirmed empirically: a `.has_focus`-only assertion
+  passed identically whether the property existed or not). **Any future
+  subsystem's controller-PR sweep should grep the WHOLE moved-body
+  source for `getattr(self, "<literal-string>"` (not just `self.<attr>`
+  accesses) and confirm each literal name actually resolves on the
+  controller** — a repeat scan after adding a name is cheap and closes
+  the whole class for that controller, per the skills series' own
+  precedent (found exactly one instance, `focused`, confirmed by re-scan
+  after the fix). The covering test for a finding in this class needs a
+  signal PROVABLY tied to the code path (e.g. a spy on the exact
+  `query_one`/method call the fix's own logic makes), not a bare DOM
+  end-state assertion — the same false-negative risk (an unrelated
+  framework fallback satisfying the assertion) applies to writing the
+  test as it did to finding the bug.
+
+- *A battery-found hazard shrinking the mover set legitimately amends the
+  RED tuple — expected, not a smell.* When a controller-PR's own
+  verification battery (not the static census) surfaces one of these
+  shapes after the RED wiring commit already pinned a cluster-name tuple,
+  correcting that tuple (and the accompanying "N of 127" counts) in the
+  same commit that lands the fix is the expected shape of the work, not
+  evidence the RED commit was wrong when it was written — the census that
+  produces the RED tuple is necessarily static, and these shapes are, by
+  definition, only found by running code. Re-deriving the exact final
+  counts (movers, exclusions, per-category tallies) after every such
+  correction — not just patching the number that changed — is what keeps
+  the tuple and its own docstring narrative from drifting apart.
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:
@@ -521,7 +606,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 2 | **export** — **complete** (wave-2 Tasks 2–4) | 3 | 13 fields moved; 22 of 51 "export"-named method candidates moved / 29 excluded (18 other-subsystem, 2 `@work` framework-decorator self-type-assertion hazard, 9 unbound-fake-self/silent-Mock test bypasses); see §12 for the series' actual, as-landed numbers |
 | 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
 | 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
-| 3 | skills | 15 | |
+| 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | ingest | 23 | |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
@@ -2354,4 +2439,736 @@ task-4-report.md`).
    exactly the discipline lessons 4-5 above ask of evidence claims in
    general, now caught turning inward on this task's own work rather
    than a prior task's.
+
+## 19. The skills series, as landed — the fourth rehearsal, and the first three-way state-field-prefix subsystem
+
+Skills (wave-4, `.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills`)
+is the fourth subsystem series to run this recipe (Tasks 1-3: state PR,
+controller PR, cleanup PR). It is the largest single-controller move to
+date (86 methods, ~2,000 lines) and the first subsystem whose state fields
+split across THREE shim prefixes rather than one or two. This section
+records what actually landed and what the rehearsal added to or
+reconfirmed about the recipe above.
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 1 | State | 36 fields (26 `_library_skill_*` singular default + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`) → `LibrarySkillsState`, via `skill_state_shim_attr()` -- a single-source three-way prefix resolver, the same shape the conversations/search+RAG exemplars' own plural-prefix split established, extended one prefix further (0 methods) | 43225 → 43179 lines, 1311 methods (unchanged) |
+| 2 | Controller | 86 of 127 "skill"-named methods → `LibrarySkillsController` (30 `@on` + 1 staticmethod + 55 plain; 41 exclusions: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard -- 1 found by static analysis (Form A), 5 found by the verification battery after two draft rounds each broke real tests (Form B: 4 names, Form C: 1 name) -- see recipe §3's sixth bypass shape) | 43179 → 41247 lines, 1311 methods (unchanged: pure move, 86 `FunctionDef`s out, 86 one-line delegators in). Controller born-governed at 3181, fix round 1 (Form B revert) → 3113, fix round 2 (Form C revert) → 3099, post-landing-review fix (the SEVENTH bare-self-hazard-adjacent shape: an unbound-attribute escape via `getattr(self, "focused", None)` with no corresponding property) → 3131 |
+| 3 | Cleanup | Shim block (36 properties across 3 prefixes) deleted; every remaining screen-side flat reference retargeted to `self._skills_state.<field>` (130 pre-existing occurrences: 121 literal `self.<flat_name>` attribute accesses + 5 dotted-vs-flat dispatch-dict string values across the `__init__` entangled-field lines and the two shared reader-preference dispatcher methods (`_replace_library_reader_preference`/`_persist_library_reader_preference`) + the skills choice-strip helper's own dispatch dict + 2 prose-comment corrections + 1 `getattr(self, "_library_skills_view", "list")` call needing a RECEIVER fix, not just a string swap, since `getattr` does not do dotted traversal); 269 test-side retargets across 9 files spanning THREE roots (`Tests/UI`: 8 files, 221 retargets; `Tests/Skills`: 2 files, 48 retargets -- `Tests/Live` had zero skills-field consumers); 16 of the 86 screen delegators deleted (repo-wide census across `tldw_chatbook/`, `Tests/UI`, `Tests/Library`, `Tests/Live`, `Tests/Skills`: zero references anywhere outside their own one-line body and the controller's own internal calls); 28 dead imports removed (1 newly dead from the shim deletion itself -- `skill_state_shim_attr` -- plus 27 left dead by task 2's own move and deliberately deferred to this cleanup PR, per the export/collections/search+RAG series' own Task 3/Task 4 split: 15 names from `Widgets.Library`, 10 from `Library.library_skills_state`, 2 from `.skills_screen`); 2 module-docstring corrections in the controller (an arithmetic error inherited from task 1's own report -- "three `@property`/`@x.setter` pairs" for a 6-match gap that is actually six pairs -- and a now-false "`LibraryScreen` keeps one-line delegators under every one of these" claim, corrected to name the 70-of-86 remaining count) | 41247 → 41155 lines, 1311 → 1295 methods (16 fewer `FunctionDef`s -- exactly the 16 pruned delegators). Controller: 3131 → 3140 (comment-only growth: the two module-docstring corrections) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`43225/1311 → 43179/1311 → 41247/1311 → 41155/1295` (final).
+
+**Controller-file governance pin** (§17): `library_skills_controller.py` was
+born-governed the moment it existed (Task 2): `3181 → 3113 → 3099 → 3131`
+(Task 2 and its two fix rounds) `→ 3140` (this cleanup task, comment-only).
+
+### Dynamic-dispatch census — zero hazard shapes found, one dotted-string update needed
+
+Re-derived Task 2's own dynamic-dispatch findings before deleting the shim,
+plus the collections/search+RAG series' own `dict.get(...)` → variable →
+`setattr`/`getattr` two-step guidance: **zero** new instances of either
+hazardous shape found touching any of the 36 Skills state fields. The ONE
+screen-side dynamic-dispatch site touching Skills is the SAME shared shell
+dispatcher every prior subsystem's cleanup has updated for its own fields --
+`_replace_library_reader_preference`/`_persist_library_reader_preference`'s
+7-destination `{destination: attribute_name}` dicts, plus the skills-list
+choice-strip helper's own `{selector_string: visibility_attr}`/
+`{visibility_attr: canvas_kind}` dict pair (mirroring the export series'
+own `"export": "_export_state.quality_choices_visible"` entry exactly) --
+all already fully generic dotted-vs-flat passthroughs via
+`operator.attrgetter`/`_assign_library_reader_preferences_attribute`, so
+none needed a logic change, only the string value(s). The SAME fixture-side
+shape recurred in `Tests/UI/test_library_adaptive_reader_closeout.py`'s own
+`DESTINATION_CONTRACT` dict (the fourth subsystem in a row to need this
+exact fixture update -- collections, conversations, and now skills each
+added one dotted entry to this same table).
+
+**A genuinely new shape this series adds to the census, found by re-running
+the recipe's own "grep the whole moved-body source for `getattr(self,
+"<literal-string>"` (not just `self.<attr>` accesses)" check (§3's sixth
+bypass shape, added by this wave's own Task 2 post-landing review) against
+the SCREEN-RESIDENT code this time, not just the moved controller body**:
+`_library_list_canvas_showing_list`'s own
+`getattr(self, "_library_skills_view", "list")` call, one of several
+sibling destination checks in the same method (`_library_notes_view`,
+`_library_prompts_view` use the identical shape and remain flat -- those
+two subsystems have not yet had their own state-PR series). Retargeting
+the STRING alone (`"_library_skills_view"` → `"_skills_state.view"`) would
+have been silently wrong: `getattr` performs a single attribute lookup, not
+dotted-path traversal, so `getattr(self, "_skills_state.view", "list")`
+would have permanently returned the literal default `"list"` -- caught by
+re-reading the transformed line before running any test, not by a test
+failure. Fixed by changing the RECEIVER too:
+`getattr(self._skills_state, "view", "list")`. **The lesson: a mechanical
+string-literal-only find/replace pass over `getattr`/`setattr` calls is not
+safe by construction -- every `getattr(self, "<flat_name>", default)` site
+found by a field-retarget census needs its receiver changed alongside the
+string, not just the string, because `getattr` has no notion of a dotted
+path.**
+
+### Screen-side field retarget
+
+**130 pre-existing flat-name occurrences**, across the `__init__`
+entangled-field lines (the reader-preferences tuple-unpack, the computed
+`reader_layout`/`reader_persistence_locks` lines, and -- a shape new to
+this series -- TWO more fields, `editor_mode` and `reader_mode`, whose
+original `__init__` lines also had to stay untouched per Task 1's own
+"forced-early-construction-point" finding, not just the usual reader
+trio), the two shared reader-preference dispatcher methods, the skills
+choice-strip helper, and every remaining screen-resident (excluded, still
+full-bodied) method's own field reads/writes -- a single per-field regex
+pass (36-field mapping, `\bself\.<flat_name>\b` → `self._skills_state.
+<field>`, plus a second pass for quoted dict-string values) rewrote 126 of
+the 130 mechanically; 2 needed a prose-comment reword (not a code change);
+1 needed the receiver fix described above; re-verified afterward with a
+zero-result grep for every one of the 36 flat field names over the whole
+file (the 1 remaining hit is this task's own explanatory comment, naming
+the deleted shim's old field names in past tense, mirroring the collections/
+search+RAG series' own retained-history comments at the same site).
+
+### Test retarget — three roots, one genuinely new fixture-restructuring scale
+
+Repo-wide census (`Tests/UI`, `Tests/Library`, `Tests/Live`, `Tests/Skills`
+-- all four named test roots, not just the two the export series' own
+lesson widened to) found flat-name consumers in 9 files across two roots
+(`Tests/Live` had zero): **221 retargets across 8 `Tests/UI` files, 48
+across 2 `Tests/Skills` files, 269 total**.
+
+**The scale of unbound-fake-self fixture restructuring is new**: 27 of the
+86 movers are unbound-fake-self exclusions (task 2's own census, roughly
+triple export's prior 9-of-51 record), and a large fraction of those are
+tested via `SimpleNamespace(...)` fakes carrying FLAT skills kwargs
+directly (`_library_skills_sort="name"`, `_selected_skill_name=""`, etc.)
+that a body now reading `self._skills_state.<field>` can no longer satisfy.
+28 separate `SimpleNamespace(...)` call sites across
+`Tests/UI/test_library_skills_canvas.py` (25),
+`Tests/UI/test_library_canvas_scoped_sync.py` (1), and
+`Tests/Skills/test_skills_import.py` (2) needed the SAME "flat kwargs →
+nested `_skills_state=SimpleNamespace(...)`" restructuring the
+conversations/export exemplars' own cleanup PRs first established (recipe
+§11) -- written as a small line-oriented script (collect every
+`<flat_name>=<value>,` kwarg line inside a `SimpleNamespace(` call block,
+regardless of whether the matched kwargs are contiguous with each other,
+and re-emit them as one `_skills_state=SimpleNamespace(<field>=<value>,
+...)` kwarg at the position of the first match) rather than done by hand,
+appropriate for this cluster's scale per the collections series' own
+"write the extraction and verification as scripts" lesson, generalized
+here from body-extraction to fixture-restructuring. Every non-state-field
+kwarg (wiring accessors, mocked-out sibling methods) was left untouched by
+construction, since the script only matches the 36 known field names.
+**Zero assertion VALUE changes** -- every one of the 269 test-side edits is
+a receiver-path rewrite only (`screen._library_skill_<field>` /
+`fake._library_skill_<field>` → `<receiver>._skills_state.<field>`,
+`_library_skill_<field>=<value>` kwarg → nested under `_skills_state=
+SimpleNamespace(...)`), confirmed by running the full affected-file battery
+before and after and diffing the pass/fail set (below).
+
+### Delegator census — 70 KEEP, 16 PRUNED (~19%)
+
+Of the 86 moved names: **30 `@on` handlers KEEP unconditionally** per the
+recipe's own transform whitelist. Of the remaining 56 (55 plain + 1
+`@staticmethod`), a repo-wide grep for each name across `tldw_chatbook/`
+and all four test roots found **40 with a genuine external caller** (an
+excluded, still-screen-resident method calling `self.<name>()` -- e.g.
+`handle_library_skills_trust_action` calling
+`_begin_library_skill_trust_setup`/`_unlock_library_skill_trust`/
+`_refresh_library_skills_trust_posture`/`_open_first_blocked_skill`, or
+`_reset_library_skill_editor_state` calling
+`_invalidate_library_skill_detail_generation` -- or a test that calls/
+patches the screen delegator directly) and **16 with none**, confirmed by
+a repo-wide grep restricted to `*.py` outside the controller module, the
+screen's own delegator body, and this task's wiring-test list, before
+deletion: `_apply_library_skill_detail`, `_apply_library_skill_detail_
+failure`, `_bootstrap_library_skill_trust`, `_build_library_skill_tool_
+catalog`, `_claim_library_skill_detail_generation`, `_do_library_skill_
+trust_reset`, `_focus_library_skills_page_control`, `_library_skill_text_
+fields_match_state`, `_load_library_skill_script_grant`, `_mark_library_
+skill_dirty`, `_read_library_skill_editor_fields`, `_read_library_skill_
+live_name`, `_revoke_library_skill_script_grant`, `_setup_library_skill_
+trust`, `_sync_library_skill_description_hint`, `_update_library_skill_
+toggle_buttons`.
+
+**A methodology trap this task's own first census draft fell into and
+corrected before acting on it**: a naive `grep`-based census using a
+negative lookbehind to exclude any match preceded by a word character or a
+dot (intended to catch bare-word occurrences like kwarg names or string
+literals, not `self.<name>(` call sites) silently EXCLUDED the single most
+important signal -- `self.<name>(` call sites -- from its own "other
+callers" count, because `self.` ends in a dot. This produced a FALSE
+"zero external callers" verdict for `_begin_library_skill_trust_setup`
+(and would have for others), when in fact `handle_library_skills_trust_
+action` -- a screen-resident, still-excluded method -- calls
+`self._begin_library_skill_trust_setup()` directly at its own line 27022.
+Caught by manually verifying one suspicious case (a test fixture
+overriding the name with a lambda, which only makes sense if SOMETHING
+calls it) before trusting the census output, not by a test failure --
+the flawed census would have pruned a delegator a real screen-resident
+caller still needed, breaking `handle_library_skills_trust_action`'s
+"setup"/"resetup" trust-action branch at runtime with no test catching it
+(no test drives that exact branch through the real screen delegator; the
+excluded method's own coverage mocks the target out). **The lesson: a
+delegator census's grep pattern must match `receiver.name(` call sites
+explicitly, not accidentally exclude them via an over-eager negative
+lookbehind aimed at a different noise source (bare kwarg names/string
+literals) -- verify the census script's OWN pattern against one hand-
+picked, already-known-to-be-called name before trusting its "zero
+callers" verdicts for the rest.**
+
+This prune fraction (16 of 86, ~19%) sits below every prior series' own
+recorded fraction (export's 1-of-22 ~5% < skills' 16-of-86 ~19% <
+search+RAG's 12-of-42 ~29% < collections' 14-of-64 ~22% < conversations'
+18-of-61 ~30%), consistent with the recipe's own "exclusions are what KEEP
+screen delegators alive" inverse-relationship finding (§15 lesson 3): 41
+of 127 candidates were excluded from the move here (a comparatively large
+exclusion count), and a large share of those excluded, screen-resident
+methods keep calling their moved siblings via `self.<name>()`, which is
+exactly what keeps a screen delegator's reference count above zero.
+
+### Shim block deletion
+
+The task-1-generated `_library_skill_<field>`/`_library_skills_<field>`/
+`_selected_skill_name` property-shim loop (installed at module end,
+`dataclasses.fields(LibrarySkillsState)`-driven) was deleted wholesale once
+the census above confirmed zero remaining consumers anywhere in
+`tldw_chatbook/` or `Tests/` outside `LibrarySkillsController`'s own
+PERMANENT generated shim loop (installed by task 2, reading
+`self._skills_state_accessor().<field>` -- untouched by this task, per the
+task brief's explicit "controller shims STAY" instruction).
+
+### Import verification
+
+**28 dead imports removed**, each verified single-occurrence (import line
+only, via AST `Name`-node usage count, not a bare grep) in
+`library_screen.py`, then checked against `Tests/Architecture/
+test_library_support_layer_surface.py`'s `_SURFACE` dict (the PR-0a
+re-export contract) before deletion -- none of the 28 belongs to any of
+`_SURFACE`'s 5 listed modules; the 3 SKILLS constants that ARE `_SURFACE`-
+pinned (`LIBRARY_SKILL_TEXT_MAX_CHARS`, `LIBRARY_SKILL_DIRTY_VETO_COPY`,
+`LIBRARY_SKILL_SAVE_STATUS_COPY`) were individually re-checked and left in
+place:
+
+- 1 newly dead as a DIRECT RESULT of this task's own shim-block deletion:
+  `skill_state_shim_attr` (the three-way prefix resolver function, still
+  imported and used by `LibrarySkillsController`'s own permanent shim loop
+  and by the wiring test, just no longer by the screen).
+- 27 left dead by task 2's own controller move (each name's only
+  screen-side usage lived inside one of the 86 moved method bodies), 26 of
+  which were independently confirmed already re-imported and live inside
+  `library_skills_controller.py` before removal from the screen: 15 from
+  `Widgets.Library` (`SKILL_DISCARD_TOOLTIP_CLEAN`, `SKILL_DISCARD_
+  TOOLTIP_DIRTY`, `next_skill_context`, `skill_context_toggle_label`,
+  `skill_disable_model_label`, `skill_script_grant_line`, `skill_trust_
+  approve_tooltip`, `skill_trust_panel_remediation_copy`, `skill_trust_
+  review_enabled`, `skill_trust_review_preview`, `skill_trust_review_
+  tooltip`, `skill_trust_state_line`, `skill_trust_unlock_enabled`,
+  `skill_trust_unlock_tooltip`, `skill_user_invocable_label`), 9 of the 10
+  from `Library.library_skills_state` (`DEFAULT_SKILL_BROWSE_PAGE_SIZE`,
+  `MAX_SKILL_BROWSE_PAGE`, `build_skill_editor_state`, `classify_skill_
+  save_error`, `compose_skill_markdown`, `reconcile_skill_allowed_tools`,
+  `skill_allowed_tools_sequence`, `skill_invocation_copy`, `skill_review_
+  identity_line`), 2 from `.skills_screen` (`SkillTrustBootstrapModal`,
+  `SkillTrustPassphraseModal`). **The 1 exception**: `SkillEditorState`
+  (the 10th `Library.library_skills_state` name) is NOT used in the
+  controller at all (`grep -c` returns 0) -- it is live in
+  `library_skills_state.py` (the `UI/Library_Modules` state object, via
+  the `editor_state: SkillEditorState | None` field annotation) and in
+  `Widgets/Library/library_skills_canvas.py` (three signatures), both
+  already-independent imports unrelated to the controller's own move.
+  Removal from `library_screen.py` was still correct either way (0
+  occurrences there beyond the import line); only the blanket "all 27 are
+  live in the controller" claim needed correcting to name the one
+  exception and its real, different, home.
+
+One name deliberately left alone despite a zero-`_SURFACE` check: `skill_
+editor_warning_lines` (`Widgets.Library`) -- confirmed still live via a
+non-`_SURFACE`, non-moved screen-resident consumer, individually re-checked
+rather than assumed dead by proximity to its 15 pruned `Widgets.Library`
+siblings (mirrors the collections series' own `CaptureIdentity`/
+`CollectionsCaptureReaderPresentation` "checked individually, not assumed
+dead-by-association" precedent).
+
+### Moved-docstring / module-docstring corrections
+
+Two inaccuracies in `library_skills_controller.py`'s own MODULE docstring
+(not a moved method body -- freely editable by any task, no byte-for-byte
+canon deferral needed, same distinction the search+RAG series' own Task 5
+lesson 8 draws) were found and fixed in this cleanup task, both
+comment-only:
+
+1. **An arithmetic error inherited unfixed from task 1's own report into
+   the controller's own docstring**: "the 6-match gap is three
+   `@property`/`@x.setter` pairs" -- task 2's own post-landing review fix
+   round (§12c) caught and corrected the IDENTICAL error in its own report
+   text ("SIX pairs", not "three"; 2 raw `FunctionDef`s − 1 unique name =
+   1 gap per name, 6 names = 6 gap) but never propagated that correction
+   into the controller module's own docstring, which still carried the
+   stale "three" claim. Fixed here.
+2. **A now-false present-tense architecture claim**: "`LibraryScreen`
+   keeps one-line delegators under every one of these original names" --
+   true when task 2 wrote it, false for 16 of the 86 as of this task's own
+   delegator prune. Fixed to name the current 70-of-86 count and point at
+   `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` for the list, mirroring the
+   collections/search+RAG wiring tests' own skip/absence-assertion
+   convention.
+
+**A precedent check worth recording**: the search+RAG controller
+(`library_rag_search_controller.py`) carries the IDENTICAL "`LibraryScreen`
+keeps one-line delegators under every one of these original names" claim
+in its own module docstring, still present and still false today (12 of
+its own 42 movers were pruned by that series' own Task 4) -- confirmed by
+reading the file, not assumed. That series' own cleanup task did not fix
+this claim when it pruned those 12 delegators. This task fixed the
+IDENTICAL claim for skills rather than leaving it stale to match
+precedent, since the task brief's canon-ruling scope explicitly authorizes
+architecture-claim corrections and the fix is free (comment-only, zero
+risk). Left AS a forward note, not fixed here (out of this task's own
+file scope): a future pass through `library_rag_search_controller.py`
+should apply the same correction there.
+
+### Wiring test finalization
+
+`Tests/Architecture/test_library_skills_wiring.py`:
+`test_state_object_fields_match_the_shim_surface` DELETED (screen shim
+gone, mirrors the conversations/export/collections/search+RAG precedent
+exactly); `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` frozenset (16 names)
+added, with `test_screen_delegates_skills_handlers` skipping those names
+and instead asserting their genuine ABSENCE from `LibraryScreen`; module
+docstring rewritten to describe the finished 3-task series. 8 of the
+original 9 tests remain (the shim-surface test's removal is the only count
+change) -- all 8 green post-cleanup.
+
+### Size ratchet
+
+Fresh measurement via the ratchet's own `_measure` semantics (`ast`-walked
+line count + `LibraryScreen` method count, not `wc -l`): **41155 lines,
+1295 methods** -- 1295 = 1311 (task 2's post-move count) − 16 (exactly the
+pruned delegator count), confirming the prune was a pure deletion with no
+replacement. Lowered in this same commit per recipe §6. Controller
+re-measured at **3140 lines** (comment-only growth from the two
+module-docstring corrections above), re-pinned same-commit per §17's
+re-pin-at-move flow.
+
+### Battery
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`.
+
+- **Wiring suites, all five**: `test_library_skills_wiring.py` (8, post-
+  deletion/post-pruning) + `test_library_collections_wiring.py` (4) +
+  `test_library_conversations_wiring.py` (6) + `test_library_export_
+  wiring.py` (5) + `test_library_search_rag_wiring.py` (8, controller-PR
+  count unaffected by this task) — all passed alongside the 3 existing
+  characterization files (collections/conversations/export) and the
+  support-layer surface suite (8 passed): 51 passed total in that combined
+  run.
+- **Both size guards, full suite**: 32 passed, 2 failed -- both the
+  documented pre-existing `chat_screen.py` ratchet rows (recipe §7's own
+  standing list), unrelated to this diff.
+- **`-k "skill and library"` sweep** (`Tests/UI`+`Tests/Library`, single
+  process, final tree): **10 failed, 272 passed, 22073 deselected** -- all
+  10 match Task 1/2's own already-documented pre-existing bucket name-for-
+  name (CSS-block/geometry-parity ×5, the command-palette test, `test_
+  action_library_skill_back_honors_dirty_guard`, `test_shadow_name_set_
+  stays_in_sync_with_real_sources`, `test_skills_route_lands_on_library_
+  with_skills_row_selected`); zero new failures; 1 more passed than Task
+  2's own 271 (`test_library_skills_manual_items_priority_survives_
+  compact_layout_sync` flipped to pass -- Task 1 already characterized
+  this exact name as order-dependent xdist-adjacent noise).
+- **`Tests/Skills/` full run** (fourth root): **537 passed, 2 failed** --
+  EXACT match to Task 1/2's own documented baseline (`test_import_real_
+  superpowers_skills_lands_trust_pending`, environment-dependent; `test_
+  uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_
+  flow`). Zero new failures.
+- **Full sequential xdist paired-baseline sweep** (`Tests/UI -k "library"
+  -p no:randomly -q -n 8 --dist worksteal`, branch then a `git stash -u`
+  pristine baseline, run SEQUENTIALLY under sustained heavy CONCURRENT
+  machine load from several unrelated long-running pytest processes
+  already active on this machine for hours -- confirmed via `ps aux`, not
+  assumed): **branch 367 failed/3937 passed (1930.5s) vs. baseline 370
+  failed/3934 passed (1949.1s)**, both inside the documented ~330-371
+  historical backdrop despite the elevated absolute counts this run's
+  heavier-than-usual load produced. 361 shared, 9 baseline-unique
+  (opposite-direction noise), 6 branch-unique -- 3 passed cleanly on a
+  combined single-process re-run (ordinary xdist noise); the other 3 (all
+  sharing the SAME "app never finished pushing its initial screen" generic
+  Textual-startup-timeout signature, nothing skills-specific) were
+  individually investigated: a fresh `git stash -u` to the identical
+  pristine tree reproduced 2 of the 3 immediately, and the third settled
+  by running it 3x in ISOLATION on each tree (3/3 failures on branch, 3/3
+  on the SAME pristine baseline, identical signature both times). **Zero
+  unexplained branch-unique failures** -- every one that reproduced at all
+  reproduces identically on the pristine pre-task tree under the same
+  (heavily loaded) conditions, and none touches Skills code or this task's
+  diff.
+- **preflight**: `./scripts/preflight.sh` -- all six checks green (no
+  diagnostic-inventory drift; this task's diff touches zero
+  `logger.warning`/persistent-diagnostic call sites).
+
+### Lessons
+
+1. **A dynamic-dispatch census's `getattr`/`setattr` fix must change the
+   RECEIVER, not just the string, whenever the call uses a bare `self`
+   receiver with a flat literal name.** See the dedicated finding above:
+   `getattr(self, "_library_skills_view", "list")` needed BOTH
+   `self` → `self._skills_state` AND the string shortened from the flat
+   name to the bare field name -- retargeting only the string produces
+   `getattr(self, "_skills_state.view", "list")`, which silently always
+   returns the default forever (no exception, no red test by construction,
+   the exact shape recipe §3's "unbound-attribute escape" bypass class
+   already names for the identical reason). Caught by reading the
+   transformed line, not by running anything -- this shape does not
+   reliably produce a failing test (per §3's own documented false-negative
+   risk for this class), so a mechanical find/replace pass over
+   `getattr`/`setattr` calls needs a human (or a second, receiver-aware
+   automated pass) to check every hit, not just the census that finds
+   them.
+2. **A delegator census's own grep pattern is itself a hazard surface --
+   verify it against one known-true case before trusting its "zero
+   callers" output for the rest.** See the dedicated finding above: an
+   over-eager negative lookbehind, added to suppress noise from bare kwarg
+   names and string literals, silently also suppressed every `self.
+   <name>(` and `<receiver>.<name>(` call-site match -- exactly the
+   signal a delegator-prune census exists to find. The fix was cheap once
+   noticed (drop the lookbehind, classify hits by which file/context they
+   land in instead of filtering them out of the pattern itself), but the
+   FIRST version of this census would have silently authorized pruning a
+   delegator a real screen-resident caller (`handle_library_skills_trust_
+   action`) still needed. Any future subsystem's delegator census should
+   sanity-check its own regex against a name already KNOWN to have a
+   `self.<name>(` caller (e.g. by grepping the target file by hand first)
+   before trusting a "zero other references" verdict for anything.
+3. **The "flat kwargs → nested `_skills_state=SimpleNamespace(...)`"
+   fixture restructuring scales cleanly to script-driven automation once a
+   cluster's unbound-fake-self exclusion count crosses roughly two dozen.**
+   Skills' 27 unbound-fake-self exclusions (task 2's own census) produced
+   28 separate `SimpleNamespace(...)` call sites needing this exact
+   restructuring in this cleanup task -- large enough that doing it by
+   hand, one call site at a time, would have been both slow and
+   error-prone (kwargs are not always contiguous within a call). A small,
+   generically-written line-oriented script (collect matching kwarg lines
+   anywhere inside a `SimpleNamespace(` block regardless of contiguity,
+   re-emit them as one nested kwarg) handled all 28 correctly on the first
+   pass, verified by `ast.parse` before and a full pytest run after --
+   generalizes the collections series' own "write the extraction and
+   verification as scripts" lesson (§15) from body-extraction to
+   fixture-restructuring, and gives a rough scale threshold (a cluster
+   with fewer than ~10 such fixtures is probably still faster by hand; one
+   with ~28, as here, clearly was not).
+4. **A stale architecture claim found in one subsystem's controller
+   docstring is worth checking for in EVERY prior subsystem's own
+   controller, not just fixing locally and moving on.** The search+RAG
+   controller carries the identical "`LibraryScreen` keeps one-line
+   delegators under every one of these original names" claim, equally
+   false today (12 of its own 42 movers were pruned by that series' own
+   cleanup task), and it was never corrected there. This task fixed its
+   OWN copy of the claim rather than leaving it to match that precedent,
+   and records the search+RAG copy as an open forward note rather than
+   silently accepting "a prior series left it stale, so this one can too"
+   as license.
+5. **The full sequential xdist paired-baseline sweep's absolute failure
+   counts move with the MACHINE's concurrent load at run time, not just
+   with the code under test -- the paired-baseline methodology is what
+   keeps the comparison valid regardless.** This task's own sweep ran
+   under sustained heavy concurrent load from several unrelated
+   long-running pytest processes already active on the machine for hours
+   (confirmed via `ps aux`, not assumed) and posted 367/370 failed
+   (branch/baseline) -- noticeably higher than every prior series' own
+   recorded run (~330-355) but still inside the documented historical
+   backdrop's outer edge. Three of the six branch-unique names needed a
+   THIRD round of investigation beyond the usual "combined re-run, then
+   isolated re-run": all three shared one generic "app never finished
+   pushing its initial screen" Textual-startup-timeout signature (nothing
+   skills-specific), and one of them passed once on an early baseline
+   check before a repeat 3x-isolated run on each tree settled it as
+   equally flaky on both. The lesson generalizes to a specific, quotable
+   number: absolute failure counts drift with ambient machine load, but
+   the PAIRED comparison (same command, same machine conditions, branch
+   vs. a `git stash -u` of the identical pristine tree, sequentially) is
+   what makes "zero unexplained branch-unique failures" a claim that
+   survives a noisier-than-usual run rather than a claim that only holds
+   on a quiet machine.
+
+### Wave-4 close
+
+Wave-4 (`.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills`,
+branch `refactor/library-decomp-wave4-skills-ingest`) scoped itself to
+skills alone at Task 1 despite the branch name (the plan's own 2026-09-04
+measure found skills at 133/38 raw and ingest at 78/20; ingest was deferred
+to a future wave rather than rushed alongside skills in the same series).
+The skills series (Tasks 1-3, above) is complete. This section is Task 4's
+own wave-level pin-trajectory re-derivation, verification battery, and
+lessons.
+
+#### Pin trajectory — full wave-4 chain
+
+Re-derived from `git log` (the `_BUDGETS` value in
+`Tests/Architecture/test_screen_size_ratchet.py` and
+`Tests/Architecture/test_library_modules_size_ratchet.py` at each commit,
+not carried over from any report):
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-4 start) | `2372ea764` | 43225 / 1311 | — (file does not exist yet) |
+| 1 | Skills state (RED — wiring test + state module + characterization pins; screen untouched) | `ef289548a` | 43225 / 1311 (unchanged) | — |
+| 1 | Skills state (GREEN, series complete) | `87c318d57` | 43179 / 1311 | — |
+| 2 | Skills controller (RED — wiring-test additions only) | `5ecf223d4` | 43179 / 1311 (unchanged) | — |
+| 2 | Skills controller (GREEN, born-governed) | `60857a2be` | 41247 / 1311 | 3099 |
+| 2 | (blame-ignore, no functional change) | `679a90d1b` | 41247 / 1311 (unchanged) | 3099 (unchanged) |
+| 2 | Fix round 1/5 — CRITICAL `focused` fix + recipe §3's sixth bypass shape (series complete) | `bf13b133b` + `f472f7512` | 41247 / 1311 (unchanged) | 3131 |
+| 3 | Skills cleanup (GREEN, series complete) | `ed4c29d45` | 41155 / 1295 | 3140 |
+| 3 | (blame-ignore, no functional change) | `2a744c434` | 41155 / 1295 (unchanged) | 3140 (unchanged) |
+| 3 | Fix round 1/5 — doc-only count corrections | `f42f75d98` | 41155 / 1295 (unchanged) | 3140 (unchanged) |
+
+Full chain, screen: `43225/1311 → 43179/1311 → 41247/1311 → 41155/1295`
+(final). Full chain, controller: born `3099` at its very first commit (Task
+2's own report documents a `3181 → 3113 → 3099` sequence, but all three
+numbers belong to uncommitted working-tree drafts from the SAME session —
+neither of the two earlier numbers was ever a landed commit, so `git log`
+shows only the final, already-corrected value at the controller's birth
+commit) `→ 3131` (Task 2's post-landing review fix round: the CRITICAL
+`focused` property) `→ 3140` (Task 3, comment-only: two module-docstring
+corrections).
+
+Net wave-4 shrink: 2070 screen lines, 16 methods (the 16 pruned skills
+delegators — a pure move is always net-zero methods on the screen; only a
+delegator prune changes the method count). Task 4's own fresh `_measure()`
+call (both ratchet files' own semantics, not `wc -l`) gives **41155 lines /
+1295 methods** for the screen and **3140 lines** for the controller — EXACT
+matches to both recorded pins, zero drift, nothing to lower.
+
+#### Verification battery (Task 4, this close)
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`, `-p no:randomly` where applicable.
+
+- **Fresh `_measure()` on both ratchet files**: 41155/1295 (screen), 3140
+  (controller) — exact match to both recorded pins, zero drift.
+- **All five wiring suites + 3 characterization files + support-layer
+  surface + both size guards, combined single run**: **83 passed, 2
+  failed** — both the documented pre-existing `chat_screen.py` ratchet rows
+  (recipe §7's own standing list), unrelated to this diff.
+- **Full `Tests/Architecture/` run**: **543 passed, 1 skipped, 16 failed** —
+  one FEWER than Task 2's own documented 17 (`test_persistent_diagnostic_
+  inventory.py::test_task_15743_exception_types_survive_loguru_forwarding`'s
+  sibling assertions now partially SKIP rather than fail, per the file's own
+  skip reason: "TASK-15743 pinned commits fdee8a31f/afee9672a are not
+  fetchable [...] force-pushed and deleted" — an external git-object
+  availability change, unrelated to this diff). All 16 remaining failures
+  match the SAME categories Task 1/2 already documented as pre-existing,
+  unrelated-file churn (Console realtime/review-selection boundary ×2,
+  console wave6 closeout/inventory ×4, default-timeout-session-guard ×1,
+  persistent-diagnostic-inventory ×2, chat_screen ratchet ×2, timer-path-
+  static-update-inventory ×3, worker-exclusive-group-inventory ×2) — zero
+  Library/Skills-scoped failures.
+- **`-k "skill and library"` sweep** (`Tests/UI`+`Tests/Library`, single
+  process, final tree): **10 failed, 272 passed, 22073 deselected** — EXACT
+  match to Task 3's own documented baseline, name-for-name. Zero new
+  failures.
+- **`Tests/Skills/` full run** (fourth root): **538 passed, 1 failed**
+  (`test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_
+  approve_flow`) — the OTHER documented pre-existing failure
+  (`test_import_real_superpowers_skills_lands_trust_pending`,
+  environment-dependent) passed this run, consistent with its own
+  "environment-dependent" characterization across all three prior tasks.
+  Zero new failures.
+- **preflight**: `./scripts/preflight.sh` — all six derived-artifact checks
+  pass (CSS bundle, profile-owned-path census, diagnostic inventory,
+  backlog task-id sweep — 3188 task files including this close's own 2 new
+  follow-up filings, chachanotes table allowlist, index plan pins).
+
+#### Full sequential xdist paired-baseline sweep — whole-wave span
+
+Branch = wave-4 tip (`f42f75d98` + this close task's own doc-only edits,
+which touch no test or production-logic file — a comment-only docstring
+correction in `library_skills_state.py`, two backlog task filings, and this
+recipe's own edits). Baseline = a path-scoped `git checkout 2372ea764 --
+tldw_chatbook Tests` overlay of the wave-4 START commit (the multi-commit-
+back equivalent of the per-task `git stash -u` technique, per §16's own
+precedent for a WAVE-level rather than per-task comparison), run, then
+restored via `git checkout HEAD -- tldw_chatbook Tests` (verified
+`_measure()` back to 41155/1295 and `git status` clean afterward). Run
+SEQUENTIALLY, not concurrently, per §7's own "concurrent runs amplify
+flakiness" lesson.
+
+**Machine load, recorded at the start of this sweep**: load average 22.72,
+21.91, and 8 concurrent `pytest` processes already running on this machine
+(`ps aux`) — sustained heavy CONCURRENT load from several unrelated
+long-running test processes throughout wave-4 (Task 3's own report already
+recorded load average between ~19 and ~51 over its own run); recorded again
+here per §19 lesson 5's own "the paired comparison is what keeps this valid
+regardless of load" discipline.
+
+| | Failed | Passed | Wall time |
+|---|---|---|---|
+| Branch (`f42f75d98` + close) | 372 | 3932 | 1699.84s (28:19) |
+| Baseline (`2372ea764`) | 365 | 3934 | 1398.41s (23:18) |
+
+Both counts sit at or just past the documented ~330–371 historical backdrop
+(recipe §7) — branch's 372 is 1 over the previous recorded high of 371 —
+consistent with this run's own recorded machine load being the heaviest of
+any sweep in this wave. Diffing the two failure-name sets: **356 shared, 9
+baseline-unique** (noise in the opposite direction, not investigated further
+per §7's own precedent — one of the 9,
+`test_library_adaptive_reader_closeout.py::
+test_closeout_single_app_route_cycle`, is the SAME test TASK-31422 above
+files a follow-up for: it failed on the BASELINE and passed on the branch
+here, the opposite direction from Task 1's own observation of it, which is
+itself further evidence for that filing's own premise — the failure is
+direction-independent flakiness, not something either tree's code
+introduces), **16 branch-unique**. All 16 resolved without a single
+unexplained name: 12 passed cleanly on a combined single-process re-run
+(ordinary xdist noise); the remaining 4
+(`test_library_media_reader_traversal_t22207.py::
+test_focus_traversal_builds_zero_bodies_for_pass_through_rows`,
+`test_library_prompts_canvas.py::
+test_library_prompt_undo_refreshes_applied_page_and_preserves_basket`,
+`test_library_shell.py::
+test_library_starter_production_geometry_and_focus_order[size0]`,
+`test_library_shell.py::
+test_library_starter_production_geometry_and_focus_order[size1]`) each
+passed cleanly in TRUE isolation on the branch. None of the 16 touches a
+Skills file, Skills-owned code, or this task's own doc-only diff — several
+are Media/Notes/Prompts/Collections/Audio tests already named as
+pre-existing xdist noise in wave-1/2/3's own sweeps (recipe §7,
+`test_library_entry_compose_once.py::
+test_source_worker_completion_during_mount_dispatch_reconciles_once` and
+`test_library_shell.py::
+test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`
+among them). **Zero unexplained branch-unique failures across the whole
+wave-4 span.**
+
+#### Probe run
+
+```
+perl -e 'alarm 150; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_probe.py
+```
+
+| interaction | settle (ms) | max gap (ms) | recompose | full-update | mounts | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 794 | 328 | 0 | 2 | 173 | 115 |
+| media (re-click same) | 442 | 118 | 0 | 2 | 85 | 115 |
+| media (re-click same, 2nd) | 460 | 96 | 0 | 2 | 89 | 115 |
+| notes (switch) | 539 | 279 | 0 | 1 | 110 | 110 |
+| notes (re-click same) | 312 | 76 | 0 | 1 | 38 | 110 |
+| media (switch-back) | 747 | 286 | 0 | 1 | 175 | 115 |
+| notes (switch, 2nd) | 853 | 587 | 0 | 1 | 110 | 115 |
+| media (switch-back, 2nd) | 606 | 171 | 0 | 1 | 175 | 115 |
+
+Every row is HIGHER than the wave-2 close band (§16: settle 264-485 ms, max
+gap 54-195 ms) — most sharply `notes (switch, 2nd)`'s 587 ms max gap versus
+§16's own highest recorded gap of 195 ms. This is NOT evidence of a
+code-level regression, but the "zero code on the probed path" framing this
+section originally used (corrected in the wave-4 final review) was FALSE:
+the skills cleanup (`ed4c29d45`) does touch this exact path, via mechanical
+receiver swaps of skills-field reads/writes INSIDE five of the probed
+path's own methods — `compose_content`,
+`_select_library_rail_row_after_source_admission`,
+`_toggle_library_media_reader_pane`, `restore_state`, and
+`_persist_library_reader_preference` (`self._library_skill(s)_<field>` →
+`self._skills_state.<field>`, dict/attribute lookups only, confirmed by
+diffing each hunk against every prior/subsequent commit's own claim on
+those line ranges — zero control-flow or logic changes anywhere in the
+five). That is nanosecond-scale work and cannot explain a ~3x max-gap
+delta on its own. The stronger evidence for "no structural regression" is
+the load-INDEPENDENT probe columns, which match wave-2's row-for-row:
+`recompose` is 0→0 on every row and `full-update` is identical row-for-row
+(2/2/2/1/1/1/1/1, both waves) — a real per-frame cost regression on this
+path would show up there, not only in wall-clock settle/gap numbers that
+scale with ambient CPU contention. The load evidence remains the far more
+plausible explanation for the timing delta itself — this probe measures
+wall-clock settle time and main-thread gap under whatever CPU contention
+exists at run time, and this session's own machine was running 8+
+concurrent `pytest` processes and sitting at a load average of ~22.7 for
+the ENTIRE sweep window this probe ran inside of, versus wave-2 close's own
+probe run, which recorded "no prior run exists to diff against" and gives
+no load context of its own either way. One further drift IS visible and
+worth naming rather than smoothing over: `mounts`/`nodes` counts rose
+slightly and unevenly — media mounts 163→173, nodes 113→115 (every media
+row gains exactly 2 nodes); `notes (switch, 2nd)` alone gains nodes
+110→115, while the other two notes rows stay at 110. This is small, does
+not track the settle/gap delta's shape, and is attributable to ordinary
+Media/Notes feature drift on this branch between wave-2 close (`09a5cadff`)
+and wave-4 close (`ed4c29d45`), not to this wave's own skills diff: 70
+non-doc commits touched `library_screen.py`/`Widgets/Library`/
+`Library_Modules` in that span, including several `origin/dev` merges and
+Media/Notes rail feature work with no connection to skills (e.g. `e34b11b23`
+"the media items pane gets a legible multi-row action grammar", `9c128c7ee`
+"the Reader carries a review-set banner", `35e9228df`/`c63e55cc0` review-set
+auto-resume/build-from-read-later) — any of which plausibly adds a handful
+of extra widgets/nodes to the Media pane and, specifically on a second
+notes switch, the notes canvas. Recorded here as this wave's own close-time
+baseline (like wave-2's), with both the load caveat and the corrected
+probed-path claim attached, rather than either silently matched to the old
+band or wrongly flagged as a regression.
+
+#### Lessons
+
+1. **A battery-found hazard's own count correction needs the SAME evidence
+   discipline as any other claim — re-derive the full tuple, not just the
+   one number that changed.** Wave-4 saw this pattern three separate times
+   in one series: Task 1's own "three `@property`/`@x.setter` pairs"
+   arithmetic error (should have been six; 2 raw `FunctionDef`s − 1 unique
+   name = 1 gap per name, 6 names = 6 gap) propagated unfixed through Task
+   2's own report text AND its controller's module docstring — caught in
+   the report by Task 2's own post-landing review fix round but missed in
+   the docstring copy until Task 3 caught it independently; Task 3's own
+   delegator-census restructure count needed a review fix round to correct
+   an "18 vs. 28" discrepancy; and Task 2's own mover-count tuple (91 → 87
+   → 86, across two in-session battery-caught regressions, Forms B and C of
+   §3's sixth bypass shape) required re-deriving every DEPENDENT count
+   (exclusion tallies, constructor parameter counts) after each correction,
+   not just patching the number that changed — recorded as its own standing
+   rule in §3's closing paragraph ("a battery-found hazard shrinking the
+   mover set legitimately amends the RED tuple"). Three independent
+   incidents in one wave converging on the same failure shape (a stale
+   count surviving past the point where better evidence existed) makes this
+   worth stating as its own numbered lesson, not three unrelated minor-
+   review findings: **any time a mechanical census's own output changes
+   after the fact — a battery-found hazard, a review correction, a
+   re-run — every number derived FROM that census, not just the one that
+   visibly changed, needs re-deriving before the next report or docstring
+   copies it forward.**
+2. **A CRITICAL production bug can be invisible to the FULL verification
+   battery a task brief mandates, and only surface under independent
+   review — which is exactly why review is a separate, mandatory gate, not
+   a redundant check on a battery that already passed.** Task 2's own
+   wiring/ratchet suites, its full `Tests/Skills/` run, its `-k "skill and
+   library"` sweep, and its own full sequential xdist paired-baseline sweep
+   all went green with the unbound `focused` bug present (§3's own
+   "unbound-attribute escape" paragraph) — no test anywhere in the standard
+   battery exercises a code path where `getattr(self, "focused", None)`'s
+   silent `None` default changes an assertion's outcome, because Textual's
+   own generic default-focus fallback happens to land on the same widget
+   the bug's own correct behavior would have. Only a coordinator review's
+   own targeted bare-self/`getattr` re-sweep (§3's own closing
+   recommendation: grep the whole moved-body source for `getattr(self,
+   "<literal>"` calls, not just `self.<attr>` accesses) found it, after the
+   commit had already landed. This generalizes past skills specifically: a
+   battery that is green is evidence the KNOWN hazard shapes did not fire,
+   not evidence no hazard exists — the review gate exists precisely to
+   catch the shapes the battery's own design cannot see yet.
+3. **A headless click-probe's absolute numbers move with ambient machine
+   load exactly the way the xdist sweep's absolute failure counts do (§19
+   lesson 5) — record the load alongside the numbers, or the probe's own
+   "must not move outside noise" contract (§9) becomes unfalsifiable.**
+   This close's own probe run posted every interaction slower than the
+   wave-2 close's recorded band, under a machine sitting at a ~22.7 load
+   average with 8+ concurrent `pytest` processes running throughout — a
+   condition wave-2's own probe run recorded no comparable load context
+   for. This task's diff only makes mechanical receiver swaps of
+   skills-field reads/writes on the probe's own Media/Notes rail-switch
+   path (nanosecond-scale — see the correction above, this same section),
+   so the honest read is ambient load, not regression — corroborated by
+   the load-independent probe columns (recompose, full-update) matching
+   wave-2's row-for-row — but that conclusion is only defensible because
+   the load was actually measured and recorded at run time, not asserted
+   after the fact.
+   A future controller-move PR's own before/after probe pair (§9) should
+   capture the SAME `ps aux`/load-average snapshot each time, or a real
+   regression and a noisy machine become indistinguishable from the numbers
+   alone.
 

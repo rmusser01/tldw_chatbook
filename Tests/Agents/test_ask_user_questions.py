@@ -141,3 +141,15 @@ def test_validate_answers_accepts_the_card_shape_and_rejects_drift():
         with pytest.raises(AskUserValidationError) as excinfo:
             validate_answers(bad)
         assert fragment in str(excinfo.value), str(excinfo.value)
+
+
+def test_resolve_tool_description_takes_the_first_valid_candidate():
+    from tldw_chatbook.Agents.ask_user_questions import (
+        MAX_TOOL_DESCRIPTION_CHARS,
+        resolve_tool_description,
+    )
+
+    assert resolve_tool_description(None, "  a\nb ", "c") == "a b"
+    assert resolve_tool_description("", 42, "x" * (MAX_TOOL_DESCRIPTION_CHARS + 1), "ok") == "ok"
+    with pytest.raises(AskUserValidationError):
+        resolve_tool_description("", None)

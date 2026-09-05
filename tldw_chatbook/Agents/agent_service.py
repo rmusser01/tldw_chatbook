@@ -131,7 +131,12 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
+from .run_context import (
+    CurrentRunActor,
+    clean_subagent_label,
+    use_run_actor,
+    use_tool_call_id,
+)
 from .run_log import _setting
 from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
 from .run_log_eviction import (
@@ -1036,6 +1041,28 @@ _FILE_CONTENT_TOOL_NAMES = frozenset(
 )
 
 
+def subagent_display_label(agent_name: str | None, task: str | None) -> str | None:
+    """Return the display label for a sub-agent run (task-31382).
+
+    The named agent's name wins when the spawn named one; otherwise the
+    first line of the child's task. Either goes through
+    ``clean_subagent_label`` so the label is one bounded, control-free line.
+
+    Args:
+        agent_name: The resolved named-agent name, or None.
+        task: The child's task text, or None.
+
+    Returns:
+        A one-line label, or None when neither source has text.
+    """
+    name = clean_subagent_label(agent_name)
+    if name:
+        return name
+    stripped = (task or "").strip()
+    first_line = stripped.splitlines()[0] if stripped else ""
+    return clean_subagent_label(first_line) or None
+
+
 def _is_file_content_tool(tool_name: str) -> bool:
     """Return whether a tool result may contain local filesystem content."""
     return tool_name.startswith("fs_") or tool_name in _FILE_CONTENT_TOOL_NAMES
@@ -1574,6 +1601,78 @@ def _usage_total_tokens(resp) -> int | None:
 
 
 _CANCEL_POLL_SECONDS = 0.5
+
+# task-31386: the one tool call a run has in flight, and the user's request
+# to abandon it. `request_tool_call_abandon(run_id)` is honoured by the very
+# next `_call_with_timeout` poll slice (<= `_CANCEL_POLL_SECONDS`), which
+# then returns the existing "tool call cancelled" result and leaves the
+# worker to die, exactly as a run-wide Stop does -- but the run's own
+# `should_cancel` stays False, so the loop hands the failed result back to
+# the model and the turn continues. A request with no call in flight is
+# refused (never queued against a future call), and the flag is cleared
+# with the in-flight mark when the call ends.
+_TOOL_CALL_ABANDON_LOCK = threading.Lock()
+_INFLIGHT_TOOL_CALLS: dict[str, tuple[str, str]] = {}
+_TOOL_CALL_ABANDON_REQUESTS: set[str] = set()
+
+
+def _mark_tool_call_inflight(run_id: str, call_key: str, tool_name: str) -> None:
+    """Record ``run_id``'s in-flight tool call for ``request_tool_call_abandon``."""
+    with _TOOL_CALL_ABANDON_LOCK:
+        _INFLIGHT_TOOL_CALLS[run_id] = (call_key, tool_name)
+
+
+def _clear_tool_call_inflight(run_id: str) -> None:
+    """Forget ``run_id``'s in-flight call and any abandon request against it."""
+    with _TOOL_CALL_ABANDON_LOCK:
+        _INFLIGHT_TOOL_CALLS.pop(run_id, None)
+        _TOOL_CALL_ABANDON_REQUESTS.discard(run_id)
+
+
+def inflight_tool_call(run_id: str) -> tuple[str, str] | None:
+    """Return the tool call ``run_id`` has in flight through the timeout wrapper.
+
+    Args:
+        run_id: The run to look up.
+
+    Returns:
+        ``(call_key, tool_name)`` while such a call is running, else None.
+        Calls dispatched outside the wrapper (no timeout, or a definitive-
+        after-start tool) are never registered and never abandonable.
+    """
+    with _TOOL_CALL_ABANDON_LOCK:
+        return _INFLIGHT_TOOL_CALLS.get(run_id)
+
+
+def tool_call_abandon_requested(run_id: str) -> bool:
+    """Whether the user asked to abandon ``run_id``'s in-flight tool call.
+
+    Args:
+        run_id: The run to look up.
+
+    Returns:
+        True while an abandon request is pending for the run's current call.
+    """
+    with _TOOL_CALL_ABANDON_LOCK:
+        return run_id in _TOOL_CALL_ABANDON_REQUESTS
+
+
+def request_tool_call_abandon(run_id: str) -> str | None:
+    """Ask ``run_id`` to abandon its in-flight tool call and continue the turn.
+
+    Args:
+        run_id: The run whose current tool call should be abandoned.
+
+    Returns:
+        The abandoned tool's name, or None when the run has no call in
+        flight (nothing is queued for a later call).
+    """
+    with _TOOL_CALL_ABANDON_LOCK:
+        inflight = _INFLIGHT_TOOL_CALLS.get(run_id)
+        if inflight is None:
+            return None
+        _TOOL_CALL_ABANDON_REQUESTS.add(run_id)
+        return inflight[1]
 
 
 def _effective_tool_timeout(
@@ -3097,17 +3196,24 @@ class AgentService:
                         ),
                         outcome=TOOL_OUTCOME_TIMEOUT,
                     )
-                return _call_with_timeout(
-                    _invoke,
-                    timeout,
-                    call.name,
-                    should_cancel,
-                    # ADR-067: pause the per-call clock while a human
-                    # decision is pending for THIS run, so an approval/
-                    # confirm wait inside the invoke outlives the ceiling.
-                    pauses_deadline=lambda: human_input_wait_active(run_id),
-                    clamped_by_wall_budget=clamped_by_wall_budget,
-                )
+                # task-31386: a per-call abandon request rides the same
+                # poll as the run-wide Stop, but only inside this wrapper --
+                # `should_cancel` itself stays False, so the loop continues.
+                _mark_tool_call_inflight(run_id, call.call_id or call.name, call.name)
+                try:
+                    return _call_with_timeout(
+                        _invoke,
+                        timeout,
+                        call.name,
+                        lambda: should_cancel() or tool_call_abandon_requested(run_id),
+                        # ADR-067: pause the per-call clock while a human
+                        # decision is pending for THIS run, so an approval/
+                        # confirm wait inside the invoke outlives the ceiling.
+                        pauses_deadline=lambda: human_input_wait_active(run_id),
+                        clamped_by_wall_budget=clamped_by_wall_budget,
+                    )
+                finally:
+                    _clear_tool_call_inflight(run_id)
             return _invoke()
 
         if self.post_tool_dispatch is None:
@@ -6126,6 +6232,11 @@ class AgentService:
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary",
             run_id,
             parent_run_id,
+            label=(
+                subagent_display_label(agent_definition, task)
+                if agent_kind == AGENT_KIND_SUBAGENT
+                else None
+            ),
         )
         builtin_invoke_tool = self._make_invoke_tool(
             config,

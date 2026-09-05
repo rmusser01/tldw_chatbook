@@ -37,6 +37,8 @@ Rig notes:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import _drain, _quiet, _settle, _survivor
@@ -56,6 +58,12 @@ from Tests.UI.test_console_store_continuity import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointPolicyState,
+    ConsoleEndpointRollbackOutcome,
+    ConsoleEphemeralEndpointPolicy,
+)
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -63,6 +71,8 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 WAKE_REPLY = "HEADLESS-WAKE-REPLY"
+CONFIGURED_VLLM_URL = "http://127.0.0.1:9098/v1"
+LIVE_VLLM_URL = "http://127.0.0.1:9188/v1"
 
 
 def _build_console_app(tmp_path):
@@ -74,6 +84,73 @@ def _build_console_app(tmp_path):
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     return app, gateway
+
+
+def _recording_vllm_gateway(app):
+    """Production resolver/adapter with observable selections and dispatches."""
+
+    calls: list[dict[str, object]] = []
+    selections: list[object] = []
+    resolutions: list[object] = []
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={},
+    )
+    resolve = gateway.resolve_for_send
+
+    async def record(selection):
+        selections.append(selection)
+        resolution = await resolve(selection)
+        resolutions.append(resolution)
+        return resolution
+
+    async def record_stream(resolution, messages, **_kwargs):
+        calls.append(
+            {
+                "base_url": resolution.base_url,
+                "messages": str(getattr(messages, "messages_payload", messages)),
+            }
+        )
+        yield WAKE_REPLY
+
+    gateway.resolve_for_send = record
+    gateway.stream_chat = record_stream
+    return gateway, selections, resolutions, calls
+
+
+def _adopt_live_vllm(store, session_id: str):
+    """Install the same endpoint-safe settings/live policy pair as handoff."""
+
+    prior_settings = store.session_settings(session_id)
+    assert prior_settings is not None
+    settings = replace(
+        prior_settings,
+        provider="vllm",
+        model="wake-vllm-model",
+        base_url=None,
+        streaming=False,
+    )
+    policy = ConsoleEphemeralEndpointPolicy(
+        provider=settings.provider,
+        model=settings.model,
+        base_url=LIVE_VLLM_URL,
+    )
+    prior_policy = store.session_ephemeral_endpoint_policy(session_id)
+    prior_has_user_work = store.ensure_session().has_user_work
+    receipt = store.adopt_session_ephemeral_endpoint(
+        session_id,
+        settings=settings,
+        policy=policy,
+    )
+    return (
+        prior_settings,
+        prior_policy,
+        prior_has_user_work,
+        settings,
+        policy,
+        receipt,
+    )
 
 
 @pytest.mark.asyncio
@@ -261,3 +338,124 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         assert WAKE_NOTICE_HEADER in rendered, (
             "the wake notice never rendered for the returning user"
         )
+
+
+@pytest.mark.asyncio
+async def test_headless_wake_uses_active_live_only_vllm_endpoint(tmp_path):
+    """An unmounted wake resolves the process-local endpoint, not config."""
+
+    app, seed_gateway = _build_console_app(tmp_path)
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
+        "api_url"
+    ] = CONFIGURED_VLLM_URL
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat, controller, store, session_id, conversation_id = await _seed_console(
+            app, pilot, seed_gateway
+        )
+        _adopt_live_vllm(store, session_id)
+        gateway, selections, resolutions, calls = _recording_vllm_gateway(app)
+        controller.provider_gateway = gateway
+        run_id = _terminal_survivor_run(
+            controller._agent_bridge.runs_db,
+            conversation_id,
+        )
+
+        await _navigate(app, pilot, "library", expect="LibraryScreen")
+        assert chat not in app.screen_stack
+        assert controller._turn_context_provider is None
+
+        _drain_from_child_thread(
+            controller.fleet_wake,
+            _drain(conversation_id, _survivor(run_id, session_id=session_id)),
+        )
+
+        assert await _settle(lambda: bool(selections), seconds=10.0)
+        selection = selections[-1]
+        assert selection.base_url == LIVE_VLLM_URL
+        assert selection.base_url != CONFIGURED_VLLM_URL
+        assert selection.configured_endpoint_fallback_allowed is False
+        assert await _settle(lambda: bool(calls), seconds=10.0), repr(resolutions)
+        assert calls[-1].get("base_url") == LIVE_VLLM_URL
+        assert CHILD_RESULT in str(calls[-1].get("messages"))
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_headless_wake_blocks_after_real_vllm_rollback_conflict(tmp_path):
+    """A real metadata winner prevents an unmounted wake from misrouting."""
+
+    app, seed_gateway = _build_console_app(tmp_path)
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
+        "api_url"
+    ] = CONFIGURED_VLLM_URL
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat, controller, store, session_id, conversation_id = await _seed_console(
+            app, pilot, seed_gateway
+        )
+        (
+            prior_settings,
+            prior_policy,
+            prior_has_user_work,
+            settings,
+            policy,
+            receipt,
+        ) = _adopt_live_vllm(store, session_id)
+        assert receipt is not None
+        current = app.chachanotes_db.get_conversation_by_id(conversation_id)
+        assert current is not None
+        winner_metadata = '{"headless_concurrent_owner":"winner"}'
+        assert app.chachanotes_db.update_conversation(
+            conversation_id,
+            {"metadata": winner_metadata},
+            expected_version=current["version"],
+        )
+        assert (
+            store.rollback_session_ephemeral_endpoint_adoption(
+                session_id,
+                expected_settings=settings,
+                expected_policy=policy,
+                prior_settings=prior_settings,
+                prior_policy=prior_policy,
+                prior_has_user_work=prior_has_user_work,
+                receipt=receipt,
+            )
+            is ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
+        )
+        blocked_policy = store.session_ephemeral_endpoint_policy(session_id)
+        assert blocked_policy is not None
+        assert blocked_policy.state is ConsoleEndpointPolicyState.BLOCKED
+
+        gateway, selections, _resolutions, calls = _recording_vllm_gateway(app)
+        controller.provider_gateway = gateway
+        run_id = _terminal_survivor_run(
+            controller._agent_bridge.runs_db,
+            conversation_id,
+        )
+        rows_before = _db_chain(app.chachanotes_db, conversation_id)
+
+        await _navigate(app, pilot, "library", expect="LibraryScreen")
+        assert chat not in app.screen_stack
+        assert controller._turn_context_provider is None
+
+        _drain_from_child_thread(
+            controller.fleet_wake,
+            _drain(conversation_id, _survivor(run_id, session_id=session_id)),
+        )
+
+        assert await _settle(lambda: bool(selections), seconds=10.0)
+        selection = selections[-1]
+        assert selection.base_url is None
+        assert selection.configured_endpoint_fallback_allowed is False
+        assert calls == []
+        assert await _quiet(lambda: bool(calls), seconds=1.0)
+        assert _db_chain(app.chachanotes_db, conversation_id) == rows_before
+        durable = app.chachanotes_db.get_conversation_by_id(conversation_id)
+        assert durable is not None
+        assert durable["metadata"] == winner_metadata
+        assert all(
+            message.content != CHILD_RESULT
+            for message in store.all_messages_for_session(session_id)
+        )
+        await gateway.aclose()

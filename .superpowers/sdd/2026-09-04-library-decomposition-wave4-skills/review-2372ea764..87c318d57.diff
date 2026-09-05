@@ -1,0 +1,1183 @@
+# Review package: 2372ea764..87c318d57
+
+## Commits
+87c318d57 refactor(library): skills state object + shims (skills series 1/3)
+ef289548a test(library): characterization + wiring pins for the skills extraction series
+
+## Files changed
+ Tests/Architecture/test_library_skills_wiring.py   |  92 ++++++
+ Tests/Architecture/test_screen_size_ratchet.py     |  11 +-
+ Tests/Skills/test_skills_library_flow.py           | 109 +++++++
+ Tests/UI/test_library_skills_canvas.py             | 267 +++++++++++++++++
+ .../UI/Library_Modules/library_skills_state.py     | 332 +++++++++++++++++++++
+ tldw_chatbook/UI/Screens/library_screen.py         | 124 +++-----
+ 6 files changed, 849 insertions(+), 86 deletions(-)
+
+## Diff
+diff --git a/Tests/Architecture/test_library_skills_wiring.py b/Tests/Architecture/test_library_skills_wiring.py
+new file mode 100644
+index 000000000..c02f5cb2d
+--- /dev/null
++++ b/Tests/Architecture/test_library_skills_wiring.py
+@@ -0,0 +1,92 @@
++"""Skills extraction series: state object exists and is screen-wired.
++
++Wave-4 Task 1 (recipe: backlog/docs/library-decomposition-recipe.md;
++export/collections/search+RAG series precedent: Tests/Architecture/
++test_library_export_wiring.py / test_library_collections_wiring.py /
++test_library_search_rag_wiring.py, their state-PR-era shape; the
++conversations exemplar's own test_library_conversations_wiring.py is the
++precedent for a state object whose fields split across multiple shim
++prefixes). Every field ``LibrarySkillsState`` declares must have a matching
++generated property shim on ``LibraryScreen``, resolved via
++``skill_state_shim_attr()`` -- the single-source, three-way prefix mapping
++(``_library_skill_`` default, ``_library_skills_`` for the plural-named
++subset, bare ``_`` for the one unprefixed field, ``selected_skill_name``)
++documented in ``library_skills_state.py``'s own module docstring. Unlike a
++looser "either prefix works" check, this test asserts the EXACT expected
++shim name per field, not just that some property exists somewhere.
++"""
++from __future__ import annotations
++
++import dataclasses
++
++import pytest
++
++from tldw_chatbook.UI.Library_Modules.library_skills_state import (
++    SKILL_UNPREFIXED_STATE_FIELDS,
++    SKILLS_PLURAL_STATE_FIELDS,
++    LibrarySkillsState,
++    skill_state_shim_attr,
++)
++
++
++@pytest.mark.unit
++def test_state_object_fields_match_the_shim_surface() -> None:
++    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++
++    field_names = {f.name for f in dataclasses.fields(LibrarySkillsState)}
++    assert field_names, "state object is empty"
++    missing = []
++    for name in field_names:
++        shim_attr = skill_state_shim_attr(name)
++        shim = getattr(LibraryScreen, shim_attr, None)
++        if not isinstance(shim, property):
++            missing.append(shim_attr)
++    assert not missing, f"no screen shim property found for: {missing!r}"
++
++
++@pytest.mark.unit
++def test_skill_state_field_prefix_sets_are_real_state_fields() -> None:
++    """Guards the single-source prefix mapping against drift: every name
++    either exception set lists must actually be a `LibrarySkillsState`
++    field (a typo or a stale entry here would otherwise silently shim
++    nothing under the intended prefix and everything under the wrong one
++    instead).
++    """
++    field_names = {f.name for f in dataclasses.fields(LibrarySkillsState)}
++    unknown_plural = SKILLS_PLURAL_STATE_FIELDS - field_names
++    unknown_bare = SKILL_UNPREFIXED_STATE_FIELDS - field_names
++    assert not unknown_plural, (
++        f"SKILLS_PLURAL_STATE_FIELDS names unknown fields: {unknown_plural!r}"
++    )
++    assert not unknown_bare, (
++        f"SKILL_UNPREFIXED_STATE_FIELDS names unknown fields: {unknown_bare!r}"
++    )
++
++
++@pytest.mark.unit
++def test_skill_state_prefix_sets_do_not_overlap() -> None:
++    """A field can only be in at most one of the two exception sets --
++    membership in both would make `skill_state_shim_attr`'s branch order
++    silently pick one and hide the other's intent."""
++    overlap = SKILLS_PLURAL_STATE_FIELDS & SKILL_UNPREFIXED_STATE_FIELDS
++    assert not overlap, f"fields claimed by both prefix exception sets: {overlap!r}"
++
++
++@pytest.mark.unit
++def test_wiring_fields_stay_off_the_state_object() -> None:
++    """`_library_skill_import_coordinator`/`_library_skills_browse_controller`
++    are wiring (capture-controller precedent), not state -- they must NOT
++    be `LibrarySkillsState` fields, and must remain plain (non-property)
++    attributes on `LibraryScreen` once an instance exists.
++    """
++    field_names = {f.name for f in dataclasses.fields(LibrarySkillsState)}
++    assert "import_coordinator" not in field_names
++    assert "browse_controller" not in field_names
++    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++
++    assert not isinstance(
++        getattr(LibraryScreen, "_library_skill_import_coordinator", None), property
++    )
++    assert not isinstance(
++        getattr(LibraryScreen, "_library_skills_browse_controller", None), property
++    )
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index 421814f6a..c38a23c93 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -332,21 +332,30 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # results_body_children`, `library_rag_scope_recovery_children`,
+     # `results_heading_text`, `scope_toggle_label` -- each verified
+     # single-occurrence (import line only) before deletion; the neighbour
+     # `library_rag_scope_shows_recovery` stayed (still live, ~line 42446).
+     # Comment-only otherwise; no method body touched. 42949/1304 ->
+     # 42940/1304.
+     #: Re-measured 2026-09-03 at the wave-3 dev catch-up merge (42 dev commits
+     #: incl. Console-interaction PRD work landed inside the budgeted file):
+     #: 42940/1304 -> 43225/1311. Post-merge re-measure per the standing
+     #: dev-race protocol; the decomposition's own trajectory remains down.
+-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43225, 1311),
++    #
++    # 2026-09-04, wave-4 task 1 (skills state PR, series 1/3): the 38-field
++    # skills `__init__` block (26 singular `_library_skill_*` + 9 plural
++    # `_library_skills_*` + 1 bare `_selected_skill_name`; 2 more --
++    # `_library_skill_import_coordinator`/`_library_skills_browse_
++    # controller` -- are WIRING and stay untouched) collapsed into one
++    # `LibrarySkillsState` constructor call plus a generated three-prefix
++    # shim loop; methods unchanged (pure field move, zero FunctionDefs
++    # touched). 43225/1311 -> 43179/1311.
++    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43179, 1311),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+ 
+ @lru_cache(maxsize=None)
+diff --git a/Tests/Skills/test_skills_library_flow.py b/Tests/Skills/test_skills_library_flow.py
+index 8b67a84f1..487cba8b6 100644
+--- a/Tests/Skills/test_skills_library_flow.py
++++ b/Tests/Skills/test_skills_library_flow.py
+@@ -1296,20 +1296,129 @@ async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
+             screen,
+             pilot,
+             "#library-skills-trust-header",
+         )
+         assert isinstance(header, Static)
+         assert "again after an update" in str(header.renderable)
+         action = screen.query_one("#library-skills-trust-action", Button)
+         assert action.trust_action == "resetup"
+ 
+ 
++# ---------------------------------------------------------------------------
++# Library decomposition wave-4 task 1 (skills state PR): characterization
++# spot-check pins. `handle_library_skills_trust_reset_cancel`/`_confirm` had
++# ZERO test coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
++# Tests/Skills before these two -- a repo-wide grep for both the method names
++# and their `#library-skills-trust-reset-cancel`/`-confirm` CSS selectors
++# found no hits. (Their sibling, `handle_library_skills_trust_reset_request`
++# -- the button that ARMS this confirm gate -- has SOME coverage already,
++# but only via an unbound-fake-`self` direct call,
++# `test_reset_requires_confirmation` in Tests/UI/test_library_skills_canvas.py
++# -- not the `.press()`-standard evidence this pin uses.) Both reuse the
++# `needs_resetup`-posture setup `test_orphaned_manifest_is_one_click_resetup`
++# above already establishes -- that posture renders BOTH the one-click
++# "resetup" action button (already covered by that test) and the standalone
++# confirm-gated Reset button this pin's flow exercises; the two are
++# independent code paths (`handle_library_skills_trust_action` vs
++# `handle_library_skills_trust_reset_request`/`_cancel`/`_confirm`), not the
++# same handler under two names.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_path):
++    """Pressing Cancel on the confirm-gated Reset row dismisses the row and
++    performs no destructive action -- the standalone Reset button is still
++    there afterward and the trust store's posture is unchanged."""
++    trust = _real_uninitialized_trust_service(tmp_path)
++    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
++    await local_service.create_skill(
++        name="demo", content=_skill_content(title="D", description="d"),
++    )
++    trust.bootstrap_trust("pw", salt=b"7" * 32)
++    trust.trust_store.marker_store.clear()
++    trust._keys = None  # fresh session
++    assert trust.trust_posture() == "needs_resetup"
++
++    app = _build_test_app()
++    _wire_empty_non_skill_services(app)
++    app.skills_scope_service = service
++    app.local_skill_trust_service = trust
++    host = LibraryHarness(app)
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-skills").press()
++        reset_button = await _wait_for_selector(
++            screen, pilot, "#library-skills-trust-reset"
++        )
++        assert isinstance(reset_button, Button)
++        reset_button.press()
++        cancel_button = await _wait_for_selector(
++            screen, pilot, "#library-skills-trust-reset-cancel"
++        )
++        assert isinstance(cancel_button, Button)
++        cancel_button.press()
++        await pilot.pause()
++        assert screen._library_skill_trust_confirming_reset is False
++        assert not list(screen.query("#library-skills-trust-reset-cancel"))
++        assert not list(screen.query("#library-skills-trust-reset-confirm"))
++        # The standalone Reset button is still present -- Cancel only backs
++        # out of the confirm row, it never runs the destructive reset.
++        assert screen.query_one("#library-skills-trust-reset", Button)
++        assert trust.trust_posture() == "needs_resetup"
++
++
++@pytest.mark.asyncio
++async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
++    """Pressing the confirm row's own Reset button actually runs the
++    destructive reset -- the trust store drops back to a genuine first-run
++    posture (``needs_setup``: no manifest, no marker) and the confirm row
++    is dismissed once the worker settles."""
++    trust = _real_uninitialized_trust_service(tmp_path)
++    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
++    await local_service.create_skill(
++        name="demo", content=_skill_content(title="D", description="d"),
++    )
++    trust.bootstrap_trust("pw", salt=b"7" * 32)
++    trust.trust_store.marker_store.clear()
++    trust._keys = None  # fresh session
++    assert trust.trust_posture() == "needs_resetup"
++
++    app = _build_test_app()
++    _wire_empty_non_skill_services(app)
++    app.skills_scope_service = service
++    app.local_skill_trust_service = trust
++    host = LibraryHarness(app)
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-skills").press()
++        reset_button = await _wait_for_selector(
++            screen, pilot, "#library-skills-trust-reset"
++        )
++        assert isinstance(reset_button, Button)
++        reset_button.press()
++        confirm_button = await _wait_for_selector(
++            screen, pilot, "#library-skills-trust-reset-confirm"
++        )
++        assert isinstance(confirm_button, Button)
++        confirm_button.press()
++        for _ in range(150):
++            if trust.trust_posture() == "needs_setup":
++                break
++            await pilot.pause(0.02)
++        assert trust.trust_posture() == "needs_setup"
++        await pilot.pause()
++        assert screen._library_skill_trust_confirming_reset is False
++
++
+ @pytest.mark.asyncio
+ async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
+     """Qodo review: a list-header Unlock refreshed only the trust posture, but
+     the list rows' trust glyphs and the header's blocked-count derive from the
+     cached local-source snapshot -- so they stayed stale until some later
+     snapshot refresh. A successful list-mode unlock must refresh the snapshot
+     too (matching the sibling reset/setup handlers)."""
+     trust = _real_uninitialized_trust_service(tmp_path)
+     local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+     await local_service.create_skill(
+diff --git a/Tests/UI/test_library_skills_canvas.py b/Tests/UI/test_library_skills_canvas.py
+index 308885ee0..eec691c99 100644
+--- a/Tests/UI/test_library_skills_canvas.py
++++ b/Tests/UI/test_library_skills_canvas.py
+@@ -1455,20 +1455,138 @@ async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
+             ):
+                 break
+         assert screen.query_one("#library-skill-row-skill-040", Button)
+         assert len(screen.query(".library-skill-row")) == 5
+         assert "41-45 of 45" in str(
+             screen.query_one("#library-skills-range", Static).renderable
+         )
+         assert screen.query_one("#library-skills-page-next", Button).disabled
+ 
+ 
++# ---------------------------------------------------------------------------
++# Library decomposition wave-4 task 1 (skills state PR): characterization
++# spot-check pins. `handle_library_skills_page_previous` had NO `.press()`
++# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
++# Tests/Skills before this pin -- the two existing widget-only references to
++# `#library-skills-page-previous` (above, `test_skills_canvas_page_two_of_two...`
++# and `test_skills_canvas_stale_page_hides_totals_and_disables_actions`) only
++# ever assert its `disabled` state on a hand-built `SkillsListState`, never
++# press it against a real, fully-mounted `LibraryScreen`. This pin reuses
++# the 45-item real-service setup immediately above (already exercises
++# `handle_library_skills_page_next` genuinely) one page further back.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
++    app = _build_test_app()
++    app.notes_scope_service = StaticLibraryNotesListScopeService([])
++    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
++    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
++    app.skills_scope_service = _FakeSkillsScopeService(
++        available=[
++            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
++            for index in range(45)
++        ]
++    )
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=(100, 30)) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-skills").press()
++        for _ in range(12):
++            await pilot.pause()
++            if len(screen.query(".library-skill-row")) == 20:
++                break
++
++        screen.query_one("#library-skills-page-next", Button).press()
++        for _ in range(12):
++            await pilot.pause()
++            if "Page 2 of 3" in str(
++                screen.query_one("#library-skills-page", Static).renderable
++            ):
++                break
++        assert "21-40 of 45" in str(
++            screen.query_one("#library-skills-range", Static).renderable
++        )
++
++        screen.query_one("#library-skills-page-previous", Button).press()
++        for _ in range(12):
++            await pilot.pause()
++            if "Page 1 of 3" in str(
++                screen.query_one("#library-skills-page", Static).renderable
++            ):
++                break
++        assert screen.query_one("#library-skill-row-skill-000", Button)
++        assert not screen.query("#library-skill-row-skill-020")
++        assert "1-20 of 45" in str(
++            screen.query_one("#library-skills-range", Static).renderable
++        )
++        assert screen.query_one("#library-skills-page-previous", Button).disabled
++
++
++class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
++    """Raises on the FIRST `list_skills` call, then delegates to the real
++    fake for every call after -- mirrors `_RecoveringLibraryNoteDetailService`
++    in `Tests/UI/test_library_shell.py` (same "fail once, then recover"
++    shape for a retry pin)."""
++
++    def __init__(self, *, available, blocked=()):
++        super().__init__(available=available, blocked=blocked)
++        self.failures_remaining = 1
++
++    async def list_skills(self, **kwargs):
++        if self.failures_remaining:
++            self.failures_remaining -= 1
++            raise RuntimeError("temporary skills list outage")
++        return await super().list_skills(**kwargs)
++
++
++@pytest.mark.asyncio
++async def test_library_skills_retry_recovers_transient_list_failure():
++    """`handle_library_skills_retry` had ZERO coverage anywhere in the four
++    test roots before this pin -- the one existing widget-only reference to
++    `#library-skills-retry` (`test_skills_canvas_stale_page_hides_totals_
++    and_disables_actions` above) only asserts the button exists on a
++    hand-built `SkillsListState`, never presses it against a real screen."""
++    app = _build_test_app()
++    app.notes_scope_service = StaticLibraryNotesListScopeService([])
++    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
++    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
++    app.skills_scope_service = _FailOnceSkillsScopeService(
++        available=[{"name": "code-review", "description": "Reviews a diff"}]
++    )
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=(100, 30)) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-skills").press()
++        retry_button = None
++        for _ in range(30):
++            await pilot.pause()
++            matches = list(screen.query("#library-skills-retry"))
++            if matches:
++                retry_button = matches[0]
++                break
++        assert isinstance(retry_button, Button)
++
++        retry_button.press()
++        for _ in range(30):
++            await pilot.pause()
++            if screen.query("#library-skill-row-code-review"):
++                break
++        assert screen.query_one("#library-skill-row-code-review", Button)
++        assert not screen.query("#library-skills-retry")
++
++
+ @pytest.mark.asyncio
+ async def test_library_skills_manual_items_priority_survives_compact_layout_sync(
+     monkeypatch: pytest.MonkeyPatch,
+ ):
+     """An explicit 80-column Items expansion must outlive ordinary refreshes."""
+     app = _build_test_app()
+     app.notes_scope_service = StaticLibraryNotesListScopeService([])
+     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+     app.skills_scope_service = _FakeSkillsScopeService(
+@@ -1941,20 +2059,169 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
+         )
+         picker.highlighted = datetime_index
+         await pilot.press("space")
+         await pilot.pause()
+         assert screen._library_skill_editor_state.allowed_tools_csv == (
+             "mystery-tool, get_current_datetime"
+         )
+         assert screen._library_skill_dirty is True
+ 
+ 
++# ---------------------------------------------------------------------------
++# Library decomposition wave-4 task 1 (skills state PR): characterization
++# spot-check pins. `handle_library_skill_tool_filter`, `handle_library_skill_
++# user_invocable_toggle`, `handle_library_skill_disable_model_toggle`, and
++# `handle_library_skill_discard` had ZERO `.press()`/keystroke-dispatch
++# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
++# Tests/Skills before this pin -- every existing reference to their
++# selectors only asserted a WIDGET-only host's structure (`_EditorHost`, no
++# real `LibraryScreen` behind it) or a hand-built `SkillsListState`'s
++# display, never pressed/typed against a real, fully-mounted screen. All
++# four are exercised together in one continuous editor session (this
++# file's own established walkthrough-style pattern, same shape as
++# `test_library_skill_tool_filter_is_read_only_until_keyboard_selection`
++# immediately above).
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_pressed(
++    tmp_path,
++):
++    local_service = LocalSkillsService(
++        store_dir=tmp_path,
++        trust_service=None,
++        allow_untrusted_without_trust_service=True,
++        policy_enforcer=None,
++    )
++    await local_service.create_skill(
++        name="demo",
++        content=(
++            "---\nname: demo\ndescription: Demo\nallowed_tools:\n"
++            "  - calculator\n---\nDo the work."
++        ),
++    )
++    app = _build_test_app()
++    app.library_new_profile_admission = False
++    app.notes_scope_service = StaticLibraryNotesListScopeService([])
++    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
++    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
++    app.skills_scope_service = SkillsScopeService(
++        local_service=local_service,
++        server_service=None,
++        policy_enforcer=None,
++    )
++    app.app_config.setdefault("library", {})["skill_editor_mode"] = "advanced"
++    host = LibraryHarness(app)
++    async with host.run_test(size=(100, 30)) as pilot:
++        screen = await _open_real_skill_editor(host, pilot, "demo")
++
++        # handle_library_skill_tool_filter: typing into the filter Input
++        # never touches the allowlist content itself, only the picker's
++        # own visible-row filtering.
++        tool_filter = screen.query_one("#library-skill-tool-filter", Input)
++        tool_filter.value = "calc"
++        await pilot.pause()
++        assert screen._library_skill_tool_filter == "calc"
++        assert screen._library_skill_dirty is False
++        picker = screen.query_one("#library-skill-tool-picker", SelectionList)
++        assert picker.options
++        assert all("calc" in str(option.value).lower() for option in picker.options)
++        tool_filter.value = ""
++        await pilot.pause()
++
++        # handle_library_skill_user_invocable_toggle
++        user_invocable_button = screen.query_one(
++            "#library-skill-user-invocable", Button
++        )
++        before = screen._library_skill_editor_state.user_invocable
++        user_invocable_button.press()
++        await pilot.pause()
++        assert screen._library_skill_editor_state.user_invocable is not before
++        assert screen._library_skill_dirty is True
++
++        # handle_library_skill_disable_model_toggle
++        disable_model_button = screen.query_one(
++            "#library-skill-disable-model", Button
++        )
++        before = screen._library_skill_editor_state.disable_model_invocation
++        disable_model_button.press()
++        await pilot.pause()
++        assert (
++            screen._library_skill_editor_state.disable_model_invocation
++            is not before
++        )
++        assert screen._library_skill_dirty is True
++
++        # handle_library_skill_discard: the dirty edit from the two toggles
++        # above is dropped and the screen returns to the skills list.
++        discard_button = screen.query_one("#library-skill-discard", Button)
++        assert discard_button.disabled is False
++        discard_button.press()
++        for _ in range(150):
++            if screen._library_skills_view == "list":
++                break
++            await pilot.pause(0.02)
++        assert screen._library_skills_view == "list"
++        assert screen._library_skill_dirty is False
++
++
++@pytest.mark.asyncio
++async def test_skill_editor_conflict_reload_clears_conflict_and_refetches(tmp_path):
++    """`handle_library_skill_conflict_reload` had ZERO `.press()` coverage
++    anywhere in the four test roots -- every existing reference to
++    `#library-skill-conflict-reload` only asserts a WIDGET-only host's
++    display, never presses it against a real screen. Driving the real
++    update-conflict path (a genuine `expected_version` mismatch from the
++    service) is out of this pin's scope -- the conflict flag is set
++    directly on a real, fully-mounted screen instance instead (the same
++    flag `_enter_library_skill_conflict` sets, whatever produced it), which
++    is enough to characterize the BUTTON's own current behavior: clear the
++    flag and re-fetch the open skill's detail."""
++    local_service = LocalSkillsService(
++        store_dir=tmp_path,
++        trust_service=None,
++        allow_untrusted_without_trust_service=True,
++        policy_enforcer=None,
++    )
++    await local_service.create_skill(
++        name="demo", content="---\nname: demo\ndescription: Demo\n---\nBody."
++    )
++    app = _build_test_app()
++    app.library_new_profile_admission = False
++    app.notes_scope_service = StaticLibraryNotesListScopeService([])
++    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
++    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
++    app.skills_scope_service = SkillsScopeService(
++        local_service=local_service,
++        server_service=None,
++        policy_enforcer=None,
++    )
++    host = LibraryHarness(app)
++    async with host.run_test(size=(100, 30)) as pilot:
++        screen = await _open_real_skill_editor(host, pilot, "demo")
++        screen._library_skill_conflict = True
++        screen._sync_library_skill_lifecycle_actions()
++        await pilot.pause()
++        reload_button = screen.query_one("#library-skill-conflict-reload", Button)
++        assert reload_button.display is True
++
++        reload_button.press()
++        for _ in range(150):
++            if screen._library_skill_conflict is False:
++                break
++            await pilot.pause(0.02)
++        assert screen._library_skill_conflict is False
++        assert screen._library_skill_detail is not None
++        assert screen._library_skill_detail.get("name") == "demo"
++
++
+ async def _wait_for_revoke_button_disabled(screen, pilot, *, expected: bool) -> Button:
+     """Poll the Revoke button until its disabled state matches ``expected``.
+ 
+     The script grant is fetched off-thread (``_refresh_library_skill_script_
+     grant``) after the skill editor first renders, so the button's real
+     (post-fetch) disabled state can lag the compose-time default (always
+     disabled) by one or more event-loop turns.
+ 
+     Args:
+         screen: The active ``LibraryScreen``.
+diff --git a/tldw_chatbook/UI/Library_Modules/library_skills_state.py b/tldw_chatbook/UI/Library_Modules/library_skills_state.py
+new file mode 100644
+index 000000000..6c13191db
+--- /dev/null
++++ b/tldw_chatbook/UI/Library_Modules/library_skills_state.py
+@@ -0,0 +1,332 @@
++"""``LibrarySkillsState`` -- the Skills subsystem's own fields.
++
++State PR of the Skills extraction series (wave-4 task 1, recipe:
++``backlog/docs/library-decomposition-recipe.md``; the search+RAG series --
++``library_rag_search_state.py`` -- is the worked example this mirrors most
++closely, since it also needed a mixed-prefix shim mapping). Every field here
++was moved verbatim out of ``LibraryScreen.__init__`` in
++``tldw_chatbook/UI/Screens/library_screen.py`` -- same default, same type.
++``library_screen.py`` keeps every original ``_library_skill_<field>``/
++``_library_skills_<field>``/``_selected_skill_name`` attribute name alive as
++a generated getter/setter ``@property`` shim pointing at
++``self._skills_state.<field>`` (a sentinel-wrapped block right after the
++``LibraryScreen`` class body). A future Skills controller PR will move the
++subsystem's methods off the screen and take over this shim's job the same
++way ``LibraryRagSearchController``/``LibraryCollectionsController`` do for
++their own subsystems; the Skills cleanup PR will then delete this
++screen-side block.
++
++Two existing, already-extracted Skills modules are NOT touched by this
++move: ``library_skill_import_controller.py`` (``LibrarySkillImportCoordinator``)
++and ``library_skills_browse_controller.py`` (``LibrarySkillsBrowseController``).
++Screen methods that merely delegate to either are exclusion candidates for
++the eventual controller-move task, not this state task's concern.
++
++Three prefixes, not two -- a genuine deviation from the plan's own "two-prefix
++mapping" framing, found by running the recipe's own field-ownership script
++(``backlog/docs/library-decomposition-recipe.md`` §2) rather than assuming
++the plan's shorthand was exhaustive:
++
++- ``_library_skill_`` (singular) is the DEFAULT prefix -- 26 of the 36
++  fields (e.g. ``dirty``, ``status``, ``editor_state``).
++- ``_library_skills_`` (plural) covers 9 fields that describe the skills
++  LIST/browse surface as a whole rather than one skill's own editor state:
++  ``sort``, ``filter``, ``filter_cursor_context``, ``view``,
++  ``sort_choices_visible``, ``trust_posture``, plus the reader-layout trio
++  below. ``SKILLS_PLURAL_STATE_FIELDS`` is the single authoritative home
++  for this set (mirroring the conversations exemplar's own
++  ``CONVERSATIONS_PLURAL_STATE_FIELDS``/the search+RAG series' own
++  ``SEARCH_PREFIXED_STATE_FIELDS`` -- one shared copy, not independently
++  drifting duplicates in the screen's own shim generator and this module).
++- ``_`` (bare underscore, no "skill"/"skills" word at all) covers exactly
++  ONE field: ``selected_skill_name`` (the original attribute is
++  ``_selected_skill_name`` -- found only because the ownership census was
++  run as a substring match on "skill" rather than a ``startswith`` filter
++  on the two `_library_skill(s)_` prefixes; the conversations exemplar's
++  own recipe §11 "startswith enumeration trap" lesson, reproduced here on
++  a THIRD prefix shape instead of a missed field within a known prefix).
++
++``skill_state_shim_attr()`` below is the single function both the screen's
++shim-generator loop and this subsystem's wiring test call to resolve a
++field name to its original attribute name, rather than each independently
++recomputing the three-way branch (the drift risk the frozenset-copy lesson
++above already warns about, applied to the whole prefix decision, not just
++the plural set).
++
++Two fields are WIRING, not state, and are NOT part of this dataclass at
++all -- exactly the ``_conversation_reader_controller``/
++``_library_collections_capture_controller`` "capture-controller" precedent:
++
++- ``_library_skill_import_coordinator`` holds the live
++  ``LibrarySkillImportCoordinator`` singleton (shared across screen
++  instances via ``ensure_library_skill_import_coordinator``); constructed
++  at its original position, untouched by this move.
++- ``_library_skills_browse_controller`` holds the live
++  ``LibrarySkillsBrowseController`` instance; also constructed at its
++  original position, untouched.
++
++Three fields (``reader_preferences``, ``reader_persistence_locks``,
++``reader_layout``) keep their *original* ``__init__`` assignment line
++completely untouched, exactly the same shape the collections/conversations/
++search+RAG series' own identically-named trios document:
++
++- ``reader_preferences`` is one of eight targets unpacked from a single
++  ``self._load_library_reader_preference_snapshot()`` call shared with
++  Media, Conversations, Notes, File Notes, Collections and Prompts.
++- ``reader_persistence_locks`` depends on a local ``asyncio.Lock()``
++  (``library_pane_persistence_lock``) also reused by five other
++  subsystems' persistence-lock dicts.
++- ``reader_layout`` is derived from ``reader_preferences`` (via
++  ``resolve_adaptive_reader_layout``) after it settles from the shared
++  snapshot above.
++
++**A new wrinkle this series adds to that precedent**: two MORE fields
++(``editor_mode``, ``reader_mode``) also keep their original ``__init__``
++lines untouched, even though neither is entangled with another
++subsystem's own initialization code the way the trio is. Both call a
++same-subsystem pure function (``coerce_skill_editor_mode``/
++``coerce_skill_reader_mode``, imported from the pre-existing
++``tldw_chatbook.Library.library_skills_state`` module -- a DIFFERENT
++module from this one; see the note at the bottom of this docstring) with
++real runtime config data (``editor_mode``) or a literal (``reader_mode``).
++The reason both must still keep their original line is positional, not
++entanglement: this dataclass's own instance (``self._skills_state``) has
++to be constructed BEFORE the reader-preferences tuple-unpack (line 2392 at
++this task's measurement) for the SAME reason the collections series'
++own state PR documents -- the trio's original lines would otherwise route
++through a not-yet-installed property into a not-yet-existing state object.
++That forces construction to happen at line ~2163 (right after
++``self._collections_state = LibraryCollectionsState()``), which is BEFORE
++``editor_mode``'s (line 2913) and ``reader_mode``'s (line 2995) own
++original lines. A field positioned after the forced-early construction
++point cannot be "passed as a constructor argument" (the recipe's usual
++computed-default rule) because construction has already happened by the
++time its line runs -- so the ONLY behaviorally-transparent option is the
++same one the trio already uses: leave the original line exactly as it
++was, let the newly-installed property shim silently route the assignment
++into the state object, same as the trio. Generalizes the trio's own
++mechanism (previously described as being ABOUT entanglement) to any field
++whose original position simply falls after the forced construction point,
++entangled or not. Every other field's original line falls BEFORE that
++forced construction point in the OLD ownership sense only for
++``_library_skill_import_coordinator`` (WIRING, stays) and
++``_library_skill_choice_presented_generation`` (static ``-1``, folded
++into this dataclass's own default, its original line deleted) --
++everything else here sits after, hence needs one of the two treatments
++above (static-default fold or original-line-untouched).
++
++All five entangled/computed fields' dataclass defaults below are
++therefore momentary placeholders, overwritten before anything else in
++``__init__`` reads them -- identical in spirit to the collections/
++conversations/search+RAG state objects' own entangled-field placeholders.
++
++Note on the two ``library_skills_state`` modules: this file
++(``tldw_chatbook/UI/Library_Modules/library_skills_state.py``) is the
++screen's OWN ``__init__``-field state object, following the exact
++directory precedent every other subsystem uses (``UI/Library_Modules/``
++pairs with an unrelated, pre-existing ``tldw_chatbook/Library/`` module of
++the SAME basename for six other subsystems already --
++``library_conversations_state.py``, ``library_export_state.py``, etc. --
++so this is not a new pattern). The OTHER, pre-existing
++``tldw_chatbook.Library.library_skills_state`` module (a pure-function/
++pure-dataclass library with no Textual/DB/network imports, covered by its
++own ``Tests/Library/test_library_skills_state.py``) supplies
++``SkillEditorState``, ``SkillEditorMode``, ``SkillReaderMode``,
++``coerce_skill_editor_mode`` and ``coerce_skill_reader_mode`` -- imported
++here by fully-qualified path, so there is no namespace collision despite
++the shared basename.
++"""
++from __future__ import annotations
++
++import asyncio
++from collections.abc import Mapping
++from dataclasses import dataclass, field
++from typing import Any
++
++from ...Library.library_skills_state import (
++    SkillEditorMode,
++    SkillEditorState,
++    SkillReaderMode,
++)
++from ...Utils.adaptive_reader_state import (
++    AdaptiveReaderEffectiveLayout,
++    AdaptiveReaderLayoutPreferences,
++    resolve_adaptive_reader_layout,
++)
++from .screen_constants import LIBRARY_SKILLS_READER_PROFILE
++
++#: See the module docstring's note on this constant: the single
++#: authoritative home for which field names use the plural
++#: ``_library_skills_`` shim prefix instead of the cluster's default
++#: singular ``_library_skill_`` prefix.
++SKILLS_PLURAL_STATE_FIELDS: frozenset[str] = frozenset(
++    {
++        "sort",
++        "filter",
++        "filter_cursor_context",
++        "view",
++        "sort_choices_visible",
++        "trust_posture",
++        "reader_preferences",
++        "reader_layout",
++        "reader_persistence_locks",
++    }
++)
++
++#: The single field using the bare ``_`` prefix (no "skill"/"skills" word
++#: at all in the original attribute name).
++SKILL_UNPREFIXED_STATE_FIELDS: frozenset[str] = frozenset({"selected_skill_name"})
++
++
++def skill_state_shim_attr(field_name: str) -> str:
++    """The original ``LibraryScreen`` attribute name for a state field.
++
++    Single-source resolution of the three-way prefix mapping documented in
++    this module's own docstring -- used by BOTH the screen's generated
++    shim loop and this subsystem's wiring test, so the mapping cannot
++    drift into two independently-typed copies.
++    """
++    if field_name in SKILL_UNPREFIXED_STATE_FIELDS:
++        return "_" + field_name
++    if field_name in SKILLS_PLURAL_STATE_FIELDS:
++        return "_library_skills_" + field_name
++    return "_library_skill_" + field_name
++
++
++@dataclass
++class LibrarySkillsState:
++    """Every field the Skills subsystem exclusively owns."""
++
++    # Placeholder default only -- see module docstring's "new wrinkle"
++    # paragraph: the original `self._library_skill_choice_presented_
++    # generation = -1` line is deleted (static literal, safe to fold in),
++    # but every field below it that keeps its ORIGINAL line untouched
++    # still needs a placeholder here since this object is constructed
++    # before those lines run.
++    choice_presented_generation: int = -1
++
++    # Placeholder defaults only -- the shared reader-preferences
++    # tuple-unpack, the `resolve_adaptive_reader_layout` call, and the
++    # persistence-locks dict literal all keep their ORIGINAL `__init__`
++    # lines untouched (see module docstring's entangled-trio paragraph),
++    # writing through the screen's generated property shim into this
++    # object's own fields the instant each original line runs.
++    reader_preferences: AdaptiveReaderLayoutPreferences = field(
++        default_factory=AdaptiveReaderLayoutPreferences
++    )
++    reader_layout: AdaptiveReaderEffectiveLayout = field(
++        default_factory=lambda: resolve_adaptive_reader_layout(
++            0,
++            AdaptiveReaderLayoutPreferences(),
++            LIBRARY_SKILLS_READER_PROFILE,
++        )
++    )
++    reader_persistence_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
++
++    # Placeholder default only -- see module docstring's "new wrinkle"
++    # paragraph: the original `self._library_skill_editor_mode =
++    # coerce_skill_editor_mode(...)` line keeps running, untouched, at its
++    # original position (reads live `library_config` data this
++    # constructor call cannot see).
++    editor_mode: SkillEditorMode = "basic"
++    tool_catalog: tuple[str, ...] = ()
++    tool_filter: str = ""
++    tool_captured: tuple[str, ...] = ()
++    tool_picker_changed: bool = False
++    more_actions_open: bool = False
++    trust_details_open: bool = False
++    mutation_in_flight: bool = False
++
++    # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
++    # are pure in-memory operations over the already-fetched
++    # ``get_context`` snapshot payload.
++    # ``_selected_skill_name`` is recording-only for now -- the
++    # in-canvas skill detail/trust editor lands in a later task -- same
++    # posture ``handle_library_prompt_row`` originally had before its
++    # own editor landed.
++    sort: str = "name"
++    filter: str = ""
++    filter_cursor_context: tuple[int, int] | None = None
++    selected_skill_name: str = ""
++
++    # Skill detail/trust editor (Task 4 of the Skills sub-project).
++    # Mirrors the prompts editor's own state shape
++    # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
++    # ``_selected_skill_name`` (above, Task 3) doubles as the
++    # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
++    # ``_selected_prompt_id is None``), a real name means "editing an
++    # existing skill", routed through by NAME (skills are keyed by name,
++    # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
++    # complication, ``detail["name"]`` is already the stable identity).
++    view: str = "list"
++
++    # Placeholder default only -- see module docstring's "new wrinkle"
++    # paragraph: the original `self._library_skill_reader_mode =
++    # coerce_skill_reader_mode(None)` line keeps running, untouched, at
++    # its original position.
++    reader_mode: SkillReaderMode = "overview"
++
++    # task-14902: True while the skills sort chooser's direct-pick
++    # strip replaces the list toolbar row (the Notes Sort pattern).
++    sort_choices_visible: bool = False
++
++    detail: Mapping[str, Any] | None = None
++    detail_generation: int = 0
++    detail_loading: bool = False
++    detail_error: str = ""
++    detail_retryable: bool = False
++    original_name: str = ""
++    editor_state: SkillEditorState | None = None
++    dirty: bool = False
++    status: str = ""
++    conflict: bool = False
++
++    # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
++    # Textual fires when a widget mounts with a non-empty initial value
++    # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
++    editor_armed: bool = False
++
++    # The trust panel's currently-captured review (from
++    # ``capture_review``'s result mapping), or ``None`` when no review
++    # is active for the open skill. Reset every time a (different)
++    # skill is opened -- unlike ``skills_screen.py``'s
++    # ``_active_trust_review`` (which persists across row selection
++    # within one long-lived screen instance and needs its own
++    # staleness reconciliation), this editor always starts a fresh
++    # session per open, so no extra staleness check is needed.
++    active_review: dict[str, Any] | None = None
++
++    # Task 7 (skills-script-execution): whether the open skill has a
++    # standing "always allow scripts" grant, cached here since checking
++    # it re-scans the skill's on-disk directory (fingerprint match) and
++    # so is only ever read off-thread -- see
++    # ``_refresh_library_skill_script_grant``. Reset alongside
++    # ``_library_skill_active_review`` on every (re)open; the panel's
++    # compose default of "not granted" is corrected in place moments
++    # later by that off-thread fetch.
++    script_grant: bool = False
++
++    # task-415: inline two-step delete (mirrors
++    # ``_library_media_confirming_delete``): the first Delete press
++    # arms this; only the recomposed confirm button actually deletes.
++    confirming_delete: bool = False
++
++    # task-417: one-shot flag armed by a create-save; the next editor
++    # recompose scrolls the action row (Save + status) back into view
++    # instead of landing at the top away from what the user pressed.
++    scroll_pending: bool = False
++
++    # Task 5 (skills-foundation): the Skills-list header's adaptive
++    # trust posture (``SkillTrustService.trust_posture()`` -- Task 3),
++    # cached here since it's read off-thread (may touch the OS
++    # keyring), never on the compose path. ``""`` hides the header --
++    # see ``_refresh_library_skills_trust_posture``.
++    trust_posture: str = ""
++
++    # Confirm-gate for the destructive Reset action (wipes the trust
++    # manifest -- every skill drops back to needs-review). Armed by
++    # either the list header's standalone Reset button or the editor's
++    # ``quarantined_manifest_error`` trust panel's own Reset button --
++    # both share this single flag/handler set since only one of the
++    # two views is ever mounted at a time.
++    trust_confirming_reset: bool = False
+diff --git a/tldw_chatbook/UI/Screens/library_screen.py b/tldw_chatbook/UI/Screens/library_screen.py
+index 7449e9205..d270ba6b9 100644
+--- a/tldw_chatbook/UI/Screens/library_screen.py
++++ b/tldw_chatbook/UI/Screens/library_screen.py
+@@ -572,20 +572,24 @@ from ..Library_Modules.library_notes_sync_controller import (
+     InertLastingSyncRuntime,
+     LibraryNotesSyncController,
+ )
+ from ..Library_Modules.library_notes_work_session import (
+     NotesWorkSessionEvent,
+     NotesWorkSessionPhase,
+     reduce_notes_work_session,
+ )
+ from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
+ from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
++from ..Library_Modules.library_skills_state import (
++    LibrarySkillsState,
++    skill_state_shim_attr,
++)
+ from ..Library_Modules.library_snapshot_cache import (
+     clone_library_source_snapshot,
+ )
+ from ..Navigation.base_app_screen import BaseAppScreen
+ from ..Navigation.main_navigation import NavigateToScreen
+ from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+ from .model_browser_state import install_failure_message
+ from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
+ from .study_scope_models import (
+     MATERIAL_SOURCE_LIBRARY,
+@@ -2048,21 +2052,20 @@ class LibraryScreen(BaseAppScreen):
+         **kwargs: Any,
+     ) -> None:
+         super().__init__(app_instance, "library", **kwargs)
+         from ..Library_Modules.library_skill_import_controller import (
+             ensure_library_skill_import_coordinator,
+         )
+ 
+         self._library_skill_import_coordinator = (
+             ensure_library_skill_import_coordinator(app_instance)
+         )
+-        self._library_skill_choice_presented_generation = -1
+         self._library_new_profile_admission = bool(
+             getattr(app_instance, "library_new_profile_admission", False)
+         )
+         lifecycle_raw, lifecycle_stored = self._load_library_lifecycle_value()
+         self._library_lifecycle_was_stored = lifecycle_stored
+         self._library_lifecycle = coerce_library_lifecycle(
+             lifecycle_raw,
+             is_new_profile=self._library_new_profile_admission,
+         )
+         self._library_lifecycle_last_persisted = (
+@@ -2154,20 +2157,26 @@ class LibraryScreen(BaseAppScreen):
+         self._selected_conversation_id = ""
+         self._library_selected_row_id: str = ""
+         self._library_continue_receipt: dict[str, Any] | None = None
+         self._library_landing_attention_signature: (
+             LibraryLandingAttentionAction | None
+         ) = None
+         self._library_navigation_context_generation: int = 0
+         self._conversations_state = LibraryConversationsState()
+         # Constructed early -- see LibraryCollectionsState's docstring.
+         self._collections_state = LibraryCollectionsState()
++        # Constructed early -- see LibrarySkillsState's own module docstring
++        # ("new wrinkle" paragraph): must exist before the shared reader-
++        # preferences tuple-unpack below AND before `editor_mode`/
++        # `reader_mode`'s own original lines, both of which keep running
++        # untouched and route through the generated shim into this object.
++        self._skills_state = LibrarySkillsState()
+         self._conversation_reader_controller = LibraryConversationReaderController(
+             self,
+             conversations_state_accessor=lambda: self._conversations_state,
+             build_conversations_state=lambda: self._build_library_conversations_state(),
+             adaptive_reader_allocation_is_current=(
+                 lambda reader: self._library_adaptive_reader_allocation_is_current(
+                     reader
+                 )
+             ),
+             run_library_service_call=(
+@@ -2908,27 +2917,20 @@ class LibraryScreen(BaseAppScreen):
+         self._library_prompt_editor_mode = coerce_prompt_editor_mode(
+             library_config.get("prompt_editor_mode")
+             if isinstance(library_config, Mapping)
+             else None
+         )
+         self._library_skill_editor_mode = coerce_skill_editor_mode(
+             library_config.get("skill_editor_mode")
+             if isinstance(library_config, Mapping)
+             else None
+         )
+-        self._library_skill_tool_catalog: tuple[str, ...] = ()
+-        self._library_skill_tool_filter: str = ""
+-        self._library_skill_tool_captured: tuple[str, ...] = ()
+-        self._library_skill_tool_picker_changed: bool = False
+-        self._library_skill_more_actions_open: bool = False
+-        self._library_skill_trust_details_open: bool = False
+-        self._library_skill_mutation_in_flight: bool = False
+         # Explicit provenance for an unsaved canonical structured copy.
+         # Legacy block edits can clear both lane origins, so origins cannot
+         # truthfully distinguish conversion/duplication from ordinary edits.
+         self._library_prompt_detached_structured: bool = False
+         self._library_prompt_capabilities: PromptSourceCapabilities = (
+             local_prompt_capabilities()
+         )
+         self._library_prompt_include_starter_content: bool = False
+         self._library_prompt_delete_pending_fingerprint: str | None = None
+         self._library_prompt_delete_inflight_fingerprint: str | None = None
+@@ -2961,101 +2963,27 @@ class LibraryScreen(BaseAppScreen):
+         self._library_prompts_import_open: bool = False
+         self._library_prompts_import_path: str = ""
+         self._library_prompts_import_status: str = ""
+         # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+         # Textual fires when a widget mounts with a non-empty initial value
+         # -- without this, opening a prompt would immediately mark it dirty
+         # even though the user never typed anything. Re-armed via
+         # ``call_after_refresh`` after every prompt-editor (re)compose,
+         # mirroring ``_library_note_editor_armed``.
+         self._library_prompt_editor_armed: bool = False
+-        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
+-        # are pure in-memory operations over the already-fetched
+-        # ``get_context`` snapshot payload.
+-        # ``_selected_skill_name`` is recording-only for now -- the
+-        # in-canvas skill detail/trust editor lands in a later task -- same
+-        # posture ``handle_library_prompt_row`` originally had before its
+-        # own editor landed.
+-        self._library_skills_sort: str = "name"
+-        self._library_skills_filter: str = ""
+-        self._library_skills_filter_cursor_context: tuple[int, int] | None = None
+-        self._selected_skill_name: str = ""
++        # Skills list/detail/trust-editor canvas state now lives in
++        # LibrarySkillsState -- see that module's own docstring/field
++        # comments for the per-field detail that used to live here.
+         # Toolbar Import… state is projected from the app-owned coordinator.
+         # A Library screen may be replaced while the accepted mutation keeps
+         # running, so screen construction must never reset that shared receipt.
+-        # Skill detail/trust editor (Task 4 of the Skills sub-project).
+-        # Mirrors the prompts editor's own state shape
+-        # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
+-        # ``_selected_skill_name`` (above, Task 3) doubles as the
+-        # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
+-        # ``_selected_prompt_id is None``), a real name means "editing an
+-        # existing skill", routed through by NAME (skills are keyed by name,
+-        # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
+-        # complication, ``detail["name"]`` is already the stable identity).
+-        self._library_skills_view: str = "list"
+         self._library_skill_reader_mode = coerce_skill_reader_mode(None)
+-        # task-14902: True while the skills sort chooser's direct-pick
+-        # strip replaces the list toolbar row (the Notes Sort pattern).
+-        self._library_skills_sort_choices_visible: bool = False
+-        self._library_skill_detail: Mapping[str, Any] | None = None
+-        self._library_skill_detail_generation: int = 0
+-        self._library_skill_detail_loading: bool = False
+-        self._library_skill_detail_error: str = ""
+-        self._library_skill_detail_retryable: bool = False
+-        self._library_skill_original_name: str = ""
+-        self._library_skill_editor_state: SkillEditorState | None = None
+-        self._library_skill_dirty: bool = False
+-        self._library_skill_status: str = ""
+-        self._library_skill_conflict: bool = False
+-        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+-        # Textual fires when a widget mounts with a non-empty initial value
+-        # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
+-        self._library_skill_editor_armed: bool = False
+-        # The trust panel's currently-captured review (from
+-        # ``capture_review``'s result mapping), or ``None`` when no review
+-        # is active for the open skill. Reset every time a (different)
+-        # skill is opened -- unlike ``skills_screen.py``'s
+-        # ``_active_trust_review`` (which persists across row selection
+-        # within one long-lived screen instance and needs its own
+-        # staleness reconciliation), this editor always starts a fresh
+-        # session per open, so no extra staleness check is needed.
+-        self._library_skill_active_review: dict[str, Any] | None = None
+-        # Task 7 (skills-script-execution): whether the open skill has a
+-        # standing "always allow scripts" grant, cached here since checking
+-        # it re-scans the skill's on-disk directory (fingerprint match) and
+-        # so is only ever read off-thread -- see
+-        # ``_refresh_library_skill_script_grant``. Reset alongside
+-        # ``_library_skill_active_review`` on every (re)open; the panel's
+-        # compose default of "not granted" is corrected in place moments
+-        # later by that off-thread fetch.
+-        self._library_skill_script_grant: bool = False
+-        # task-415: inline two-step delete (mirrors
+-        # ``_library_media_confirming_delete``): the first Delete press
+-        # arms this; only the recomposed confirm button actually deletes.
+-        self._library_skill_confirming_delete: bool = False
+-        # task-417: one-shot flag armed by a create-save; the next editor
+-        # recompose scrolls the action row (Save + status) back into view
+-        # instead of landing at the top away from what the user pressed.
+-        self._library_skill_scroll_pending: bool = False
+-        # Task 5 (skills-foundation): the Skills-list header's adaptive
+-        # trust posture (``SkillTrustService.trust_posture()`` -- Task 3),
+-        # cached here since it's read off-thread (may touch the OS
+-        # keyring), never on the compose path. ``""`` hides the header --
+-        # see ``_refresh_library_skills_trust_posture``.
+-        self._library_skills_trust_posture: str = ""
+-        # Confirm-gate for the destructive Reset action (wipes the trust
+-        # manifest -- every skill drops back to needs-review). Armed by
+-        # either the list header's standalone Reset button or the editor's
+-        # ``quarantined_manifest_error`` trust panel's own Reset button --
+-        # both share this single flag/handler set since only one of the
+-        # two views is ever mounted at a time.
+-        self._library_skill_trust_confirming_reset: bool = False
+         self._selected_note_id: str = ""
+         note_session_port = _LibraryDatabaseNoteSessionPort(
+             run_service_call=self._run_library_service_call,
+             notes_scope_service=getattr(app_instance, "notes_scope_service", None),
+             notes_service=getattr(app_instance, "notes_service", None),
+             user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
+             clock=lambda: datetime.now(timezone.utc),
+         )
+         self._library_note_session = DatabaseNoteSessionCoordinator(
+             note_session_port,
+@@ -43216,10 +43144,36 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
+ # wave-3 task 4 (search+RAG cleanup, search+RAG series 3/3) deleted the
+ # generated search+rag-state shim block that used to live here (wave-3
+ # task 2): every remaining screen-side `_library_rag_<field>`/
+ # `_library_search_history` reference was retargeted to
+ # `self._rag_search_state.<field>` and every test attribute path/dynamic-
+ # dispatch string was retargeted to match, so nothing on `LibraryScreen`
+ # needs the flat property names anymore -- see
+ # `LibraryRagSearchController`'s own generated shim loop (installed by
+ # task 3) for where the SAME shape now lives permanently, one layer down,
+ # exactly mirroring the collections precedent immediately above.
++
++# --- BEGIN generated skills-state shims (delete wholesale at cleanup) ---
++# wave-4 task 1: keeps every original `_library_skill_<field>`/
++# `_library_skills_<field>`/`_selected_skill_name` name working as a
++# property over `self._skills_state`; attached programmatically so the
++# class body gains no FunctionDefs (the size ratchet counts those).
++# `skill_state_shim_attr` (imported from `library_skills_state` -- the
++# single authoritative home for the three-way prefix mapping, not a
++# second, independently-drifting copy here) resolves each field's real
++# original attribute name -- singular `_library_skill_` default, plural
++# `_library_skills_` for the subset named in `SKILLS_PLURAL_STATE_FIELDS`,
++# or the bare `_` prefix for the one name in `SKILL_UNPREFIXED_STATE_
++# FIELDS` (`selected_skill_name`).
++for _lss_field in dataclasses.fields(LibrarySkillsState):
++    setattr(
++        LibraryScreen,
++        skill_state_shim_attr(_lss_field.name),
++        property(
++            lambda self, _n=_lss_field.name: getattr(self._skills_state, _n),
++            lambda self, value, _n=_lss_field.name: setattr(
++                self._skills_state, _n, value
++            ),
++        ),
++    )
++del _lss_field
++# --- END generated skills-state shims ---

@@ -116,6 +116,22 @@ until review, validation, and activation all succeed.
 
 ## Consequences
 
+### Buddy presentation ownership (TASK-21123, 2026-09-04)
+
+The app owns one disposable Buddy presentation coordinator as well as the domain
+controller. The coordinator mounts the native view on the current primary screen;
+screens carry no Buddy-specific view or reconciliation state. Screen-change signals
+and a generic post-recompose notification keep the view current, including when a
+screen rebuilds without navigation. Controller generation notifications cross to
+the UI through thread-safe app messages. Covered views preserve their existing modal
+behavior, stale view generations cannot publish unavailable state, and geometry
+flushes before controller shutdown. The controller still owns no Textual object.
+
+The implementation must preserve the existing pet-only visual and interaction
+contract. This clarifies ADR-074's app ownership; it does not introduce a general
+overlay framework or use private Textual system-child retention conventions.
+See [the design](../../Docs/superpowers/specs/2026-09-04-task-21123-buddy-overlay-owner.md).
+
 - Actor Pack import/export and Buddy operate only on profile-local actors; server
   Personas require an explicit local copy.
 - The portable envelope can carry both visual systems without coupling their models or

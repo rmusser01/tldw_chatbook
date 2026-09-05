@@ -215,12 +215,16 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         view_generation: int,
         reconcile: Callable[[], Awaitable[None] | None],
         is_current: Callable[["PersonaBuddyWidget"], bool] | None = None,
+        confirm_unavailable: Callable[..., bool] | None = None,
+        is_confirmed_unavailable: Callable[..., bool] | None = None,
     ) -> None:
         super().__init__(id="persona-buddy-widget")
         self._controller = controller
         self.view_generation = view_generation
         self._reconcile = reconcile
         self._current_view = is_current
+        self._confirm_unavailable = confirm_unavailable
+        self._is_confirmed_unavailable = is_confirmed_unavailable
         self._snapshot: Any = None
         self._painted_visual_identity: object | None = None
         self._accepted_render: _AcceptedRender | None = None
@@ -374,7 +378,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.refresh_from_controller(schedule_resolution=False)
             current_visual = current_snapshot.visual
             if visual is not None and not visual.available and current_visual is visual:
-                confirm = getattr(
+                confirm = self._confirm_unavailable or getattr(
                     self.screen, "confirm_persona_buddy_unavailable", None
                 )
                 if not callable(confirm) or not confirm(
@@ -401,7 +405,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 if removed or not self._is_current_view():
                     return
                 current_snapshot = self._controller.snapshot()
-                confirmed = getattr(
+                confirmed = self._is_confirmed_unavailable or getattr(
                     self.screen, "is_persona_buddy_confirmed_unavailable", None
                 )
                 if callable(confirmed) and confirmed(
@@ -974,6 +978,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self._is_current_view():
             self.release_interaction_capture()
             return
+        self._apply_interaction_position(event)
+        event.stop()
+
+    def _apply_interaction_position(self, event: events.MouseEvent) -> None:
+        """Apply the latest pointer sample while the interaction is still armed."""
+        if self._interaction is None:
+            return
         mode, origin_x, origin_y, original = self._interaction
         screen_x = int(event.screen_x if event.screen_x is not None else event.x)
         screen_y = int(event.screen_y if event.screen_y is not None else event.y)
@@ -994,7 +1005,6 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self._working_preferences, geometry=preferred
         )
         self._apply_geometry(preferred)
-        event.stop()
 
     def on_mouse_up(self, event: events.MouseUp) -> None:
         """Finish one interaction, release capture, and persist exactly once."""
@@ -1005,7 +1015,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self._is_current_view():
             self.release_interaction_capture()
             return
-        self._interaction = None
+        # Terminals may coalesce moves or report the last position only on release.
+        self._apply_interaction_position(event)
         self.release_interaction_capture()
         self._schedule_geometry_persist(self._working_preferences.geometry)
         event.stop()

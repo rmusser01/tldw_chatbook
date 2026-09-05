@@ -10537,7 +10537,14 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
                 lambda *a, **k: ready,
             )
             mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the action is composed disabled while no
+            # provider resolves, so the patched-ready resolution has to
+            # reach the viewer before the press can land.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is False
+            generate.press()
 
             service = app.media_reading_scope_service
             for _ in range(200):
@@ -10605,7 +10612,18 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
                 "chat_api_call",
                 lambda **k: dispatched.append(k) or "should not run",
             )
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the refusal is now stated at the control
+            # BEFORE the click -- a disabled Button swallows press() -- so
+            # the handler's surviving post-click guard is exercised directly.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is True
+            assert str(generate.label) == "○ Generate"
+            assert str(generate.tooltip) == "No analysis provider is configured."
+            screen.handle_library_media_analysis_generate(
+                SimpleNamespace(stop=lambda: None)
+            )
             await pilot.pause()
             await pilot.pause()
 
@@ -12610,21 +12628,34 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         for selector in (
             "#library-media-export",
             "#library-media-select-toggle",
-            "#library-media-row-0",
             "#library-media-open-viewer",
-            "#library-media-bulk-delete-undo",
         ):
             action = screen.query_one(selector, Button)
             assert action.disabled, selector
             assert str(action.label).startswith("○"), selector
             assert str(action.tooltip) == stale_reason, selector
 
+        # task-31220: rows are NOT in that list any more. Opening a row is a
+        # READ, and gating it behind the very staleness the open is how you
+        # recover from is what wedged Media in critique #5. Rows now carry
+        # only the mutation gate (a write actually in flight).
+        assert not screen.query_one("#library-media-row-0", Button).disabled
+        # task-31220: nor is the receipt's Undo. It restores exactly the ids
+        # the receipt names, so it is the receipt's own recovery -- a stale
+        # PAGE cannot invalidate it, and disabling it beside a "✓ deleted"
+        # receipt broke the confirmation's "You can undo right away" promise
+        # at the one moment it mattered (critique #5).
+        undo = screen.query_one("#library-media-bulk-delete-undo", Button)
+        assert not undo.disabled
+        assert str(undo.label) == "Undo"
+
         screen._sync_library_media_browse_state(None)
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-media-row-0", Button).disabled,
+            lambda: screen.query_one("#library-media-export", Button).disabled,
             message="Stale action gate did not survive canvas recomposition.",
         )
+        assert not screen.query_one("#library-media-row-0", Button).disabled
 
         screen._library_media_select_mode = True
         screen._library_media_row_selection.toggle("local:media:45")
@@ -12640,12 +12671,15 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
             "#library-media-select-clear",
             "#library-media-export-selected",
             "#library-media-delete-selected",
-            "#library-media-row-0",
         ):
             action = screen.query_one(selector, Button)
             assert action.disabled, selector
             assert str(action.label).startswith("○"), selector
             assert str(action.tooltip) == stale_reason, selector
+        # task-31220: a select-mode row press only ticks its own checkbox, and
+        # every action that could CONSUME that selection is disabled just
+        # above -- so the toggle is inert and does not need the stale gate.
+        assert not screen.query_one("#library-media-row-0", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -12769,10 +12803,13 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             assert service.search_calls[-1]["offset"] == 20
             assert controller.type_options == ("video",)
             if refresh_fails:
-                assert controller.stale_copy == (
-                    "Media changed; retry to load a current page."
-                )
-                assert screen.query_one("#library-media-row-0", Button).disabled
+                # task-31220: the post-mutation refresh failed, and the copy
+                # says so instead of repainting the unchanged "Media changed"
+                # line that made recovery read as inert. Rows stay openable.
+                assert controller.stale_copy == "Couldn't retry · RuntimeError"
+                assert not screen.query_one(
+                    "#library-media-row-0", Button
+                ).disabled
                 assert not screen.query_one(
                     "#library-media-type-filter", Button
                 ).disabled
@@ -25828,8 +25865,8 @@ def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     restored.restore_state(state)
 
     assert restored._library_skills_browse_controller.scope == scope
-    assert restored._library_skills_filter == "review"
-    assert restored._library_skills_sort == "status"
+    assert restored._skills_state.filter == "review"
+    assert restored._skills_state.sort == "status"
 
 
 @pytest.mark.parametrize(

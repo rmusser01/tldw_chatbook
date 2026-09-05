@@ -2,9 +2,9 @@
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
  * settings-owned rules split out of components/_agentic_terminal.tcss
- * by build_css.py (TASK-25812). Loaded via the owning screen's CSS_PATH,
- * so these bytes are parsed on first visit instead of before first paint.
- * Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit components/_agentic_terminal.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -44,6 +44,8 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
 
 $ds-chat-user-accent: $text-primary;
 $ds-chat-user-accent-dark: #8bd5ff;
