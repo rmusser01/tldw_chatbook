@@ -40,4 +40,8 @@ list they came from.
 - [ ] #9 `serialize_console_rail_preferences` and the `ConsoleInspectorRail` class both carry docstrings describing what they own
 - [ ] #10 The `_on_app_focus` test asserts the production path is reached rather than that a shadowing handler is absent
 - [ ] #11 The rail's `UnknownModeError` catch is narrowed or justified in place
+- [ ] #12 `ENV_SUMMARY_BUDGET` (and the 34-column widget-test pin) match the rail's REAL content width — measured 30 columns at 80x24, 36 at 200x50, so the "Environment" title still ellipsizes to "Environm…" at the smallest size; a budget of ≤16 (or a width-aware budget) fits the full title, and the test must pin a width the smallest supported terminal actually produces (final re-review, live-measured 2026-09-04)
+- [ ] #13 The Tasks section header summary gets the same budget treatment — a branch-linked summary like "task-31450 · In Progress" (24 cols) + 3-col toggle leaves 3 cols for the 5-col "Tasks" title at 80x24, reproducing the F1 squeeze; reachable on any feat/task-NNNNN branch (final re-review)
+- [ ] #14 The F2 negative-control docstring in `Tests/UI/test_console_environment_wiring.py` stops claiming a click path it does not exercise (Textual focuses focus_on_click widgets on MouseDown before forwarding, so the test proves only the programmatic re-projection path)
+- [ ] #15 `TasksEnvState.scanning` + its projection branch + `test_scanning_placeholder` are either wired to real behavior or deleted — provably dead code since the bounded-read optimization (owner call recorded at arc close)
 <!-- AC:END -->
