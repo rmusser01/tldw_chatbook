@@ -227,7 +227,7 @@ values. Zero drift; nothing to lower.
   force-added for durable evidence (ledger + 3 reports + 6 review diffs +
   this report).
 
-Commit: COMMIT_SHA_PLACEHOLDER
+Commit: `225a75be1`
 
 ## 8. Self-review
 
