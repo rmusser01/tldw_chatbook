@@ -11,13 +11,12 @@ import shlex
 import shutil
 import socket
 import subprocess
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 from urllib.parse import urlparse
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -49,8 +48,7 @@ _MANAGED_SHORT_FLAG_ALIASES = {"-tp": "--tensor-parallel-size"}
 _MAX_PROBE_OUTPUT_BYTES = 256
 _PROBE_TIMEOUT_SECONDS = 5.0
 _PROBE_REAP_TIMEOUT_SECONDS = 0.25
-_PROBE_READER_POLL_SECONDS = 0.01
-_PROBE_READER_JOIN_SECONDS = 1.0
+_PROBE_OUTPUT_POLL_SECONDS = 0.01
 _VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
 _DTYPE_VALUES = frozenset({"", "auto", "half", "float16", "bfloat16", "float32"})
 _MAX_BIND_ADDRESS_CODEPOINTS = 255
@@ -457,134 +455,152 @@ def _terminate_and_reap_probe(process: subprocess.Popen[bytes]) -> None:
     try:
         if process.poll() is not None:
             return
-    except (OSError, subprocess.SubprocessError):
+    except Exception:  # noqa: BLE001, S110 - cleanup never exposes child details
         pass
     try:
         process.terminate()
         process.wait(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
         return
-    except (OSError, subprocess.SubprocessError):
+    except Exception:  # noqa: BLE001, S110 - cleanup never exposes child details
         pass
     try:
         process.kill()
         process.wait(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
-    except (OSError, subprocess.SubprocessError):
+    except Exception:  # noqa: BLE001, S110 - cleanup never exposes child details
         pass
 
 
-def _windows_pipe_available(fd: int) -> int:
-    """Return currently readable bytes for one Windows anonymous pipe."""
+class _ProbeOutput(Protocol):
+    """Owned probe-output channel whose reads cannot outlive the deadline."""
 
-    import ctypes
-    import msvcrt
-    from ctypes import wintypes
+    def read_nowait(self, maximum_bytes: int) -> tuple[bytes, bool]: ...
 
-    available = wintypes.DWORD()
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    peek_named_pipe = kernel32.PeekNamedPipe
-    peek_named_pipe.argtypes = (
-        wintypes.HANDLE,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-    )
-    peek_named_pipe.restype = wintypes.BOOL
-    succeeded = peek_named_pipe(
-        wintypes.HANDLE(msvcrt.get_osfhandle(fd)),
-        None,
-        0,
-        None,
-        ctypes.byref(available),
-        None,
-    )
-    if not succeeded:
-        raise OSError(ctypes.get_last_error(), "pipe probe failed")
-    return available.value
+    def close(self) -> None: ...
 
 
-def _read_probe_stdout(
-    process: subprocess.Popen[bytes],
-    output: bytearray,
-    stop: threading.Event,
-    deadline: float,
-) -> None:
-    """Read a child pipe without any operation that can outlive the deadline."""
+@dataclass(slots=True)
+class _PosixProbeOutput:
+    stream: object
+    descriptor: int
 
-    assert process.stdout is not None
-    fd = process.stdout.fileno()
-    windows = os.name == "nt"
-    if not windows:
-        os.set_blocking(fd, False)
-    while not stop.is_set() and time.monotonic() < deadline:
-        remaining = _MAX_PROBE_OUTPUT_BYTES + 1 - len(output)
-        if remaining <= 0:
-            return
+    def read_nowait(self, maximum_bytes: int) -> tuple[bytes, bool]:
         try:
-            if windows:
-                available = _windows_pipe_available(fd)
-                if available == 0:
-                    if process.poll() is not None:
-                        return
-                    stop.wait(_PROBE_READER_POLL_SECONDS)
-                    continue
-                read_size = min(remaining, available)
-            else:
-                read_size = remaining
-            chunk = os.read(fd, read_size)
+            chunk = os.read(self.descriptor, maximum_bytes)
         except BlockingIOError:
-            if process.poll() is not None:
-                return
-            stop.wait(_PROBE_READER_POLL_SECONDS)
-            continue
-        if not chunk:
-            return
-        output.extend(chunk)
+            return b"", False
+        return chunk, not chunk
+
+    def close(self) -> None:
+        try:
+            self.stream.close()  # type: ignore[attr-defined]
+        except (OSError, ValueError):
+            pass
+
+
+def _open_windows_probe_output_pipe() -> tuple[_ProbeOutput, object]:
+    """Open the repository's local-only PIPE_NOWAIT output transport."""
+
+    from tldw_chatbook.Model_Artifacts.machine_memory_probe import (
+        _open_windows_output_pipe,
+    )
+
+    return _open_windows_output_pipe()
+
+
+def _close_probe_writer(writer: object) -> None:
+    """Close one parent-owned child-writer wrapper without retaining errors."""
+
+    try:
+        writer.close()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001, S110 - never retain cleanup details
+        pass
+
+
+def _start_default_probe(
+    argv: list[str],
+) -> tuple[subprocess.Popen[bytes], _ProbeOutput]:
+    """Start a probe with one platform-safe, owned output channel."""
+
+    if os.name == "nt":
+        probe_output, writer = _open_windows_probe_output_pipe()
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdout=writer,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+            )
+        except Exception:
+            probe_output.close()
+            _close_probe_writer(writer)
+            raise
+        try:
+            writer.close()  # type: ignore[attr-defined]
+        except Exception:
+            _terminate_and_reap_probe(process)
+            probe_output.close()
+            raise
+        return process, probe_output
+
+    process = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=0,
+        shell=False,
+    )
+    if process.stdout is None:
+        _terminate_and_reap_probe(process)
+        raise RuntimeError("vLLM probe stdout unavailable")
+    stdout = process.stdout
+    try:
+        descriptor = stdout.fileno()
+        os.set_blocking(descriptor, False)
+    except Exception:
+        _terminate_and_reap_probe(process)
+        try:
+            stdout.close()
+        except (OSError, ValueError):
+            pass
+        raise
+    return process, _PosixProbeOutput(stdout, descriptor)
 
 
 def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
     """Read a child pipe portably while enforcing time and byte ceilings."""
 
     try:
-        process = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0,
-        )
-    except OSError:
+        process, probe_output = _start_default_probe(argv)
+    except Exception:  # noqa: BLE001 - normalize transport and spawn failures
         return False, None
-    assert process.stdout is not None
     output = bytearray()
-    reader_done = threading.Event()
-    reader_failed = threading.Event()
-    reader_stop = threading.Event()
     deadline = time.monotonic() + _PROBE_TIMEOUT_SECONDS
-
-    def read_stdout() -> None:
-        try:
-            _read_probe_stdout(process, output, reader_stop, deadline)
-        except Exception:  # noqa: BLE001 - normalize child pipe failures
-            reader_failed.set()
-        finally:
-            reader_done.set()
-
-    reader = threading.Thread(
-        target=read_stdout,
-        name="vllm-version-probe-reader",
-    )
     result: tuple[bool, str | None] = (False, None)
-    reader.start()
     try:
-        remaining = deadline - time.monotonic()
-        if remaining > 0 and reader_done.wait(remaining):
-            if not reader_failed.is_set() and len(output) <= _MAX_PROBE_OUTPUT_BYTES:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                read_limit = _MAX_PROBE_OUTPUT_BYTES + 1 - len(output)
+                chunk, reached_eof = probe_output.read_nowait(read_limit)
+            except Exception:  # noqa: BLE001 - normalize transport failures
+                break
+            if chunk:
+                output.extend(chunk)
+                if len(output) > _MAX_PROBE_OUTPUT_BYTES:
+                    break
+                continue
+            try:
+                returncode = process.poll()
+            except Exception:  # noqa: BLE001 - normalize child polling failures
+                break
+            if returncode is not None:
                 try:
                     returncode = process.wait(
                         timeout=max(0.0, deadline - time.monotonic())
                     )
-                except (OSError, subprocess.SubprocessError):
+                except Exception:  # noqa: BLE001 - normalize child wait failures
                     returncode = None
                 if returncode == 0:
                     result = (
@@ -593,21 +609,27 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
                             output.decode("utf-8", errors="replace")
                         ),
                     )
+                break
+            if reached_eof:
+                try:
+                    returncode = process.wait(timeout=remaining)
+                except Exception:  # noqa: BLE001 - normalize child wait failures
+                    break
+                if returncode == 0:
+                    result = (
+                        True,
+                        _classify_probe_version(
+                            output.decode("utf-8", errors="replace")
+                        ),
+                    )
+                break
+            time.sleep(min(_PROBE_OUTPUT_POLL_SECONDS, remaining))
     finally:
         if not result[0]:
             _terminate_and_reap_probe(process)
-        reader_stop.set()
-        join_budget = (
-            max(0.0, deadline - time.monotonic())
-            + _PROBE_READER_JOIN_SECONDS
-            + _PROBE_READER_POLL_SECONDS
-        )
-        reader.join(timeout=join_budget)
-        if reader.is_alive():
-            raise RuntimeError("vLLM probe reader cleanup failed")
         try:
-            process.stdout.close()
-        except (OSError, ValueError):
+            probe_output.close()
+        except Exception:  # noqa: BLE001, S110 - never retain cleanup details
             pass
     return result
 

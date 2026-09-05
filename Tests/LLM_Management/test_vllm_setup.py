@@ -159,17 +159,16 @@ def test_default_probe_times_out_and_reaps_a_quiet_child(monkeypatch, tmp_path: 
 
 
 def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch):
-    class BrokenPipe:
+    class BrokenOutput:
         closed = False
 
-        def read(self, _size: int) -> bytes:
-            raise OSError("READER_EXCEPTION_CANARY")
+        def read_nowait(self, _maximum_bytes: int) -> tuple[bytes, bool]:
+            raise RuntimeError("READER_EXCEPTION_CANARY")
 
         def close(self) -> None:
             self.closed = True
 
     class FakeProcess:
-        stdout = BrokenPipe()
         reaped = False
 
         def poll(self):
@@ -188,18 +187,18 @@ def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch)
             self.reaped = True
 
     process = FakeProcess()
-    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+    output = BrokenOutput()
     monkeypatch.setattr(
         vllm_setup,
-        "_read_probe_stdout",
-        lambda *_args: (_ for _ in ()).throw(OSError("READER_EXCEPTION_CANARY")),
+        "_start_default_probe",
+        lambda _argv: (process, output),
     )
 
     result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
 
     assert result == (False, None)
     assert process.reaped
-    assert process.stdout.closed
+    assert output.closed
     assert "READER_EXCEPTION_CANARY" not in repr(result)
     assert not any(
         thread.name == "vllm-version-probe-reader" and thread.is_alive()
@@ -208,20 +207,19 @@ def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch)
 
 
 def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
-    class VersionPipe:
+    class VersionOutput:
         closed = False
 
         def __init__(self) -> None:
-            self.chunks = iter((b"Python 3.12.0", b""))
+            self.chunks = iter(((b"Python 3.12.0", False), (b"", True)))
 
-        def read(self, _size: int) -> bytes:
+        def read_nowait(self, _maximum_bytes: int) -> tuple[bytes, bool]:
             return next(self.chunks)
 
         def close(self) -> None:
             self.closed = True
 
     class FakeProcess:
-        stdout = VersionPipe()
         reaped = False
         waits = 0
 
@@ -234,7 +232,7 @@ def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
         def wait(self, timeout=None) -> int:
             self.waits += 1
             if self.waits == 1:
-                raise OSError("WAIT_EXCEPTION_CANARY")
+                raise RuntimeError("WAIT_EXCEPTION_CANARY")
             self.reaped = True
             return 0
 
@@ -242,19 +240,19 @@ def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
             self.reaped = True
 
     process = FakeProcess()
-    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
-
-    def read_version(_process, output, _stop, _deadline) -> None:
-        output.extend(b"Python 3.12.0")
-
-    monkeypatch.setattr(vllm_setup, "_read_probe_stdout", read_version)
+    output = VersionOutput()
+    monkeypatch.setattr(
+        vllm_setup,
+        "_start_default_probe",
+        lambda _argv: (process, output),
+    )
 
     result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
 
     assert result == (False, None)
     assert process.reaped
     assert process.waits == 2
-    assert process.stdout.closed
+    assert output.closed
     assert "WAIT_EXCEPTION_CANARY" not in repr(result)
     assert not any(
         thread.name == "vllm-version-probe-reader" and thread.is_alive()
@@ -274,7 +272,173 @@ def test_default_probe_enforces_exact_output_byte_boundary(length: int, expected
     assert result == ((True, None) if expected else (False, None))
 
 
-def test_default_probe_joins_reader_before_closing_inherited_writer_pipe(
+def test_windows_default_probe_uses_owned_nonblocking_transport(monkeypatch):
+    class FakeOutput:
+        closed = False
+
+        def __init__(self) -> None:
+            self.chunks = iter(((b"Python 3.12.0", False), (b"", True)))
+
+        def read_nowait(self, _maximum_bytes: int) -> tuple[bytes, bool]:
+            return next(self.chunks)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeWriter:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class LegacyStdout:
+        closed = False
+
+        def fileno(self) -> int:
+            return 123
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        stdout = LegacyStdout()
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout=None) -> int:
+            return 0
+
+    output = FakeOutput()
+    writer = FakeWriter()
+    process = FakeProcess()
+    popen_stdout: list[object] = []
+
+    def popen(*_args, **kwargs):
+        popen_stdout.append(kwargs["stdout"])
+        return process
+
+    monkeypatch.setattr(vllm_setup.os, "name", "nt")
+    monkeypatch.setattr(vllm_setup.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        vllm_setup,
+        "_open_windows_probe_output_pipe",
+        lambda: (output, writer),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        vllm_setup,
+        "_windows_pipe_available",
+        lambda _fd: (_ for _ in ()).throw(
+            AssertionError("synchronous pipe readiness must not run")
+        ),
+        raising=False,
+    )
+
+    result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
+
+    assert result == (True, "Python 3.12.0")
+    assert popen_stdout == [writer]
+    assert popen_stdout[0] is not subprocess.PIPE
+    assert writer.closed
+    assert output.closed
+    assert not any(
+        thread.name == "vllm-version-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def test_windows_inherited_writer_cannot_outlive_probe_or_leak_handles(monkeypatch):
+    readiness_entered = threading.Event()
+    release_readiness = threading.Event()
+
+    class FakeOutput:
+        closed = False
+
+        def read_nowait(self, _maximum_bytes: int) -> tuple[bytes, bool]:
+            return b"", False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeWriter:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class LegacyStdout:
+        closed = False
+
+        def fileno(self) -> int:
+            return 123
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        stdout = LegacyStdout()
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout=None) -> int:
+            return 0
+
+    output = FakeOutput()
+    writer = FakeWriter()
+    process = FakeProcess()
+    result_box: list[tuple[bool, str | None]] = []
+
+    def blocking_readiness(_fd: int) -> int:
+        readiness_entered.set()
+        release_readiness.wait(1)
+        return 0
+
+    monkeypatch.setattr(vllm_setup.os, "name", "nt")
+    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(vllm_setup, "_PROBE_TIMEOUT_SECONDS", 0.03)
+    monkeypatch.setattr(
+        vllm_setup,
+        "_windows_pipe_available",
+        blocking_readiness,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        vllm_setup,
+        "_open_windows_probe_output_pipe",
+        lambda: (output, writer),
+        raising=False,
+    )
+    caller = threading.Thread(
+        target=lambda: result_box.append(
+            vllm_setup._run_default_probe([sys.executable, "ignored.py"])
+        ),
+        name="windows-vllm-probe-contract-test",
+        daemon=True,
+    )
+
+    started = time.monotonic()
+    caller.start()
+    caller.join(0.3)
+    returned_by_bound = not caller.is_alive()
+    elapsed = time.monotonic() - started
+    release_readiness.set()
+    caller.join(2)
+
+    assert returned_by_bound
+    assert elapsed < 0.3
+    assert readiness_entered.is_set() is False
+    assert result_box == [(True, None)]
+    assert writer.closed
+    assert output.closed
+    assert not any(
+        thread.name == "vllm-version-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def test_posix_default_probe_closes_after_inherited_writer_deadline(
     monkeypatch,
 ):
     read_fd, write_fd = os.pipe()

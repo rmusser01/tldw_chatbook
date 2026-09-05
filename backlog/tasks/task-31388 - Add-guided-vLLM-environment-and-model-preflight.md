@@ -214,24 +214,20 @@ any resolver, socket, or HTTP work. Focused bind/URL and mounted settlement
 regressions pass; no new ADR is required because this directly enforces the
 accepted preflight boundary.
 
-Post-PR review hardening replaces pipe polling in the default-version probe
-with one bounded reader thread and an owner-enforced monotonic deadline. Every
-oversize, timeout, reader, and process-wait failure now terminates, kills when
-needed, reaps, closes, and joins without retaining output or exception text;
-cross-platform subprocess tests cover each settlement path. The same round
-adds a shared strict lexical boundary for every vLLM draft control and raw
-arguments, preserving exact partial edits while rejecting bounded invalid
-events without echo. ADR-117 already governs these preflight and privacy
-boundaries, so no new ADR or contract change was required.
-
-Independent-review follow-up removes the remaining cross-thread buffered-close
-hazard from the default probe. The reader uses deadline-bounded nonblocking file
-descriptor reads (with `PeekNamedPipe` availability on Windows), the owner
-settles the child before cancellation, confirms the non-daemon reader joined,
-and only then closes the wrapper. Synchronized inherited-writer coverage proves
-the close cannot race a live reader; exact 256/257-byte, quiet-timeout,
-read-error, and wait-error cases all pass without retained output. This
-strengthens ADR-117's existing bounded preflight rule without changing it.
+Post-PR review hardening gives the default-version probe one owner-enforced
+monotonic loop over platform-safe output transports: a nonblocking descriptor
+on POSIX and the repository's local-only `PIPE_NOWAIT` named pipe on Windows.
+There is no reader thread or synchronous anonymous-pipe readiness call for an
+inherited writer to strand. Every oversize, timeout, read, process-wait, spawn,
+and transport failure terminates, kills when needed, reaps, and closes without
+retaining output or exception text. Ten focused cases cover the real
+cross-platform subprocess path, the exact 256/257-byte boundary, quiet timeout,
+read/wait failure, simulated Windows transport ownership, inherited writers,
+and thread/handle cleanup. The same round adds a shared strict lexical boundary
+for every vLLM draft control and raw arguments, preserving exact partial edits
+while rejecting bounded invalid events without echo. ADR-117 already governs
+these preflight and privacy boundaries, so no new ADR or contract change was
+required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
