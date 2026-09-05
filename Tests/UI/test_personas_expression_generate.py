@@ -1780,6 +1780,9 @@ async def test_visual_identity_generate_all_decline_makes_zero_provider_calls(
 async def test_visual_identity_generate_all_uses_three_threads_one_reference_and_event(
     personas_editor_with_bound_pack, monkeypatch
 ):
+    from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+
+    assert "ResolvedReferenceImage" not in vars(personas_screen_module)
     app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
     _set_description(screen, "silver hair, amber eyes")
     monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
@@ -1825,10 +1828,14 @@ async def test_visual_identity_generate_all_uses_three_threads_one_reference_and
     assert len(requests) == len(SAMIRA_REACTION_LABELS) == 31
     assert peak == 3
     assert len({id(request.reference_image) for request in requests}) == 1
+    assert type(requests[0].reference_image) is ResolvedReferenceImage
+    assert "ResolvedReferenceImage" not in vars(personas_screen_module)
     assert requests[0].reference_image.content == reference_bytes
     assert len({id(request.cancel_event) for request in requests}) == 1
     assert isinstance(requests[0].cancel_event, Event)
-    assert len(screen._visual_identity_authoring.candidate.replaced_expression_keys) == 31
+    assert (
+        len(screen._visual_identity_authoring.candidate.replaced_expression_keys) == 31
+    )
 
 
 async def test_visual_identity_generate_all_cancellation_discards_candidate_and_drains(
