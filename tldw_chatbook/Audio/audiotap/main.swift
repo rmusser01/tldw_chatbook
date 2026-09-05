@@ -50,7 +50,12 @@ func processObject(for pid: pid_t) -> AudioObjectID? {
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
                                    UInt32(MemoryLayout<pid_t>.size), ptr, &size, &object)
     }
-    return status == noErr ? object : nil
+    // Translation answers noErr with kAudioObjectUnknown (0) for a PID that
+    // has no HAL audio client yet -- typically the parent process that spawns
+    // this helper. Passing that 0 into the tap's exclude list makes
+    // AudioHardwareCreateProcessTap fail with '!obj' (560947818), which looks
+    // exactly like a denied System Audio Recording grant. Drop it instead.
+    return status == noErr && object != AudioObjectID(kAudioObjectUnknown) ? object : nil
 }
 
 var exclude: [AudioObjectID] = []
