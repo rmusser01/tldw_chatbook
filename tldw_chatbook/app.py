@@ -8389,6 +8389,7 @@ class TldwCli(
                     get_cli_setting("appearance", "reduce_motion", False)
                 ),
                 scheduler=self.call_after_refresh,
+                on_change=self._notify_persona_buddy_changed,
             )
             return self._persona_buddy_controller
 
@@ -11921,8 +11922,9 @@ class TldwCli(
             controller is not current_controller
             or current_screen is not screen
             or not screen.is_attached
-            or screen._persona_buddy_view is not view
-            or screen.persona_buddy_view_generation != view_generation
+            or getattr(self, "_persona_buddy_overlay", None) is None
+            or not self._persona_buddy_overlay.is_current(view)
+            or self._persona_buddy_overlay.generation != view_generation
             or not view.is_attached
         ):
             return False
@@ -11951,7 +11953,55 @@ class TldwCli(
             return False
         if not isinstance(screen, BaseAppScreen) or not screen.is_active:
             return False
-        return await screen.reconcile_persona_buddy_view()
+        owner = getattr(self, "_persona_buddy_overlay", None)
+        if owner is None:
+            from .UI.Navigation.persona_buddy_overlay import PersonaBuddyOverlay
+
+            owner = self._persona_buddy_overlay = PersonaBuddyOverlay(self)
+        return await owner.reconcile()
+
+    def _start_persona_buddy_overlay(self) -> None:
+        """Subscribe once to native screen changes and reconcile after mount."""
+        if getattr(self, "_persona_buddy_overlay_started", False):
+            return
+        self._persona_buddy_overlay_started = True
+        self.screen_change_signal.subscribe(self, self._schedule_persona_buddy_overlay)
+        self.call_after_refresh(self._schedule_persona_buddy_overlay)
+
+    def _notify_persona_buddy_changed(self) -> None:
+        """Post a content-free notification safely from any controller thread."""
+        from .UI.Navigation.persona_buddy_overlay import PersonaBuddyChanged
+
+        self.post_message(PersonaBuddyChanged())
+
+    def on_persona_buddy_changed(self, message: Any) -> None:
+        """Reconcile the latest controller generation on the app event loop."""
+        self._schedule_persona_buddy_overlay()
+
+    def on_base_app_screen_contents_rebuilt(self, message: Any) -> None:
+        """Restore app-owned presentation after the active screen rebuilds."""
+        if message.screen is self.screen:
+            self._schedule_persona_buddy_overlay()
+
+    def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
+        """Skip disabled work and coalesce presentation updates on the app."""
+        owner = getattr(self, "_persona_buddy_overlay", None)
+        if owner is not None and owner.closed:
+            return
+        controller = getattr(self, "persona_buddy_controller", None)
+        snapshot = controller.snapshot() if controller is not None else None
+        if (snapshot is None or not snapshot.enabled) and (
+            owner is None or owner.view is None
+        ):
+            sync = getattr(self.screen, "sync_persona_buddy_reconciled_state", None)
+            if callable(sync):
+                sync()
+            return
+        if owner is None:
+            from .UI.Navigation.persona_buddy_overlay import PersonaBuddyOverlay
+
+            owner = self._persona_buddy_overlay = PersonaBuddyOverlay(self)
+        owner.request()
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
@@ -14196,6 +14246,7 @@ class TldwCli(
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        self._start_persona_buddy_overlay()
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
             local_service=self.local_watchlists_service,
             briefing_db=self.subscriptions_db,
@@ -16813,42 +16864,10 @@ class TldwCli(
         await asyncio.shield(task)
 
     async def _flush_persona_buddy_geometry(self) -> None:
-        """Land any debounced Buddy geometry before admission closes.
-
-        TASK-21122: the mounted view coalesces geometry writes behind a
-        250 ms debounce. Because `_shutdown_persona_buddy` ends the
-        controller BEFORE Textual unmounts screens, a nudge inside that
-        window would reach `persist_preferences_revision` after admission
-        closed and be refused -- silently losing the user's last move.
-        Draining every mounted view here, while the controller is still
-        accepting writes, is what keeps it durable.
-        """
-        screens: list[Any] = []
-        stacks = getattr(self, "_screen_stacks", None)
-        if isinstance(stacks, dict):
-            for stack in stacks.values():
-                screens.extend(stack or ())
-        else:
-            try:
-                screens.extend(self.screen_stack)
-            except Exception:
-                return
-        seen: set[int] = set()
-        for screen in screens:
-            if id(screen) in seen:
-                continue
-            seen.add(id(screen))
-            flush = getattr(screen, "flush_persona_buddy_geometry", None)
-            if not callable(flush):
-                continue
-            try:
-                pending = flush()
-                if inspect.isawaitable(pending):
-                    await pending
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.debug("persona_buddy_geometry_flush_failed")
+        """Close presentation admission and drain the app-owned view."""
+        owner = getattr(self, "_persona_buddy_overlay", None)
+        if owner is not None:
+            await owner.shutdown()
 
     async def _shutdown_persona_buddy(self) -> None:
         """Drain the app-owned Buddy before profile database teardown.
