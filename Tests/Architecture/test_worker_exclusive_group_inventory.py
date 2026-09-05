@@ -308,7 +308,10 @@ def _mutation_refresh_violations_in_tree(
             if isinstance(item, ast.Name)
             and isinstance(item.ctx, ast.Load)
             and item.id == callback.id
-            and owners.get(item.lineno) == dispatcher
+            and (
+                owners.get(item.lineno) == dispatcher
+                or owners.get(item.lineno, "").startswith(f"{dispatcher}.")
+            )
         ]
         if len(references) == 1:
             grouped_callbacks[f"{dispatcher}.{callback.id}"] = group.value
@@ -809,6 +812,12 @@ def test_nested_loader_wrapper_requires_exclusive_grouped_dispatch() -> None:
             ("unknown", "tasks", "", False),
             ("True", "mutation", "", False),
             ("True", "tasks", "await refresh()", False),
+            (
+                "True",
+                "tasks",
+                "async def mutate():\n            await refresh()\n        await mutate()",
+                False,
+            ),
         ):
             tree = ast.parse(
                 "class ScratchScreen:\n"
