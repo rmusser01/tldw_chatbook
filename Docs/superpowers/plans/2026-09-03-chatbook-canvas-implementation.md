@@ -564,6 +564,7 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `Tests/Canvas/browser/test_canvas_served_flow.py`
 - Modify: `Tests/Canvas/browser/test_canvas_zero_egress.py`
 - Create as needed: focused live-harness helpers/fixtures under `Tests/Canvas/browser/`
+- Modify as needed: `tldw_chatbook/Canvas/gateway.py`, `tldw_chatbook/Canvas/static/canvas_shell.js`, `tldw_chatbook/Web_Server/serve.py`, and focused gateway/served-state/browser tests to repair the reproduced served exact-card selection delivery gap and redundant parent synchronization. Preserve exact-selection capability revocation, historical pinning, shell ownership and stale-response fences; do not reload a consumed bootstrap or weaken authentication. Passive synchronization of an already-applied scope must remain distinct from explicit same-revision selection intent. ADR-115 already governs this behavior; no new architecture is authorized.
 - Modify as needed: `Tests/Chatbooks/test_chatbook_canvas_round_trip.py`
 - Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the reviewed Canvas schema 67 migration; preserve the genuine v64 upgrade fixture and compaction assertions)
 - Modify: `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Docs/Development/console-semantic-mutation-inventory.md` (synchronize exact census totals and owner documentation for the two already-classified Canvas routes; retain the bidirectional structural checks)

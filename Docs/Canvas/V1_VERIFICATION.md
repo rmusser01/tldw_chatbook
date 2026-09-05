@@ -5,9 +5,30 @@ Architecture: [ADR-115](../../backlog/decisions/115-local-versioned-canvas-artif
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
-Final independent task and whole-branch review are pending. TASK-31232 remains
+Independent Task 7.4 review found five Important evidence/fixture gaps; fixes
+and scoped rereview are pending, followed by whole-branch review. Specifically,
+the corpus needs explicit expected admission/runtime outcomes, Console needs
+a persisted terminal-message assertion, native auto-open needs create-triggered
+coverage, served card reopen/reconnection must reach completion, and setup
+failure needs resource rollback. The passing counts below do not close these
+findings or establish the stronger lifecycle claims by themselves. TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
+
+The stricter exact-reopen test subsequently reproduced a product defect: the
+child selects the historical root, but the existing served renderer remains on
+its old branch. A narrow gateway/shell delivery repair is in progress under
+the existing ADR-115 contract. The earlier results below precede that repair;
+fresh affected-path coverage is required before accepting it.
+
+During diagnosis, a retained-browser-response probe timed out at 300 seconds
+and teardown was interrupted at 332 seconds. It is inconclusive evidence, not
+a demonstrated product timeout. The test/child/Playwright-driver processes
+exited and the owned pytest data/certificate paths were absent. The run did
+not capture the Chromium PID/profile, so its browser-process cleanup could
+not be independently verified from exact provenance. Unattributed or ambient
+processes were not killed; do not generalize the normal-cleanup claim below
+to that interrupted diagnostic run.
 
 ## Revision and execution context
 
@@ -107,7 +128,16 @@ an earlier 29-failure baseline characterization; it is not a new distinct set.
 ## Static checks and remaining boundaries
 
 Task 7.4's eight owned Python files outside the semantic inventory pass Ruff.
-That inventory's base/current normalized `(path, code, message)` Counters are
+The six schema/census checks were rerun solely to resolve the review's missing
+warning-category question: **6 passed, 4 warnings in 37.87s**. The retained
+summary identifies RequestsDependencyWarning plus three SyntaxWarnings for
+invalid escape sequences: `Tools/patch_tool_impls.py:32` and
+`Utils/Splash_Screens/environmental/train_journey.py:31–32`. Both source files
+are unchanged from the exact shared merge base. This characterizes the fresh
+run, not a retroactive reconstruction of the earlier lost warning summary.
+No unrelated warning cleanup was performed.
+
+The inventory's base/current normalized `(path, code, message)` Counters are
 equal at 34 findings each. Whole-file formatting passes for the five helper/
 served/zero-egress files and archive test; native, inventory and schema tests
 retain inherited whole-file formatting debt. All 31 changed-hunk format checks,
