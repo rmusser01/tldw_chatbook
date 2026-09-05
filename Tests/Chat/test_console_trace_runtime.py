@@ -220,6 +220,7 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
         "missing",
         "foreign_turn",
         "changed_policy",
+        "changed_actor",
         "stale_surface",
         "same_surface_new_run",
         "ambiguous",
@@ -277,6 +278,10 @@ async def test_tool_loop_uses_recorded_chain_and_rejects_changed_ownership(
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
     ] == ["ok"]
+    with database.transaction() as cursor:
+        origin_run_id = cursor.execute(
+            "SELECT run_id FROM console_trace_calls WHERE call_sequence = 0"
+        ).fetchone()[0]
     if scenario == "missing":
         chain = new_opaque_id()
     elif scenario == "foreign_turn":
@@ -284,6 +289,8 @@ async def test_tool_loop_uses_recorded_chain_and_rejects_changed_ownership(
         _, revision = _saved_message(database, other, "calculate")
     elif scenario == "changed_policy":
         policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    elif scenario == "changed_actor":
+        actor = new_opaque_id()
     elif scenario == "ambiguous":
         other = database.add_conversation({"title": "colliding chain"})
         other_id, _ = _saved_message(database, other, "other turn")
@@ -297,7 +304,7 @@ async def test_tool_loop_uses_recorded_chain_and_rejects_changed_ownership(
                 owner_id=owner.owner_id,
                 segment_id=segment.segment_id,
                 turn_id=other_id,
-                run_id=chain,
+                run_id=origin_run_id,
                 call_sequence=0,
                 idempotency_key=new_opaque_id(),
                 policy_id=policy.policy_id,
@@ -383,7 +390,7 @@ async def test_tool_loop_uses_recorded_chain_and_rejects_changed_ownership(
             loop_prepared, resolution, ConsoleRequestRoute.TOOL_LOOP
         )
         assert boundary.identity.turn_id == user_id
-        assert boundary.identity.run_id == chain
+        assert boundary.identity.run_id == origin_run_id
         assert boundary.identity.call_sequence == 1
     else:
         with pytest.raises(ValueError, match="trace_tool_chain_unavailable"):

@@ -7171,10 +7171,10 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         first = await controller.submit_draft("Observe the sky.", session_id=session.id)
         assert first.accepted
         assert len(requests) == 1
-        cursor = chat_db.get_connection().cursor()
-        first_call = tuple(
-            cursor.execute("SELECT * FROM console_trace_calls").fetchone()
-        )
+        with chat_db.transaction() as connection:
+            first_call = tuple(
+                connection.execute("SELECT * FROM console_trace_calls").fetchone()
+            )
         first_user_id = store.messages_for_session(session.id)[0].persisted_message_id
         reader = ConsoleTraceNativeReader(chat_db)
         first_trace = reader.read_calls(first_user_id)
@@ -7196,9 +7196,11 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             "Observe the sky.", session_id=session.id
         )
         assert second.accepted
-        assert first_call in [
-            tuple(row) for row in cursor.execute("SELECT * FROM console_trace_calls")
-        ]
+        with chat_db.transaction() as connection:
+            assert first_call in [
+                tuple(row)
+                for row in connection.execute("SELECT * FROM console_trace_calls")
+            ]
         assert reader.read_calls(first_user_id) == first_trace
         if change_history:
             assert len(requests) == 1

@@ -1977,6 +1977,9 @@ class ConsoleTraceRepository:
 
         Returns:
             The sole sequence-zero call, or None if missing or ambiguous.
+
+        Raises:
+            ValueError: If run_id is not a non-empty string.
         """
         _nonempty(run_id, "run_id")
         rows = cursor.execute(

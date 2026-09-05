@@ -157,7 +157,13 @@ class ConsoleTraceBoundaryFactory:
         )
         policy = frozen_policy_from_provenance(semantic_provenance)
         preparation_identity = new_opaque_id()
-        run_id = route_record.chain_id or new_opaque_id()
+        # Both route identities are canonical UUIDv4 strings. Bind their pair
+        # durably, without a process cache or a second ownership table.
+        run_id = (
+            f"{route_record.actor_id}:{route_record.chain_id}"
+            if route_record.chain_id is not None
+            else new_opaque_id()
+        )
         idempotency_key = new_opaque_id()
         call_sequence = 0
         reserved = None

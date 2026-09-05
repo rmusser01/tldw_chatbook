@@ -107,3 +107,30 @@ control wire/exception captures and pending/after-restore mounted SVGs.
   Logs and synthetic databases are retained; user models, binaries and profiles
   were not changed.
   The owned native/API processes exited and both fixture ports have no listeners.
+
+## PR2433 rebase and Qodo review follow-up
+
+Rebased onto dev `66a1cbf8f`. The sole conflict was competing testing-lesson
+appendices; both were retained. Range-diff confirmed unchanged product patches.
+
+Qodo identified a missing actor binding, an unscoped test cursor, and a missing
+validation-exception docstring. A new changed-actor regression failed with
+`DID NOT RAISE ValueError`: the original chain accepted another actor. Durable
+agent `run_id` now encodes the canonical UUIDv4 pair `actor_uuid:chain_uuid`.
+The same pair recovers from SQLite across factory reconstruction; a changed
+actor finds no authoritative origin and fails before reservation. Existing
+opaque-string consumers and legacy shadow binding accept this identity. No
+new schema or cache was introduced; ADR097 decision4 records the clarification.
+Historical chain-only traces remain readable but cannot authorize continuations.
+
+Both integration reads now use separate shared transaction contexts, with no
+raw cursor retained across the awaited second send. `get_run_origin` documents
+its ValueError contract. Independent read-only review approved the follow-up
+with no findings. Fresh whole targeted modules: **375 passed, 1 known baseline
+catalog failure, 1 warning, 52.85s**. No introduced Ruff/security findings;
+changed-range formatting and diff checks pass. Earlier live native UAT above
+was not rerun for this review follow-up; the real controller/agent/factory
+regressions were rerun with inference replaced.
+
+Fresh post-review storage release gates: **2 passed, 4 deselected, 1 warning,
+89.42s**, preserving both append and replacement growth requirements.
