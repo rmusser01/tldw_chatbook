@@ -20,6 +20,7 @@ from Tests.UI.test_library_per_click_recompose_t21116 import (
 )
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
+    _wait_for_media_reader_loaded,
     _wait_for_selector,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
@@ -125,7 +126,11 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
-        screen.query_one("#library-media-row-0", Button).press()
+        row = screen.query_one("#library-media-row-0", Button)
+        expected_id = str(getattr(row, "media_id", "") or "")
+        row.press()
+        await _wait_for_media_reader_loaded(screen, pilot, expected_id=expected_id)
+        screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit")
 
         plain_viewer_shortcuts = screen._footer_shortcut_registration

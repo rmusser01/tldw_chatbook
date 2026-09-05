@@ -47,8 +47,10 @@ was deleted; see the note where its entry used to be.)
 import re
 from pathlib import Path
 
+from Tests.UI.consolidated_css import app_css_text
 from Tests.UI.test_non_obscuring_focus_contract import (
-    BUNDLE, css_selectors, css_selectors_contain_class,
+    css_selectors,
+    css_selectors_contain_class,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -119,6 +121,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "button`; same pattern as console-composer-menu-button -- no "
         "distinct rule, not queried."
     ),
+    "console-conversation-actions": (
+        "query/event-routing handle on the row action opener; visuals come "
+        "from the styled `console-workspace-action` base class."
+    ),
     "console-dictation-button": (
         "per-button identifier stacked on the styled `destination-action-"
         "button`; no distinct rule, not queried."
@@ -127,11 +133,6 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "duplicates the widget's own id (#console-fleet-coachmark); shown/"
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
-    ),
-    "console-inspector-outer-scroll-hint": (
-        "duplicates #console-inspector-outer-scroll-hint; the pinned cue's "
-        "height/display are set inline and its copy is updated through the "
-        "id, so this class carries no independent style."
     ),
     "console-left-rail-outer-hint": (
         "duplicates #console-left-rail-outer-hint; the pinned cue's "
@@ -153,6 +154,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
     "console-markdown-selection-strip": (
         "query-selector handle used to update the reusable selection strip; "
         "visibility is driven directly by styles.display."
+    ),
+    "console-redirect-button": (
+        "per-button identifier stacked on the styled `destination-action-"
+        "button`; visibility and sizing are driven through its id/inline styles."
     ),
     "console-save-as-context": (
         "plain descriptive Static (role/excerpt text) with no visual "
@@ -176,10 +181,22 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "sections to toggle their display in Python; styling comes from the "
         "styled console-settings-modal-section class stacked alongside it."
     ),
+    "console-settings-action-group": (
+        "query-selector handle used to measure and align the two action rows; "
+        "the container and child buttons are styled by their ids/type rules."
+    ),
+    "console-settings-control-support": (
+        "semantic marker on per-control capability copy; each instance is "
+        "addressed by id and needs no separate visual treatment."
+    ),
     "console-settings-error-summary": (
         "presence pinned by test_console_session_settings.py:1764 "
         "('console-settings-error-summary' in error.classes) for test "
         "identification; no distinct CSS rule."
+    ),
+    "console-settings-field-help": (
+        "semantic marker on contextual model/provider help; visibility and "
+        "content are controlled through each widget's id."
     ),
     "console-setup-modal-detected-action": (
         "per-button identifier stacked on the styled "
@@ -189,6 +206,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "per-button identifier stacked on the styled `destination-action-"
         "button` (companion to console-send-button, but not itself test-"
         "pinned); no distinct rule, not queried."
+    ),
+    "console-terminal-session-label": (
+        "plain form-label Static inside the styled terminal-session modal; "
+        "the token is semantic and has no independent layout or paint."
     ),
     "console-tool-diff-selection-strip": (
         "query-selector handle used to update the reusable diff selection "
@@ -203,6 +224,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         ":1853,1860 (transcript.query('.console-transcript-summary-"
         "banner')), not a style hook."
     ),
+    "console-transcript-library-activity": (
+        "interaction marker used to preserve transcript selection when a "
+        "library-activity button is clicked; the Button type supplies visuals."
+    ),
     "console-turn-file-note-delete": (
         "event-routing and test-query handle on an otherwise standard "
         "compact Button; it carries no distinct visual rule."
@@ -215,6 +240,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "plain descriptive recovery-copy Static shared across four compose "
         "sites in console_workspace_context.py; no distinct rule, not "
         "queried."
+    ),
+    "console-workspace-files-more": (
+        "event-routing selector for paginated file-tree buttons; the compact "
+        "Button type supplies the visual treatment."
     ),
     "console-workspace-status-row": (
         "plain descriptive handoff-status-row Static; no distinct rule, "
@@ -277,8 +306,7 @@ def _composed_tokens():
     return tokens
 
 def _styled_tokens():
-    bundle_text = BUNDLE.read_text(encoding="utf-8")
-    selectors = css_selectors(bundle_text)
+    selectors = css_selectors(app_css_text())
     for path in _scoped_files():
         for block in DEFAULT_CSS_BLOCK.finditer(path.read_text(encoding="utf-8")):
             selectors.extend(css_selectors(block.group(1)))

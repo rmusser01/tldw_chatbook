@@ -1,11 +1,11 @@
 ---
 id: TASK-31550
 title: Install the root project in comprehensive UI CI shards
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:59'
-updated_date: '2026-09-04 23:59'
+updated_date: '2026-09-05 01:24'
 labels: []
 dependencies: []
 ---
@@ -18,10 +18,10 @@ Restore meaningful UI test execution in the comprehensive GitHub Actions workflo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The UI test job installs the repository package before invoking pytest.
-- [ ] #2 A focused workflow contract test fails if the UI job can no longer import bundled project packages.
-- [ ] #3 The workflow contract tests and profile-core packaging checks pass.
-- [ ] #4 Comprehensive UI CI reaches collected test bodies instead of aborting on a missing tldw_profile_core import.
+- [x] #1 The UI test job installs the repository package before invoking pytest.
+- [x] #2 A focused workflow contract test fails if the UI job can no longer import bundled project packages.
+- [x] #3 The workflow contract tests and profile-core packaging checks pass.
+- [x] #4 Comprehensive UI CI reaches collected test bodies instead of aborting on a missing tldw_profile_core import.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,3 +36,12 @@ ADR required: no
 ADR path: N/A
 Reason: This is a CI installation correction that preserves existing packaging and runtime boundaries.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Added an editable root-project install to every comprehensive UI shard and a workflow contract that pins the install before pytest.
+- Verified 19 CI workflow tests, three profile-core packaging tests, Ruff, diff checks, and a fresh editable install in an empty virtual environment.
+- Published commit `6320ce6554`; comprehensive run 33931801273 collected and executed UI test bodies (for example, shard 0 reached 1,550 tests) instead of failing globally in setup on `tldw_profile_core`.
+- ADR required: no; this is a CI packaging correction only.
+<!-- SECTION:NOTES:END -->

@@ -1867,6 +1867,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # a third key.
         tiebreak_labels = note_row_tiebreak_labels(projection.rows)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
+            note_index = 0
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
                 if row.kind == "pager":
@@ -1960,7 +1961,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes += " library-notes-tree-needs-attention"
                 button = library_row_button(
                     label,
-                    id=f"library-notes-tree-note-{index}",
+                    # Preserve the note-row identity contract used by the
+                    # pre-tree list. Folder and pager rows must not shift a
+                    # note's selector: they are navigation structure, not
+                    # note records.
+                    id=f"library-notes-row-{note_index}",
                     classes=classes,
                     compact=True,
                     tooltip=row.breadcrumb,
@@ -1971,6 +1976,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
+                note_index += 1
             yield from self._compose_trash_opener()
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
