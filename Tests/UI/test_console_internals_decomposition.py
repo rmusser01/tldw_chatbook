@@ -2702,19 +2702,19 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
         transcript_region = console.query_one("#console-transcript-region")
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         transcript = console.query_one("#console-native-transcript")
 
         assert not list(console.query("#console-start-here"))
         assert transcript_region.styles.border.top[0] in {"", "none"}
-        assert transcript_title.region.y == transcript_region.region.y
+        assert transcript_title.region.y == transcript_region.content_region.y
         assert (
             tab_strip.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
+        assert tab_row is not None
         assert transcript.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.y + tab_row.region.height + tab_row.styles.margin.bottom
         )
 
 
@@ -2740,21 +2740,23 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
 
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         active_tab = console.query_one(".console-session-tab-active", Button)
         transcript = console.query_one("#console-native-transcript")
 
         assert transcript_title.has_class("console-transcript-title")
-        assert tab_strip.has_class("console-session-tab-strip")
+        assert tab_row is not None
+        assert tab_row.has_class("console-session-tab-strip")
         assert transcript_title.region.height == 1
-        assert tab_strip.region.height == 1
+        assert tab_row.region.height == 1
         assert transcript_title.styles.height.value == 1
-        assert tab_strip.styles.height.value == 1
-        assert tab_strip.region.y == transcript_title.region.y + 1
+        assert tab_row.styles.height.value == 1
+        assert tab_row.region.y == transcript_title.region.y + 1
         assert transcript.region.y == (
-            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+            tab_row.region.y + 1 + tab_row.styles.margin.bottom
         )
         assert transcript_title.styles.color != active_tab.styles.color
-        assert active_tab.styles.background != tab_strip.styles.background
+        assert active_tab.styles.background != tab_row.styles.background
         assert active_tab.has_class("console-session-tab-active")
 
 
