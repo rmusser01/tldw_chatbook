@@ -1,6 +1,55 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
-## Merge paused: inherited whole-registry pre-import breach
+## Owner-approved pre-import repair — ready for current-head CI
+
+The owner approved the inherited budget repair, superseding the pause below.
+Latest base is dev `2c9c144181b942af2d29d16b9eb2681d7f5a7212`; its delta from
+`22006e84d` is backlog-only. Library's six runtime controllers and note-import
+helpers now load at construction/use, while Settings defers RAG adapter and
+Tool Pack services/modals. Existing named RAG patch seams and eager Textual
+event classes are preserved. No package, service, ownership or routing contract
+changed; ADR-097 governs the repair.
+
+The unchanged complete census falls from **547 / 422544** to **490 modules /
+363740 LOC**, with Library **113319 LOC**. No limits rise. ADR-097 tightening
+banks the savings: whole-pass LOC **380000 → 378740**, per-route LOC
+**145000 → 123319**, module cap remains **500**. The canonical snapshot tool
+refreshes only the now-passing pre-import snapshot.
+
+Verification:
+
+- New Library and Settings cold-process regressions observed genuine RED before
+  edits. Combined census/closure repeat passes all five tests.
+- Library mounted first-use selection: 122 passed / 3 source-inspection failures
+  during an import-formatting edit; the unchanged-source architecture repeat
+  passes all 17. This reproduces the already-documented `inspect`/`linecache`
+  lesson, not a behavior failure. Final complete unchanged-source repeat:
+  **125 passed**, 94.36s.
+- Five complete affected Settings files: **299 passed**, 140.95s. Independent
+  Settings review additionally ran 33 closure/Tool Profile checks, all passed.
+- Other boot/closure guards: **13 passed**; import weight **641/660**,
+  UI-ready **972/972**, CSS **785755/804000 bytes**.
+- Independent Library and Settings reviews: no actionable findings. New files
+  lint/format clean; no added diagnostics against existing broad-file baselines.
+  All six derived-artifact checks pass. No full repository sweep was run.
+- Real mounted Models UAT after runtime edits: **1 passed**, 267.44s, using the
+  existing b10816/Gemma 4/adjacent vision projector. Text reuse **22/23**, same
+  image **105/106**, changed image **19/106**, matching the native text-prefix
+  control. Newest-10/lowered-after-save retention and cancel/confirmed Delete
+  pass. The final capture was visually checked; no UAT-owned server child remains.
+
+Evidence directory: `/private/tmp/chatbook-snapshot-uat.OT7gEe`. Logs:
+`library-closure-red.log`, `library-paydown-green.log`, `library-wiring-repeat.log`,
+`library-paydown-final.log`, `paydown-boot-guards.log`, `paydown-banked-guards.log`,
+`paydown-preflight.log`, `paydown-live.log`, and `paydown-live.xml`.
+Settings's 299-test tool-output receipt is explicitly labeled at
+`/private/tmp/settings-preimport-299-tests-transcript.log`; fresh scoped static
+evidence is `/private/tmp/settings-preimport-final-static-checks.log`.
+Final image: `paydown-live-final.png`. Existing Requests dependency mismatch and
+the Settings combined-run descriptor-growth warning remain visible, unsuppressed.
+GitHub review/check settlement and the requested merge are the remaining steps.
+
+## Historical pause: inherited whole-registry pre-import breach
 
 Latest dev `22006e84d` (Library media/focus) rebased with only a lessons-document
 conflict; both additions were preserved. Integrated startup/Console/Models/F9

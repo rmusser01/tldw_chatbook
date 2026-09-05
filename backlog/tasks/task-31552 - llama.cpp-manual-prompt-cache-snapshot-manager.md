@@ -1,11 +1,11 @@
 ---
 id: TASK-31552
 title: llama.cpp manual prompt-cache snapshot manager
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 18:25'
+updated_date: '2026-09-05 18:51'
 labels: []
 dependencies: []
 references:
@@ -69,17 +69,26 @@ Recheck allocation before integration.
 - [x] #12 The integrated Console keeps Environment collectors off closed-Inspect startup while first-open, refresh, and reopen behavior remain usable
 - [x] #13 Suspended reusable Console screens do not dispatch Environment collectors, and returning to an open Inspect rail refreshes using the retained owner
 - [x] #14 Snapshot settings remain outside the whole-registry pre-import closure until the provider settings surface is used
+- [x] #15 The complete registered-screen pre-import census meets the existing module and LOC limits, without moving cost onto boot, and deferred Library and Settings features remain usable on first open.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+Owner-approved inherited pre-import repair: execute
+Docs/superpowers/plans/2026-09-05-preimport-budget-paydown.md. Defer the measured
+Library controller/note-import edges and Settings RAG/Tool Pack services to their
+existing runtime consumers. Preserve screen registration, event classes, patch
+seams, ownership and all budget limits. Verify cold-import RED/GREEN, mounted
+first use, the unchanged full census and the other boot guards before review.
+ADR required: no new ADR. ADR path: backlog/decisions/097-boot-budget-ratchets.md.
+Reason: routine import deferral preserves existing runtime boundaries.
+
 Pre-import contribution plan: pin snapshot-settings absence in a fresh whole-route
 walk, defer the canonical F9 preference imports to their existing use sites, and
 verify mounted F9 behavior plus paired census against untouched dev. ADR required:
 no new ADR; ADR-097 applies. Do not raise limits or refactor unrelated routes.
 
-<!-- SECTION:PLAN:BEGIN -->
 Latest-dev integration plan: reproduce Environment dispatch while a reusable
 Console is covered, gate the controller's existing rail accessor on screen
 activity, and refresh the retained owner on ordinary resume. Verify mounted
@@ -87,13 +96,28 @@ suspend/resume, existing deferred-controller guards, startup census and live UAT
 ADR required: no new ADR. Existing ADR-097 applies; this preserves visible-only
 collection across the newly inherited Console screen-reuse lifecycle.
 
-<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md. Reason: accepted snapshot ownership and retention contract; ADR-029 and ADR-036 also apply. Execute Docs/superpowers/plans/2026-09-04-llamacpp-slot-snapshots.md in six reviewed units: (1) strict settings and effective launch admission; (2) private transactional storage and integrity; (3) bounded loopback-only management HTTP; (4) app-owned operation and subprocess lifecycle; (5) manual Models widget and canonical F9 settings; (6) isolated real-server reuse evidence and closeout. Units 1–5 are implemented and reviewed. Task6 supplies safeguards, an opt-in production-path harness, and honest evidence documentation; its required real-server execution remains pending. Use targeted RED/GREEN tests and check criteria only when their evidence exists.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Owner-approved inherited pre-import repair supersedes the historical pause below.
+Deferred Library runtime controllers/note-import helpers and Settings RAG/Tool
+Pack services at existing use sites; patch seams and Textual event classes remain
+intact. Complete census is 490 modules/363740 LOC (was 547/422544), Library113319.
+ADR-097 banks the savings at 378740 total/123319 per-route LOC; module limit500
+unchanged. No budget increase. New closure RED/GREEN, 299 affected Settings checks,
+13 other boot/closure checks and independent reviews pass. Existing broad-file
+lint has no new diagnostics; derived artifacts reproduce. Real b10816/Gemma4
+vision UAT passes267.44s with text22/23, sameimage105/106, changedimage19/106,
+retention/Delete and owned-child cleanup. See the current UAT report for complete
+Library repeat and retained source-inspection failure evidence. No full sweep.
+Final complete unchanged-source Library verification: 125 passed in94.36s;
+final tightened census/closure repeat: 5 passed in9.17s.
+Plan: Docs/superpowers/plans/2026-09-05-preimport-budget-paydown.md.
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; no new ADR required.
+
 Merge paused after latest-dev `22006e84d` integration. 71 startup/UI checks pass;
 the wider pre-import guard fails on both PR and untouched dev (549 vs 547 modules,
 limit500; both exceed LOC caps too). Deferred F9 snapshot-preference imports at
@@ -190,14 +214,6 @@ CSS/inventory reproduction and whitespace checks pass. Existing ADR-097/ADR-119
 apply; no budget change or broad test sweep. GitHub review/check settlement and
 the requested remote merge remain the external integration steps.
 <!-- SECTION:NOTES:END -->
-
-<!-- SECTION:PLAN:END -->
-
-<!-- SECTION:PLAN:END -->
-
-<!-- SECTION:PLAN:END -->
-
-<!-- SECTION:PLAN:END -->
 
 Owner-approved inherited Console fix: first-use Environment ownership keeps the
 four collectors/projection modules off closed-Inspect startup. First-open paints

@@ -266,29 +266,8 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
 from ...Widgets.Settings_Widgets.tool_profiles_panel import ToolProfilesPanel
-from ...Widgets.Settings_Widgets.tool_pack_import_review import (
-    ToolPackExportReviewModal,
-    ToolPackImportOptions,
-    ToolPackImportOptionsModal,
-    ToolPackImportReviewModal,
-    ToolProfileFirstBindReviewModal,
-)
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 from ...Third_Party.textual_fspicker import Filters
-from ...Tool_Packs.activation import ToolPackActivationResult
-from ...Tool_Packs.binding import (
-    ToolProfileBindingReview,
-    ToolProfileConfirmationRequired,
-)
-from ...Tool_Packs.contracts import ToolPackError
-from ...Tool_Packs.export import ToolPackExportReview
-from ...Tool_Packs.importer import ToolPackImportReview
-from ...Tool_Packs.publication import (
-    CapturedToolPackDestination,
-    ToolPackPublicationResult,
-)
-from ...Tool_Packs.removal import ToolProfileRemovalResult
-from ...Tool_Packs.service import ToolProfileListing
 from ...Model_Artifacts.service import ArtifactRef
 from ...Model_Artifacts.store import managed_service
 from ...TTS.audio_cpp_guided_config import (
@@ -356,21 +335,6 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
-from .settings_rag_profile_adapter import (
-    activate_profile,
-    active_profile_info,
-    clone_profile_as,
-    delete_user_profile,
-    fetch_index_status,
-    get_profile_defaults,
-    index_change_pending,
-    is_first_run_state,
-    list_profiles_grouped,
-    load_rag_defaults_from_active_profile,
-    rename_user_profile,
-    save_rag_defaults_to_active_profile,
-    soft_config_warnings,
-)
 from ...RAG_Search.ingestion_indexing import (
     backfill_semantic_index,
     get_shared_rag_service,
@@ -431,12 +395,15 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
-    # Type-only: the create dialog is a shared modal imported locally at its
-    # one call site (handle_workspace_create) to avoid a real import cycle.
-    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ...Tool_Packs.contracts import ToolPackError
+    from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
+
+    # Type-only: the create dialog is a shared modal imported locally at its
+    # one call site (handle_workspace_create) to avoid a real import cycle.
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_network_defaults import SettingsNetworkTLS
 
@@ -468,6 +435,189 @@ def reset_image_generation_runtime() -> None:
     from ...Image_Generation.config import reset_image_generation_runtime as reset
 
     reset()
+
+
+# ADR-097: the adapter imports the RAG engine's package. Resolve it only
+# when its Settings category is used; these named seams remain patchable
+# by the profile-region tests and other existing consumers.
+def activate_profile(profile_id: str) -> tuple[bool, str]:
+    """Activate a RAG profile when the user requests a profile change.
+
+    Args:
+        profile_id: Identifier of the profile to activate.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import activate_profile as activate
+
+    return activate(profile_id)
+
+
+def active_profile_info() -> dict:
+    """Read the active RAG profile for its Settings presentation.
+
+    Returns:
+        Profile identifier, name, read-only state, and description.
+    """
+    from .settings_rag_profile_adapter import active_profile_info as read
+
+    return read()
+
+
+def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
+    """Clone a RAG profile after an explicit Settings action.
+
+    Args:
+        source_id: Identifier of the profile to clone.
+        new_name: Display name for the writable copy.
+
+    Returns:
+        Success flag and the new profile identifier or failure reason.
+    """
+    from .settings_rag_profile_adapter import clone_profile_as as clone
+
+    return clone(source_id, new_name)
+
+
+def delete_user_profile(profile_id: str) -> tuple[bool, str]:
+    """Delete a user RAG profile through its existing adapter.
+
+    Args:
+        profile_id: Identifier of the user profile to delete.
+
+    Returns:
+        Success flag and any fallback notice or failure reason.
+    """
+    from .settings_rag_profile_adapter import delete_user_profile as delete
+
+    return delete(profile_id)
+
+
+def fetch_index_status() -> dict:
+    """Read RAG index status only when the category requests it.
+
+    Returns:
+        Index state, document count, and provenance for the active profile.
+    """
+    from .settings_rag_profile_adapter import fetch_index_status as fetch
+
+    return fetch()
+
+
+def get_profile_defaults(profile_id: str) -> SettingsLibraryRagDefaults | None:
+    """Read defaults for the RAG profile selected in Settings.
+
+    Args:
+        profile_id: Identifier of the profile whose defaults are requested.
+
+    Returns:
+        Profile defaults, or None when the profile is missing.
+    """
+    from .settings_rag_profile_adapter import get_profile_defaults as read
+
+    return read(profile_id)
+
+
+def index_change_pending(values: SettingsLibraryRagDefaults) -> bool:
+    """Check whether staged RAG settings require reindexing.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Whether saving would change the active collection fingerprint.
+    """
+    from .settings_rag_profile_adapter import index_change_pending as pending
+
+    return pending(values)
+
+
+def is_first_run_state(info: dict, grouped: dict, index_state: str) -> bool:
+    """Resolve the RAG category's first-run presentation on demand.
+
+    Args:
+        info: Active-profile presentation facts.
+        grouped: Built-in and user profile groups.
+        index_state: Previously fetched index state for the active profile.
+
+    Returns:
+        Whether the profile and index facts describe a fresh installation.
+    """
+    from .settings_rag_profile_adapter import is_first_run_state as first_run
+
+    return first_run(info, grouped, index_state)
+
+
+def list_profiles_grouped() -> dict:
+    """List RAG profiles for their Settings picker.
+
+    Returns:
+        Name-sorted built-in and user groups plus the active profile identifier.
+    """
+    from .settings_rag_profile_adapter import list_profiles_grouped as list_profiles
+
+    return list_profiles()
+
+
+def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
+    """Load active-profile defaults when the RAG category needs them.
+
+    Returns:
+        Active-profile defaults with the current global Console settings.
+    """
+    from .settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile as load,
+    )
+
+    return load()
+
+
+def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
+    """Rename a user RAG profile after an explicit Settings action.
+
+    Args:
+        profile_id: Identifier of the user profile to rename.
+        new_name: Replacement display name.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import rename_user_profile as rename
+
+    return rename(profile_id, new_name)
+
+
+def save_rag_defaults_to_active_profile(
+    values: SettingsLibraryRagDefaults,
+) -> tuple[bool, str]:
+    """Persist RAG defaults through the existing active-profile owner.
+
+    Args:
+        values: Candidate Library/RAG defaults to persist.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import (
+        save_rag_defaults_to_active_profile as save,
+    )
+
+    return save(values)
+
+
+def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Read advisory warnings for the current RAG settings draft.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Advisory messages that do not prevent saving.
+    """
+    from .settings_rag_profile_adapter import soft_config_warnings as warnings
+
+    return warnings(values)
 
 
 class _AudioCppResultTransactionError(RuntimeError):
@@ -2624,6 +2774,8 @@ class SettingsScreen(BaseAppScreen):
     )
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
+        from ...Tool_Packs.service import ToolProfileListing
+
         super().__init__(app_instance, "settings", **kwargs)
         self._console_capture_policy = runtime_capture_policy()
         self._console_capture_status = "Global exchange capture settings are active."
@@ -3990,6 +4142,8 @@ class SettingsScreen(BaseAppScreen):
     )
     def _load_tool_profiles_worker(self, generation: int) -> None:
         """Capture one complete profile listing without blocking Settings."""
+        from ...Tool_Packs.service import ToolProfileListing
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             listing = ToolProfileListing(unavailable_category="service_unavailable")
@@ -4014,7 +4168,7 @@ class SettingsScreen(BaseAppScreen):
     def _apply_tool_profiles_listing(
         self,
         generation: int,
-        listing: ToolProfileListing,
+        listing: "ToolProfileListing",
     ) -> None:
         """Apply only the newest listing to the currently mounted category."""
         if generation != self._tool_profiles_listing_generation:
@@ -4063,7 +4217,7 @@ class SettingsScreen(BaseAppScreen):
         return False
 
     @staticmethod
-    def _tool_pack_failure_copy(operation: str, error: ToolPackError) -> str:
+    def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
         if operation == "export" and error.category == "publication_unsupported":
             if os.name == "nt":
@@ -4093,6 +4247,15 @@ class SettingsScreen(BaseAppScreen):
     )
     async def _tool_profile_import_flow(self) -> None:
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
+        from ...Tool_Packs.activation import ToolPackActivationResult
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.importer import ToolPackImportReview
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackImportOptions,
+            ToolPackImportOptionsModal,
+            ToolPackImportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Import failed · service_unavailable")
@@ -4192,6 +4355,16 @@ class SettingsScreen(BaseAppScreen):
         policy_digest: str | None,
     ) -> None:
         """Capture, review, and safely publish one immutable Tool Pack."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.export import ToolPackExportReview
+        from ...Tool_Packs.publication import (
+            CapturedToolPackDestination,
+            ToolPackPublicationResult,
+        )
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackExportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Export failed · service_unavailable")
@@ -4289,6 +4462,9 @@ class SettingsScreen(BaseAppScreen):
         revision: int,
     ) -> None:
         """Confirm and replace one eligible profile with its permanent tombstone."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.removal import ToolProfileRemovalResult
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Remove failed · service_unavailable")
@@ -23118,6 +23294,16 @@ class SettingsScreen(BaseAppScreen):
         profile_id: str | None,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
+        from ...Tool_Packs.binding import (
+            ToolProfileBindingReview,
+            ToolProfileConfirmationRequired,
+        )
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.service import ToolProfileListing
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolProfileFirstBindReviewModal,
+        )
+
         intended = WorkspaceAssistantDefaults(
             assistant_kind="persona",
             assistant_id=persona_id,
