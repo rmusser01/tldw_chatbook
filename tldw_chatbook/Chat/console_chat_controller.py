@@ -3315,6 +3315,8 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._pending_dispatch_transitions: set[str] = set()
+        self._deferred_user_stop_markers: set[str] = set()
         # Physical SQLite maintenance sets this process-local gate before its
         # final provider-idle check. New runs may prepare normally but cannot
         # cross either provider-dispatch seam until the compactor's finally
@@ -9314,12 +9316,32 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
 
         async def enter_provider_dispatch() -> None:
-            await self._run_durable_postcommit_effect(
-                preparation_id,
-                "checkpoint_transition",
-                transition_checkpoint,
-                fingerprint=fingerprint,
+            # SQLite keeps running after cancellation of its to_thread await.
+            # Finish publishing that exact committed owner before Stop settles
+            # it; otherwise a late CAS can survive a false recovery failure.
+            assistant_id = commit.assistant_message_id
+            self._pending_dispatch_transitions.add(assistant_id)
+            transition = asyncio.create_task(
+                self._run_durable_postcommit_effect(
+                    preparation_id,
+                    "checkpoint_transition",
+                    transition_checkpoint,
+                    fingerprint=fingerprint,
+                )
             )
+            cancelled = False
+            try:
+                while not transition.done():
+                    try:
+                        await asyncio.shield(transition)
+                    except asyncio.CancelledError:
+                        # Repeated Stop must not cancel the draining handoff.
+                        cancelled = True
+                transition.result()
+            finally:
+                self._pending_dispatch_transitions.discard(assistant_id)
+            if cancelled:
+                raise asyncio.CancelledError
 
         try:
 
@@ -14109,6 +14131,13 @@ class ConsoleChatController:
             return False
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
+        if assistant_message_id in self._pending_dispatch_transitions:
+            if record_user_stop:
+                self._deferred_user_stop_markers.add(assistant_message_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+            return True
         settlement_failed = False
         try:
             self._mark_stream_stopped(
@@ -14122,7 +14151,7 @@ class ConsoleChatController:
                 assistant_message_id,
             )
         if record_user_stop and not settlement_failed:
-            # TASK-337 AC3: a durable, explicit record — the run-state chip
+            # TASK-337 AC3: an explicit transcript record — the run-state chip
             # copy is transient and the review found nothing else marked
             # the interruption.
             try:
@@ -20254,6 +20283,7 @@ class ConsoleChatController:
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
+            self._deferred_user_stop_markers.discard(assistant_message_id)
             if (
                 self._active_stream_tasks.get(owner_id) is active_task
                 and self._active_assistant_message_ids.get(owner_id)
@@ -22090,7 +22120,17 @@ class ConsoleChatController:
         await self._wait_for_trace_maintenance_dispatch()
         self._trace_last_provider_activity = time.monotonic()
         if before_provider_dispatch is not None:
-            await before_provider_dispatch()
+            try:
+                await before_provider_dispatch()
+            except asyncio.CancelledError:
+                if not cancel_event.is_set():
+                    raise
+                # No agent worker exists yet; the durable handoff has drained
+                # and its published checkpoint can now settle normally.
+                stopped = self._mark_stream_stopped(
+                    assistant_message_id, visible_copy="Response stopped."
+                )
+                return ConsoleSubmitResult(True, True, stopped.content)
         elif preparation_id is not None and not self._transition_preparation(
             preparation_id,
             ConsoleTurnPreparationState.ACCEPTED,
@@ -23653,6 +23693,14 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=owner_id,
         )
+        if assistant_message_id in self._deferred_user_stop_markers:
+            self._deferred_user_stop_markers.discard(assistant_message_id)
+            if owner_id is not None:
+                self.store.append_message(
+                    owner_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="Response stopped by user.",
+                )
         return stopped
 
     def _set_run_state(
