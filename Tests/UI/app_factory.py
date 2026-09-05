@@ -33,11 +33,10 @@ from tldw_chatbook.runtime_policy import RuntimeSourceState
 # root conftest's autouse cleanup after each test.
 _created_dirs: list[Path] = []
 
-# Every still-running `get_subscriptions_db_path` patch started by
-# `_build_test_app` (task-1631); stopped by the root conftest's autouse
-# cleanup after each test. See `_build_test_app`'s own comment for why this
-# one patch cannot simply live inside the function's `ExitStack` like the
-# others.
+# Every still-running patch started by `_build_test_app`; stopped by the root
+# conftest's autouse cleanup after each test. See `_build_test_app`'s comments
+# for why the subscription-path and CLI-setting patches must outlive the
+# function's `ExitStack`.
 _active_service_patches: list = []
 
 
@@ -310,6 +309,8 @@ def _build_test_app(
     # every app-building test would start booting splash screens and
     # background schedulers.
     def fake_cli_setting(_section, _key=None, default=None):
+        if _section == "splash_screen" and _key == "enabled":
+            return False
         if (
             _section == "general"
             and _key == "default_tab"
@@ -317,6 +318,19 @@ def _build_test_app(
         ):
             return configured_default
         return default
+
+    # `TldwCli.compose()` runs only after this factory returns, but it reads
+    # `get_cli_setting` again for splash configuration. Keeping this patch
+    # alive through the test makes "splash off unless explicitly requested"
+    # a hermetic factory contract instead of depending on the developer's
+    # real config. A test about splash behavior may still layer its own
+    # narrower patch over this one.
+    cli_settings_patcher = patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=fake_cli_setting,
+    )
+    cli_settings_patcher.start()
+    _active_service_patches.append(cli_settings_patcher)
 
     fake_app_config = build_test_app_config(
         first_run_setup_completed=first_run_setup_completed,
@@ -326,7 +340,6 @@ def _build_test_app(
     with ExitStack() as stack:
         for ctx in (
             patch("tldw_chatbook.app.load_settings", return_value=fake_app_config),
-            patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
             patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None),
             patch(
                 "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",

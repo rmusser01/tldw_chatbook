@@ -1055,6 +1055,7 @@ class SchedulesWorkbench(BaseAppScreen):
             _load,
             exclusive=True,
             group="schedules-load-tasks",
+            exit_on_error=False,
         )  # type: ignore[arg-type]
 
     def _current_definitions(self) -> list[dict[str, Any]]:
@@ -1162,6 +1163,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
             all_rows = await asyncio.to_thread(_build_rows)
         except Exception:  # noqa: BLE001
+            if not self.is_mounted:
+                return
             logger.exception("Failed to load tasks")
             self.app_instance.notify(
                 "Could not load tasks. Check the scheduling service and retry.",
@@ -1182,6 +1185,11 @@ class SchedulesWorkbench(BaseAppScreen):
             await self._refresh_console_context()
             return
 
+        # Navigation may unmount this workbench while either service I/O or
+        # the threaded row build above is in flight. Its widgets no longer
+        # exist at that point, so the completed snapshot is obsolete.
+        if not self.is_mounted:
+            return
         self._tasks = reminders
         # Marks must always refer to rows that still exist (task-23107
         # review F1): a task deleted or filtered out of existence must not
@@ -1915,6 +1923,8 @@ class SchedulesWorkbench(BaseAppScreen):
         latest_console_launch = None
         if latest_console_item is None:
             latest_console_launch = await self._latest_reading_digest_console_launch()
+        if not self.is_mounted:
+            return
         self._apply_console_context(latest_console_item, latest_console_launch)
 
     async def _latest_console_follow_item_from_adapter(self) -> Any | None:
