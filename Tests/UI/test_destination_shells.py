@@ -3846,6 +3846,57 @@ async def test_skills_destination_uses_three_column_workbench_contract():
         assert screen.query_one("#skills-detail-inspector-divider")
 
 
+class _CssTrueDestinationHarness(DestinationHarness):
+    """``DestinationHarness`` that ALSO loads the real app CSS bundle.
+
+    ``DestinationHarness``/``ConsolidatedCSSApp``'s own ``CSS_PATH`` is only
+    the lifted screen/modal sheets (``screen_css_scoped``/``screen_css_self``)
+    plus the split-out widget-defaults sheets -- never
+    ``tldw_cli_modular.tcss``, where ``.ds-panel``, ``.destination-workbench``,
+    and every ``#<screen>-workbench`` ID-scoped height override actually live
+    (confirmed: none of those three selectors appear in any generated file
+    except the monolithic bundle). Textual's OWN built-in
+    ``Horizontal { height: 1fr }`` default then makes a workbench measured
+    under the plain ``DestinationHarness`` look correctly sized by
+    COINCIDENCE even with the real override missing entirely -- verified
+    while writing this test: reverting the ``#meetings-workbench`` fix and
+    rebuilding the bundle left a plain-``DestinationHarness`` measurement of
+    this exact region completely unchanged, because it never loads the file
+    that changed. Only this subclass, with the bundle spliced into its
+    ``CSS_PATH`` the same way ``_CssTrueConsoleHarness``
+    (``test_console_composer_overflow.py``) does for Console, can see the
+    bug -- see the "shared UI harness never loads the app stylesheet" entry
+    in ``backlog/docs/lessons-testing-evidence.md``.
+    """
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+@pytest.mark.asyncio
+async def test_meetings_workbench_and_transcript_pane_have_real_height():
+    # TASK-31551 task-13 fix round: pins the CSS-collapse regression found
+    # live (no #meetings-workbench height:1fr override -- .ds-panel's own
+    # height:auto/min-height:3 won by default, so the rail and canvas
+    # painted zero rows in the real app despite every mounted pilot test
+    # elsewhere staying green). Must use `_CssTrueDestinationHarness` (see
+    # its docstring) -- the plain `DestinationHarness` never loads the
+    # bundle this bug and fix live in, so it cannot see either state.
+    app = _build_test_app()
+    host = _CssTrueDestinationHarness(app, "meetings")
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#meetings-workbench").region.height >= 20
+        assert screen.query_one("#meetings-transcript").region.height > 0
+
+
 @pytest.mark.asyncio
 async def test_skills_destination_service_failure_uses_recovery_copy():
     app = _build_test_app()
