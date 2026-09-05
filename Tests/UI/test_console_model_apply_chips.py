@@ -283,10 +283,12 @@ async def test_model_apply_exact_origin_is_captured_before_catalog_await(
         _provider_readiness_app_config=lambda: {},
         _console_context_control_state_for_session=context_state_for_session,
         _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
-        _console_default_readiness=lambda _provider, _model: (
-            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        _settings_durability=SimpleNamespace(
+            _console_default_readiness=lambda _provider, _model: (
+                ConsoleSettingsReadiness("Ready", "Ready.", True)
+            ),
+            _commit_console_settings_submission_live=lambda _submission: None,
         ),
-        _commit_console_settings_submission_live=lambda _submission: None,
         _apply_console_model_popover_result=lambda _result: None,
         app=SimpleNamespace(
             push_screen=lambda modal, callback: pushed.append((modal, callback))
