@@ -7,12 +7,12 @@ display time from usage rows via the pricing catalog.
 
 from types import SimpleNamespace
 
+from tldw_chatbook.Chat import console_cost_tracker as tracker
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRow,
     ConsoleCostRowTotals,
     ConsoleCostSnapshot,
-    PayloadFingerprint,
     build_cost_rows,
     build_cost_rows_totals,
     build_cost_snapshot,
@@ -30,8 +30,10 @@ def _msg(content="hi", usage=None, role="assistant"):
 
 def test_snapshot_sums_priced_usage_rows():
     usage = ProviderUsage(
-        uncached_input=1_000_000, output=1_000_000,
-        provider="anthropic", model="claude-sonnet-4-6",
+        uncached_input=1_000_000,
+        output=1_000_000,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     snap = build_cost_snapshot(
         [_msg(usage=usage)], provider="anthropic", model="claude-sonnet-4-6"
@@ -59,8 +61,10 @@ def test_fleet_tokens_fold_into_total_tokens_but_never_price():
     price accurately (see ``ConsoleCostSnapshot.fleet_tokens``'s
     docstring)."""
     usage = ProviderUsage(
-        uncached_input=1_000_000, output=1_000_000,
-        provider="anthropic", model="claude-sonnet-4-6",
+        uncached_input=1_000_000,
+        output=1_000_000,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     snap = build_cost_snapshot(
         [_msg(usage=usage)],
@@ -141,8 +145,12 @@ def test_unknown_model_yields_tokens_only():
 def test_state_normal_warm():
     snap = ConsoleCostSnapshot(0.4821, 12000, True, False, 3)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.WARM, break_reason=None,
-        projected_delta_usd=None, ttl_remaining_s=240.0, pricing_as_of="2026-08-02",
+        snap,
+        cache_state=ConsoleCacheState.WARM,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=240.0,
+        pricing_as_of="2026-08-02",
     )
     assert state.label == "$0.4821 ●"
     assert state.alert is False and state.cold is False
@@ -152,8 +160,12 @@ def test_state_normal_warm():
 def test_state_alert_carries_delta_and_reason():
     snap = ConsoleCostSnapshot(0.48, 12000, True, False, 3)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.WARM, break_reason="system prompt changed",
-        projected_delta_usd=0.13, ttl_remaining_s=120.0, pricing_as_of="2026-08-02",
+        snap,
+        cache_state=ConsoleCacheState.WARM,
+        break_reason="system prompt changed",
+        projected_delta_usd=0.13,
+        ttl_remaining_s=120.0,
+        pricing_as_of="2026-08-02",
     )
     assert state.label == "$0.48 ⚠ ~+$0.13"
     assert state.compact_label == "$0.48 ⚠"
@@ -164,8 +176,12 @@ def test_state_alert_carries_delta_and_reason():
 def test_state_alert_requires_warm_cache():
     snap = ConsoleCostSnapshot(0.48, 12000, True, False, 3)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.NONE, break_reason="system prompt changed",
-        projected_delta_usd=0.13, ttl_remaining_s=None, pricing_as_of=None,
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason="system prompt changed",
+        projected_delta_usd=0.13,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
     )
     assert state.alert is False  # no warm cache -> nothing to break
 
@@ -173,8 +189,12 @@ def test_state_alert_requires_warm_cache():
 def test_state_expired_is_cold_not_alert():
     snap = ConsoleCostSnapshot(0.48, 12000, True, False, 3)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.EXPIRED, break_reason=None,
-        projected_delta_usd=0.13, ttl_remaining_s=None, pricing_as_of=None,
+        snap,
+        cache_state=ConsoleCacheState.EXPIRED,
+        break_reason=None,
+        projected_delta_usd=0.13,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
     )
     assert state.label == "$0.48 ○"
     assert state.cold is True and state.alert is False
@@ -184,18 +204,81 @@ def test_state_expired_is_cold_not_alert():
 def test_state_no_pricing_shows_tokens():
     snap = ConsoleCostSnapshot(None, 12_345, False, False, 2)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.NONE, break_reason=None,
-        projected_delta_usd=None, ttl_remaining_s=None, pricing_as_of=None,
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
     )
     assert state.label == "12.3k tok"
     assert "[pricing]" in state.tooltip
 
 
+def test_unpriced_estimated_history_is_marked_as_local_not_unsent():
+    snap = ConsoleCostSnapshot(None, 12_345, False, True, 2)
+    state = build_cost_state(
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
+    )
+    assert state.label == "~12.3k tok"
+    assert "Includes locally estimated transcript rows." in state.tooltip
+    assert "unsent" not in state.tooltip
+
+
+def test_snapshot_failure_is_unavailable_without_losing_cache_narration(
+    monkeypatch,
+):
+    class BrokenCatalog:
+        def get_pricing(self, *_args):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(tracker, "get_pricing_catalog", BrokenCatalog)
+    snapshot = build_cost_snapshot(
+        [_msg(content="persisted history")],
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    state = build_cost_state(
+        snapshot,
+        cache_state=ConsoleCacheState.WARM,
+        break_reason="system prompt changed",
+        projected_delta_usd=0.13,
+        ttl_remaining_s=90.0,
+        pricing_as_of="2026-09-04",
+    )
+
+    assert snapshot.available is False
+    assert state.label == "unavailable"
+    assert state.alert is True and state.cold is False
+    assert "Cache: warm" in state.tooltip
+    assert "system prompt changed" in state.tooltip
+
+    expired = build_cost_state(
+        snapshot,
+        cache_state=ConsoleCacheState.EXPIRED,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of="2026-09-04",
+    )
+    assert expired.alert is False and expired.cold is True
+    assert "Cache: expired" in expired.tooltip
+
+
 def test_estimated_entries_marked_in_tooltip_and_label():
     snap = ConsoleCostSnapshot(0.10, 5000, True, True, 2)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.NONE, break_reason=None,
-        projected_delta_usd=None, ttl_remaining_s=None, pricing_as_of=None,
+        snap,
+        cache_state=ConsoleCacheState.NONE,
+        break_reason=None,
+        projected_delta_usd=None,
+        ttl_remaining_s=None,
+        pricing_as_of=None,
     )
     assert state.label.startswith("~$0.10")
     assert "estimated" in state.tooltip.lower()
@@ -214,11 +297,13 @@ def test_estimated_row_pricing_depends_on_role():
 
     user_snap = build_cost_snapshot(
         [_msg(content=content, usage=None, role="user")],
-        provider="anthropic", model="claude-sonnet-4-6",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     assistant_snap = build_cost_snapshot(
         [_msg(content=content, usage=None, role="assistant")],
-        provider="anthropic", model="claude-sonnet-4-6",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     assert user_snap.pricing_known is True
     assert assistant_snap.pricing_known is True
@@ -242,7 +327,8 @@ def test_estimated_row_pricing_depends_on_role():
             _msg(content=content, usage=None, role="user"),
             _msg(content=content, usage=None, role="assistant"),
         ],
-        provider="anthropic", model="claude-sonnet-4-6",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     assert combined_snap.total_usd == expected_total
 
@@ -257,11 +343,13 @@ def test_estimate_provider_is_normalized_before_ratio_lookup():
 
     snap_lower = build_cost_snapshot(
         [_msg(content=content, usage=None, role="user")],
-        provider="google", model="gemini-2.5-flash",
+        provider="google",
+        model="gemini-2.5-flash",
     )
     snap_mixed = build_cost_snapshot(
         [_msg(content=content, usage=None, role="user")],
-        provider="Google", model="gemini-2.5-flash",
+        provider="Google",
+        model="gemini-2.5-flash",
     )
     assert snap_mixed.total_tokens == snap_lower.total_tokens
     assert snap_mixed.total_usd == snap_lower.total_usd
@@ -274,8 +362,12 @@ def test_tokens_only_tooltip_narrates_cache_state():
     """
     snap = ConsoleCostSnapshot(None, 12_345, False, False, 2)
     state = build_cost_state(
-        snap, cache_state=ConsoleCacheState.WARM, break_reason="system prompt changed",
-        projected_delta_usd=0.13, ttl_remaining_s=90.0, pricing_as_of=None,
+        snap,
+        cache_state=ConsoleCacheState.WARM,
+        break_reason="system prompt changed",
+        projected_delta_usd=0.13,
+        ttl_remaining_s=90.0,
+        pricing_as_of=None,
     )
     assert state.alert is True
     assert "system prompt changed" in state.tooltip
@@ -303,15 +395,24 @@ BASE = [
 
 def test_appended_turn_is_not_a_break():
     baseline = _fp(BASE)
-    current = _fp(BASE + [{"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}])
+    current = _fp(
+        BASE
+        + [{"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}]
+    )
     assert fingerprint_break_reason(baseline, current) is None
 
 
 def test_each_component_yields_its_reason_with_priority():
     baseline = _fp(BASE)
-    assert fingerprint_break_reason(baseline, _fp(BASE, model="other")) == "model or provider changed"
+    assert (
+        fingerprint_break_reason(baseline, _fp(BASE, model="other"))
+        == "model or provider changed"
+    )
     changed_system = [{"role": "system", "content": "be verbose"}] + BASE[1:]
-    assert fingerprint_break_reason(baseline, _fp(changed_system)) == "system prompt changed"
+    assert (
+        fingerprint_break_reason(baseline, _fp(changed_system))
+        == "system prompt changed"
+    )
     edited = [BASE[0], {"role": "user", "content": "EDITED"}, BASE[2]]
     assert fingerprint_break_reason(baseline, _fp(edited)) == "earlier history changed"
     # model beats system when both changed
@@ -323,7 +424,9 @@ def test_each_component_yields_its_reason_with_priority():
 
 def test_truncated_history_is_a_break():
     baseline = _fp(BASE)
-    assert fingerprint_break_reason(baseline, _fp(BASE[:2])) == "earlier history changed"
+    assert (
+        fingerprint_break_reason(baseline, _fp(BASE[:2])) == "earlier history changed"
+    )
 
 
 def test_list_content_rows_hash_stably():
@@ -336,8 +439,12 @@ def test_list_content_rows_hash_stably():
 
 def test_build_cost_rows_prices_a_usage_row():
     usage = ProviderUsage(
-        uncached_input=1000, cache_read=200, cache_write=50, output=500,
-        provider="anthropic", model="claude-sonnet-4-6",
+        uncached_input=1000,
+        cache_read=200,
+        cache_write=50,
+        output=500,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     rows = build_cost_rows(
         [_msg(usage=usage)], provider="anthropic", model="claude-sonnet-4-6"
@@ -378,7 +485,9 @@ def test_build_cost_rows_estimates_row_without_usage_role_aware():
 
 
 def test_build_cost_rows_unknown_model_yields_unpriced_row():
-    usage = ProviderUsage(uncached_input=100, provider="anthropic", model="mystery-9000")
+    usage = ProviderUsage(
+        uncached_input=100, provider="anthropic", model="mystery-9000"
+    )
     rows = build_cost_rows(
         [_msg(usage=usage)], provider="anthropic", model="mystery-9000"
     )
@@ -451,12 +560,15 @@ def test_build_cost_rows_totals_empty_is_unpriced_zero():
 
 def test_build_cost_rows_carries_audio_and_transcription_fields():
     usage = ProviderUsage(
-        uncached_input=33, output=118, audio_input=18, audio_output=90,
-        transcription_seconds=2.5, provider="openai", model="gpt-realtime",
+        uncached_input=33,
+        output=118,
+        audio_input=18,
+        audio_output=90,
+        transcription_seconds=2.5,
+        provider="openai",
+        model="gpt-realtime",
     )
-    rows = build_cost_rows(
-        [_msg(usage=usage)], provider="openai", model="gpt-realtime"
-    )
+    rows = build_cost_rows([_msg(usage=usage)], provider="openai", model="gpt-realtime")
     assert len(rows) == 1
     row = rows[0]
     assert row.audio_input == 18
@@ -472,7 +584,8 @@ def test_build_cost_rows_carries_audio_and_transcription_fields():
 def test_build_cost_rows_estimated_row_has_zero_audio_fields():
     rows = build_cost_rows(
         [_msg(content="hi there", usage=None, role="user")],
-        provider="anthropic", model="claude-sonnet-4-6",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
     )
     assert rows[0].audio_input == 0
     assert rows[0].audio_output == 0

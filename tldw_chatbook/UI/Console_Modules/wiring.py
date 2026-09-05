@@ -76,6 +76,7 @@ from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
+from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
@@ -1915,4 +1916,9 @@ def build_console_controllers(
             )
         ),
         pending_launch_accessor=lambda: screen._pending_console_launch_context,
+    )
+    screen._console_draft_spend_refresh = ConsoleDraftSpendRefresh(
+        schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
+        sync_settings_summary=lambda: screen._sync_console_settings_summary(),
+        sync_cost_chip=lambda: screen._sync_console_cost_chip(),
     )
