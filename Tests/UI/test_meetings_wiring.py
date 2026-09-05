@@ -80,6 +80,43 @@ def test_build_owner_marshals_submit_and_reads_job_state(tmp_path, monkeypatch):
     assert owner._job_state("ingest-job-9") == "done" and owner._job_state("nope") is None
 
 
+def test_build_owner_marshals_registry_listener_registration(tmp_path, monkeypatch):
+    """Q12: the raw-track cleanup waits on the ingest registry, which is
+    UI-thread-only -- add_listener/remove_listener go through the same
+    marshalling as submit, not straight off the stopping thread."""
+    from tldw_chatbook.Audio import meeting_owner as mo
+
+    monkeypatch.setattr(mo, "_config_accessors", lambda: (lambda s, k, d: d, lambda: tmp_path))
+    listeners = []
+
+    class Registry:
+        def add_listener(self, callback):
+            listeners.append(callback)
+
+        def remove_listener(self, callback):
+            listeners.remove(callback)
+
+    marshalled = []
+
+    class App:
+        library_ingest_jobs = Registry()
+        _thread_id = threading.get_ident() + 1   # pretend the UI thread is another thread
+
+        def call_from_thread(self, fn, *args, **kwargs):
+            marshalled.append(fn)
+            return fn(*args, **kwargs)
+
+    owner = mo.build_meeting_session_owner(App())
+
+    def callback():
+        return None
+
+    owner._subscribe_jobs(callback)
+    assert listeners == [callback] and marshalled == [App.library_ingest_jobs.add_listener]
+    owner._unsubscribe_jobs(callback)
+    assert listeners == [] and marshalled[-1] == App.library_ingest_jobs.remove_listener
+
+
 def test_build_owner_calls_directly_when_already_on_ui_thread(tmp_path, monkeypatch):
     from tldw_chatbook.Audio import meeting_owner as mo
 
