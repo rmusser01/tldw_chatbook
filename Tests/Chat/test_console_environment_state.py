@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 from tldw_chatbook.Chat.console_environment_state import (
+    ENV_PENDING_TEXT,
     ENV_ROW_BRANCH,
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS,
@@ -11,10 +12,16 @@ from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_EMPTY,
     ENV_ROW_ERROR,
     ENV_ROW_LOCAL,
+    ENV_ROW_PENDING,
     ENV_ROW_PR,
     ENV_ROW_PR_ADD,
     ENV_ROW_PR_OPEN,
+    ENV_ROW_UNBOUND,
+    ENV_ROW_UNBOUND_NOTE,
+    ENV_UNBOUND_NOTE_TEXT,
+    ENV_UNBOUND_TEXT,
     EnvSourceAvailability,
+    unbound_snapshot,
     ExecTargetKind,
     GitEnvState,
     PrCheck,
@@ -65,15 +72,32 @@ def test_relative_age_buckets():
     assert relative_age(now - timedelta(days=6), now) == "6d ago"
 
 
-def test_environment_snapshot_defaults_are_not_applicable():
+def test_environment_snapshot_defaults_are_pending_not_a_negative_answer():
+    """TASK-31660: the default snapshot means "nobody has looked yet".
+
+    It used to default every tier to NOT_APPLICABLE, which the projection
+    renders as the definitive "No git workspace" -- so a cold start asserted
+    that a git worktree was not a git worktree for the ~20s until the first
+    gatherer landed. NOT_APPLICABLE keeps its ONE meaning ("we looked; it is
+    not a repository"); PENDING carries the other.
+    """
     snapshot = EnvironmentSnapshot()
-    assert snapshot.git.availability is EnvSourceAvailability.NOT_APPLICABLE
-    assert snapshot.pr.availability is EnvSourceAvailability.NOT_APPLICABLE
-    assert snapshot.tasks.availability is EnvSourceAvailability.NOT_APPLICABLE
+    assert snapshot.git.availability is EnvSourceAvailability.PENDING
+    assert snapshot.pr.availability is EnvSourceAvailability.PENDING
+    assert snapshot.tasks.availability is EnvSourceAvailability.PENDING
     assert snapshot.target.kind is ExecTargetKind.LOCAL
 
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+
+
+def _not_applicable_snapshot() -> EnvironmentSnapshot:
+    """A snapshot whose git tier was CHECKED and is genuinely not a repo."""
+    return EnvironmentSnapshot(
+        git=GitEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE),
+        pr=PrEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE),
+        tasks=TasksEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE),
+    )
 
 
 def _git_state(**kw) -> GitEnvState:
@@ -91,7 +115,15 @@ def _git_state(**kw) -> GitEnvState:
 
 
 def test_no_git_workspace_projects_a_single_quiet_row():
-    state = project_environment_section(EnvironmentSnapshot(), frozenset(), now=_NOW)
+    """NOT_APPLICABLE's rendering is UNCHANGED by TASK-31660.
+
+    Updated pin: the state is now built explicitly rather than leaning on
+    ``EnvironmentSnapshot()``'s default, because that default is PENDING now
+    -- "checked: not a repo" and "never checked" stopped being the same
+    value. The assertions about NOT_APPLICABLE itself are verbatim.
+    """
+    state = project_environment_section(
+        _not_applicable_snapshot(), frozenset(), now=_NOW)
     assert [r.row_id for r in state.rows] == [ENV_ROW_EMPTY]
     assert state.rows[0].primary_text == "No git workspace"
     assert not state.rows[0].clickable
@@ -107,9 +139,101 @@ def test_errored_git_tier_gets_its_own_row_not_the_no_workspace_copy():
     assert state.rows[0].status == "blocked"
     # ... and the NOT_APPLICABLE copy is unchanged (negative control).
     not_applicable = project_environment_section(
-        EnvironmentSnapshot(), frozenset(), now=_NOW)
+        _not_applicable_snapshot(), frozenset(), now=_NOW)
     assert not_applicable.rows[0].primary_text == "No git workspace"
     assert not_applicable.rows[0].status == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-31660: PENDING (nobody has looked yet) and UNBOUND (no folder bound)
+# ---------------------------------------------------------------------------
+
+
+def test_pending_git_tier_renders_a_quiet_checking_row_never_a_negative():
+    """AC #2: before the first landing the panel must not assert anything."""
+    state = project_environment_section(EnvironmentSnapshot(), frozenset(), now=_NOW)
+    assert [r.row_id for r in state.rows] == [ENV_ROW_PENDING]
+    assert state.rows[0].primary_text == ENV_PENDING_TEXT == "Checking workspace…"
+    assert not state.rows[0].clickable
+    assert state.rows[0].status == ""
+    assert state.summary == ""
+    # The negative it replaced must be gone.
+    assert "No git workspace" not in state.rows[0].primary_text
+
+
+def test_pending_suppresses_counts_commit_push_and_pr_rows():
+    """A PENDING tier never paints leftover counts or an action for them."""
+    stale_looking = EnvironmentSnapshot(
+        git=GitEnvState(
+            availability=EnvSourceAvailability.PENDING,
+            root="/w/previous", branch="feat/previous", adds=1204, dels=86,
+            files=(ChangedFile(path="a.py", status="M", adds=1200, dels=80),),
+        ),
+        pr=PrEnvState(availability=EnvSourceAvailability.OK, number=7,
+                      title="T", state="OPEN", url="https://x/pull/7"),
+    )
+    ids = [r.row_id for r in project_environment_section(
+        stale_looking, frozenset(), now=_NOW).rows]
+    assert ids == [ENV_ROW_PENDING]
+    for suppressed in (ENV_ROW_CHANGES, ENV_ROW_BRANCH, ENV_ROW_COMMIT_PUSH,
+                       ENV_ROW_PR, ENV_ROW_CHECKS):
+        assert suppressed not in ids
+
+
+def test_pending_tasks_tier_hides_the_tasks_card():
+    assert project_tasks_section(EnvironmentSnapshot(), frozenset()).rows == ()
+
+
+def test_unbound_git_tier_carries_change_reviews_copy():
+    """AC #1: the copy is Change Review's, adapted to the rail as two rows."""
+    state = project_environment_section(unbound_snapshot(), frozenset(), now=_NOW)
+    assert [r.row_id for r in state.rows] == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
+    assert state.rows[0].primary_text == ENV_UNBOUND_TEXT
+    assert state.rows[1].primary_text == ENV_UNBOUND_NOTE_TEXT
+    joined = " ".join(r.primary_text for r in state.rows)
+    assert "No folder is bound to this conversation's workspace" in joined
+    assert "changes are not tracked here" in joined
+    assert "not a report that nothing changed" in joined
+    assert not any(r.clickable for r in state.rows)
+    assert state.summary == ""
+
+
+def test_unbound_suppresses_counts_commit_push_pr_and_checks():
+    """AC #1/#3: the PREVIOUS root's data must not survive the switch."""
+    previous_root_data = EnvironmentSnapshot(
+        git=GitEnvState(
+            availability=EnvSourceAvailability.UNBOUND,
+            root="/w/previous", branch="feat/previous", adds=1204, dels=86,
+            files=(ChangedFile(path="a.py", status="M", adds=1200, dels=80),
+                   ChangedFile(path="b.py", status="A", adds=4, dels=6)),
+            ahead=3,
+        ),
+        pr=PrEnvState(availability=EnvSourceAvailability.OK, number=7,
+                      title="T", state="OPEN", url="https://x/pull/7",
+                      checks=(PrCheck("ci", "failure", "https://ci/1"),)),
+    )
+    state = project_environment_section(previous_root_data, frozenset(), now=_NOW)
+    ids = [r.row_id for r in state.rows]
+    assert ids == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
+    for suppressed in (ENV_ROW_CHANGES, ENV_ROW_BRANCH, ENV_ROW_COMMIT_PUSH,
+                       ENV_ROW_PR, ENV_ROW_CHECKS, ENV_ROW_LOCAL):
+        assert suppressed not in ids
+    # No count text leaks through any row, in either line.
+    text = " ".join(r.primary_text + " " + r.secondary_text for r in state.rows)
+    assert "1,204" not in text and "feat/previous" not in text
+
+
+def test_unbound_tasks_tier_hides_the_tasks_card():
+    assert project_tasks_section(unbound_snapshot(), frozenset()).rows == ()
+
+
+def test_unbound_snapshot_marks_every_tier_unbound():
+    """One factory, one consistent answer across the three tiers."""
+    snapshot = unbound_snapshot()
+    assert snapshot.git.availability is EnvSourceAvailability.UNBOUND
+    assert snapshot.pr.availability is EnvSourceAvailability.UNBOUND
+    assert snapshot.tasks.availability is EnvSourceAvailability.UNBOUND
+    assert snapshot.git.files == () and snapshot.pr.number == 0
 
 
 def test_missing_tool_git_tier_still_reads_as_no_git_workspace():
@@ -267,7 +391,8 @@ def _tasks_state(**kw) -> TasksEnvState:
 
 
 def test_tasks_card_absent_without_backlog_dir():
-    state = project_tasks_section(EnvironmentSnapshot(), frozenset())
+    """Updated pin: NOT_APPLICABLE built explicitly (the default is PENDING now)."""
+    state = project_tasks_section(_not_applicable_snapshot(), frozenset())
     assert state.rows == ()
 
 

@@ -485,3 +485,148 @@ def test_branch_change_does_not_escalate_while_the_rail_is_closed(monkeypatch):
     fx.run_job(jobs_before - 1)
     assert len(fx.jobs) == jobs_before  # nothing escalated
     assert fx.pr_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# TASK-31660: root-is-None is an ANSWER (UNBOUND), not a reason to skip.
+#
+# `poll_tick`/`request_refresh` used to `return` on a None root, so nothing
+# landed and the LAST PAINT STOOD: after a switch to an unbound workspace the
+# panel kept the previous repository's branch and counts -- and still offered
+# "Commit or push - N files" against it -- permanently, with an inert Refresh.
+# ---------------------------------------------------------------------------
+
+
+def _unbound_landings(fx) -> list:
+    return [
+        s for s in fx.snapshots
+        if s.git.availability is EnvSourceAvailability.UNBOUND
+    ]
+
+
+def test_cold_start_is_pending_and_lands_nothing_until_a_gatherer_answers(monkeypatch):
+    """AC #2: PENDING first, data second -- never a negative in between."""
+    fx = DeferredFixture(monkeypatch)
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+    assert fx.snapshots == []
+
+    fx.controller.notify_rail_opened()
+    assert fx.snapshots == []  # dispatched, but nothing has ANSWERED yet
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+    fx.run_job(0)
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.snapshots[-1].git.branch == "feat/call-1"
+
+
+def test_switch_to_an_unbound_workspace_lands_unbound_within_one_poll(monkeypatch):
+    """AC #1/#3: the previous root's data is replaced, not left painted."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+
+    fx.root = None  # workspace switched to one that binds no folder
+    fx.controller.poll_tick()
+
+    landed = fx.controller.snapshot
+    assert landed.git.availability is EnvSourceAvailability.UNBOUND
+    assert landed.pr.availability is EnvSourceAvailability.UNBOUND
+    assert landed.tasks.availability is EnvSourceAvailability.UNBOUND
+    assert landed.git.branch is None and landed.git.files == ()
+    assert landed.pr.number == 0  # the other repo's PR went with its root
+    assert _unbound_landings(fx)  # it reached `on_snapshot`, not just the field
+
+
+def test_unbound_poll_dispatches_no_git_or_gh_work(monkeypatch):
+    """Landing a state is not the same as gathering one: no root, no I/O."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.poll_tick()
+    assert fx.dispatched == []
+    assert fx.git_calls == 0 and fx.pr_calls == 0
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+def test_unbound_lands_nothing_while_the_rail_is_closed(monkeypatch):
+    """Negative control: the rail-open guard still comes first."""
+    fx = Fixture(monkeypatch, root=None, rail_open=False)
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    fx.controller.notify_rail_opened()
+    assert fx.snapshots == []
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+
+def test_refresh_while_unbound_re_checks_the_binding_and_re_lands(monkeypatch):
+    """AC #4: the Refresh slot is never a visible no-op in UNBOUND."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert len(_unbound_landings(fx)) == 1
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert len(_unbound_landings(fx)) == 2  # re-checked, re-landed
+
+    # ...and the same press recovers the moment a folder IS bound again.
+    fx.root = "/w/repo"
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.git_calls == 1 and fx.pr_calls == 1
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+
+def test_unbound_to_bound_recovers_on_the_next_poll(monkeypatch):
+    """AC #3's other direction: None -> root must be detected as a change."""
+    fx = Fixture(monkeypatch, root=None)
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+    assert fx.controller._landed_root is None
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.git_calls == 1
+    assert fx.pr_calls == 1  # a root change is a BOTH-tier refresh
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+    assert fx.controller._landed_root == "/w/repo"
+
+
+def test_unbound_clears_the_net_ttl_so_a_rebind_refetches(monkeypatch):
+    """The `gh` TTL is keyed on the OLD root; unbinding must retire it."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.pr_calls == 1
+    fx.root = None
+    fx.controller.poll_tick()
+    assert fx.controller._net_fetched_at is None
+    assert fx.controller._net_pending is False
+
+    fx.root = "/w/repo"  # rebound to the SAME root, well inside the 60s TTL
+    fx.controller.poll_tick()
+    assert fx.pr_calls == 2
+
+
+def test_repeated_unbound_polls_do_not_arm_the_backoff_pause(monkeypatch):
+    """UNBOUND is a healthy answer, not a failure: it must not count."""
+    fx = Fixture(monkeypatch, root=None)
+    for _ in range(5):
+        fx.controller.poll_tick()
+    assert fx.controller._failures == {"local": 0, "net": 0}
+    assert len(_unbound_landings(fx)) == 5
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.git_calls == 1  # not paused
+
+
+def test_a_deferred_local_landing_for_a_dropped_root_stays_dropped(monkeypatch):
+    """The stale-scope guard still holds when the NEW scope is None.
+
+    A local gather in flight for `/w/repo` must not repaint the panel after
+    the workspace has unbound -- that is the same last-paint-stands defect,
+    one landing later.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh()
+    fx.root = None
+    fx.controller.poll_tick()  # lands UNBOUND
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+    fx.run_job(0)  # the in-flight gather for the old root finally lands
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND

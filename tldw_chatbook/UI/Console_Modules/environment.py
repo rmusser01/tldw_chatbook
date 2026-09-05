@@ -55,6 +55,16 @@ tests could not exercise since jobs ran synchronously at dispatch time):
   dropped mid-flight is cleared rather than latched -- otherwise its
   accumulated ``force_net`` leaks into the next request that re-keys the
   slot and silently bypasses the TTL. (task-13 addition B.)
+- A ``None`` workspace root is a landable state, not a skip (TASK-31660).
+  ``poll_tick``/``request_refresh`` used to return early on it, so nothing
+  landed and the last paint stood: after a switch to a workspace that binds
+  no folder the panel kept the PREVIOUS repository's branch and counts and
+  still offered "Commit or push · N files" against it, permanently, with an
+  inert Refresh. They now land an explicit UNBOUND snapshot (all three
+  tiers, so no half-state can keep another repo's PR), through the ordinary
+  ``_land``/``on_snapshot`` path with ``scope_root=None``. Because ``None``
+  is a real landed scope, "nothing has landed yet" needs its own flag
+  (``_has_landed``) -- see ``_landed_root``'s comment.
 - A local landing whose branch differs from the one the current PR state
   was fetched for escalates a net refresh while the rail is open. The TTL
   key is ``(root, branch)`` so the new branch was always TTL-clean --
@@ -76,6 +86,7 @@ from typing import Any, Callable
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot,
     EnvSourceAvailability,
+    unbound_snapshot,
 )
 from tldw_chatbook.Workspaces.environment_status import (
     BacklogTaskScanner,
@@ -122,7 +133,15 @@ class ConsoleEnvironmentController:
         # The root of the most recently LANDED local result, recorded as
         # the accessor's own raw string (never GitEnvState.root -- see
         # module docstring). All root-change comparisons must use this.
+        #
+        # ``None`` is now a REAL landed value ("the workspace binds no
+        # folder"), so it can no longer double as "nothing has landed yet"
+        # -- `_has_landed` carries that. Conflating them would make the
+        # unbound->bound recovery unreachable: the root-change branch in
+        # `poll_tick` would read the rebind as "first landing" and never
+        # reset the net TTL that still belongs to the old root.
         self._landed_root: str | None = None
+        self._has_landed = False
 
         # A net refresh requested before the local tier has landed for the
         # CURRENT root defers until `_land` supplies a known branch (C1).
@@ -155,9 +174,24 @@ class ConsoleEnvironmentController:
         ERROR row with a Refresh slot that did nothing. The counters exist
         to stop a 10s *automatic* flap loop; a deliberate keypress is not
         that loop.
+
+        A ``None`` root is an ANSWER ("no folder is bound"), not a reason to
+        skip: it lands an explicit UNBOUND snapshot. The old early return
+        meant nothing landed and the LAST PAINT STOOD -- after a switch to
+        an unbound workspace the panel kept the previous repository's branch
+        and counts and still offered "Commit or push · N files" against it,
+        permanently, because this method (and `poll_tick`) were the only
+        things that could ever have replaced them. It also makes the
+        Refresh slot re-check the binding rather than be a visible no-op
+        (TASK-31660 AC #4).
         """
         root = self._workspace_root_accessor()
-        if root is None or not self._rail_open_accessor():
+        if not self._rail_open_accessor():
+            return
+        if root is None:
+            if force_net:
+                self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
+            self._land_unbound()
             return
         scope_root = root
 
@@ -178,12 +212,18 @@ class ConsoleEnvironmentController:
         git-resolved ``snapshot.git.root``) and, when one happened, resets
         backoff/TTL state and does a full (both-tier) refresh instead of a
         local-only poll.
+
+        TASK-31660: the change detection is gated on ``_has_landed`` rather
+        than on ``_landed_root is not None``, so BOTH directions across the
+        unbound boundary are genuine root changes -- ``root -> None`` (which
+        must wipe the previous repository's paint within one tick, AC #3)
+        and ``None -> root`` (which must retire the old root's ``gh`` TTL
+        and re-fetch both tiers).
         """
         root = self._workspace_root_accessor()
-        if root is None or not self._rail_open_accessor():
+        if not self._rail_open_accessor():
             return
-        last_root = self._landed_root
-        if last_root is not None and root != last_root:
+        if self._has_landed and root != self._landed_root:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
             self._net_fetched_at = None
             self.request_refresh(include_net=True)
@@ -249,7 +289,32 @@ class ConsoleEnvironmentController:
         self._net_pending_force = False
         self._net_pending_scope = None
 
-    def _land(self, scope_root: str, tier: str, result: Any, token: int) -> None:
+    def _land_unbound(self) -> None:
+        """Land the "no folder is bound" state through the normal path.
+
+        Deliberately calls ``_land`` DIRECTLY rather than going through
+        ``_marshal_to_ui``: this runs on the UI thread already (it is
+        reached from ``poll_tick``/``request_refresh``, both timer/handler
+        callbacks), and the production marshal is
+        ``app.call_from_thread``, which raises when called from the app's
+        own thread. Everything else about the landing is the ordinary path
+        -- the stale-scope guard, the dispatch token, ``_record_outcome``,
+        and ``on_snapshot`` -- so an UNBOUND state is superseded and
+        supersedes exactly like a gathered one.
+
+        The scope is ``None``, which the stale-scope guard now accepts as a
+        landable scope (it compares against the accessor, which is what
+        just returned ``None``).
+        """
+        unbound = unbound_snapshot()
+        self._land(
+            None,
+            _LOCAL_TIER,
+            (unbound.git, unbound.tasks),
+            self._next_token(_LOCAL_TIER),
+        )
+
+    def _land(self, scope_root: str | None, tier: str, result: Any, token: int) -> None:
         if scope_root != self._workspace_root_accessor():
             # Stale-scope guard: a newer refresh already superseded this one.
             # B2: a net request deferred against THIS scope was waiting on
@@ -267,8 +332,25 @@ class ConsoleEnvironmentController:
         if tier == _LOCAL_TIER:
             git_result, tasks_result = result
             self._record_outcome(_LOCAL_TIER, git_result.availability)
-            self.snapshot = dataclasses.replace(self.snapshot, git=git_result, tasks=tasks_result)
+            if git_result.availability is EnvSourceAvailability.UNBOUND:
+                # No root means no repository, so the PR tier's data belongs
+                # to the root that just went away: a per-field
+                # `dataclasses.replace` would mark git UNBOUND while leaving
+                # ANOTHER repository's PR number and check results painted.
+                # Replace the whole snapshot (keeping the exec target, which
+                # is a session property, not a workspace one) and retire the
+                # net tier's TTL/pending bookkeeping with it, so a later
+                # rebind re-fetches instead of inheriting a stale 60s window
+                # keyed on the old (root, branch).
+                self.snapshot = unbound_snapshot(target=self.snapshot.target)
+                self._net_fetched_at = None
+                self._clear_net_pending()
+            else:
+                self.snapshot = dataclasses.replace(
+                    self.snapshot, git=git_result, tasks=tasks_result
+                )
             self._landed_root = scope_root
+            self._has_landed = True
             if self._net_pending and self._net_pending_scope == scope_root:
                 force = self._net_pending_force
                 self._clear_net_pending()

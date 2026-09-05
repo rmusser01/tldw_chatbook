@@ -244,7 +244,9 @@ source never renders as an error:
 
 | Situation | What you see |
 | --- | --- |
-| No git repo behind the workspace (or none bound) | one muted **No git workspace** row; no Tasks, PR, or check rows |
+| Nothing has been checked yet (cold start, or the rail has only just opened) | one muted **Checking workspace…** row — the panel never claims anything before a source has answered |
+| No folder is bound to this conversation's workspace | two muted rows saying so, and that this is *not* a report that nothing changed; no counts, no **Commit or push**, no Tasks/PR/check rows |
+| A folder is bound but it is not a git repo | one muted **No git workspace** row; no Tasks, PR, or check rows |
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
 | No open or recent PR for the branch | same: no PR row |
 | No `backlog/` directory | no Tasks section |
@@ -956,3 +958,18 @@ terminal size), expanding a row keeps keyboard focus on that row, an errored
 git tier now says "Environment unavailable — Refresh to retry" instead of
 "No git workspace", and the Refresh action revives a backed-off local tier —
 which is what "until manual refresh or scope change" above always promised.*
+
+*Amended — 2026-09-05 (TASK-31660, state honesty): the table above gained two
+rows because "No git workspace" used to be shown for three different
+situations, only one of which it described. It now means exactly one thing —
+"we looked, and the bound folder is not a git repository". Before any source
+has answered the panel says **Checking workspace…** (it used to assert "No git
+workspace" for the ~20s until the first `git status` landed, inside a real
+worktree), and when the conversation's workspace binds no folder at all it
+says so in Change Review's own words — including that this is not a report
+that nothing changed. Switching to an unbound workspace now clears the
+previous repository's branch, counts and **Commit or push** offer within one
+10-second poll instead of leaving them painted indefinitely, and pressing
+**Refresh** in that state re-checks the binding rather than doing nothing.
+Code-level pass (pure projection, deferred-fake controller, and screen-wiring
+suites); not re-driven live.*

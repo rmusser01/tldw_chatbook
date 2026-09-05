@@ -15,10 +15,27 @@ from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 
 class EnvSourceAvailability(str, Enum):
+    """Why a tier's data is (or is not) there.
+
+    ``NOT_APPLICABLE`` used to carry two incompatible meanings -- "we
+    looked, and this is not a repository" AND "nobody has looked yet" --
+    and the projection rendered both as the flat assertion "No git
+    workspace". TASK-31660 splits the second meaning out (``PENDING``) and
+    adds the third state the panel could not express at all (``UNBOUND``:
+    the conversation's workspace binds no folder, so there is nothing to
+    look at). ``NOT_APPLICABLE``'s meaning and rendering are unchanged.
+    """
+
     OK = "ok"
+    #: Checked; the bound root is genuinely not a git repository.
     NOT_APPLICABLE = "not_applicable"
     MISSING_TOOL = "missing_tool"
     ERROR = "error"
+    #: No folder is bound to this conversation's workspace at all. A
+    #: negative about the BINDING, never a negative about the contents.
+    UNBOUND = "unbound"
+    #: No gatherer has answered yet. Renders as progress, never as a claim.
+    PENDING = "pending"
 
 
 class ExecTargetKind(str, Enum):
@@ -28,7 +45,7 @@ class ExecTargetKind(str, Enum):
 
 @dataclass(frozen=True)
 class GitEnvState:
-    availability: EnvSourceAvailability = EnvSourceAvailability.NOT_APPLICABLE
+    availability: EnvSourceAvailability = EnvSourceAvailability.PENDING
     root: str = ""
     branch: str | None = None
     detached: bool = False
@@ -57,7 +74,7 @@ class PrCheck:
 
 @dataclass(frozen=True)
 class PrEnvState:
-    availability: EnvSourceAvailability = EnvSourceAvailability.NOT_APPLICABLE
+    availability: EnvSourceAvailability = EnvSourceAvailability.PENDING
     number: int = 0
     title: str = ""
     state: str = ""  # "OPEN" | "MERGED" | "CLOSED"
@@ -101,7 +118,7 @@ class BranchTaskState:
 
 @dataclass(frozen=True)
 class TasksEnvState:
-    availability: EnvSourceAvailability = EnvSourceAvailability.NOT_APPLICABLE
+    availability: EnvSourceAvailability = EnvSourceAvailability.PENDING
     branch_task: BranchTaskState | None = None
     in_progress: int = 0
     todo: int = 0
@@ -116,10 +133,44 @@ class ExecTargetState:
 
 @dataclass(frozen=True)
 class EnvironmentSnapshot:
+    """The panel's whole state.
+
+    Every tier defaults to ``PENDING``: a freshly constructed snapshot is
+    what the panel shows before ANY gatherer has answered, and the honest
+    description of that moment is "checking", not "there is no git
+    workspace here" (TASK-31660).
+    """
+
     git: GitEnvState = field(default_factory=GitEnvState)
     target: ExecTargetState = field(default_factory=ExecTargetState)
     pr: PrEnvState = field(default_factory=PrEnvState)
     tasks: TasksEnvState = field(default_factory=TasksEnvState)
+
+
+def unbound_snapshot(target: ExecTargetState | None = None) -> EnvironmentSnapshot:
+    """Build the snapshot for "no folder is bound to this workspace".
+
+    One factory so the three tiers can never disagree about it, and so the
+    controller cannot accidentally keep the PREVIOUS root's ``pr``/``tasks``
+    while marking only ``git`` unbound -- which is exactly the shape of the
+    reported P0 (another repository's PR and "Commit or push · N files"
+    left painted after a workspace switch).
+
+    Args:
+        target: Exec target to preserve; the execution destination is a
+            property of the session, not of the workspace binding, so it
+            survives an unbind. Defaults to a fresh ``ExecTargetState``.
+
+    Returns:
+        A snapshot whose git, pr, and tasks tiers are all ``UNBOUND`` and
+        carry no data.
+    """
+    return EnvironmentSnapshot(
+        git=GitEnvState(availability=EnvSourceAvailability.UNBOUND),
+        target=target if target is not None else ExecTargetState(),
+        pr=PrEnvState(availability=EnvSourceAvailability.UNBOUND),
+        tasks=TasksEnvState(availability=EnvSourceAvailability.UNBOUND),
+    )
 
 
 _BRANCH_TASK_RE = re.compile(r"task-(\d+(?:\.\d+)*)")
@@ -169,6 +220,9 @@ TASKS_SECTION_ID = "tasks"
 ENV_ROW_CHANGES = "env-changes"
 ENV_ROW_ERROR = "env-error"
 ENV_ROW_EMPTY = "env-empty"
+ENV_ROW_PENDING = "env-pending"
+ENV_ROW_UNBOUND = "env-unbound"
+ENV_ROW_UNBOUND_NOTE = "env-unbound-note"
 ENV_ROW_LOCAL = "env-local"
 ENV_ROW_BRANCH = "env-branch"
 ENV_ROW_COMMIT_PUSH = "env-commit-push"
@@ -201,6 +255,19 @@ _MAX_FILE_ROWS = 12
 # projection, not in the widget -- this arc's rule, so it is testable
 # without a running app.
 ENV_SUMMARY_BUDGET = 18
+
+# TASK-31660 copy. PENDING is progress, not a claim; UNBOUND is Change
+# Review's own unbound-workspace sentence (`change_review_screen.py`'s
+# empty-state copy), split across two rail rows because the rail's body is
+# ~30-36 columns and one row's Static would wrap into an unreadable slab.
+# The second row is the load-bearing half: the whole point of the copy is
+# that an empty panel here is NOT evidence that nothing changed.
+ENV_PENDING_TEXT = "Checking workspace…"
+ENV_UNBOUND_TEXT = (
+    "No folder is bound to this conversation's workspace, "
+    "so changes are not tracked here."
+)
+ENV_UNBOUND_NOTE_TEXT = "This is not a report that nothing changed."
 
 
 def _git_status_class(stale: bool) -> str:
@@ -281,6 +348,35 @@ def project_environment_section(
     now: datetime,
 ) -> ConsoleInspectorSectionState:
     git = snapshot.git
+    if git.availability is EnvSourceAvailability.PENDING:
+        # Nobody has looked yet. Every other branch below is an ANSWER, and
+        # rendering this one as an answer is the cold-start defect: a git
+        # worktree was told "No git workspace" for the ~20s until the first
+        # gatherer landed. Counts, Commit-or-push, PR/checks and the Tasks
+        # card are all suppressed by returning here -- there is nothing yet
+        # to suppress that was ever measured against the current root.
+        return ConsoleInspectorSectionState(
+            rows=(InspectorSectionRow(
+                row_id=ENV_ROW_PENDING, primary_text=ENV_PENDING_TEXT,
+            ),),
+            summary="",
+        )
+    if git.availability is EnvSourceAvailability.UNBOUND:
+        # No folder is bound, so nothing about a repository can be asserted
+        # -- including, emphatically, "clean". Returning before the counts
+        # is what makes the panel drop the PREVIOUS root's branch, files,
+        # and "Commit or push · N files" offer on a workspace switch.
+        return ConsoleInspectorSectionState(
+            rows=(
+                InspectorSectionRow(
+                    row_id=ENV_ROW_UNBOUND, primary_text=ENV_UNBOUND_TEXT,
+                ),
+                InspectorSectionRow(
+                    row_id=ENV_ROW_UNBOUND_NOTE, primary_text=ENV_UNBOUND_NOTE_TEXT,
+                ),
+            ),
+            summary="",
+        )
     if git.availability is EnvSourceAvailability.ERROR:
         # ERROR is NOT "there is nothing here" -- it is "we could not look".
         # Rendering it as the NOT_APPLICABLE empty state told a user whose
@@ -459,6 +555,13 @@ def project_tasks_section(
 ) -> ConsoleInspectorSectionState:
     tasks = snapshot.tasks
     if tasks.availability is not EnvSourceAvailability.OK:
+        # TASK-31660: PENDING and UNBOUND land here too, and hiding the card
+        # is the SAME choice the Environment section makes for them -- say
+        # nothing rather than assert something. The difference is only that
+        # the Environment section is a permanently mounted header (with the
+        # Refresh tail), so it needs a visible row to say "checking"/"not
+        # bound"; the Tasks card has no header of its own to keep honest, so
+        # its non-assertion is simply its absence.
         return ConsoleInspectorSectionState(rows=(), summary="")
     if tasks.scanning and not tasks.entries and tasks.branch_task is None:
         return ConsoleInspectorSectionState(

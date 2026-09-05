@@ -7997,8 +7997,10 @@ class ChatScreen(BaseAppScreen):
 
         A bare `ChatScreen` built outside `__init__`'s controller wiring
         (several architecture tests do exactly that) has no controller, and
-        `EnvironmentSnapshot()`'s NOT_APPLICABLE tiers are the right answer
-        there anyway -- the quiet "No git workspace" row.
+        `EnvironmentSnapshot()`'s PENDING tiers are the right answer there
+        anyway -- the quiet "Checking workspace…" row. TASK-31660: that
+        default used to be NOT_APPLICABLE, which projects as the definitive
+        "No git workspace" -- an assertion nothing had checked.
         """
         controller = getattr(self, "_console_environment", None)
         if controller is None:
@@ -8012,7 +8014,7 @@ class ChatScreen(BaseAppScreen):
         it at the live ``ConsoleEnvironmentController`` snapshot so a rail
         RECOMPOSE (which rebuilds the section from scratch) repaints the same
         data `_land_console_environment` last patched in, instead of
-        reverting to "No git workspace" until the next poll tick.
+        reverting to the pre-first-landing state until the next poll tick.
         """
         from datetime import datetime as _datetime, timezone as _timezone
 
@@ -8038,8 +8040,12 @@ class ChatScreen(BaseAppScreen):
 
         The conversation's own change-review roots (first = primary), so the
         panel and Change Review can never disagree about which tree is being
-        described. ``None`` when there is no root -- the controller treats
-        that as "nothing to gather" and dispatches nothing.
+        described. ``None`` when there is no root -- which the controller
+        treats as the ANSWER "no folder is bound" (TASK-31660): it dispatches
+        no gather, but it does land an explicit UNBOUND snapshot, so the
+        previous root's counts/branch/"Commit or push" cannot survive the
+        switch. It used to dispatch nothing AND land nothing, leaving the
+        last paint standing forever.
         """
         roots = self._review_selection._console_change_review_workspace_roots()
         if not roots:

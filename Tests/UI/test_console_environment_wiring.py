@@ -38,8 +38,11 @@ from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS_FIX,
     ENV_ROW_COMMIT_PUSH,
+    ENV_ROW_PENDING,
     ENV_ROW_PR_ADD,
     ENV_ROW_PR_OPEN,
+    ENV_ROW_UNBOUND,
+    ENV_ROW_UNBOUND_NOTE,
     EnvironmentSnapshot,
     EnvSourceAvailability,
     GitEnvState,
@@ -48,6 +51,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     TASKS_ROW_ADD,
     TasksEnvState,
     BranchTaskState,
+    unbound_snapshot,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
@@ -444,6 +448,104 @@ async def test_landing_for_stale_root_does_not_touch_sections():
         screen._land_console_environment(snapshot)  # must not raise
         await pilot.pause()
         assert tasks_section.rows == ()  # untouched, not half-applied
+
+
+@pytest.mark.asyncio
+async def test_unbound_landing_replaces_the_previous_repos_paint():
+    """TASK-31660 AC #1/#3 at the SCREEN seam.
+
+    The reported P0 was a repaint failure, not a projection failure: after a
+    switch to an unbound workspace the mounted rows still read the previous
+    repository's branch and counts, and still offered "Commit or push - N
+    files". Drives the real sections through the real landing path.
+    """
+    async with _console_screen() as (pilot, screen):
+        bound = _snapshot(
+            files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),),
+            branch="feat/previous-repo",
+            tasks=TasksEnvState(
+                availability=EnvSourceAvailability.OK,
+                branch_task=BranchTaskState(
+                    task_id="31660", title="State honesty", status="In Progress"
+                ),
+            ),
+        )
+        screen._console_environment.snapshot = bound
+        screen._land_console_environment(bound)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        tasks_section = screen.query_one(
+            "#console-tasks-section", ConsoleInspectorSection
+        )
+        assert ENV_ROW_COMMIT_PUSH in _row_ids(section)
+        assert tasks_section.styles.display == "block"
+
+        unbound = unbound_snapshot()
+        screen._console_environment.snapshot = unbound
+        screen._land_console_environment(unbound)
+        await pilot.pause()
+
+        assert _row_ids(section) == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
+        assert ENV_ROW_COMMIT_PUSH not in _row_ids(section)
+        painted = " ".join(
+            str(static.renderable)
+            for static in section.query(".console-inspector-section-row-primary")
+        )
+        assert "No folder is bound to this conversation's workspace" in painted
+        assert "not a report that nothing changed" in painted
+        assert "feat/previous-repo" not in painted
+        assert "Commit or push" not in painted
+        # The Tasks card goes with it -- it described the other repo's backlog.
+        assert tasks_section.rows == ()
+        assert tasks_section.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_cold_start_rail_never_paints_the_no_git_workspace_negative():
+    """AC #2 at the screen seam: PENDING, not a claim, before anything lands."""
+    async with _console_screen() as (pilot, screen):
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert _row_ids(section) == [ENV_ROW_PENDING]
+        painted = " ".join(
+            str(static.renderable)
+            for static in section.query(".console-inspector-section-row-primary")
+        )
+        assert "Checking workspace" in painted
+        assert "No git workspace" not in painted
+
+
+@pytest.mark.asyncio
+async def test_refresh_while_unbound_re_lands_through_the_real_controller():
+    """AC #4: pressing Refresh with no bound folder is not a no-op.
+
+    Drives the real "Refresh" tail message through the real handler and the
+    real controller -- the seam the old early-return made inert.
+    """
+    async with _console_screen() as (pilot, screen):
+        screen._review_selection._console_change_review_workspace_roots = lambda: ()
+        assert screen._console_environment_root() is None
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
+
+        landed: list = []
+        screen._console_environment._on_snapshot = lambda snap: (
+            landed.append(snap) or screen._land_console_environment(snap)
+        )
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        section.post_message(ConsoleInspectorSection.ViewAllRequested("environment"))
+        await pilot.pause()
+
+        assert landed and all(
+            snap.git.availability is EnvSourceAvailability.UNBOUND for snap in landed
+        )
+        assert _row_ids(section) == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
 
 
 @pytest.mark.asyncio

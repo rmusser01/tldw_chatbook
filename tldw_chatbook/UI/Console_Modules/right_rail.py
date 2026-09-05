@@ -1541,8 +1541,10 @@ class ConsoleInspectorRail(Vertical):
             # of the staged-context tray, per the redesign spec's rail
             # ordering. Pure display state supplied by the screen (a
             # projection of the controller's current snapshot, or the
-            # empty-state projection of a default `EnvironmentSnapshot()`
-            # pre-wiring); this rail never gathers environment data itself.
+            # PENDING projection of a default `EnvironmentSnapshot()`
+            # pre-wiring -- "Checking workspace…", never a negative claim,
+            # per TASK-31660); this rail never gathers environment data
+            # itself.
             # Each section hides itself (`styles.display = "none"`) when its
             # projection has no rows -- the fleet pattern this rail already
             # uses for the live-work header Statics above.
