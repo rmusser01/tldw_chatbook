@@ -116,7 +116,7 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
     )
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import build_console_commands_controller
 
     db_path = tmp_path / "research.db"
     db_path.write_bytes(b"this is not a sqlite database at all\x00\x01")
@@ -127,14 +127,15 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     # the handler's None-guard fired instead).
     service = LocalResearchService(db_path)
     screen = _RecordingScreen(_StubApp(service))
+    build_console_commands_controller(screen)
 
     warnings: list[str] = []
     sink_id = loguru_logger.add(
         lambda message: warnings.append(str(message)), level="WARNING"
     )
     try:
-        await ChatScreen._console_command_research(
-            screen, SimpleNamespace(args="why is the sky blue")
+        await screen._commands._console_command_research(
+            SimpleNamespace(args="why is the sky blue")
         )
 
         assert len(screen.worker_coroutines) == 1
