@@ -296,6 +296,33 @@ async def test_delete_confirmation_removes_only_selected_record(snapshot_ui):
 
 
 @pytest.mark.asyncio
+async def test_manager_keep_count_preserves_integer_spellings_and_rejects_invalid_text(
+    snapshot_ui,
+):
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+    from tldw_chatbook.Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
+
+    h = snapshot_ui
+    async with h.app.run_test(size=(140, 45)) as pilot:
+        await h.app.push_screen(LLMScreen(h.app))
+        await pilot.pause()
+        manager = h.app.screen.query_one(LlamaCppSnapshotManager)
+        field = manager.query_one("#snapshot-keep", Input)
+        for raw in ("027", "+27", " 27 "):
+            field.value = raw
+            await manager._save_preferences(False)
+            assert preferences.load_snapshot_preferences().keep_count == 27
+            assert field.value == "27"
+        for raw in ("27.5", "NaN", "0", "1001"):
+            field.value = raw
+            await manager._save_preferences(False)
+            assert preferences.load_snapshot_preferences().keep_count == 27
+            assert "Not saved" in str(
+                manager.query_one("#snapshot-preferences-result").render()
+            )
+
+
+@pytest.mark.asyncio
 async def test_launcher_refresh_does_not_advance_dirty_preference_baseline(snapshot_ui):
     from tldw_chatbook.LLM_Management import snapshot_settings as preferences
     from tldw_chatbook.Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager

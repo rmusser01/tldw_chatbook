@@ -75,6 +75,27 @@ async def test_malformed_f9_preferences_leave_provider_surface_and_revert_recove
 
 
 @pytest.mark.asyncio
+async def test_f9_snapshot_save_rejects_noninteger_values_without_coercion(
+    no_snapshot_splash,
+):
+    app = _build_test_app()
+    async with app.run_test(size=(140, 45)) as pilot:
+        screen = SettingsScreen(app)
+        await app.push_screen(screen)
+        screen._select_category("providers-models")
+        await pilot.pause()
+        original = preferences.load_snapshot_preferences()
+        for raw in (True, 27.0, 27.5, float("nan"), "27.0", "NaN", "0", "1001"):
+            await screen._save_snapshot_preferences_draft(
+                (original.enabled, raw), original, False
+            )
+            assert preferences.load_snapshot_preferences() == original
+            assert "Not saved" in str(
+                screen.query_one("#settings-snapshot-result").render()
+            )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("raw", ["027", "+27", " 27 "])
 @pytest.mark.parametrize("combined", [False, True])
 async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(

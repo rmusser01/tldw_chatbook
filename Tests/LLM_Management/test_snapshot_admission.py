@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import socket
+from collections import UserDict
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
@@ -639,6 +641,80 @@ def test_explicit_key_file_overrides_environment_api_key(tmp_path: Path) -> None
 
     assert descriptor.disabled_reason is None
     assert descriptor.bearer_token == "file-key"
+
+
+@pytest.mark.parametrize("source", ["argument", "environment"])
+def test_key_file_path_uses_shared_policy_before_reading(tmp_path, source):
+    """A real filename rejected by central policy must not yield credentials."""
+    executable, model = _launch_files(tmp_path)
+    key_file = _write(tmp_path / "private;keys", b"secret-token\n")
+    extra = ("--api-key-file", str(key_file)) if source == "argument" else ()
+    env = {"LLAMA_ARG_API_KEY_FILE": str(key_file)} if source == "environment" else {}
+    descriptor = prepare_launch(
+        _explicit_command(executable, model, *extra), env, _claim(), "path-policy"
+    )
+    assert descriptor.bearer_token is None
+    assert "key file" in descriptor.disabled_reason
+    assert "secret-token" not in repr(descriptor)
+    assert str(key_file) not in repr(descriptor)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "oversized"])
+def test_key_file_policy_preserves_no_follow_and_byte_limit(tmp_path, kind):
+    """Central validation must not normalize away a link or relax the read bound."""
+    executable, model = _launch_files(tmp_path)
+    target = _write(tmp_path / "target.keys", b"secret-token\n")
+    key_file = tmp_path / "server.keys"
+    if kind == "symlink":
+        key_file.symlink_to(target)
+    else:
+        key_file.write_bytes(b"k" * (1024 * 1024 + 1))
+    descriptor = prepare_launch(
+        _explicit_command(executable, model, "--api-key-file", str(key_file)),
+        {},
+        _claim(),
+        "key-file-safety",
+    )
+    assert descriptor.bearer_token is None
+    assert "key file" in descriptor.disabled_reason
+
+
+@pytest.mark.parametrize("invalid", ["env-value", "env-key", "argv-value", "launch-id"])
+def test_launch_boundary_rejects_non_string_inputs_without_coercion(tmp_path, invalid):
+    """Malformed launch inputs must fail before parsing, without secret values."""
+    executable, model = _launch_files(tmp_path)
+    command = _explicit_command(executable, model)
+    env = {}
+    launch_id = "strict-launch"
+    if invalid == "env-value":
+        env = {"LLAMA_ARG_PORT": 8080}
+    elif invalid == "env-key":
+        env = {123: "private-environment-value"}
+    elif invalid == "argv-value":
+        command = (*command, "--port", 8080)
+    else:
+        launch_id = 123
+    with pytest.raises(ValueError, match="^invalid llama.cpp snapshot launch$"):
+        prepare_launch(command, env, _claim(), launch_id)
+
+
+@pytest.mark.parametrize("mapping_type", [UserDict, MappingProxyType])
+def test_launch_boundary_captures_string_mapping_without_requiring_dict(
+    tmp_path, mapping_type
+):
+    """The public Mapping contract must preserve valid inputs and capture values."""
+    executable, model = _launch_files(tmp_path)
+    environment = {"LLAMA_API_KEY": "initial-key"}
+    descriptor = prepare_launch(
+        _explicit_command(executable, model),
+        mapping_type(environment),
+        _claim(),
+        "mapping-launch",
+    )
+    environment["LLAMA_API_KEY"] = "later-key"
+    assert descriptor.disabled_reason is None
+    assert descriptor.bearer_token == "initial-key"
+    assert descriptor.child_env["LLAMA_API_KEY"] == "initial-key"
 
 
 def test_valid_key_file_uses_first_non_comment_key_without_repr_leak(

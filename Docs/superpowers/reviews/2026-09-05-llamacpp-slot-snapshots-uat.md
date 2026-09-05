@@ -1,5 +1,44 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## PR #2419 review remediation
+
+Qodo's six validation/style findings are addressed: configured key-file paths
+use the shared validator without resolving away symlinks; the credential byte
+limit is named; launch argv/environment/ID pass a strict Pydantic boundary while
+preserving the public Mapping contract; both keep-count UI surfaces use shared
+bounded-integer validation; retention wording has its public docstring; and
+snapshot-service local imports form one contiguous group.
+
+The seventh finding, claiming socket errors fall through to launch, is not
+reproducible: only ConnectionRefusedError is caught. Timeout and other OSError
+exceptions already propagate to the worker before directory creation or spawn.
+Three socket-level worker regressions pass. A runtime-only mutation catching all
+OSError makes both ambiguous-error rejection cases fail; the refusal control passes.
+No production network handling was weakened or changed.
+
+CI also caught eager snapshot composition adding nine UI-ready modules (981 >
+972). The app now composes the owner on first use, schedules default storage in
+the running app loop, and drains only an existing owner on shutdown. Pre-run
+access, explicit storage initialization and pending setup are covered. The actual
+startup guard passed twice at **972/972**, with no snapshot modules resident and
+no budget increase (ADR-097). A direct helper invocation outside the pytest
+harness measured 973; that is not substituted for the actual guard's evidence.
+
+Final combined verification: **460 passed, 1 deselected**, 114.68s, plus **3 passed**
+mounted Models first-load/layout checks, 10.11s. The fresh normal live UAT passed
+in **258.67s**, with the same text/image counters, real retention and Delete
+results, and normal confirmation callbacks. Evidence in the same scratch directory:
+`pr-qodo-targeted.log`, `pr-qodo-models-mount.log`, `pr-qodo-live.log`,
+`pr-qodo-live.xml` and per-stage SVGs under `pr-qodo-live/`.
+
+The shared validation regressions were observed RED before correction, including
+non-string launch coercion, disallowed key filenames, boolean keep-count coercion,
+and Mapping compatibility. The lazy composition regression also failed before its
+fix. Eight scoped files pass Ruff lint and format; large existing files retain
+their independently compared baseline lint debt. CSS reproduction, diagnostic
+inventory and whitespace checks pass. Existing dependency warnings remain. No
+full repository sweep, dependency change, or boot-budget exception was used.
+
 ## PR integration verification
 
 The snapshot-only commits were replayed onto `origin/dev` at `93388ba69b`, on

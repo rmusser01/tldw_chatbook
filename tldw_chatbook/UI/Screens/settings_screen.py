@@ -186,6 +186,7 @@ from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
+    validate_bounded_integer,
     validate_number_range,
     validate_text_input,
     validate_url,
@@ -6804,7 +6805,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         try:
             value = snapshot_preferences.SnapshotPreferences(
-                enabled=raw[0], keep_count=int(raw[1])
+                enabled=raw[0],
+                keep_count=validate_bounded_integer(raw[1], minimum=1, maximum=1000),
             )
             saved = await asyncio.to_thread(
                 snapshot_preferences.save_snapshot_preferences, value, expected=expected

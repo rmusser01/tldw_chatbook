@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
+
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
 )
@@ -33,6 +35,7 @@ _SPLIT_MODEL = re.compile(
 )
 _TRUE_VALUES = frozenset({"1", "true", "on", "enabled"})
 _FALSE_VALUES = frozenset({"0", "false", "off", "disabled"})
+MAX_API_KEY_FILE_BYTES = 1024 * 1024
 _UNRESOLVED_RUNTIME_VALUES: dict[str, frozenset[str]] = {
     "device": frozenset({"@auto", "auto"}),
     "flash-attn": frozenset({"auto"}),
@@ -49,6 +52,18 @@ class _ValueOption:
     canonical: str
     value_kind: str
     optional: bool = False
+
+
+class _LaunchInput(BaseModel):
+    """Strict structural boundary; option semantics remain in the argv parser."""
+
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", hide_input_in_errors=True
+    )
+
+    command: tuple[StrictStr, ...] = Field(min_length=1, repr=False)
+    env: Mapping[StrictStr, StrictStr] = Field(repr=False)
+    launch_id: StrictStr = Field(min_length=1)
 
 
 _VALUE_OPTIONS: dict[str, _ValueOption] = {}
@@ -801,13 +816,15 @@ def _numeric_loopback(host: str) -> str:
 
 
 def _read_key_file(value: str) -> str:
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
     descriptor: int | None = None
     try:
-        path = Path(value).expanduser().absolute()
+        path = validate_path_simple(value, probe_existing=False).absolute()
         named = path.lstat()
         if stat.S_ISLNK(named.st_mode) or not stat.S_ISREG(named.st_mode):
             raise ValueError("key file")
-        if named.st_size > 1024 * 1024:
+        if named.st_size > MAX_API_KEY_FILE_BYTES:
             raise ValueError("key file")
         descriptor = os.open(
             path,
@@ -824,8 +841,8 @@ def _read_key_file(value: str) -> str:
         if not stat.S_ISREG(opened.st_mode) or identity(named) != identity(opened):
             raise ValueError("key file")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
-            payload = handle.read(1024 * 1024 + 1)
-        if len(payload) > 1024 * 1024:
+            payload = handle.read(MAX_API_KEY_FILE_BYTES + 1)
+        if len(payload) > MAX_API_KEY_FILE_BYTES:
             raise ValueError("key file")
         text = payload.decode("utf-8")
     except (OSError, UnicodeError, ValueError):
@@ -886,9 +903,15 @@ def prepare_launch(
 ) -> LaunchDescriptor:
     """Capture effective argv/environment and verified pre-readiness identities."""
 
-    if not command or not launch_id or claim.provider != "llamacpp":
+    try:
+        inputs = _LaunchInput(command=command, env=env, launch_id=launch_id)
+    except ValidationError:
+        raise ValueError("invalid llama.cpp snapshot launch") from None
+    if claim.provider != "llamacpp":
         raise ValueError("invalid llama.cpp snapshot launch")
-    captured_env = {str(key): str(value) for key, value in env.items()}
+    command = inputs.command
+    launch_id = inputs.launch_id
+    captured_env = inputs.env
     parsed = _parse_command(command)
     _apply_environment(parsed, captured_env)
     if parsed.disabled_reason is not None:
