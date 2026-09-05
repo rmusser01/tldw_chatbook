@@ -4869,6 +4869,26 @@ max_video_file_size_mb = 2000
 cleanup_temp_files = true
 temp_dir = ""  # Empty means use system temp
 
+[meetings]
+# Meetings screen: record a call (mic + system audio) or a room (mic only).
+# STT provider for the live transcript; "auto" = the Console dictation choice.
+provider = "auto"
+# Model override for that provider; empty = the provider's default.
+model = ""
+# "auto" = native system audio (macOS 14.2+ tap, Linux parec/pw-record,
+# Windows WASAPI loopback). Or name an input device such as "BlackHole 2ch".
+system_source = "auto"
+# Input device name for the mic; empty = system default.
+mic_device = ""
+# Where meeting folders go; empty = <data_dir>/meetings.
+recordings_dir = ""
+# Keep you.wav / others.wav after the Library ingest finishes (mixed.wav is always kept).
+keep_raw_tracks = true
+# Re-transcribe mixed.wav offline after the meeting (needed for speaker labels).
+post_transcribe = true
+# Ask that offline pass for speaker diarization (needs torch + speechbrain).
+post_diarize = true
+
 [transcription]
 # Default transcription provider
 # Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"

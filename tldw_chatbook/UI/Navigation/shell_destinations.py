@@ -134,6 +134,15 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Build and launch repeatable agent workflows.",
     ),
     ShellDestination(
+        "meetings",
+        "Meetings",
+        "meetings",
+        "Record a call or a room with a live labelled transcript, then file it in the Library.",
+        "Record and transcribe a meeting.",
+        palette_aliases=("meeting", "record", "transcribe"),
+        navigation_priority=75,
+    ),
+    ShellDestination(
         "mcp",
         "MCP",
         "mcp",
@@ -197,6 +206,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "logs": "f8",
         "settings": "f9",
         "research": "f10",
+        "meetings": "f11",
     }
 )
 

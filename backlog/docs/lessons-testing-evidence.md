@@ -2106,14 +2106,40 @@ actually works: add the override to a `CSS_PATH`-bundled source file (`_navigati
 tcss` here), in the SAME tier as the rule being overridden, where ordinary
 specificity resolves it without needing `!important` at all.
 
-**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+**Sixth instance (TASK-31551 task 13, 2026-09-04, whole-screen collapse this time, not
+a single rule).** The Meetings screen's task-11 brief composed its workbench Horizontal
+with `classes="ds-panel destination-workbench"` — the identical two-class combination
+nine sibling screens (Artifacts, Personas, Watchlists, Workflows, MCP, ACP, Skills,
+Settings, Evals) already use, each paired with an `#<id>-workbench { height: 1fr; ... }`
+ID-scoped override in `css/components/_agentic_terminal.tcss` that beats `.ds-panel`'s
+own `height: auto; min-height: 3`. Task 11's brief never asked for that override for
+`#meetings-workbench`, and every one of its mounted `Tests/UI/test_meetings_screen.py`
+pilots (`_build_test_app`, no real `CSS_PATH`) stayed green through Tasks 8-11 and
+review, including tests that `pilot.click("#meetings-start")` at a hard-coded
+coordinate. Live-driving the real app under tmux for task 13 showed why: with the real
+bundle loaded, `.ds-panel`'s `height: auto` won outright (no priority inversion needed,
+just an entirely absent override), collapsing the workbench AND both its panes to
+zero visible rows — no Select, Button, Static, or RichLog painted anywhere on screen,
+confirmed with `tmux capture-pane` showing two adjacent empty bordered boxes. The fix
+was the same one-line pattern as the other nine screens: add `#meetings-workbench` to
+the existing ID list. This is not a single missing/mis-tiered rule (instances 1-5) but
+the SAME root cause at the scale of an entire screen: a harness with no `CSS_PATH`
+cannot fail a geometry assertion that a required per-screen CSS override was never
+written, because it never applied the class-level rule that override exists to beat in
+the first place.
+
+**What to do (all six instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
 color/opacity or geometry as proof of live behavior — it can miss a rule entirely
-(instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
+(instances 1-4, 6) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
 regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
 (`color == background`, opacity-to-zero, etc.), grep for prior art
 (`Button:disabled`, `:disabled` opacity overrides already exist for MCP inspector)
 and verify with `button.styles.opacity`/`get_visual_style()` under a REAL-bundle
-harness or live tmux, not just a bare widget construction.
+harness or live tmux, not just a bare widget construction. When a new screen reuses a
+shared "workbench" class combination (`ds-panel destination-workbench` or similar),
+grep for the sibling screens' matching ID-scoped override in the same pass that adds
+the class names — the class alone renders a screen with, at best, three rows of
+content no matter how many widgets it composes.
 
 ---
 
@@ -11199,6 +11225,44 @@ contract, not a comparison against old ordinal data: recapture the structural
 baseline before reformatting. Fail closed for ambiguous exception headers, never
 discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
 or decorator boundary for every non-header directive.
+
+---
+
+## A hand-written JSON fixture that omits one real field can hide a 100%-reproducible crash (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** `Audio/meeting_owner.py::recover_folder()` reads a crashed meeting's
+`meeting.json`, updates a few fields, and calls
+`update_meeting_json(folder, **payload)` — a function whose first parameter is
+also named `folder`. Every meeting.json the app's own writer ever produces
+(`MeetingSession`/`meeting_owner.start()`/`stop()`) includes a `"folder"` key, so
+in production this call *always* raises
+`TypeError: update_meeting_json() got multiple values for argument 'folder'`.
+The recover button's worker is `@work(thread=True)` with Textual's default
+`exit_on_error=True`, so this single `TypeError` did not just fail the recovery —
+it took the entire app down. Both of the feature's existing `recover_folder` unit
+tests (`test_scan_and_recover_unfinished_folder`,
+`test_recover_folder_survives_missing_mixed_wav`) hand-write their own
+`meeting.json` fixture from scratch, and both happen to omit the one key
+(`"folder"`) that the real writer always includes and that triggers the crash —
+so a fully reviewed, 100%-passing feature crashed on the very first live
+recovery attempt (reproduced by `kill -9` on the running app mid-meeting,
+relaunching, and pressing Recover). It was found only by live-driving the actual
+crash → relaunch → Recover cycle in the real app under tmux, not by reading the
+diff or the passing suite.
+
+**What to do.** When a test constructs a JSON/dict fixture by hand to feed a
+function that reads a file your OWN code also writes elsewhere, do not write the
+fixture from what the function's logic *seems* to need — grep for every call
+site that actually produces that file/payload in production and copy its real
+shape (or better, round-trip through the real writer function itself) into the
+fixture. A hand-typed fixture that "looks about right" is a guessed contract,
+and the field most likely to be missing is exactly the one the code path
+under test never gets to touch precisely because the guess omitted it. For any
+`@work(thread=True)`-decorated callback that can reach unvalidated on-disk
+data (recovery, import, migration), also check whether Textual's default
+`exit_on_error=True` means a single unhandled exception there takes down the
+whole app, not just the feature — that raises the cost of an untested edge case
+from "one broken button" to "total data-loss-adjacent crash."
 ---
 
 ## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves

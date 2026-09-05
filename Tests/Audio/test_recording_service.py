@@ -478,8 +478,13 @@ class TestAudioRecordingIntegration:
                 mock_stream.close.assert_called_once_with()
                 assert service.stream is None
 
+    @pytest.mark.real_audio_device
     def test_sounddevice_recording_flow(self):
-        """Test complete recording flow with sounddevice backend."""
+        """Test complete recording flow with sounddevice backend.
+
+        Exercises the sounddevice loop with `sd.InputStream` patched, so no
+        real device is opened (qualifies for the opt-out marker).
+        """
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", False):
             with patch(
                 "tldw_chatbook.Audio.recording_service.SOUNDDEVICE_AVAILABLE", True
@@ -563,8 +568,13 @@ class TestErrorHandling:
                 # Should return empty list on error
                 assert devices == []
 
+    @pytest.mark.real_audio_device
     def test_recording_thread_error(self):
-        """Test handling of recording thread errors."""
+        """Test handling of recording thread errors.
+
+        Exercises `_recording_loop`'s exception path; backend loop is mocked
+        so no real device is opened (qualifies for opt-out marker).
+        """
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
             service = AudioRecordingService()
 

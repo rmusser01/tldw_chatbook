@@ -216,6 +216,7 @@ class LazyLiveDictationService:
         max_buffer_bytes: Optional[int] = None,
         on_buffer_limit: Optional[Callable[[], None]] = None,
         transcription_service_factory: Optional[Callable[[], Any]] = None,
+        recorder_factory: Optional[Callable[..., Any]] = None,
     ):
         """Initialize dictation service with lazy loading.
 
@@ -240,6 +241,11 @@ class LazyLiveDictationService:
                 unless `max_buffer_bytes` is set.
             transcription_service_factory: Optional app-owned facade factory,
                 invoked only when transcription is first needed.
+            recorder_factory: Callable used to construct the recorder,
+                receiving the same kwargs `AudioRecordingService` would.
+                Defaults to `AudioRecordingService`. Exists so a caller can
+                substitute its own capture (meetings hand in a mixed
+                mic+system stream) and so tests can inject a fake.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -250,6 +256,7 @@ class LazyLiveDictationService:
         self.max_buffer_bytes = max_buffer_bytes
         self.on_buffer_limit = on_buffer_limit
         self._transcription_service_factory = transcription_service_factory
+        self._recorder_factory = recorder_factory
 
         # Lazy-loaded services
         self._audio_service = None
@@ -484,14 +491,13 @@ class LazyLiveDictationService:
                 from .recording_service import AudioRecordingService
 
                 # Try to initialize with preferences
-                self._audio_service = AudioRecordingService(
+                factory = self._recorder_factory or AudioRecordingService
+                self._audio_service = factory(
                     backend=self.audio_backend_preference,
                     use_vad=True,
                     vad_aggressiveness=self.vad_aggressiveness,
                     vad_preroll_ms=self.vad_preroll_ms,
-                    chunk_size=int(
-                        self.buffer_duration_ms * 16
-                    ),  # 16 samples/ms at 16kHz
+                    chunk_size=int(self.buffer_duration_ms * 16),
                     # Both default to None, so every caller that does not ask
                     # for a bound gets exactly the behaviour it had before.
                     max_buffer_bytes=self.max_buffer_bytes,
