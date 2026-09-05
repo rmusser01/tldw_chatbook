@@ -179,7 +179,7 @@ Mirrors the `library_canvas_resync_pending_accessor` precedent exactly
 
 | Where | Change |
 |---|---|
-| `LibraryIngestController.__init__` signature | new keyword-only param `library_ingest_analyze_outcomes_accessor`, in group (b) with a 4-line comment. Keyword-only arity **38 → 39** (`inspect.signature` total incl. `self` and `screen`: 40). |
+| `LibraryIngestController.__init__` signature | new keyword-only param `library_ingest_analyze_outcomes_accessor`, in group (b) with a 4-line comment. Keyword-only arity **37 → 38** (`inspect.signature` total incl. `self` and `screen`: 39 → 40). ERRATUM (scoped re-review): this row originally said "38 → 39", a figure carried from the fix brief without measuring; the merge commit 897ab81f7's message carries the same stale figure and stays as-is (amending would rewrite the branch tip); the PR description carries the erratum. |
 | `LibraryIngestController.__init__` body | `self._library_ingest_analyze_outcomes_accessor = (library_ingest_analyze_outcomes_accessor)` |
 | `LibraryIngestController` properties | new `@property _library_ingest_analyze_outcomes` returning `self._library_ingest_analyze_outcomes_accessor()`. **Getter only, deliberately**: the ported block only `pop`s, and a `dict` mutates in place through the getter — which is exactly what keeps the ported lines byte-for-byte with dev's. |
 | `handle_library_ingest_clear_finished` body | dev's 13 lines (10 comment + 3 code) inserted verbatim, between the `terminal = [...]` comprehension and `known = {...}`, at dev's own position. |
