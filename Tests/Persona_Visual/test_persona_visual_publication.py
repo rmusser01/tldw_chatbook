@@ -7,6 +7,8 @@ import json
 import os
 import sqlite3
 import stat
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError, replace
 from io import BytesIO
 from pathlib import Path
@@ -192,18 +194,46 @@ def test_first_activation_publishes_one_private_immutable_graph(environment) -> 
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor limit regression")
-def test_publication_bounds_descriptors_at_contract_maximum(environment) -> None:
+def test_publication_bounds_descriptors_at_contract_maximum(request) -> None:
     import resource
 
-    repository, source_root, _profile_root = environment
-    snapshot = _large_snapshot(source_root)
     original = resource.getrlimit(resource.RLIMIT_NOFILE)
     if original[0] < 256 or (
         original[1] != resource.RLIM_INFINITY and original[1] < 256
     ):
         pytest.skip("descriptor limit is below the regression threshold")
+    child_marker = "TLDW_TEST_PUBLICATION_DESCRIPTOR_CHILD"
+    if os.environ.get(child_marker) != "1":
+        # A long-lived worker may already own more than 256 descriptors.
+        # Measure publication itself, without inheriting unrelated open handles.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-q",
+                "-o",
+                "addopts=",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            env={**os.environ, child_marker: "1"},
+            close_fds=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 passed" in result.stdout, result.stdout + result.stderr
+        return
+
+    environment = request.getfixturevalue("environment")
+    repository, source_root, _profile_root = environment
+    snapshot = _large_snapshot(source_root)
+    assert len(snapshot.assets) == 256
     try:
         resource.setrlimit(resource.RLIMIT_NOFILE, (256, original[1]))
+        assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] == 256
         result = _publish(environment, snapshot)
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, original)
