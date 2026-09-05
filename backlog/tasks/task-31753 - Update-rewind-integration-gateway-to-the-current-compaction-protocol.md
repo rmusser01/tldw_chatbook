@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 20:11'
-updated_date: '2026-09-05 22:15'
+updated_date: '2026-09-05 22:37'
 labels: []
 dependencies: []
 ---
@@ -32,5 +32,5 @@ ADR required: no. ADR path: N/A; test-only current provider protocol alignment. 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Current prepared-request, typed provider-resolution and auxiliary-completion fixture protocols are implemented. Real savings require a compressible prefix; assertions now follow current branch-memory storage instead of retired legacy summary fields. This exposed TASK-31757, the live-parent snapshot defect. The full integration file passes in the 203-test rewind/settings selection; final full summary-fence verification is pending. ADR not required: test-only alignment.
+Current prepared-request, typed resolution, auxiliary completion and branch-memory assertions are implemented. The complete rewind integration passes after rebasing in a 46-test follow-up selection; all 73 summary tests passed in the initial rebased selection. Exact span, preamble, transcript, durable-memory restart and no-leak assertions remain. Pre-rebase combined 78-test run passed with an existing aggregate descriptor warning, not resource closure. TASK-31757 records the exposed runtime defect. No new ADR.
 <!-- SECTION:NOTES:END -->

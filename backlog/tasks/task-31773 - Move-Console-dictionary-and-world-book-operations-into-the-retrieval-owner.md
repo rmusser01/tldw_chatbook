@@ -1,5 +1,5 @@
 ---
-id: TASK-31738
+id: TASK-31773
 title: Move Console dictionary and world-book operations into the retrieval owner
 status: Done
 assignee:

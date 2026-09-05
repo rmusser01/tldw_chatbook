@@ -50,11 +50,11 @@ and post-rebase integration still need completion.
   diagnosis recorded, no implementation yet.
 - TASK-31708: agent gateway/gate fixture signatures and regeneration failure
   reporting; diagnosis recorded, no implementation yet.
-- TASK-31710: Console journey phase synchronization has six targeted passes;
+- TASK-31769: Console journey phase synchronization has six targeted passes;
   its complete-file run was intentionally stopped after 48 passes for rebasing.
-- TASK-31711: Files-to-Notes browse scroll restores 6 instead of logical offset 7.
+- TASK-31770: Files-to-Notes browse scroll restores 6 instead of logical offset 7.
   The interrupted Notes workspace run reached 105 passes and this one failure.
-- TASK-31712: thread-start fault injection mutates shared stdlib threading and
+- TASK-31771: thread-start fault injection mutates shared stdlib threading and
   can cause test-runner teardown warnings; diagnosis only.
 - Unallocated: Notes Save-failed contrast in the light theme, pinned sync-history
   paging geometry, and load-sensitive Qwen retry/MCP child cleanup failures.
@@ -295,3 +295,63 @@ by the exact snapshot probe; no lineage authorization check was relaxed.
 The final complete rewind/summary-fence/parent-persistence selection is **78
 passed** (31.45 seconds). Its preexisting aggregate descriptor-growth warning
 (209) remains open; this is behavioral evidence, not resource-leak closure.
+
+## Second rebase and current handoff
+
+Rebased 144 review commits onto dev `53194eee674865bd8b4aa6daac4b1e7d97160594`,
+including 156 new upstream commits since the preceding review base. The pushed
+pre-rebase checkpoint and local branch
+`codex/dev-test-review-before-second-rebase-20260905` retain the prior history.
+Upstream lazy Environment construction, Stop/dispatch draining, trace ownership,
+Library ingest ownership, and both sets of testing lessons are preserved.
+
+The initial post-rebase selection stopped after **180 passed / 15 failed**.
+Thirteen failures shared missing first-use Notes imports or stale Library class
+lookup assumptions; these are repaired. The assembly-order pin now explicitly
+includes the new upstream ingest constructor, whose AST matches upstream exactly.
+The final complete follow-up selection is **46 passed** (25.94 seconds), covering
+Library assembly/ingest, cold import boundaries, rewind integration, dispatch
+draining and delayed callbacks. Separately, the first rebased run completed all
+**73 summary tests**, **65 delegate guards**, and **25 Environment wiring tests**
+successfully. These selections overlap and are not a unique test total.
+
+Remaining current integration debt includes:
+
+- Console is **16,899 lines / 508 methods** against its unchanged **16,818 / 505**
+  ratchet; the added upstream work needs a further bounded paydown. The ceiling
+  was not raised. Library is **39,818 / 1,295**, and its ceiling was tightened to
+  that combined measurement.
+- Five unresolved UI cases and the unexecuted part of the 84-file Console census,
+  plus the previously recorded non-UI/DB/private-inventory and resource families.
+- Diagnostic hash/inventory qualification must be rerun against the new upstream
+  Meetings classification and twelfth sink; pre-rebase hashes are historical.
+- Two additional Backlog collisions (31714 and 31737) arrived in the last four
+  dev commits and await separate approval to renumber the review tasks.
+
+With explicit user approval, these 18 review-created task IDs were renumbered;
+the upstream tasks and their identities were left unchanged:
+
+| Former review ID | New review ID |
+| --- | --- |
+| 31551 | 31758 |
+| 31552 | 31759 |
+| 31586 | 31760 |
+| 31587 | 31761 |
+| 31588 | 31762 |
+| 31589 | 31763 |
+| 31636 | 31764 |
+| 31637 | 31765 |
+| 31650 | 31766 |
+| 31651 | 31767 |
+| 31701 | 31768 |
+| 31710 | 31769 |
+| 31711 | 31770 |
+| 31712 | 31771 |
+| 31713 | 31772 |
+| 31738 | 31773 |
+| 31739 | 31774 |
+| 31740 | 31775 |
+
+This remains a draft progress checkpoint, not a complete test-suite or merge
+qualification. All current production files edited during conflict resolution
+parse, undefined-name checks pass, and `git diff --check` is clean.

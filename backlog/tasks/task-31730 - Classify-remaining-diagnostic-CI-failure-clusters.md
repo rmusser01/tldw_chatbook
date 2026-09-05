@@ -33,6 +33,6 @@ Replay the highest-frequency failures from the superseded diagnostic workflow on
 Replayed six high-frequency diagnostic modules on the rebased current dev head:
 1,113 tests passed and 134 failed. Failures were isolated to MCP documentation (39),
 Library shell (35), screen navigation (28), Console workbench (13), Console side chat
-(13), and Console modal dismissal (6). Created TASK-31586 through TASK-31590 and TASK-31731 as
+(13), and Console modal dismissal (6). Created TASK-31760 through TASK-31590 and TASK-31731 as
 separate repair units. ADR required: no; this task made no runtime changes.
 <!-- SECTION:NOTES:END -->

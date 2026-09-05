@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 20:06'
-updated_date: '2026-09-05 22:15'
+updated_date: '2026-09-05 22:37'
 labels: []
 dependencies: []
 ---
@@ -20,8 +20,8 @@ Remove redundant private screen forwarding methods so existing controller owners
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exactly the64 approved private delegates are removed and their real callers resolve the existing owners, while public/event/action methods, agent-bridge injection and transcript ephemeral lookup remain intact.
-- [ ] #2 Callback lookup phases, arguments, await/return behavior and targeted fault-injection semantics are preserved, with explicit late-bound hook regressions.
+- [x] #1 Exactly the64 approved private delegates are removed and their real callers resolve the existing owners, while public/event/action methods, agent-bridge injection and transcript ephemeral lookup remain intact.
+- [x] #2 Callback lookup phases, arguments, await/return behavior and targeted fault-injection semantics are preserved, with explicit late-bound hook regressions.
 - [ ] #3 Affected whole-file checks and static ownership tests pass or separately evidenced baseline failures remain tracked, and actual screen size satisfies unchanged ceilings without unrelated compression or boundary moves.
 <!-- AC:END -->
 
@@ -34,5 +34,5 @@ ADR required: no. ADR path: N/A. Follow root-approved Docs/superpowers/plans/202
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Checkpoint, not complete: 64 approved private delegates retired with preserved assertions and delayed callback lookup. 145 architecture/import/inventory tests and 121 question/composer tests pass. The 84-file run stopped for the new dev rebase after 1749 passed and 7 failed; two owner-fixture failures subsequently pass in a 203-test selection. Five other observed cases and the unexecuted remainder still require review. Current measured size and tightened cap are 16818 lines / 505 methods. ADR not required; existing controller boundaries unchanged.
+The 64 private delegates and late-bound callbacks are verified; 65 ownership guards pass after rebasing onto 53194eee67. Whole-file census remains incomplete: pre-rebase 1749 passed / 7 failed, two owner fixtures subsequently repaired. New upstream Console work measures 16899 lines / 508 methods against the retained 16818 / 505 ceiling. Further bounded paydown and remaining UI cases are still required. No new ADR; boundaries unchanged.
 <!-- SECTION:NOTES:END -->

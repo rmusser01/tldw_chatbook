@@ -1,5 +1,5 @@
 ---
-id: TASK-31710
+id: TASK-31769
 title: Wait for explicit Console journey phases before asserting transitions
 status: Done
 assignee:

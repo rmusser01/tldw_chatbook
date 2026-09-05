@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.UI.Screens import library_screen
+from tldw_chatbook.UI.Library_Modules import wiring
 from tldw_chatbook.UI.Library_Modules.wiring import build_library_controllers
 
 _OWNERS = (
@@ -36,7 +37,7 @@ def test_existing_controller_reads_replaced_state_at_call_time(
 ) -> None:
     screen = library_screen.LibraryScreen(SimpleNamespace(app_config={}))
     controller = getattr(screen, owner_name)
-    assert type(controller) is getattr(library_screen, class_name)
+    assert type(controller) is getattr(wiring, class_name)
     accessor = getattr(controller, f"{state_name}_accessor")
     assert accessor() is getattr(screen, state_name)
 
@@ -97,7 +98,9 @@ def test_assembly_stays_between_state_creation_and_preference_loading() -> None:
     position = positions[0]
     previous, following = statements[position - 1], statements[position + 1]
     assert ast.unparse(previous.targets[0]) == "self._skills_state"
+    assert ast.unparse(following.targets[0]) == "self._ingest_controller"
+    assert ast.unparse(following.value.func) == "LibraryIngestController"
     assert (
-        ast.unparse(following.value.func)
+        ast.unparse(statements[position + 2].value.func)
         == "self._load_library_reader_preference_snapshot"
     )

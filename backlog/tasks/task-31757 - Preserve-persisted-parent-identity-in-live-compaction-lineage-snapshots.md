@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 22:06'
-updated_date: '2026-09-05 22:15'
+updated_date: '2026-09-05 22:37'
 labels: []
 dependencies: []
 ---
@@ -31,5 +31,5 @@ ADR required: no. ADR path: N/A; routine correction within the existing durable 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reused the existing durable_parent_for_message resolver in one snapshot field, matching the accepted-turn persistence owner. The real edited-send regression failed on the ordered-parent-chain assertion before the correction; summary persistence and restored no-leak behavior now pass in the 203-test rewind/settings selection. The parent fault injection follows the authoritative native tree. Final whole summary-file verification is pending. ADR not required: routine repair with unchanged guards.
+One snapshot field now uses the existing durable_parent_for_message resolver instead of an unset cached parent. The real edited-send parent-chain regression failed before the change; the full rewind integration and all 73 summary tests pass after rebasing. The parent fault case mutates the authoritative native tree. Pre-rebase combined 78-test run also passed; its existing aggregate descriptor warning remains tracked. No new ADR; ownership guards are unchanged.
 <!-- SECTION:NOTES:END -->

@@ -105,7 +105,7 @@ and pair lazy-owner guards with a no-result first-use UI test.
 
 ## Mounted filesystem benchmarks must use the current authority schema and an installed worker
 
-**TASK-31651, 2026-09-05.** The three-turn benchmark granted `fs_write` using a
+**TASK-31767, 2026-09-05.** The three-turn benchmark granted `fs_write` using a
 standalone provider descriptor, then ran the mounted Console's ADR-102 provider.
 The latter adds `root_alias`, so the definition-hash guard correctly changed the
 old Allow grant to Ask. The unattended test timed out awaiting approval and then
@@ -11939,7 +11939,7 @@ stacks separately: this incident also found and fixed an owned Character
 presentation callback running after its screen stack had been removed.
 ## An isolated helper can execute the editable install's other checkout
 
-**TASK-31713, 2026-09-05.** The stale-write and agent-worktree tests passed in
+**TASK-31772, 2026-09-05.** The stale-write and agent-worktree tests passed in
 the repository's installed checkout but returned `worker_crashed` from an
 isolated `python -I -m ...` workspace helper in a linked review worktree. The
 helper intentionally strips `PYTHONPATH`; the environment's editable install
