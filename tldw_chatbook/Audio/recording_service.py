@@ -117,6 +117,10 @@ class AudioRecordingService:
     #: `vad_preroll_ms`.
     _preroll_frames: Deque[bytes] = deque(maxlen=0)
 
+    #: Class-level fallback for instances built via ``__new__`` (some tests
+    #: skip the constructor's backend probe); ``__init__`` always overrides it.
+    retain_audio: bool = True
+
     # Audio configuration defaults
     DEFAULT_SAMPLE_RATE = 16000  # 16kHz is standard for speech recognition
     DEFAULT_CHANNELS = 1  # Mono
