@@ -1730,16 +1730,17 @@ async def test_conversation_settings_return_atomic_failure_retains_retry_without
         )
         real_settle = app.pending_handoffs.settle_transferred_claim
         attempts = 0
+        allow_settlement = False
 
         def fail_atomic_settlement(claim):
             nonlocal attempts
             if claim.revision == target.return_revision:
                 attempts += 1
                 if failure_mode == "raise_persistently" or (
-                    failure_mode == "raise_once" and attempts == 1
+                    failure_mode == "raise_once" and not allow_settlement
                 ):
                     raise RuntimeError("injected atomic settlement failure")
-                if failure_mode == "false_once" and attempts == 1:
+                if failure_mode == "false_once" and not allow_settlement:
                     return False
             return real_settle(claim)
 
@@ -1774,6 +1775,9 @@ async def test_conversation_settings_return_atomic_failure_retains_retry_without
             == "pending"
         )
 
+        # Mount/resume timers may attempt recovery before this explicit retry.
+        # Keep the injected fault active through the source-owner assertions.
+        allow_settlement = True
         console._settings_navigation._consume_pending_conversation_settings_return()
         for _ in range(120):
             if (
@@ -3430,14 +3434,17 @@ async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift:
         console._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
-        modal.query_one("#console-prompts-improve", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-saved", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-result-recipe-1", Button).press()
-        await pilot.pause()
+        for selector in (
+            "#console-prompts-improve",
+            "#console-prompts-structured-recipe",
+            "#console-prompts-recipe-saved",
+            "#console-prompts-result-recipe-1",
+        ):
+            await _wait_for_selector(modal, pilot, selector)
+            button = modal.query_one(selector, Button)
+            assert button.is_mounted and button.screen is modal
+            button.press()
+        await _wait_for_selector(modal, pilot, "#prompt-editor-apply")
 
         if drift == "id":
             service.record["id"] = "recipe-replaced"
