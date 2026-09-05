@@ -1,0 +1,249 @@
+"""Task 8: app-owned session owner (watchdog, shutdown, recovery, cleanup)."""
+from __future__ import annotations
+
+import json
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from tldw_chatbook.Audio import meeting_owner as mo
+from tldw_chatbook.Audio.system_audio_tap import TapMode
+from tldw_chatbook.Audio.wav_writer import PlaceholderWavWriter, wav_needs_patch
+
+pytestmark = pytest.mark.unit
+
+
+class FakeRecorder:
+    def __init__(self, **kwargs):
+        self.callback = None
+
+    def start_recording(self, callback=None, save_to_file=None):
+        self.callback = callback
+        return True
+
+    def stop_recording(self):
+        return None
+
+    def get_audio_devices(self):
+        return []
+
+    def set_device(self, device_id):
+        return True
+
+
+class FakeDictation:
+    MAX_NON_STREAMING_SEGMENT_SECONDS = 30.0
+
+    def __init__(self, capture):
+        self.capture = capture
+        self.privacy_settings = {"auto_clear_buffer": False}
+        self.callbacks = {}
+
+    def start_dictation(self, **callbacks):
+        self.callbacks = callbacks
+        return True
+
+    def stop_dictation(self):
+        return SimpleNamespace(transcription_complete=True)
+
+
+class EnergyVad:
+    def is_speech(self, frame, rate):
+        return False
+
+
+def _settings(tmp_path, **over) -> mo.MeetingSettings:
+    base = dict(recordings_dir=tmp_path / "meetings", system_source="auto")
+    base.update(over)
+    return mo.MeetingSettings(**base)
+
+
+def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, **over):
+    marshalled: list[tuple] = []
+    submitted: list[dict] = []
+
+    def call_from_thread(fn, *args, **kwargs):
+        marshalled.append((fn, args, kwargs))
+        return fn(*args, **kwargs)
+
+    def submit_ingest(**kwargs):
+        submitted.append(kwargs)
+        return "ingest-job-1"
+
+    owner = mo.MeetingSessionOwner(
+        settings=_settings(tmp_path, **over),
+        call_from_thread=call_from_thread,
+        submit_ingest=submit_ingest,
+        job_state=job_state or (lambda job_id: None),
+        facade_factory=lambda: SimpleNamespace(name="facade"),
+        dictation_factory=lambda capture, facade, cfg: FakeDictation(capture),
+        tap_probe=lambda **kw: TapMode(tap_kind, "reason", command=("x",)),
+        tap_builder=lambda mode, **kw: None,
+        mic_recorder_factory=FakeRecorder,
+        vad_factory=EnergyVad,
+        watchdog_interval_s=0.01,
+        stall_after_s=0.05,
+    )
+    return owner, marshalled, submitted
+
+
+def test_settings_from_config_reads_flat_meetings_section(tmp_path):
+    values = {"provider": "parakeet-mlx", "keep_raw_tracks": False, "recordings_dir": str(tmp_path / "rec")}
+
+    def get(section, key, default):
+        assert section == "meetings"
+        return values.get(key, default)
+
+    settings = mo.MeetingSettings.from_config(get, data_dir=tmp_path)
+    assert settings.provider == "parakeet-mlx" and settings.keep_raw_tracks is False
+    assert settings.recordings_dir == (tmp_path / "rec").resolve()
+    default = mo.MeetingSettings.from_config(lambda s, k, d: d, data_dir=tmp_path)
+    assert default.recordings_dir == (tmp_path / "meetings").resolve()
+
+
+def test_diarization_requirements_uses_find_spec_not_imports():
+    missing = mo.diarization_requirements(find_spec=lambda name: None if name in ("torch", "speechbrain") else object())
+    assert missing == ("torch", "speechbrain")
+
+
+def test_prepare_reports_tap_provider_and_diarization(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="faster-whisper", model="base.en", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
+    owner, _, _ = _owner(tmp_path, tap_kind="native_macos")
+    prepared = owner.prepare()
+    assert prepared.tap_mode.kind == "native_macos"
+    assert prepared.provider == "faster-whisper" and prepared.model == "base.en"
+    assert prepared.diarization_available is False and prepared.diarization_missing == ("torch",)
+    assert owner.prepared is prepared and owner._facade.name == "facade"
+
+
+def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    assert owner.is_active and session.state == "recording"
+    folder = session.meta.folder
+    assert folder.parent == (tmp_path / "meetings").resolve()
+    assert (folder / "mixed.wav").exists() and not (folder / "you.wav").exists()
+    assert session.meta.mode == "room" and session.meta.provider == "p"
+    owner.stop()
+    assert not owner.is_active
+
+
+def test_start_call_mode_has_three_writers(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+
+    class Tap:
+        state = "stopped"
+
+        def start(self, on_frames):
+            self.state = "running"
+            return True
+
+        def stop(self):
+            self.state = "stopped"
+
+    owner, _, _ = _owner(tmp_path, tap_kind="native_macos")
+    owner._tap_builder = lambda mode, **kw: Tap()
+    owner.prepare()
+    session = owner.start()
+    folder = session.meta.folder
+    assert {p.name for p in folder.glob("*.wav")} == {"mixed.wav", "you.wav", "others.wav"}
+    assert session.meta.mode == "call"
+    owner.stop()
+
+
+def test_stop_submits_through_call_from_thread(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, marshalled, submitted = _owner(tmp_path)
+    owner.prepare()
+    owner.start()
+    result = owner.stop()
+    assert result is owner.last_result and result.stop_reason == "user"
+    assert submitted[0]["detected_type"] == "audio" and submitted[0]["ingest_options"] == {"diarization": True}
+    assert marshalled and marshalled[0][0] is owner._submit_ingest
+    assert owner.local_sink.job_id == "ingest-job-1"
+
+
+def test_watchdog_stops_on_fault(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    session.capture.fault = OSError("disk full")
+    deadline = time.monotonic() + 2
+    while owner.is_active and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not owner.is_active and owner.last_result.stop_reason == "disk_error"
+
+
+def test_watchdog_stops_on_stalled_clock_but_not_while_paused(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    session.pause()
+    time.sleep(0.15)
+    assert owner.is_active            # paused: no stall verdict
+    session.resume()
+    deadline = time.monotonic() + 2   # no mic frames ever arrive -> stall
+    while owner.is_active and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not owner.is_active and owner.last_result.stop_reason == "mic_lost"
+
+
+def test_shutdown_finalises_files_without_submitting(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, submitted = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    owner.shutdown()
+    assert not owner.is_active and submitted == []
+    assert not wav_needs_patch(session.meta.folder / "mixed.wav")
+    payload = json.loads((session.meta.folder / "meeting.json").read_text())
+    assert payload["stop_reason"] == "shutdown" and payload["ended_at"]
+
+
+def test_scan_and_recover_unfinished_folder(tmp_path):
+    folder = tmp_path / "meetings" / "2026-09-04_1000"
+    folder.mkdir(parents=True)
+    writer = PlaceholderWavWriter(folder / "mixed.wav")
+    writer.write(b"\x00\x00" * 320 * 50)   # 1 s
+    writer._handle.flush()                  # crash: never closed
+    (folder / "meeting.json").write_text(json.dumps({"schema": 1, "started_at": "2026-09-04T10:00:00", "ended_at": None, "mode": "room"}))
+    assert mo.scan_recoverable(tmp_path / "meetings") == [folder]
+    payload = mo.recover_folder(folder)
+    assert payload["recovered"] is True and payload["duration_s"] == pytest.approx(1.0)
+    assert payload["ended_at"] and not wav_needs_patch(folder / "mixed.wav")
+    assert mo.scan_recoverable(tmp_path / "meetings") == []
+
+
+def test_cleanup_raw_tracks_only_when_job_done(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    states = {"ingest-job-1": "parsing"}
+
+    class Tap:
+        state = "stopped"
+
+        def start(self, on_frames):
+            return True
+
+        def stop(self):
+            return None
+
+    owner, _, _ = _owner(tmp_path, tap_kind="native_macos", job_state=lambda j: states.get(j), keep_raw_tracks=False)
+    owner._tap_builder = lambda mode, **kw: Tap()
+    owner.prepare()
+    session = owner.start()
+    folder = session.meta.folder
+    owner.stop()
+    assert owner.cleanup_raw_tracks_if_done() is False and (folder / "you.wav").exists()
+    states["ingest-job-1"] = "done"
+    assert owner.cleanup_raw_tracks_if_done() is True
+    assert not (folder / "you.wav").exists() and not (folder / "others.wav").exists()
+    assert (folder / "mixed.wav").exists()
