@@ -3834,16 +3834,10 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
         matches = list(screen.query(selector))
         if matches:
             await pilot.pause()
-            # task-32201/task-32185: re-query AFTER the settle pause. The
-            # match that satisfied the loop can belong to a compose that the
-            # very next frame replaces (leaving select mode recomposes the
-            # whole notes canvas, for one), and a caller that then presses
-            # the returned Button presses a DETACHED node: the press posts
-            # nothing, the editor never opens, and the test reports the
-            # symptom several assertions later. Returning the live node is
-            # what every caller already means by "the row that is there now".
-            settled = list(screen.query(selector))
-            return settled[0] if settled else matches[0]
+            # Re-query after settlement; never return a detached stale match.
+            current = list(screen.query(selector))
+            if current and current[0] is matches[0] and current[0].is_attached:
+                return current[0]
         if time.monotonic() >= deadline:
             break
         await pilot.pause(0.02)
