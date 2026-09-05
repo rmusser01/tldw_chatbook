@@ -315,7 +315,7 @@ def export_recovery(session: LabSession) -> bytes:
 - Consumes `RunRequest`, `RunResult`, `capture_batch`, `accept_result`, `execute_prepared`, `AutosaveWriter`, `parse_recovery`.
 - Produces `PreviewLimits(sample_bytes: int = 2097152, chunks: int = 10000, result_bytes: int = 33554432, wall_seconds: float = 60.0)` and `LocalPreviewRunner(limits: PreviewLimits)` with `async run(request: RunRequest) -> RunResult`, `async cancel() -> None`, `async close() -> None`. Cancel returns only after child termination and reaping.
 - Produces `LabCoordinator(session: LabSession, writer: AutosaveWriter, runner: LocalPreviewRunner)` with `session -> LabSession`, `async run(candidate_ids: tuple[str, ...]) -> None`, `async cancel() -> None`, `async replace_recovery(payload: bytes) -> None`, `async undo_restore() -> None`, `async clear() -> None`, `async close() -> None`, and `set_session(session: LabSession) -> None` for serialized pure UI transitions. Replacement/clear reject edits until the guarded transition settles.
-- The coordinator exposes copied session/status change events to subscribers; UI widgets never receive process or DB handles. One app/profile owns one coordinator, surviving screen unmount.
+- The coordinator exposes small copied invalidation/status events (profile_key/epoch/revision/busy/guarded and copied SaveStatus) with no LabSession payload, avoiding full retained-result copies per edit. Consumers use the existing `session` immutable-transition snapshot convention as borrowed read-only state; an explicit detached full snapshot, if needed, is obtained off-loop rather than implicitly per event. UI widgets never receive process or DB handles. One app/profile owns one coordinator, surviving screen unmount.
 - A pure undo may remove a newly pinned A and invalidate its installed batch (`batch` becomes `None`). `set_session` must stop that batch's worker and remaining queue; no later member may launch or publish. A new Run remains blocked until the prior worker has stopped.
 
 - [ ] Write the failing limit test below and process-backed timeout/cancel tests with a deliberately non-cooperative local test child. Write coordinator tests using recording runner/writer doubles to inspect immutable requests and publication ordering.
@@ -342,15 +342,15 @@ async def test_sample_limit_reports_failure_without_clipping():
 - [ ] Implement a spawn-compatible top-level worker and bounded JSON pipe messages. Pass only captured request data, not live DB objects/config clients. Recheck requested runtime/assets in the child; mismatch is failure. Parent supervises monotonic wall time, output size, and child exit; terminate then kill/reap with bounded waits. No second run until the first has stopped.
 
 ```python
-# Supervisor primitive: cap message allocation before accepting a result.
-if connection.poll(0.05):
-    payload = connection.recv_bytes(maxlength=limits.result_bytes)
-    # Validate JSON and RunResult membership before publishing.
-# Polling and joining execute outside Textual's event loop; the async caller
-# remains cancelable while the supervisor owns the process through final reaping.
+# Framed subprocess protocol: reject an oversized declared payload before
+# allocation, read only the bounded frame, then validate JSON and exact
+# RunResult membership before publication. Do not use unbounded communicate().
+# Blocking reads/joins stay off Textual's event loop; the async caller remains
+# cancelable while the supervisor owns the process through final reaping.
 ```
 
 - [ ] Enforce input/chunk/serialized-output/time budgets with named limited outcomes. Test intermediate amplification and peak RSS for admitted operations using isolated processes; final JSON size is not a memory cap. Bound configurable expansion before execution and refuse combinations that cannot meet the resource envelope. Record OS-specific process/resource limitations and never describe this worker as a security sandbox. Do not add psutil or fork the engine to get metrics.
+- [ ] Use a fresh stdlib subprocess with bounded framed JSON pipes and explicit stderr DEVNULL; do not mutate global streams. Apply shared Save/Run preflight ceilings of 16 configured pre/post operation entries combined and 2 MiB per authored/effective canonical recipe document. Refuse runs exceeding a conservatively estimated 32 MiB intermediate working payload; this estimate is not an OS RSS cap. Bound extract_sections prescan in the supervised child by 10,000 matches and cumulative captured text/metadata amplification, including overlapping captures. Refusals name the resource reason and retain the full configuration without clipping/skipping. Qualify worst admitted combinations with actual child RSS; report OS limits only when successfully applied.
 - [ ] Implement Run both: capture/validate both, store the batch manifest with queued states, await its committed checkpoint, then execute A and B sequentially from those objects. A failure may continue B; cancellation stops both. Commit each output/reference atomically; retain an unsaved result in memory on persistence failure. Never borrow previous results to satisfy a failed batch. Editing changes only the next run and staleness badges.
 - [ ] Implement guarded navigation/restore/clear: stop queue and child, settle writer requests, then replace/clear transactionally; old epoch messages are ignored. Failure keeps the old session and writer retry authority. Reopen marks unfinished runs Interrupted without dispatch. Closing flushes or exposes a recoverable failure rather than silently dropping memory.
 - [ ] Run `pytest Tests/Chunking/test_lab_runner.py Tests/Chunking/test_lab_coordinator.py Tests/Chunking/test_lab_recovery.py Tests/Chunking/test_lab_autosave.py -q`. Include mutated catalog while A runs, save failure before launch, A-fail/B-success, stale completion, concurrent Run clicks, restore failure, and quit during a non-cooperative run.
@@ -363,7 +363,7 @@ if connection.poll(0.05):
 - Create: `tldw_chatbook/RAG_Admin/chunking_lab_service.py`.
 - Modify: `tldw_chatbook/Chunking/chunking_interop_library.py` (`update_template` expected-version predicate).
 - Test: `Tests/RAG_Admin/test_chunking_lab_service.py`.
-- Regression: existing `Tests/RAG_Admin/test_local_rag_admin_service.py`.
+- Regression: existing `Tests/RAG_Admin/test_local_rag_admin_service.py` and real catalog CRUD coverage in `Tests/Chunking/test_chunking_interop_v7.py`.
 
 **Interfaces**
 
@@ -372,7 +372,7 @@ if connection.poll(0.05):
 - Extend `ChunkingInteropService.update_template` with optional keyword-only `expected_uuid: str | None = None` and `expected_version: int | None = None`; require both or neither. Lab always supplies both on update. Existing callers keep their signatures/semantics, but builtin/live protection is rechecked inside the write transaction for everyone.
 - Import/export template files use the existing record envelope; preserve tags as the canonical column and the exact authored body semantics. Legacy body import remains a draft, not an implicit migration.
 
-- [ ] Write a failing real SQLite stale-version test using the existing Media DB fixture pattern from the local RAG-admin tests; include concurrent same-name creation and stored-invalid repair.
+- [ ] Write a failing real SQLite stale-version test using the existing Media DB fixture pattern from `Tests/Chunking/test_chunking_interop_v7.py` (the local RAG-admin tests mainly use a service double); include concurrent same-name creation and stored-invalid repair.
 
 ```python
 # With a real MediaDatabase fixture named media_db:
@@ -397,7 +397,7 @@ SET name = ?, description = ?, template_json = ?, tags = ?, version = version + 
 WHERE id = ? AND uuid = ? AND version = ? AND deleted = 0 AND is_builtin = 0;
 ```
 
-- [ ] Run `pytest Tests/RAG_Admin/test_chunking_lab_service.py Tests/RAG_Admin/test_local_rag_admin_service.py Tests/RAG_Admin/test_template_validation.py -q`. Prove no source chunk/default mutation; reserved `auto` spelling variants fail; builtins can be copied but not updated; valid advanced metadata/tags round-trip.
+- [ ] Run `pytest Tests/RAG_Admin/test_chunking_lab_service.py Tests/RAG_Admin/test_local_rag_admin_service.py Tests/RAG_Admin/test_template_validation.py Tests/Chunking/test_chunking_interop_v7.py -q`. Prove no source chunk/default mutation; reserved `auto` spelling variants fail; builtins can be copied but not updated; valid advanced metadata/tags round-trip.
 - [ ] Review and commit only task files: `feat(chunking): save Lab templates with atomic conflict checks`.
 
 ### Task 7 / TASK-31427: Honest comparison and bounded inspection

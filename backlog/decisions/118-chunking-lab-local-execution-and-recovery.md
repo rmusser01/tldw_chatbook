@@ -73,6 +73,15 @@ ADR-003 ownership; its placement proposal is superseded by this decision.
 
 Initial v1 limits: 2 MiB UTF-8 sample, 10,000 chunks, 32 MiB serialized result,
 60 seconds per preview; test resource behavior, including intermediate allocations.
+Lab preflight additionally admits at most 16 pre/post operation entries combined
+and 2 MiB for each canonical authored/effective recipe document. Sample-dependent
+admission estimates at most 32 MiB of intermediate working payload, including
+bounded section-capture amplification. This estimate is not a process RSS cap:
+Python objects and intermediate copies can consume substantially more memory.
+Record measured child-lifetime peaks and actual successful OS limits separately;
+in particular, macOS address-space enforcement cannot be assumed. The fresh
+subprocess uses bounded framed JSON and explicit stderr DEVNULL, without changing
+the application's global streams. It is not a security sandbox.
 Autosave targets a 300 ms trailing debounce and at most one second between normal
 continuous-edit checkpoints. These are engineering defaults, not benchmark claims
 or guarantees of zero-keystroke loss. Display Saved locally only for the latest

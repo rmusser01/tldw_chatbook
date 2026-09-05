@@ -1,11 +1,11 @@
 ---
 id: TASK-31425
 title: Chunking Lab - bounded local A-B execution lifecycle
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 01:31'
+updated_date: '2026-09-05 02:15'
 labels:
   - chunking
   - chunking-lab
@@ -44,6 +44,7 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented one fresh stdlib subprocess per immutable preview, bounded framed JSON,
 off-loop admission/serialization/supervision, and termination followed by kill/reap.
 The coordinator commits the captured A/B manifest before launching either member,
@@ -85,3 +86,6 @@ rechecks its completed state after joining another transition. Four regressions
 failed before the fix; the covering coordinator file now passes 22 tests with one
 known Requests warning in 4.73s. Scoped Ruff/format/diff checks pass. No process,
 storage, resource-policy, or public-interface changes; ADR-118 still applies.
+
+Independent Task5 review found caller-task lifetime ownership; fix 391997ecd3 uses a Run completion future and closes idempotently after joining an active transition. Four RED regressions and 22 passing coordinator tests; scoped re-review approved with no new Important/Critical findings. ADR-118 and plan linked above; resource/platform qualifications remain explicit.
+<!-- SECTION:NOTES:END -->

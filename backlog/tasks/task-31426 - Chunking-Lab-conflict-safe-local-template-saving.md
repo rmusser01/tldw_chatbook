@@ -1,13 +1,17 @@
 ---
 id: TASK-31426
 title: Chunking Lab - conflict-safe local template saving
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-04 23:13'
+updated_date: '2026-09-05 02:15'
 labels:
   - chunking
   - chunking-lab
-dependencies: [TASK-31421, TASK-31422]
+dependencies:
+  - TASK-31421
+  - TASK-31422
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -28,3 +32,9 @@ Save Lab recipes through the existing canonical service with truthful validation
 - [ ] #3 Builtins default to Save as new, reserved auto names are refused, concurrent creates respect live-name uniqueness, and stored-invalid rows remain visible and repairable.
 - [ ] #4 Save A persists its pinned recipe and Save B its current valid draft; neither save changes Library content or defaults, and successful changes can trigger ingest-picker refresh.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: implements approved canonical local save and atomic expected-version contract. 1. Read Task6 brief/context and real Media DB service/tests. 2. Write failing real SQLite stale-version and lossless-save tests. 3. Add headless shared-preflight Lab Save and atomic live/builtin/UUID/version checks without catalog schema changes. 4. Verify caller input preservation, reserved names, concurrent uniqueness, stored-invalid repair, advanced tags/metadata, and no source/default mutation. 5. Run targeted service/parity/catalog regressions and scoped static checks; self-review, independent review, and evidence notes.
+<!-- SECTION:PLAN:END -->
