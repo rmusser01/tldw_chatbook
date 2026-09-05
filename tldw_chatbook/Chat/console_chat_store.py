@@ -17107,6 +17107,13 @@ class ConsoleChatStore:
             session_id,
             (None, None),
         )
+        # ADR-095: explicitly staged settings use the post-promotion writer
+        # and its failure ledger. Inherited policy remains part of the bundle.
+        bundled_context_policy = (
+            session.context_policy_overrides
+            if session.context_policy_revision == 0
+            else None
+        )
         committed_policy = self.persistence.promote_console_conversation_bundle(
             conversation_id=identity.conversation_id,
             policy_candidate=ConsoleLibraryPolicyCandidate(
@@ -17129,7 +17136,7 @@ class ConsoleChatStore:
             project_context_json=encode_project_context_json(
                 session.project_instruction_state
             ),
-            context_policy_overrides=session.context_policy_overrides,
+            context_policy_overrides=bundled_context_policy,
             contributions=contributions,
             trace_boundary=session.fork_trace_boundary,
         )
@@ -17149,6 +17156,11 @@ class ConsoleChatStore:
                 raise RuntimeError("Temporary chat identity changed during save.")
             session.ephemeral = False
             self.publish_committed_identity(session_id, identity)
+            if bundled_context_policy is not None:
+                # Match the fresh conversation's durable acceptance revision.
+                session.context_policy_durable_revision = (
+                    None if bundled_context_policy.is_empty else 1
+                )
             if staged_generation_snapshot is not None:
                 session.generation_durable_snapshot = staged_generation_snapshot
             session.library_policy_holder.snapshot = committed_policy
