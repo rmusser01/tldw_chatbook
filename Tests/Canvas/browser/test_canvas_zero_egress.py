@@ -19,11 +19,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
+from playwright.async_api import async_playwright
 
-from tldw_chatbook.Canvas.compiler import compile_canvas_document
-from tldw_chatbook.Canvas.models import RenderNode
+from Tests.Canvas.browser.canvas_live_harness import (
+    ProductRouteRecorder,
+    exercise_adversarial_preview,
+)
+from Tests.Canvas.browser.canvas_live_harness import (
+    attack_source as live_attack_source,
+)
+from Tests.Canvas.browser.canvas_live_harness import (
+    chromium_executable as live_chromium_executable,
+)
+from tldw_chatbook.Canvas.compiler import CanvasCompileError, compile_canvas_document
+from tldw_chatbook.Canvas.gateway import CanvasGateway
+from tldw_chatbook.Canvas.models import CanvasScope, RenderNode
+from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
@@ -505,7 +520,7 @@ def _chromium_executable(browser_type: Any) -> str | None:
     return shutil.which("chromium") or shutil.which("chromium-browser")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def playwright_runtime() -> Iterator[Any]:
     try:
         playwright_module = importlib.import_module("playwright.sync_api")
@@ -549,7 +564,7 @@ def test_python_playwright_is_a_mandatory_security_gate(
     assert "Python Playwright is required" in str(caught)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def chromium_browser(playwright_runtime: Any) -> Iterator[Any]:
     executable = _chromium_executable(playwright_runtime.chromium)
     if executable is None:
@@ -938,6 +953,228 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
             context.close()
 
     print("CANVAS_ZERO_EGRESS_CORPUS=" + json.dumps(evidence, sort_keys=True))
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_canonical_adversarial_corpus_stays_in_native_product_route(
+    egress_server: _OwnedServer,
+) -> None:
+    """Replay every canonical attack through the shipped native gateway."""
+
+    cases = json.loads(
+        (FIXTURES / "adversarial_scripts.json").read_text(encoding="utf-8")
+    )
+    canary_path = "/canvas-generated-same-origin-canary"
+    cases.append(
+        {
+            "name": "same_origin_relative_request",
+            "script": f"try {{ fetch('{canary_path}'); }} catch (_error) {{}}",
+            "expected": "ready",
+        }
+    )
+    session_id = "native-adversarial"
+    scope = CanvasScope(
+        session_id=session_id,
+        conversation_id=session_id,
+        active_message_ids=("assistant-adversarial",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="native-adversarial-bootstrap",
+    )
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: scope,
+        canvas_controller=controller,
+    )
+    gateway = CanvasGateway(authority=authority)
+    recorder = ProductRouteRecorder()
+
+    try:
+        initial = authority.import_html(
+            session_id=session_id,
+            source="<!doctype html><title>Adversarial gate</title><p>ready</p>",
+            create_new=True,
+        )
+        browser_scope = authority.gateway_scope(
+            session_id=session_id,
+            browser_session_id="native-adversarial-browser",
+            canvas_id=initial.canvas_id,
+            revision_id=initial.revision_id,
+        )
+        launch = await gateway.open_shell(browser_scope)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            context = await browser.new_context()
+            await recorder.install_execution_boundary(context)
+            await context.add_init_script(
+                "window.__canvasNativeWindowSentinel='native-route-clean';"
+                "Object.prototype.__canvasNativePrototypeSentinel='native-route-clean';"
+            )
+            page = await context.new_page()
+            recorder.attach(context, page)
+            page.set_default_timeout(12_000)
+            await page.goto(launch.browser_url)
+            preview = page.frame_locator("#canvas-preview")
+            await page.locator("#loading-state").wait_for(state="hidden")
+            shell = page
+            accepted_sequence = 1
+            for index, case in enumerate(cases):
+                script = (
+                    str(case["script"])
+                    .replace("__EGRESS__", egress_server.origin)
+                    .replace(
+                        "__WEBSOCKET__",
+                        egress_server.origin.replace("http://", "ws://", 1),
+                    )
+                )
+                scope = CanvasScope(
+                    session_id=session_id,
+                    conversation_id=session_id,
+                    active_message_ids=("assistant-adversarial",),
+                    selected_canvas_id=None,
+                    selected_revision_id=None,
+                    run_id=f"native-adversarial-{index}",
+                )
+                recorder.begin_load()
+                try:
+                    authority.import_html(
+                        session_id=session_id,
+                        source=live_attack_source(script, marker=str(case["name"])),
+                        create_new=False,
+                    )
+                except CanvasCompileError as error:
+                    assert {issue.code for issue in error.issues} == {"html-limit"}
+                    assert egress_server.requests == [], case["name"]
+                    continue
+                accepted_sequence += 1
+                await page.get_by_text(
+                    f"Revision {accepted_sequence}", exact=True
+                ).wait_for()
+                await exercise_adversarial_preview(
+                    shell, preview, case, expect_bridge=False
+                )
+                assert egress_server.requests == [], case["name"]
+                assert await page.evaluate("window.__canvasNativeWindowSentinel") == (
+                    "native-route-clean"
+                )
+                assert (
+                    await page.evaluate(
+                        "Object.prototype.__canvasNativePrototypeSentinel"
+                    )
+                    == "native-route-clean"
+                )
+                assert (
+                    await preview.locator("#attack").evaluate(
+                        "() => window.__canvasNativeWindowSentinel"
+                    )
+                    == "native-route-clean"
+                )
+            launch_url = urlsplit(launch.browser_url)
+            recorder.assert_generated_confined(
+                trusted_origin=f"{launch_url.scheme}://{launch_url.netloc}",
+                trusted_route_root=launch_url.path,
+                forbidden_canary_path=canary_path,
+            )
+            await browser.close()
+    finally:
+        await gateway.aclose()
+        controller.close_runtime()
+
+
+@pytest.mark.parametrize(
+    ("kind", "target", "detail"),
+    [
+        (
+            "request",
+            "https://127.0.0.1:9443/canvas/cap/api/plan?escape=1",
+            json.dumps(
+                {
+                    "method": "GET",
+                    "owner": "https://127.0.0.1:9443/canvas/cap/render",
+                    "resource_type": "fetch",
+                },
+                sort_keys=True,
+            ),
+        ),
+        ("navigation", "data:text/html,escape", "frame"),
+        (
+            "request",
+            "https://127.0.0.1:9443/canvas/cap/api/plan",
+            json.dumps(
+                {
+                    "method": "GET",
+                    "owner": "https://127.0.0.1:9443/canvas/cap/render",
+                    "resource_type": "fetch",
+                },
+                sort_keys=True,
+            ),
+        ),
+    ],
+    ids=["same-origin-query", "data-navigation", "late-renderer-request"],
+)
+def test_product_route_recorder_rejects_generated_escape_surfaces(
+    kind: str, target: str, detail: str
+) -> None:
+    recorder = ProductRouteRecorder()
+    recorder.mark_generated()
+    recorder.add(kind, target, detail)
+
+    with pytest.raises(AssertionError):
+        recorder.assert_generated_confined(
+            trusted_origin="https://127.0.0.1:9443",
+            trusted_route_root="/canvas/cap/",
+            forbidden_canary_path="/canvas-generated-same-origin-canary",
+        )
+
+
+def test_product_route_recorder_rejects_foreign_startup_worker() -> None:
+    recorder = ProductRouteRecorder()
+    recorder.begin_load()
+    recorder.add("worker", "data:text/javascript,fetch('/leak')")
+    with pytest.raises(AssertionError):
+        recorder.assert_generated_confined(
+            trusted_origin="https://127.0.0.1:9443",
+            trusted_route_root="/canvas/cap/",
+            forbidden_canary_path="/canvas-generated-same-origin-canary",
+        )
+
+
+@pytest.mark.parametrize("missing_kind", ["request", "response", "request-finished"])
+def test_product_execution_requires_completed_startup_census(missing_kind) -> None:
+    recorder = ProductRouteRecorder()
+    root = "https://127.0.0.1:9443/canvas/cap"
+    expected = [(root + "/render", "document")]
+    expected += [
+        (root + "/static/" + name, "script")
+        for name in (
+            "canvas_renderer.js",
+            "canvas_runtime_worker.js",
+            "quickjs-runtime.js",
+        )
+    ]
+    for url, resource_type in expected:
+        for kind in ("request", "response", "request-finished"):
+            if kind != missing_kind:
+                recorder.add(
+                    kind,
+                    url,
+                    json.dumps(
+                        {
+                            "method": "GET",
+                            "resource_type": resource_type,
+                            "owner": root + "/render",
+                            "status": 200,
+                        }
+                    ),
+                )
+    with pytest.raises(AssertionError, match="startup .*census"):
+        recorder.assert_startup_complete(root + "/")
+    assert recorder.execution_ack_count == 0
 
 
 @pytest.mark.loopback_network

@@ -232,6 +232,9 @@ def test_canvas_v3_whole_graph_round_trips_atomically_as_new(tmp_path: Path) -> 
             assert archive.read(record["source_path"]).decode("utf-8") == source
         assert not any(name.endswith(".html") for name in archive.namelist())
 
+    source_path.unlink()
+    assert not source_path.exists()
+
     target_path = tmp_path / "target.sqlite"
     importer = ChatbookImporter({"ChaChaNotes": str(target_path)})
     importer.temp_dir = tmp_path / "import-temp"
@@ -328,6 +331,7 @@ def test_canvas_v3_whole_graph_round_trips_atomically_as_new(tmp_path: Path) -> 
     for item in (*identities, *metadata):
         UUID(item.canvas_id)
         assert item.canvas_id not in expected["canvas_ids"]
+
     target.close_connection()
 
 

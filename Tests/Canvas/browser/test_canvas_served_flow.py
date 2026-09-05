@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import secrets
 import shutil
 import tomllib
 from http.cookies import SimpleCookie
@@ -16,8 +18,23 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
+from Tests.Canvas.browser.canvas_live_chatbook_child import _ScriptedCanvasGateway
+from Tests.Canvas.browser.canvas_live_harness import (
+    LiveServedStack,
+    ProductRouteRecorder,
+    adversarial_cases,
+    assert_only_owned_browser_traffic,
+    egress_probe,
+    exercise_adversarial_preview,
+    start_live_served_stack,
+)
+from Tests.Canvas.browser.canvas_live_harness import (
+    chromium_executable as live_chromium_executable,
+)
+from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.control_protocol import (
     CONTROL_PROTOCOL_VERSION,
@@ -293,6 +310,807 @@ async def _load_owned_shell(page) -> None:
     await page.set_content(source)
     await page.add_style_tag(path=_SERVED_STATIC / "served_shell.css")
     await page.add_script_tag(path=_SERVED_STATIC / "served_shell.js")
+
+
+async def _login_live_page(page, *, origin: str, access_token: str) -> None:
+    """Complete the real remote-login path without exposing the credential."""
+
+    await page.goto(origin)
+    await page.get_by_label("Access token").fill(access_token)
+    await page.get_by_role("button", name="Sign in").click()
+    await expect(page.locator("#terminal-region")).to_be_visible()
+
+
+async def _live_browser_session_id(server, page, *, port: int) -> str:
+    cookie = next(
+        item["value"]
+        for item in await page.context.cookies()
+        if item["name"] == SESSION_COOKIE_NAME
+    )
+    session = server._web_auth.authenticate_request(
+        RequestFacts(
+            method="GET",
+            path="/",
+            peer_ip="127.0.0.1",
+            scheme="https",
+            host=f"127.0.0.1:{port}",
+            cookie_value=cookie,
+            forwarded_for="127.0.0.1"
+            if server._web_auth.policy.trusted_proxy_addresses
+            else None,
+            forwarded_proto="https"
+            if server._web_auth.policy.trusted_proxy_addresses
+            else None,
+            forwarded_host=f"127.0.0.1:{port}"
+            if server._web_auth.policy.trusted_proxy_addresses
+            else None,
+        )
+    )
+    return session.session_id
+
+
+async def _live_child_for_page(server, page, *, port: int) -> str:
+    browser_session_id = await _live_browser_session_id(server, page, port=port)
+    return server._served_browser_children[browser_session_id]
+
+
+async def _send_terminal_command(page, command: str) -> None:
+    await page.locator("#terminal .xterm-helper-textarea").press(
+        {
+            "update": "u",
+            "branch": "b",
+            "reopen-root": "r",
+            "ping": "p",
+            "next-adversarial": "n",
+        }[command]
+    )
+
+
+async def _served_shell_projection(page) -> dict[str, object]:
+    """Read the trusted shell's exact source-free state over its product route."""
+
+    iframe = await page.locator("#served-canvas-frame").element_handle()
+    assert iframe is not None
+    shell_frame = await iframe.content_frame()
+    assert shell_frame is not None
+    result = await shell_frame.evaluate(
+        """async () => {
+            const response = await fetch(new URL('api/state', location.href));
+            return {status: response.status, body: await response.json()};
+        }"""
+    )
+    assert isinstance(result, dict)
+    assert result.get("status") == 200
+    body = result.get("body")
+    assert isinstance(body, dict)
+    return body
+
+
+async def _send_console_prompt(page, prompt: str) -> None:
+    keyboard_target = page.locator("#terminal .xterm-helper-textarea")
+    await keyboard_target.focus()
+    await keyboard_target.press("Escape")
+    await page.wait_for_timeout(250)
+    await keyboard_target.press_sequentially(prompt, delay=5)
+    await expect(page.locator("#terminal")).to_contain_text(prompt, timeout=5_000)
+    await keyboard_target.press("Enter")
+
+
+async def _wait_for_gateway_calls(path: Path, expected: int) -> None:
+    for _ in range(600):
+        if path.exists():
+            observed = int(path.read_text(encoding="ascii"))
+            if observed >= expected:
+                return
+        await asyncio.sleep(0.05)
+    observed = path.read_text(encoding="ascii") if path.exists() else "missing"
+    pytest.fail(
+        "actual Chatbook provider call count did not reach "
+        f"{expected}; observed={observed}"
+    )
+
+
+async def _scripted_gateway_reply(gateway, messages: list[dict[str, str]]) -> str:
+    chunks = [chunk async for chunk in gateway.stream_chat(None, messages)]
+    assert len(chunks) == 1
+    return chunks[0]
+
+
+@pytest.mark.parametrize("discovery", [False, True], ids=["direct", "progressive"])
+async def test_actual_chatbook_scripted_gateway_emits_create_then_stable_update(
+    tmp_path: Path, monkeypatch, discovery: bool
+) -> None:
+    """Keep the deterministic live provider faithful to real tool disclosure."""
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    gateway = _ScriptedCanvasGateway()
+    system = (
+        "use find_tools, then load_tools"
+        if discovery
+        else "available tools: canvas_create canvas_update"
+    )
+    messages = [{"role": "system", "content": system}]
+
+    if discovery:
+        assert '"name":"find_tools"' in await _scripted_gateway_reply(gateway, messages)
+        assert '"name":"load_tools"' in await _scripted_gateway_reply(gateway, messages)
+    create = await _scripted_gateway_reply(gateway, messages)
+    assert '"name": "canvas_create"' in create
+    canvas_id = "00000000-0000-4000-8000-000000000001"
+    revision_id = "00000000-0000-4000-8000-000000000002"
+    create_result = json.dumps(
+        {
+            "status": "staged",
+            "canvas": {"canvas_id": canvas_id, "revision_id": revision_id},
+        }
+    )
+    messages.append(
+        {
+            "role": "user",
+            "content": f"{FENCE_TOOL_RESULT_PREFIX}canvas_create: {create_result}",
+        }
+    )
+    assert await _scripted_gateway_reply(gateway, messages) == (
+        "CHATBOOK_CANVAS_CREATED"
+    )
+
+    messages = [{"role": "system", "content": system}]
+    if discovery:
+        assert '"name":"find_tools"' in await _scripted_gateway_reply(gateway, messages)
+        assert '"name":"load_tools"' in await _scripted_gateway_reply(gateway, messages)
+    update = await _scripted_gateway_reply(gateway, messages)
+    fenced = update.removeprefix("```tool_call\n").removesuffix("\n```")
+    call = json.loads(fenced)
+    assert call["name"] == "canvas_update"
+    assert call["arguments"]["canvas_id"] == canvas_id
+    assert call["arguments"]["expected_parent_revision_id"] == revision_id
+
+
+@pytest.mark.loopback_network
+async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Run deterministic provider tool cycles through an actual TldwCli child."""
+
+    access_token = secrets.token_urlsafe(24)
+    stack = await start_live_served_stack(
+        tmp_path,
+        monkeypatch,
+        access_token=access_token,
+        child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
+    )
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page(ignore_https_errors=True)
+            page.set_default_timeout(45_000)
+            await _login_live_page(page, origin=stack.origin, access_token=access_token)
+            await expect(page.locator("body")).to_have_class(re.compile("first-byte"))
+            await expect(page.locator("#terminal")).to_contain_text(
+                "Composer", timeout=45_000
+            )
+            await expect(page.locator("#terminal")).not_to_contain_text("Check online")
+            child_id = await _live_child_for_page(stack.server, page, port=stack.port)
+            await stack.server._canvas_control_broker.wait_connected(
+                child_id, timeout=10.0
+            )
+
+            await _send_console_prompt(page, "Create the requested Canvas")
+            await _wait_for_gateway_calls(
+                tmp_path / "test_data" / "canvas-live-gateway-calls", 2
+            )
+            disclosure = (
+                tmp_path / "test_data" / "canvas-live-tool-disclosure"
+            ).read_text(encoding="ascii")
+            assert disclosure == (
+                "mode=direct;find_tools=False;load_tools=False;canvas_create=True"
+            )
+            assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
+                encoding="utf-8"
+            ) == "canvas"
+            await expect(page.locator("#terminal")).to_contain_text(
+                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            )
+            shell = page.frame_locator("#served-canvas-frame")
+            await expect(shell.locator("#connection-state")).to_have_text(
+                "Connected", timeout=45_000
+            )
+            preview = shell.frame_locator("#canvas-preview")
+            await expect(preview.locator("#chatbook-app-canvas")).to_have_text(
+                "CHATBOOK_APP_CANVAS", timeout=60_000
+            )
+            await expect(preview.locator("#chatbook-app-revision")).to_have_text("v1")
+            await expect(shell.get_by_text("Revision 1", exact=True)).to_be_visible()
+
+            await page.wait_for_timeout(1_000)
+            await _send_console_prompt(page, "Revise the active Canvas")
+            await _wait_for_gateway_calls(
+                tmp_path / "test_data" / "canvas-live-gateway-calls", 3
+            )
+            await _wait_for_gateway_calls(
+                tmp_path / "test_data" / "canvas-live-gateway-calls", 4
+            )
+            assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
+                encoding="ascii"
+            ) == "canvas_create,staged"
+            await expect(preview.locator("#chatbook-app-revision")).to_have_text("v2")
+            await expect(shell.get_by_text("Revision 2", exact=True)).to_be_visible()
+            await expect(page.locator("#terminal")).to_contain_text(
+                "CHATBOOK_CANVAS_UPDATED", timeout=45_000
+            )
+            await expect(page.locator("#terminal.-connected")).to_be_visible()
+            await browser.close()
+    finally:
+        await stack.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize(
+    "trusted_proxy", [False, True], ids=["direct-tls", "trusted-proxy"]
+)
+async def test_production_tls_two_child_tool_and_reconnect_flow(
+    tmp_path: Path, monkeypatch, trusted_proxy: bool
+) -> None:
+    """Exercise authenticated TLS, real AppServices, tools, isolation, and recovery."""
+
+    access_token = secrets.token_urlsafe(24)
+    stack = await start_live_served_stack(
+        tmp_path, monkeypatch, access_token=access_token, trusted_proxy=trusted_proxy
+    )
+    attempted_urls: list[str] = []
+    sent_websocket_frames: list[str | bytes] = []
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            contexts = [
+                await browser.new_context(ignore_https_errors=True) for _ in range(2)
+            ]
+            for context in contexts:
+                context.on(
+                    "request", lambda request: attempted_urls.append(request.url)
+                )
+            pages = [await context.new_page() for context in contexts]
+            for page in pages:
+                page.on(
+                    "websocket",
+                    lambda websocket: websocket.on(
+                        "framesent", lambda frame: sent_websocket_frames.append(frame)
+                    ),
+                )
+                page.set_default_timeout(15_000)
+                await _login_live_page(
+                    page, origin=stack.origin, access_token=access_token
+                )
+
+            shells = [page.frame_locator("#served-canvas-frame") for page in pages]
+            previews = [shell.frame_locator("#canvas-preview") for shell in shells]
+            for shell in shells:
+                await expect(shell.locator("#connection-state")).to_have_text(
+                    "Connected", timeout=15_000
+                )
+                await expect(shell.locator("#loading-state")).to_be_hidden()
+
+            port = int(urlsplit(stack.origin).port or 443)
+            child_ids = [
+                await _live_child_for_page(stack.server, page, port=port)
+                for page in pages
+            ]
+            assert child_ids[0] != child_ids[1]
+            markers = [f"child-{child_id[-8:]}" for child_id in child_ids]
+            for preview, marker in zip(previews, markers, strict=True):
+                await expect(preview.locator("#profile-identity")).to_have_text(marker)
+                await expect(preview.locator("#revision-marker")).to_have_text("v1")
+
+            first_src = (
+                await pages[0].locator("#served-canvas-frame").get_attribute("src")
+            )
+            assert first_src is not None
+            copied_status = await pages[1].evaluate(
+                "async url => (await fetch(url)).status", first_src
+            )
+            guessed_status = await pages[1].evaluate(
+                "async () => (await fetch('/canvas/guessed')).status"
+            )
+            assert copied_status == guessed_status == 404
+
+            async with pages[0].expect_response(
+                lambda response: response.url.endswith("/api/bridge/prepare")
+            ) as prepare_info:
+                await previews[0].get_by_role("button", name="Send result").click()
+            assert (await prepare_info.value).status == 200
+            await expect(shells[0].locator("#bridge-dialog")).to_be_visible()
+            assert (
+                markers[0]
+                in await shells[0].locator("#bridge-complete-text").input_value()
+            )
+            await shells[0].get_by_role("button", name="Send to composer").click()
+            await expect(shells[0].locator("#bridge-dialog")).to_be_hidden()
+
+            await previews[1].get_by_role("button", name="Download result").click()
+            await expect(shells[1].locator("#bridge-dialog")).to_be_visible()
+            async with pages[1].expect_download() as download_info:
+                await shells[1].get_by_role("button", name="Download file").click()
+            download = await download_info.value
+            assert download.suggested_filename == f"{markers[1]}.txt"
+            download_path = tmp_path / "downloaded-profile.txt"
+            await download.save_as(download_path)
+            assert download_path.read_text(encoding="utf-8") == f"{markers[1]}:v1"
+
+            await _send_terminal_command(pages[0], "update")
+            await pages[0].wait_for_timeout(100)
+            assert any("stdin" in str(frame) for frame in sent_websocket_frames)
+            await expect(previews[0].locator("#revision-marker")).to_have_text(
+                "v2", timeout=15_000
+            )
+            await expect(
+                shells[0].get_by_text("Revision 2", exact=True)
+            ).to_be_visible()
+
+            await _send_terminal_command(pages[0], "branch")
+            await expect(previews[0].locator("#revision-marker")).to_have_text(
+                "branch", timeout=15_000
+            )
+            await shells[0].get_by_role("button", name="View previous").click()
+            await expect(previews[0].locator("#revision-marker")).to_have_text(
+                "v1", timeout=15_000
+            )
+            await expect(shells[0].get_by_text("Pinned", exact=True)).to_be_visible()
+
+            await stack.server._canvas_control_broker.revoke_child(child_ids[0])
+            await expect(
+                pages[0].get_by_text("Canvas reconnecting", exact=True)
+            ).to_be_visible(timeout=15_000)
+            await expect(pages[0].locator("#terminal-region")).to_be_visible()
+            await expect(shells[1].locator("#connection-state")).to_have_text(
+                "Connected"
+            )
+
+            await _send_terminal_command(pages[0], "ping")
+            await pages[0].wait_for_timeout(250)
+            await expect(pages[0].locator("#terminal.-connected")).to_be_visible()
+            assert any(
+                '"stdin","p"' in str(frame).replace(" ", "")
+                for frame in sent_websocket_frames
+            )
+
+            assert_only_owned_browser_traffic(
+                attempted_urls, owned_origins=(stack.origin,)
+            )
+            if trusted_proxy:
+                assert stack.server._web_ssl_context is None
+                assert stack.proxy_counts["http"] > 0
+                assert stack.proxy_counts["websocket"] == 2
+            await browser.close()
+    finally:
+        await stack.aclose()
+
+
+async def test_live_stack_cleanup_failure_still_reaps_child_and_owned_files(tmp_path):
+    class Process:
+        returncode = None
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def fail_cleanup():
+        raise RuntimeError("owned cleanup failure")
+
+    process = Process()
+    owned = tmp_path / "owned-child-data"
+    owned.mkdir()
+    stack = LiveServedStack(
+        server=None,
+        runner=SimpleNamespace(cleanup=fail_cleanup),
+        origin="https://127.0.0.1",
+        port=1,
+        owned_paths=(owned,),
+        services=[SimpleNamespace(_process=process)],
+    )
+    with pytest.raises(RuntimeError, match="owned cleanup failure"):
+        await stack.aclose()
+    assert process.returncode == -9
+    assert not owned.exists()
+
+
+@pytest.mark.loopback_network
+async def test_actual_child_abnormal_exit_cleans_owned_state(
+    tmp_path, monkeypatch
+) -> None:
+    stack = await start_live_served_stack(
+        tmp_path,
+        monkeypatch,
+        access_token="owned-test-token",
+        child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
+    )
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            try:
+                page = await browser.new_page(ignore_https_errors=True)
+                await _login_live_page(
+                    page, origin=stack.origin, access_token="owned-test-token"
+                )
+                await expect(page.locator("#terminal")).to_contain_text(
+                    "Composer", timeout=45_000
+                )
+                child_temp = tmp_path / "test_data" / "child-tmp"
+                assert list(child_temp.glob("tldw-chatbook-test-*"))
+                assert len(stack.services) == 1
+                process = stack.services[0]._process
+                assert process is not None and process.returncode is None
+                process.kill()
+                await asyncio.wait_for(process.wait(), 5)
+            finally:
+                await browser.close()
+    finally:
+        await stack.aclose()
+    assert all(not path.exists() for path in stack.owned_paths)
+    assert all(service._process.returncode is not None for service in stack.services)
+
+
+@pytest.mark.parametrize(
+    ("mode", "start_index", "update_count"),
+    (("fresh", 7, 1), ("rapid", 0, 8)),
+)
+async def test_served_renderer_case_seven_keeps_exact_scope_and_execution_ack(
+    tmp_path: Path,
+    monkeypatch,
+    mode: str,
+    start_index: int,
+    update_count: int,
+) -> None:
+    """Correlate the formerly flaky renderer load on fresh and rapid paths."""
+
+    access_token = secrets.token_urlsafe(24)
+    with egress_probe() as probe:
+        monkeypatch.setenv("TLDW_CANVAS_EGRESS_PROBE_ORIGIN", probe.origin)
+        monkeypatch.setenv("TLDW_CANVAS_ADVERSARIAL_START_INDEX", str(start_index))
+        stack = await start_live_served_stack(
+            tmp_path, monkeypatch, access_token=access_token
+        )
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    executable_path=live_chromium_executable(playwright.chromium),
+                )
+                context = await browser.new_context(ignore_https_errors=True)
+                recorder = ProductRouteRecorder(served=True)
+                await recorder.install_execution_boundary(context)
+                page = await context.new_page()
+                recorder.attach(context, page)
+                page.set_default_timeout(15_000)
+                await _login_live_page(
+                    page, origin=stack.origin, access_token=access_token
+                )
+                await expect(page.locator("#terminal.-connected")).to_be_visible()
+                browser_session_id = await _live_browser_session_id(
+                    stack.server, page, port=stack.port
+                )
+                child_id = stack.server._served_browser_children[browser_session_id]
+                await stack.server._canvas_control_broker.wait_connected(
+                    child_id, timeout=15.0
+                )
+                shell = page.frame_locator("#served-canvas-frame")
+                preview = shell.frame_locator("#canvas-preview")
+                await expect(shell.locator("#connection-state")).to_have_text(
+                    "Connected"
+                )
+                await expect(shell.locator("#loading-state")).to_be_hidden()
+                initial_expected = await stack.server.served_canvas_state(
+                    browser_session_id
+                )
+                initial_actual = await _served_shell_projection(page)
+                if (
+                    initial_expected["revision_id"]
+                    != initial_actual["selection"]["revision_id"]
+                ):
+                    raise AssertionError(
+                        "initial shell revision differs from child scope"
+                    )
+
+                ack_count = recorder.execution_ack_count
+                cases = adversarial_cases(probe.origin)
+                for offset in range(update_count):
+                    case_index = start_index + offset
+                    recorder.begin_load()
+                    await _send_terminal_command(page, "next-adversarial")
+                    await expect(page.locator("#terminal")).to_contain_text(
+                        f"CANVAS_LIVE_ADVERSARIAL_{case_index}"
+                    )
+                    expected = await stack.server.served_canvas_state(
+                        browser_session_id
+                    )
+                    try:
+                        await expect(
+                            shell.get_by_text(f"Revision {offset + 2}", exact=True)
+                        ).to_be_visible(timeout=5_000)
+                        await expect(
+                            preview.locator("#adversarial-marker")
+                        ).to_have_text(str(case_index))
+                        await exercise_adversarial_preview(
+                            shell, preview, cases[case_index], expect_bridge=False
+                        )
+                        for _ in range(1_000):
+                            if recorder.execution_ack_count > ack_count:
+                                break
+                            await asyncio.sleep(0.01)
+                    except AssertionError:
+                        actual = await _served_shell_projection(page)
+                        state = {
+                            "case_index": case_index,
+                            "startup_error": recorder.startup_error,
+                            "revision_matches_child": expected["revision_id"]
+                            == actual["selection"]["revision_id"],
+                            "connection": await shell.locator(
+                                "#connection-state"
+                            ).text_content(),
+                            "loading_hidden": await shell.locator(
+                                "#loading-state"
+                            ).is_hidden(),
+                            "compatibility_hidden": await shell.locator(
+                                "#compatibility"
+                            ).is_hidden(),
+                            "marker_visible": await preview.locator(
+                                "#adversarial-marker"
+                            ).is_visible(),
+                            "execution_ack_advanced": (
+                                recorder.execution_ack_count > ack_count
+                            ),
+                        }
+                        pytest.fail(
+                            f"case seven {mode} renderer boundary failed: {state}",
+                            pytrace=False,
+                        )
+                    if recorder.execution_ack_count <= ack_count:
+                        raise AssertionError("renderer execution ack did not advance")
+                    ack_count = recorder.execution_ack_count
+                    actual = await _served_shell_projection(page)
+                    if expected["revision_id"] != actual["selection"]["revision_id"]:
+                        raise AssertionError(
+                            "trusted shell revision differs from exact child scope"
+                        )
+                    assert probe.requests == []
+                await browser.close()
+        finally:
+            await stack.aclose()
+
+
+@pytest.mark.loopback_network
+async def test_canonical_adversarial_corpus_stays_in_served_product_route(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Replay the canonical attacks through authenticated mounted Canvas routes."""
+
+    access_token = secrets.token_urlsafe(24)
+    canary_path = "/canvas-generated-same-origin-canary"
+    with egress_probe() as probe:
+        monkeypatch.setenv("TLDW_CANVAS_EGRESS_PROBE_ORIGIN", probe.origin)
+        monkeypatch.setenv("TLDW_CANVAS_SAME_ORIGIN_CANARY_PATH", canary_path)
+        stack = await start_live_served_stack(
+            tmp_path, monkeypatch, access_token=access_token
+        )
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    executable_path=live_chromium_executable(playwright.chromium),
+                )
+                context = await browser.new_context(ignore_https_errors=True)
+                recorder = ProductRouteRecorder(served=True)
+                await recorder.install_execution_boundary(context)
+                await context.add_init_script(
+                    "Object.defineProperty(window, '__canvasNativeWindowSentinel', {"
+                    "value:'served-route-clean',writable:true,configurable:true});"
+                    "Object.defineProperty(Object.prototype, "
+                    "'__canvasNativePrototypeSentinel', {value:'served-route-clean',"
+                    "writable:true,configurable:true});"
+                )
+                page = await context.new_page()
+                recorder.attach(context, page)
+                bridge_prepare_responses: list[object] = []
+                page.on(
+                    "response",
+                    lambda response: (
+                        bridge_prepare_responses.append(response)
+                        if response.url.endswith("/api/bridge/prepare")
+                        else None
+                    ),
+                )
+                page.set_default_timeout(15_000)
+                await _login_live_page(
+                    page, origin=stack.origin, access_token=access_token
+                )
+                await expect(page.locator("#terminal.-connected")).to_be_visible(
+                    timeout=15_000
+                )
+                child_id = await _live_child_for_page(
+                    stack.server, page, port=stack.port
+                )
+                await stack.server._canvas_control_broker.wait_connected(
+                    child_id, timeout=15.0
+                )
+                shell = page.frame_locator("#served-canvas-frame")
+                preview = shell.frame_locator("#canvas-preview")
+                await expect(shell.locator("#connection-state")).to_have_text(
+                    "Connected", timeout=15_000
+                )
+                await expect(shell.locator("#loading-state")).to_be_hidden(
+                    timeout=15_000
+                )
+
+                cases = adversarial_cases(probe.origin)
+                cases.append(
+                    {
+                        "name": "same_origin_relative_request",
+                        "script": (
+                            f"try {{ fetch('{canary_path}'); }} catch (_error) {{}}"
+                        ),
+                        "expected": "ready",
+                    }
+                )
+
+                async def clear_prepared_dialog() -> None:
+                    dialog = shell.locator("#bridge-dialog")
+                    if not await dialog.is_visible():
+                        return
+                    async with page.expect_response(
+                        lambda response: response.url.endswith("/api/bridge")
+                    ) as decision_info:
+                        await shell.get_by_role("button", name="Cancel").click()
+                    assert (await decision_info.value).status in {200, 409}
+                    await dialog.wait_for(state="hidden")
+
+                accepted_sequence = 1
+                for case_index, case in enumerate(cases):
+                    prior_prepares = len(bridge_prepare_responses)
+                    recorder.begin_load()
+                    await _send_terminal_command(page, "next-adversarial")
+                    await expect(page.locator("#terminal")).to_contain_text(
+                        re.compile(
+                            rf"CANVAS_LIVE_(?:ADVERSARIAL|REJECTED)_{case_index}"
+                        ),
+                        timeout=15_000,
+                    )
+                    if f"CANVAS_LIVE_REJECTED_{case_index}" in (
+                        await page.locator("#terminal").inner_text()
+                    ):
+                        assert probe.requests == [], case["name"]
+                        continue
+                    accepted_sequence += 1
+                    await expect(
+                        shell.get_by_text(f"Revision {accepted_sequence}", exact=True)
+                    ).to_be_visible(timeout=15_000)
+                    try:
+                        await expect(
+                            preview.locator("#adversarial-marker")
+                        ).to_have_text(str(case_index), timeout=15_000)
+                    except AssertionError:
+                        renderer_state = {
+                            "connection": await shell.locator(
+                                "#connection-state"
+                            ).text_content(),
+                            "loading_hidden": await shell.locator(
+                                "#loading-state"
+                            ).is_hidden(),
+                            "compatibility_hidden": await shell.locator(
+                                "#compatibility"
+                            ).is_hidden(),
+                            "preview_src": bool(
+                                await shell.locator("#canvas-preview").get_attribute(
+                                    "src"
+                                )
+                            ),
+                        }
+                        pytest.fail(
+                            f"{case['name']} renderer did not mount; "
+                            f"state={renderer_state}",
+                            pytrace=False,
+                        )
+                    emits_expected_bridge = isinstance(
+                        case.get("bridge_kind"), str
+                    ) or case["name"] in {"bridge_count_limit", "bridge_rate_limit"}
+                    if not emits_expected_bridge:
+                        await clear_prepared_dialog()
+                    try:
+                        await exercise_adversarial_preview(
+                            shell,
+                            preview,
+                            case,
+                            expect_bridge=False,
+                            programmatic_clicks=True,
+                        )
+                    except PlaywrightTimeoutError:
+                        shell_state = await shell.locator(".canvas-workbench").evaluate(
+                            "node => ({children:[...node.children].map(child => ({"
+                            "id:child.id,hidden:child.hidden,inert:child.inert}))})"
+                        )
+                        pytest.fail(
+                            f"{case['name']} timed out; bridge prepare statuses="
+                            f"{[response.status for response in bridge_prepare_responses[-2:]]}; "
+                            f"shell={shell_state}",
+                            pytrace=False,
+                        )
+                    dialog = shell.locator("#bridge-dialog")
+                    if isinstance(case.get("bridge_kind"), str):
+                        for _ in range(1_000):
+                            if len(bridge_prepare_responses) > prior_prepares:
+                                break
+                            await asyncio.sleep(0.01)
+                        response = bridge_prepare_responses[-1]
+                        if response.status != 200:
+                            payload = await response.json()
+                            pytest.fail(
+                                f"{case['name']} prepare failed with "
+                                f"{response.status}:{payload.get('error')}",
+                                pytrace=False,
+                            )
+                        await dialog.wait_for(state="visible", timeout=10_000)
+                    elif case["name"] in {"bridge_count_limit", "bridge_rate_limit"}:
+                        for _ in range(1_000):
+                            if len(bridge_prepare_responses) > prior_prepares:
+                                break
+                            await asyncio.sleep(0.01)
+                        response = bridge_prepare_responses[-1]
+                        assert response.status in {200, 409}
+                        if response.status == 200:
+                            await asyncio.sleep(0.1)
+                    await clear_prepared_dialog()
+                    assert probe.requests == [], case["name"]
+                    assert (
+                        await page.evaluate("window.__canvasNativeWindowSentinel")
+                        == "served-route-clean"
+                    )
+                    assert (
+                        await page.evaluate(
+                            "Object.prototype.__canvasNativePrototypeSentinel"
+                        )
+                        == "served-route-clean"
+                    )
+                    assert (
+                        await preview.locator("#attack").evaluate(
+                            "() => window.__canvasNativeWindowSentinel"
+                        )
+                        == "served-route-clean"
+                    )
+
+                bridge_prepare_statuses = [
+                    response.status for response in bridge_prepare_responses
+                ]
+                assert bridge_prepare_statuses.count(200) >= 3
+                assert set(bridge_prepare_statuses) <= {200, 409}
+
+                shell_src = await page.locator("#served-canvas-frame").get_attribute(
+                    "src"
+                )
+                assert shell_src is not None
+                route_path = urlsplit(shell_src).path
+                recorder.assert_generated_confined(
+                    trusted_origin=stack.origin,
+                    trusted_route_root=route_path,
+                    forbidden_canary_path=canary_path,
+                    trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+                    trusted_static_paths=(
+                        "/static/chatbook-canvas/canvas_renderer.js",
+                        "/static/chatbook-canvas/canvas_runtime_worker.js",
+                        "/static/chatbook-canvas/quickjs-runtime.js",
+                    ),
+                )
+                await browser.close()
+        finally:
+            await stack.aclose()
 
 
 async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(

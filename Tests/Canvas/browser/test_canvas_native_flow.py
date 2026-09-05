@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 from playwright.async_api import async_playwright, expect
 
+from Tests.Chatbooks.test_chatbook_canvas_round_trip import _seed_canvas_graph
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
@@ -26,11 +27,18 @@ from tldw_chatbook.Canvas.gateway import (
 from tldw_chatbook.Canvas.limits import sha256_utf8
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Canvas.service import CanvasService
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
+from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @dataclass
@@ -221,7 +229,9 @@ async def test_native_gateway_shutdown_destroys_an_actively_running_preview() ->
             }"""
         )
         await page.wait_for_timeout(800)
-        assert await page.evaluate("document.activeElement.id") == "disconnect-focus-probe"
+        assert (
+            await page.evaluate("document.activeElement.id") == "disconnect-focus-probe"
+        )
         await browser.close()
 
 
@@ -338,6 +348,256 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+async def test_native_temporary_promotion_reopens_and_unsaved_close_destroys(
+    tmp_path: Path,
+) -> None:
+    """Show both atomic promotion and unsaved destruction in the real shell."""
+
+    database = CharactersRAGDB(tmp_path / "native-lifecycle.sqlite", "native-browser")
+    controller = ConsoleCanvasController(durable_service=CanvasService(database))
+    holder: dict[str, NativeConsoleCanvasAuthority] = {}
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(database),
+        canvas_promotion_participant=controller,
+        canvas_turn_controller=controller,
+        on_canvas_context_changed=lambda session_id: (
+            holder.get("authority")
+            and holder["authority"].sync_live_context(session_id)
+        ),
+    )
+    scopes: dict[str, CanvasScope] = {}
+
+    def resolve(session_id: str) -> CanvasScope:
+        return scopes[session_id]
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=resolve,
+        canvas_controller=controller,
+    )
+    holder["authority"] = authority
+    gateway = CanvasGateway(authority=authority)
+    authority.bind_gateway_invalidator(gateway.mark_browser_session_unavailable)
+    try:
+        saved = store.create_session(ephemeral=True)
+        saved_message = store.append_message(
+            saved.id, role=ConsoleMessageRole.ASSISTANT, content="temporary Canvas"
+        )
+        scopes[saved.id] = CanvasScope(
+            session_id=saved.id,
+            conversation_id=saved.id,
+            active_message_ids=(saved_message.id,),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="temporary-import",
+        )
+        root = authority.import_html(
+            session_id=saved.id,
+            source="<!doctype html><title>Temporary board</title><main>root</main>",
+            create_new=True,
+        )
+        scopes[saved.id] = replace(scopes[saved.id], run_id="temporary-rename")
+        selected = authority.gateway_scope(
+            session_id=saved.id,
+            browser_session_id="temporary-before-save",
+            canvas_id=root.canvas_id,
+            revision_id=root.revision_id,
+        )
+        renamed = authority.navigate(selected, action="rename", title="Saved board")
+        launch = await gateway.open_shell(renamed.scope)
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page()
+            await page.goto(launch.browser_url)
+            await expect(page.get_by_text("Temporary", exact=True)).to_be_visible()
+            await expect(page.get_by_text("Revision 2", exact=True)).to_be_visible()
+
+            conversation_id = store.promote_ephemeral_session(saved.id)
+            persisted_message_id = store.get_message(
+                saved_message.id
+            ).persisted_message_id
+            assert conversation_id is not None and persisted_message_id is not None
+            scopes[saved.id] = replace(
+                scopes[saved.id],
+                conversation_id=conversation_id,
+                active_message_ids=(persisted_message_id,),
+                selected_canvas_id=root.canvas_id,
+                selected_revision_id=renamed.scope.revision_id,
+                run_id="durable-reopen",
+            )
+            durable_scope = authority.gateway_scope(
+                session_id=saved.id,
+                browser_session_id="durable-after-save",
+                canvas_id=root.canvas_id,
+                revision_id=renamed.scope.revision_id,
+                follow_latest=False,
+            )
+            durable_launch = await gateway.open_shell(durable_scope)
+            await page.goto(durable_launch.browser_url)
+            await expect(page.locator("#temporary-badge")).to_be_hidden()
+            await expect(page.get_by_text("Revision 2", exact=True)).to_be_visible()
+            await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
+            await expect(
+                page.frame_locator("#canvas-preview").locator("main")
+            ).to_have_text("root")
+
+            discarded = store.create_session(ephemeral=True)
+            discarded_message = store.append_message(
+                discarded.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="discard this Canvas",
+            )
+            scopes[discarded.id] = CanvasScope(
+                session_id=discarded.id,
+                conversation_id=discarded.id,
+                active_message_ids=(discarded_message.id,),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id="discard-import",
+            )
+            doomed = authority.import_html(
+                session_id=discarded.id,
+                source="<!doctype html><title>Unsaved</title><main>doomed</main>",
+                create_new=True,
+            )
+            doomed_scope = authority.gateway_scope(
+                session_id=discarded.id,
+                browser_session_id="temporary-discard",
+                canvas_id=doomed.canvas_id,
+                revision_id=doomed.revision_id,
+            )
+            doomed_launch = await gateway.open_shell(doomed_scope)
+            doomed_page = await browser.new_page()
+            await doomed_page.goto(doomed_launch.browser_url)
+            await expect(
+                doomed_page.frame_locator("#canvas-preview").locator("main")
+            ).to_have_text("doomed")
+            store.close_session(discarded.id)
+            await expect(
+                doomed_page.get_by_text("Disconnected", exact=True)
+            ).to_be_visible()
+            await expect(doomed_page.locator("#canvas-preview")).to_have_attribute(
+                "src", "about:blank"
+            )
+            assert controller.promotion_contribution(discarded.id) is None
+            await browser.close()
+    finally:
+        await gateway.aclose()
+        controller.close_runtime()
+        database.close_connection()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_imported_archive_reopens_exact_branch_after_source_purge(
+    tmp_path: Path,
+) -> None:
+    """Prove an imported branch remains runnable after the source DB is gone."""
+
+    source_path = tmp_path / "archive-source.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    archive_path = tmp_path / "archive.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    creator.temp_dir = tmp_path / "archive-create"
+    creator.temp_dir.mkdir()
+    assert creator.create_chatbook(
+        name="Canvas browser archive",
+        description="browser reopen",
+        content_selections={
+            ContentType.CONVERSATION: [str(expected["conversation_id"])]
+        },
+        output_path=archive_path,
+    )[0]
+    source_path.unlink()
+    assert not source_path.exists()
+
+    target_path = tmp_path / "archive-target.sqlite"
+    importer = ChatbookImporter({"ChaChaNotes": str(target_path)})
+    importer.temp_dir = tmp_path / "archive-import"
+    importer.temp_dir.mkdir()
+    assert importer.import_chatbook(
+        archive_path,
+        conflict_resolution=ConflictResolution.RENAME,
+    )[0]
+    database = CharactersRAGDB(target_path, "archive-browser")
+    gateway = None
+    try:
+        conversation = database.get_conversation_by_name("Canvas archive graph")[0]
+        conversation_id = str(conversation["id"])
+        repository = CanvasService(database)
+        active_message_ids: list[str] = []
+        message_id = str(conversation["active_leaf_message_id"])
+        while message_id:
+            active_message_ids.append(message_id)
+            row = (
+                database.get_connection()
+                .execute(
+                    "SELECT parent_message_id FROM messages WHERE id = ?",
+                    (message_id,),
+                )
+                .fetchone()
+            )
+            assert row is not None
+            message_id = str(row[0]) if row[0] is not None else ""
+        active_message_ids.reverse()
+        canvases = repository.list_canvases(
+            CanvasScope(
+                session_id="archive-browser",
+                conversation_id=conversation_id,
+                active_message_ids=tuple(active_message_ids),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id="archive-reopen",
+            )
+        )
+        canvas = next(item for item in canvases if item.title == "Planner alternate")
+        scope = CanvasScope(
+            session_id="archive-browser",
+            conversation_id=conversation_id,
+            active_message_ids=tuple(active_message_ids),
+            selected_canvas_id=canvas.canvas_id,
+            selected_revision_id=canvas.revision_id,
+            run_id="archive-reopen",
+        )
+        controller = ConsoleCanvasController(durable_service=repository)
+        controller.activate_session(scope.session_id)
+        authority = NativeConsoleCanvasAuthority(
+            scope_resolver=lambda _requested: scope,
+            canvas_controller=controller,
+        )
+        browser_scope = authority.gateway_scope(
+            session_id=scope.session_id,
+            browser_session_id="archive-browser-route",
+            canvas_id=canvas.canvas_id,
+            revision_id=canvas.revision_id,
+            follow_latest=False,
+        )
+        gateway = CanvasGateway(authority=authority)
+        launch = await gateway.open_shell(browser_scope)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page()
+            await page.goto(launch.browser_url)
+            await expect(
+                page.frame_locator("#canvas-preview").locator("main")
+            ).to_have_text("right 🌿")
+            await expect(page.get_by_text("Revision 3", exact=True)).to_be_visible()
+            await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
+            await browser.close()
+    finally:
+        if gateway is not None:
+            await gateway.aclose()
+        database.close_connection()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_production_authority_import_selector_rename_and_hot_reload() -> None:
     session_id = "temporary-browser-session"
     controller = ConsoleCanvasController()
@@ -413,14 +673,18 @@ async def test_production_authority_import_selector_rename_and_hot_reload() -> N
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_real_branch_transition_clears_unreachable_preview_until_reopened() -> None:
+async def test_real_branch_transition_clears_unreachable_preview_until_reopened() -> (
+    None
+):
     controller = ConsoleCanvasController()
     holder = {}
     store = ConsoleChatStore(
         canvas_promotion_participant=controller,
         canvas_turn_controller=controller,
-        on_canvas_context_changed=lambda session_id: holder.get("authority")
-        and holder["authority"].sync_live_context(session_id),
+        on_canvas_context_changed=lambda session_id: (
+            holder.get("authority")
+            and holder["authority"].sync_live_context(session_id)
+        ),
     )
     session = store.create_session(ephemeral=True)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="root")
@@ -472,9 +736,11 @@ async def test_real_branch_transition_clears_unreachable_preview_until_reopened(
         page = await browser.new_page(viewport={"width": 1000, "height": 700})
         page.set_default_timeout(7_000)
         await page.goto(launch.browser_url)
-        await page.frame_locator("#canvas-preview").get_by_role(
-            "heading", name="Left branch preview"
-        ).wait_for()
+        await (
+            page.frame_locator("#canvas-preview")
+            .get_by_role("heading", name="Left branch preview")
+            .wait_for()
+        )
         await page.get_by_role("button", name="Inspect source").click()
         await page.locator("#source-panel").wait_for(state="visible")
         assert await page.evaluate("document.activeElement.id") == (
@@ -514,9 +780,11 @@ async def test_real_branch_transition_clears_unreachable_preview_until_reopened(
         )
         reopened = await gateway.open_shell(reopened_scope)
         await page.goto(reopened.browser_url)
-        await page.frame_locator("#canvas-preview").get_by_role(
-            "heading", name="Left branch preview"
-        ).wait_for()
+        await (
+            page.frame_locator("#canvas-preview")
+            .get_by_role("heading", name="Left branch preview")
+            .wait_for()
+        )
         await browser.close()
     await gateway.aclose()
 
@@ -537,10 +805,14 @@ async def test_runtime_failure_and_javascript_disabled_have_visible_recovery() -
         await page.goto(launch.browser_url)
         await page.get_by_role("button", name="Reopen with scripts disabled").wait_for()
         await page.get_by_role("button", name="Reopen with scripts disabled").click()
-        await page.get_by_text("Opened with generated scripts disabled.", exact=True).wait_for()
-        await page.frame_locator("#canvas-preview").get_by_role(
-            "heading", name="Failure fixture"
+        await page.get_by_text(
+            "Opened with generated scripts disabled.", exact=True
         ).wait_for()
+        await (
+            page.frame_locator("#canvas-preview")
+            .get_by_role("heading", name="Failure fixture")
+            .wait_for()
+        )
 
         no_js = await browser.new_context(java_script_enabled=False)
         no_js_page = await no_js.new_page()
@@ -558,7 +830,9 @@ async def test_runtime_failure_and_javascript_disabled_have_visible_recovery() -
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blob() -> None:
+async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blob() -> (
+    None
+):
     session_id = "temporary-confirmation-session"
     controller = ConsoleCanvasController()
     controller.activate_session(session_id)
@@ -657,11 +931,13 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         prepare_request_ids: list[str] = []
         page.on(
             "request",
-            lambda request: prepare_request_ids.append(
-                request.post_data_json["request"]["request_id"]
-            )
-            if request.url.endswith("/api/bridge/prepare")
-            else None,
+            lambda request: (
+                prepare_request_ids.append(
+                    request.post_data_json["request"]["request_id"]
+                )
+                if request.url.endswith("/api/bridge/prepare")
+                else None
+            ),
         )
         await page.add_init_script(
             """(() => {
@@ -681,8 +957,13 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         await frame.get_by_role("button", name="Submit text").click()
         dialog = page.get_by_role("dialog", name="Send result to chat")
         await dialog.wait_for()
-        assert await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
-        assert await page.locator("#bridge-complete-text").input_value() == "  exact\ntext  "
+        assert (
+            await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
+        )
+        assert (
+            await page.locator("#bridge-complete-text").input_value()
+            == "  exact\ntext  "
+        )
         assert await page.locator("#bridge-target").text_content() == (
             f"Conversation {session_id} · Canvas “Bridge tools” · Revision 1 · "
             f"Canvas ID {created.canvas_id} · Revision ID {created.revision_id}"
@@ -716,10 +997,15 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         await page.get_by_role("button", name="Retry confirmation").click()
         await page.get_by_role("dialog", name="Send result to chat").wait_for()
         assert prepare_request_ids[-1] != refused_request_id
-        assert await page.locator("#bridge-complete-text").input_value() == '{"a":[true,null],"z":1}'
+        assert (
+            await page.locator("#bridge-complete-text").input_value()
+            == '{"a":[true,null],"z":1}'
+        )
         await page.get_by_role("button", name="Send to composer").click()
         await dialog.wait_for(state="hidden")
-        await page.get_by_text("Draft inserted · Review it in Chatbook before sending.", exact=True).wait_for()
+        await page.get_by_text(
+            "Draft inserted · Review it in Chatbook before sending.", exact=True
+        ).wait_for()
         assert drafts == ["  exact\ntext  ", '{"a":[true,null],"z":1}']
 
         for button_name, expected_text in (
@@ -729,7 +1015,10 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         ):
             await frame.get_by_role("button", name=button_name).click()
             await page.get_by_role("dialog", name="Send result to chat").wait_for()
-            assert await page.locator("#bridge-complete-text").input_value() == expected_text
+            assert (
+                await page.locator("#bridge-complete-text").input_value()
+                == expected_text
+            )
             async with page.expect_response(
                 lambda response: response.url.endswith("/api/bridge")
             ):
@@ -737,7 +1026,9 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
 
         await frame.get_by_role("button", name="Submit maximum text").click()
         await page.get_by_role("dialog", name="Send result to chat").wait_for()
-        assert len(await page.locator("#bridge-complete-text").input_value()) == 16 * 1024
+        assert (
+            len(await page.locator("#bridge-complete-text").input_value()) == 16 * 1024
+        )
         assert await page.locator("#bridge-expiry").text_content() in {
             "Review expires in 5:00",
             "Review expires in 4:59",
@@ -790,9 +1081,17 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         assert await page.locator("#bridge-recovery").is_visible()
         assert await page.get_by_role("button", name="Copy result").is_visible()
         assert await page.get_by_role("button", name="Retry confirmation").is_visible()
-        assert await page.get_by_role("button", name="Close Canvas and return").is_visible()
-        assert await page.locator("#bridge-expiry-status").get_attribute("role") == "status"
-        assert await page.locator("#bridge-expiry-status").get_attribute("aria-live") == "polite"
+        assert await page.get_by_role(
+            "button", name="Close Canvas and return"
+        ).is_visible()
+        assert (
+            await page.locator("#bridge-expiry-status").get_attribute("role")
+            == "status"
+        )
+        assert (
+            await page.locator("#bridge-expiry-status").get_attribute("aria-live")
+            == "polite"
+        )
         composer["generation"] -= 1
         await page.keyboard.press("Escape")
 
@@ -952,25 +1251,30 @@ async def test_trusted_shell_bounds_and_compares_structured_presentation_lossles
         await page.route("**/api/bridge/prepare", tamper_preparation)
         await page.goto(launch.browser_url)
         await page.get_by_text("Connected", exact=True).wait_for()
-        await page.frame_locator("#canvas-preview").get_by_role(
-            "button", name="Submit"
-        ).click()
+        await (
+            page.frame_locator("#canvas-preview")
+            .get_by_role("button", name="Submit")
+            .click()
+        )
         await page.get_by_text(
             "Canvas request could not be confirmed. Reload the preview and try again.",
             exact=True,
         ).wait_for()
         assert await page.get_by_role("dialog").count() == 0
         if expected_parser_entries is not None:
-            assert await page.evaluate(
-                "window.__canvasLosslessParseEntries || 0"
-            ) == expected_parser_entries
+            assert (
+                await page.evaluate("window.__canvasLosslessParseEntries || 0")
+                == expected_parser_entries
+            )
         await browser.close()
     await gateway.aclose()
 
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_trusted_shell_rejects_forged_bridge_values_before_server_preparation() -> None:
+async def test_trusted_shell_rejects_forged_bridge_values_before_server_preparation() -> (
+    None
+):
     authority = _NativeFlowAuthority()
     authority.publish("revision-1", sequence=1)
     gateway = CanvasGateway(authority=authority)
@@ -985,9 +1289,11 @@ async def test_trusted_shell_rejects_forged_bridge_values_before_server_preparat
         prepare_requests: list[str] = []
         page.on(
             "request",
-            lambda request: prepare_requests.append(request.url)
-            if request.url.endswith("/api/bridge/prepare")
-            else None,
+            lambda request: (
+                prepare_requests.append(request.url)
+                if request.url.endswith("/api/bridge/prepare")
+                else None
+            ),
         )
         await page.add_init_script(
             """(() => {
@@ -1062,7 +1368,9 @@ async def test_trusted_shell_rejects_forged_bridge_values_before_server_preparat
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_source_download_defaults_inert_and_runnable_html_requires_warning() -> None:
+async def test_source_download_defaults_inert_and_runnable_html_requires_warning() -> (
+    None
+):
     authority = _NativeFlowAuthority()
     authority.publish("revision-1", sequence=1)
     gateway = CanvasGateway(authority=authority)
@@ -1086,7 +1394,9 @@ async def test_source_download_defaults_inert_and_runnable_html_requires_warning
             "This HTML runs outside Chatbook and bypasses Canvas zero-egress and sandbox protections.",
             exact=True,
         ).wait_for()
-        assert await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
+        assert (
+            await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
+        )
         await page.get_by_role("button", name="Cancel").click()
         await warning.wait_for(state="hidden")
         await browser.close()
