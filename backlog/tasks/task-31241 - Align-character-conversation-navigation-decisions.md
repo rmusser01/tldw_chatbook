@@ -4,7 +4,7 @@ title: Align character conversation navigation decisions
 status: Done
 assignee: []
 created_date: '2026-09-04 02:03'
-updated_date: '2026-09-04 03:19'
+updated_date: '2026-09-05 19:57'
 labels:
   - architecture
   - console
@@ -55,42 +55,13 @@ created at 02:03 and moves with all plan and dependency references.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- ADR required: yes. ADR path:
-  `backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`.
-  Reason: the programme needs one authority for durable derived indexes, typed
-  local identity, cross-surface activation/repair, semantic consent, and
-  long-lived surface ownership before runtime implementation.
-- Fetched `origin/dev` and swept every remote ref, registered worktree, and open
-  pull request. No older claimant exists for TASK-31241 or ADR-120; the merge
-  candidate contains exactly the intended task and ADR paths.
-- Created ADR-120 with the approved local-only identity union, selected-branch
-  Keyword/Meaning corpus, Console-owned activation, Library-only CAS repair,
-  opt-in embeddings-only Meaning generations, and surface boundaries.
-- Added narrow dated amendments to ADR-004
-  (`004-personas-destination-native-workbench.md`), ADR-030, ADR-037, ADR-046,
-  ADR-083, and ADR-085. ADR-031 remains the key/hint authority and ADR-033
-  remains the Settings commit-model authority.
-- Modified only governance documentation named by the corrected plan; no runtime
-  behavior or dependencies changed.
-- Initial documentation/reference checks, `git diff --check`, the exact contract
-  check, local-link existence checks, and the repository backlog-ID guard passed.
-- Initial self-review found and corrected the Roleplay amendment's aggregate
-  draft-owner enumeration. Independent review then found the ambiguous duplicate
-  ADR-004 selection, incomplete semantic maintenance/Delete lifecycle, and
-  canonical ADR filename mismatch.
-- Fix Round 1 removed the unrelated storage-restart amendment, amended
-  `004-personas-destination-native-workbench.md` for Roleplay per-character
-  browse versus Library global/archive ownership, renamed ADR-120 to the
-  approved `local-semantic-search` path, and updated every committed reference
-  plus the source implementation plan.
-- ADR-120 now makes future maintenance effective only after a complete ready
-  initial generation and makes Delete atomically remove ready/staging
-  generations, disable saved future maintenance, clear semantic query caches,
-  synchronize original/draft Settings state to Off, and preserve source chats.
-- Fresh review-correction, preserved-contract, lifecycle, filename, link,
-  `git diff --check`, and backlog-ID gates passed. The full application suite
-  was intentionally not run for this documentation-only task, as ruled in the
-  task brief.
-- Final self-review found no unresolved finding or generalisable new repository
-  lesson.
+- ADR required: yes. ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md. Reason: ADR-120 remains the programme authority for identity, pagination, semantic-index ownership, and lifecycle; no new ADR was required for this review correction.
+- Created ADR-120 and the six scoped amendments, preserving ADR-031 and ADR-033, with documentation-only governance and no runtime or dependency changes.
+- Incorporated PR #2429 review corrections after rebasing the six governance commits onto current origin/dev without conflicts. The implementation plan now carries created_at in CharacterConversationCursor and CharacterConversationRow, specifies descending last_modified/created_at/conversation_id keyset ordering, and requires equal-timestamp and unchanged-page no-skip/no-repeat regressions.
+- Completed the semantic manifest example with local content authority, installed model artifact digest, chunk-configuration digest, and source content watermark. Compatibility, publication, and query checks now reject changed artifact bytes under the same model ID and changed source watermarks while retaining atomic ready-generation fencing and selected-content exclusions.
+- Added durable data_authority_id to semantic index, saved, and draft configuration examples. Build/rebuild and lifecycle checks fail closed across active Data Profile changes and prevent reuse of another authority’s jobs or generations.
+- Rechecked ADR-120 and TASK-31241 acceptance wording; neither contradicted the approved spec, so no additional ADR or acceptance-criterion amendment was needed.
+- Scoped contract assertions, relative-link checks, git diff --check, and the repository backlog-ID guard passed. The correction diff remains documentation-only. Application tests were intentionally not rerun because runtime was unchanged.
+- Runtime carry-forward: TASK-31242 must implement and test the corrected three-field ordering; this documentation correction does not claim the current two-field runtime cursor is fixed.
+- Final self-review found no additional actionable review issue or generalisable repository lesson.
 <!-- SECTION:NOTES:END -->

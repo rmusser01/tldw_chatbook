@@ -332,6 +332,7 @@ CharacterConversationKey = ResolvedLocalCharacterKey | UnresolvedConversationKey
 @dataclass(frozen=True)
 class CharacterConversationCursor:
     last_modified: str
+    created_at: str
     conversation_id: str
 
 @dataclass(frozen=True)
@@ -343,6 +344,7 @@ class CharacterConversationRow:
     character_label: str
     title: str
     last_modified: str
+    created_at: str
     is_current: bool
     selected_excerpt: str
 
@@ -401,6 +403,11 @@ class CharacterConversationNavigationService:
     def repair(self, request: CharacterRepairRequest) -> CharacterRepairResult: ...
     def ensure_keyword_index(self) -> CharacterKeywordIndexStatus: ...
 ```
+
+Character browse rows and cursors use the same complete descending key:
+`(last_modified, created_at, conversation_id)`. Keyset predicates compare all
+three components; the stable conversation ID is the final tie-breaker and is
+never used as a substitute for `created_at`.
 
 ADR required: no
 
@@ -498,14 +505,20 @@ Add tests named:
 ```python
 def test_same_numeric_ids_in_two_authorities_never_merge(): ...
 def test_recent_groups_force_current_then_sort_other_groups_by_latest_chat(): ...
-def test_character_page_keyset_has_no_skip_or_repeat(): ...
+def test_character_page_orders_equal_modified_by_created_at_desc(): ...
+def test_character_page_orders_equal_dates_by_conversation_id_desc(): ...
+def test_character_page_boundary_has_no_skip_or_repeat_for_unchanged_rows(): ...
 def test_keyword_search_is_local_only_and_revalidates_data_revision(): ...
 def test_unique_legacy_link_backfills_but_ambiguous_link_stays_unavailable(): ...
 def test_repair_candidates_stay_in_authority_and_repair_uses_expected_version(): ...
 ```
 
 Use real file-backed and in-memory SQLite fixtures; include server-shaped
-canaries and assert they remain absent.
+canaries and assert they remain absent. Page-boundary fixtures must include
+rows with equal `last_modified` and different `created_at`, rows with both
+timestamps equal and different stable conversation IDs, and at least two
+unchanged pages whose concatenated identities contain neither gaps nor
+duplicates.
 
 - [ ] **Step 9: Implement projection, deterministic backfill, and CAS repair**
 
@@ -1137,6 +1150,7 @@ class CharacterSemanticMaintenanceAction(StrEnum):
 
 @dataclass(frozen=True)
 class CharacterSemanticIndexConfig:
+    data_authority_id: str
     model_id: str
     storage_path: str
 
@@ -1167,16 +1181,20 @@ class CharacterSemanticConversationHit:
 class CharacterSearchManifest:
     version: int
     data_authority_id: str
+    content_authority: Literal["local"]
     generation_id: str
     model_id: str
+    model_artifact_digest: str
     dimension: int
     normalized: bool
+    chunk_config_digest: str
     chunk_policy_version: int
     eligibility_policy_version: int
     projection_version: int
     metric: Literal["cosine"]
     distance_semantics_version: int
     aggregation_version: int
+    source_content_watermark: str
 
 @dataclass(frozen=True)
 class CharacterSemanticQueryResult:
@@ -1209,6 +1227,13 @@ class CharacterConversationSemanticIndex:
     async def reconcile(self, data_authority_id: str) -> CharacterSemanticIndexStatus: ...
 ```
 
+`CharacterSemanticIndexConfig.data_authority_id` is the durable Data Profile
+authority, not a storage-path derivation or RAG configuration-profile ID.
+Index and rebuild validate it against the active Data Profile before creating
+or resuming work and again before publication. An authority change, including
+switching away and reselecting a Data Profile, cannot adopt another authority's
+job, staging generation, ready generation, or saved/draft configuration.
+
 ADR required: no
 
 ADR path:
@@ -1227,7 +1252,13 @@ sequence advances v66 to v67; never edit a version already present on `dev`.
 
 Assert exact serialization, rejection of unknown versions/metrics/dimensions,
 and the distinction between `RESULTS(())`, `UNAVAILABLE`, `DAMAGED`, and
-`QUERY_ERROR`. Compatibility must include every manifest field shown above.
+`QUERY_ERROR`. Compatibility, publication, and query validation must include
+every manifest field shown above: Data Profile authority, local content
+authority, model ID and local artifact digest, vector shape, complete chunk
+configuration digest/version, eligibility and projection versions, cosine
+distance/aggregation semantics, and source content watermark. Prove that
+changed artifact bytes under the same model ID and a changed source watermark
+both reject publication/query rather than reusing the generation.
 
 - [ ] **Step 3: Implement contracts and deterministic chunking**
 
@@ -1258,7 +1289,11 @@ Add real-SQLite tests for initial build, rebuild, partial failure, pause,
 cancel, restart/resume, storage-full, model removal, delete, and reconciliation.
 Inject failure after replacement chunks but before ready-fence advance and
 prove the whole conversation is suppressed until idempotent replay completes.
-Rebuild failure must leave the prior generation queryable.
+Rebuild failure must leave the prior generation queryable. Change the active
+Data Profile authority during a build and after switching away then reselecting;
+assert neither case can resume or publish a job/generation owned by a different
+authority. A manifest whose artifact digest or captured source watermark no
+longer matches must remain staging/rejected and must not move the ready pointer.
 
 - [ ] **Step 7: Implement durable jobs, per-conversation fences, and cutover**
 
@@ -1267,8 +1302,9 @@ Authoritative conversation transactions increment
 complete replacement, verifies count/digest/revision, advances that
 conversation's ready fence, then removes old chunks. Initial/rebuild jobs mark a
 new generation ready only after every included conversation is fenced; cutover
-is one SQLite transaction. Candidate suppression happens immediately from
-authoritative revision state, before vector cleanup.
+is one SQLite transaction and happens only after the complete manifest and
+captured Data Profile authority are revalidated. Candidate suppression happens
+immediately from authoritative revision state, before vector cleanup.
 
 - [ ] **Step 8: Write failing direct ANN query tests**
 
@@ -1281,8 +1317,10 @@ prefilter or lexical rerank.
 - [ ] **Step 9: Implement local-provider validation and query aggregation**
 
 Reject remote provider kinds and models requiring a network fetch. Read only
-the ready compatible manifest, query the vector store, filter every hit through
-current authority/revision/digest fences, aggregate by minimum raw distance,
+the ready compatible manifest, including matching the installed local artifact
+digest and the ready generation's source watermark, query the vector store,
+filter every hit through current authority/revision/digest fences, aggregate by
+minimum raw distance,
 and join titles/excerpts from the authoritative projection only after ranking.
 Any backend failure returns a non-RESULTS status.
 
@@ -1354,6 +1392,7 @@ Roleplay, Context, or switcher file changed.
 ```python
 @dataclass(frozen=True)
 class CharacterSemanticSavedConfig:
+    data_authority_id: str
     enabled_for_future: bool
     model_id: str
     storage_path: str
@@ -1362,6 +1401,7 @@ class CharacterSemanticSavedConfig:
 
 @dataclass(frozen=True)
 class CharacterSemanticSettingsDraft:
+    data_authority_id: str
     enabled_for_future: bool
     model_id: str
     storage_path: str
@@ -1388,7 +1428,10 @@ Add tests proving model and `Keep future chats indexed` are staged, Save is
 authoritative, Revert affects only staged fields, and maintenance actions always
 use saved configuration. Index/Rebuild/Delete are disabled while relevant
 fields differ from saved values; Pause/Resume/Cancel stay active for the current
-saved-config job and ignore the draft.
+saved-config job and ignore the draft. Saved and draft configuration retain the
+durable Data Profile authority. Changing the active authority, or switching
+away and reselecting, cannot expose or operate another authority's jobs or
+generations; stale conversions and build/rebuild requests fail closed.
 
 - [ ] **Step 3: Implement saved config and draft adapters**
 
