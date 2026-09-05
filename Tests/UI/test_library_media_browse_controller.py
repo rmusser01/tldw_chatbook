@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -456,3 +458,74 @@ async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> No
     assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
     assert controller.applied_scope == MediaBrowseScope(page=1)
     assert controller.freshness == "fresh"
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    (
+        (TimeoutError(), "Library took longer than 5 s to answer"),
+        (asyncio.TimeoutError(), "Library took longer than 5 s to answer"),
+        (OSError("database is locked"), "database is locked"),
+        (sqlite3.OperationalError("database is locked"), "database is locked"),
+        (RuntimeError("boom"), "RuntimeError"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_failed_retry_under_the_stale_gate_says_why_and_clears_on_success(
+    failure: Exception, reason: str
+) -> None:
+    """task-31220: a Retry that fails again must CHANGE the copy.
+
+    Critique #5 saw ``Media changed; retry to load a current page.`` survive
+    two Retry presses unchanged, so recovery read as inert. The stale copy
+    now carries the failure reason, and a later success clears it.
+    """
+    screen = _Screen()
+    service = _Service(_page(1, 20), failure, _page(1, 19))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    controller.begin_mutation()
+    controller.reconcile_committed_mutation(remove_ids=("local:media:1",))
+    assert controller.stale_copy == "Media changed; retry to load a current page."
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.stale_copy == f"Retry failed · {reason}"
+    assert controller.freshness == "stale"
+    assert controller.error_copy == ""
+    assert controller.pager.retry_visible is True
+    assert controller.pager.status_copy == f"Retry failed · {reason}"
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.stale_copy == ""
+    assert controller.freshness == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_shrink_and_first_load_failure_copies_are_untouched() -> None:
+    """The new reason only replaces a copy that would otherwise never change."""
+    screen = _Screen()
+    service = _Service(RuntimeError("cold"))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.stale_copy == ""
+    assert controller.error_copy == (
+        "Couldn't load media. Check the local Library and retry."
+    )
+
+    shrink_screen = _Screen()
+    shrink_service = _Service(_page(2, 40), _page(99, 45), _page(3, 20))
+    shrink = _controller(shrink_screen, shrink_service)
+    shrink.request(MediaBrowseScope(page=2), focus_identity=None)
+    await shrink_screen.pending.pop()
+    shrink.request(MediaBrowseScope(page=99), focus_identity=None)
+    await shrink_screen.pending.pop()
+
+    assert shrink.stale_copy == "List changed while paging; retry to load a current page."

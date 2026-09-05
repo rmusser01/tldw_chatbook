@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Mapping
 
@@ -26,6 +27,29 @@ _SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
 _FACET_ERROR = "Couldn't load media types. Retry."
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
+_RETRY_FAILED_PREFIX = "Retry failed · "
+_TIMEOUT_REASON = "Library took longer than 5 s to answer"
+
+
+def _retry_failure_reason(exc: BaseException) -> str:
+    """Name a failed refresh in the reader's terms, never as a bare class.
+
+    Args:
+        exc: The exception the failed page request raised.
+
+    Returns:
+        A short human-readable reason for the failure.
+    """
+    # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
+    # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
+    if isinstance(exc, TimeoutError):
+        return _TIMEOUT_REASON
+    if isinstance(exc, (OSError, sqlite3.OperationalError)):
+        # One bounded line: this lands in a ~36-col status Static, so an
+        # embedded newline or a long path would push the pager off screen.
+        message = " ".join(str(exc).split())[:80]
+        return message or type(exc).__name__
+    return type(exc).__name__
 
 
 class LibraryMediaBrowseController:
@@ -201,6 +225,14 @@ class LibraryMediaBrowseController:
             self.inflight_scope = None
             if self.freshness != "stale":
                 self.error_copy = self._failure_copy(scope)
+            else:
+                # task-31220: on a stale page the stale copy is the ONLY
+                # thing shown, and leaving it untouched is what made Retry
+                # read as inert across repeated presses (critique #5).
+                # ``_MUTATION_COPY``/``_SHRINK_COPY`` still describe why the
+                # page went stale; this describes why recovering from it
+                # just failed. ``_apply`` clears it on the next success.
+                self.stale_copy = _RETRY_FAILED_PREFIX + _retry_failure_reason(exc)
             self._sync(focus_identity)
 
     def _apply(

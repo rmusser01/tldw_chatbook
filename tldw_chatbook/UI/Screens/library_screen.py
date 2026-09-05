@@ -14,7 +14,14 @@ import time
 import tomllib
 import uuid
 import webbrowser
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from enum import Enum
 from contextlib import closing
@@ -15619,6 +15626,38 @@ class LibraryScreen(BaseAppScreen):
         """Return the unfiltered sentinel plus every complete stored facet."""
         return (None, *self._library_media_browse_controller.type_options)
 
+    def _claim_library_media_mutation(
+        self, work: Coroutine[Any, Any, None]
+    ) -> None:
+        """Claim the shared write interlock, fence reads, and schedule ``work``.
+
+        task-31220: the ONE place ``_library_media_bulk_delete_in_flight``
+        is taken (ADR-055's one-flag, one-group rule made structural). Every
+        worker body releases it in a ``finally``, so the only unrecoverable
+        window was a claim that never reached a worker at all -- if fencing
+        or ``run_worker`` raised, the coroutine was never awaited, no
+        ``finally`` ran, and Media stayed wedged behind ``Media change in
+        progress.`` until the app restarted (critique #5). Releasing here
+        makes "the interlock is released on every path" true by
+        construction rather than by auditing six hand-written call sites.
+
+        Args:
+            work: The mutation coroutine to run under the interlock.
+
+        Returns:
+            None.
+        """
+        self._library_media_bulk_delete_in_flight = True
+        try:
+            self._begin_library_media_mutation()
+            self.run_worker(
+                work, exclusive=True, group="library_media_bulk_delete"
+            )
+        except BaseException:
+            work.close()
+            self._complete_library_media_mutation()
+            raise
+
     def _begin_library_media_mutation(self) -> MediaBrowseScope:
         """Fence page/facet reads before the shared durable Media write."""
         if self._library_media_mutation_scope is None:
@@ -24319,12 +24358,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_bulk_delete = False
             _sync_library_canvas(self, "media")
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._delete_library_media_selection(media_ids),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._delete_library_media_selection(media_ids)
         )
 
     def action_library_media_bulk_delete_cancel(self) -> None:
@@ -24511,12 +24546,8 @@ class LibraryScreen(BaseAppScreen):
         media_ids = self._library_media_delete_receipt_ids
         if not media_ids:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._undo_library_media_bulk_delete(media_ids),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._undo_library_media_bulk_delete(media_ids)
         )
 
     @on(Button.Pressed, "#library-media-bulk-delete-receipt-dismiss")
@@ -24994,12 +25025,8 @@ class LibraryScreen(BaseAppScreen):
         claim = controller.claim_mutation()
         if claim is None or claim.target != captured:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._permanently_delete_library_media_from_trash(claim),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._permanently_delete_library_media_from_trash(claim)
         )
 
     async def _permanently_delete_library_media_from_trash(
@@ -25088,12 +25115,8 @@ class LibraryScreen(BaseAppScreen):
         claim = self._library_media_trash_browse_controller.claim_mutation()
         if claim is None:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._restore_library_media_from_trash(claim),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._restore_library_media_from_trash(claim)
         )
 
     async def _restore_library_media_from_trash(
@@ -38497,9 +38520,7 @@ class LibraryScreen(BaseAppScreen):
             for item in keywords_raw.split(",")
             if (cleaned := self._sanitize_media_field(item, max_length=200).strip())
         ]
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
+        self._claim_library_media_mutation(
             self._save_library_media_edit(
                 media_id,
                 title=title,
@@ -38541,49 +38562,64 @@ class LibraryScreen(BaseAppScreen):
             keywords: New keywords, already split from the comma-separated
                 edit input.
         """
-        service = getattr(self.app_instance, "media_reading_scope_service", None)
-        update_media_item = getattr(service, "update_media_item", None)
         updated_item: Mapping[str, Any] | None = None
         committed = False
-        if callable(update_media_item):
-            try:
-                await self._run_library_service_call(
-                    update_media_item,
-                    mode="local",
-                    media_id=self._required_library_media_backing_id(media_id),
-                    title=title,
-                    author=author,
-                    url=url,
-                    keywords=keywords,
-                    isolate_in_worker=True,
-                )
-                committed = True
-                # Keep the broad landing/rail cache in step; the exact Media
-                # page remains controller-owned.
-                self._patch_local_media_record(
-                    media_id, title=title, author=author, url=url, keywords=keywords
-                )
-                current = next(
-                    (
-                        item
-                        for item in self._library_media_browse_controller.retained_items
-                        if item["id"] == media_id
-                    ),
-                    None,
-                )
-                if current is not None:
-                    updated_item = dict(current, title=title)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to save Library media edit for {media_id!r}."
-                )
-                self._notify_library_media_edit_warning(
-                    "Could not save media changes; showing the latest saved version."
-                )
-        else:
-            self._notify_library_media_edit_warning("Media editing is unavailable.")
-        self._library_media_editing = False
+        # task-31220: the ``finally`` spans the WHOLE body, not just the
+        # trailing detail re-fetch -- the unavailable-service notice above it
+        # was outside the old guard, so a notify that raised (app teardown)
+        # left the shared write interlock claimed with no way to release it.
         try:
+            service = getattr(
+                self.app_instance, "media_reading_scope_service", None
+            )
+            update_media_item = getattr(service, "update_media_item", None)
+            if callable(update_media_item):
+                try:
+                    await self._run_library_service_call(
+                        update_media_item,
+                        mode="local",
+                        media_id=self._required_library_media_backing_id(media_id),
+                        title=title,
+                        author=author,
+                        url=url,
+                        keywords=keywords,
+                        isolate_in_worker=True,
+                    )
+                    committed = True
+                    # Keep the broad landing/rail cache in step; the exact
+                    # Media page remains controller-owned.
+                    self._patch_local_media_record(
+                        media_id,
+                        title=title,
+                        author=author,
+                        url=url,
+                        keywords=keywords,
+                    )
+                    current = next(
+                        (
+                            item
+                            for item in (
+                                self._library_media_browse_controller.retained_items
+                            )
+                            if item["id"] == media_id
+                        ),
+                        None,
+                    )
+                    if current is not None:
+                        updated_item = dict(current, title=title)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to save Library media edit for {media_id!r}."
+                    )
+                    self._notify_library_media_edit_warning(
+                        "Could not save media changes; showing the latest "
+                        "saved version."
+                    )
+            else:
+                self._notify_library_media_edit_warning(
+                    "Media editing is unavailable."
+                )
+            self._library_media_editing = False
             await self._refresh_library_media_detail(media_id)
         finally:
             self._complete_library_media_mutation(
@@ -38700,12 +38736,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_delete = False
             self.refresh(recompose=True)
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._delete_library_media_item(media_id),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._delete_library_media_item(media_id)
         )
 
     async def _delete_library_media_item(self, media_id: str) -> None:

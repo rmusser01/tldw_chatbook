@@ -290,7 +290,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             button.styles.height = row_height
             button.styles.min_height = row_height
-            self._gate_stale_action(button, label_rest.lstrip())
+            self._gate_mutation_action(button, label_rest.lstrip())
         try:
             preview = self.query_one("#library-media-preview")
             open_viewer = self.query_one("#library-media-open-viewer", Button)
@@ -1137,7 +1137,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         button.styles.height = row_height
                         button.styles.min_height = row_height
-                        yield self._gate_stale_action(button, label_rest.lstrip())
+                        # task-31220: a row OPEN is a read, so it is gated
+                        # only while a write is actually unsettled -- never by
+                        # the stale gate the open is how you recover from.
+                        # Only the mutating actions (Select/Export/sort/
+                        # Delete/Undo) stay behind ``_gate_stale_action``.
+                        yield self._gate_mutation_action(
+                            button, label_rest.lstrip()
+                        )
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 

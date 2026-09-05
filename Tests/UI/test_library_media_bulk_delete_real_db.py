@@ -18,6 +18,7 @@ the app wrote through.
 import sqlite3
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
@@ -30,7 +31,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
 )
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 
 def _seed(db: MediaDatabase, count: int) -> list[int]:
@@ -186,13 +187,23 @@ async def test_long_lived_reader_connection_can_miss_the_write_the_receipt_repor
 
 @pytest.mark.asyncio
 async def test_contended_write_never_paints_a_success_receipt(tmp_path):
-    """Finding 3: another instance holds the write lock -- no ✓, the failure
-    notify fires, and the interlock still releases.
+    """Finding 3: another instance holds the write lock -- no ✓, the per-item
+    failure is logged and notified, and the interlock still releases.
 
-    Takes ~10s: the app connection's SQLite busy timeout has to expire.
+    The contended write fails immediately -- measured 1.05s for the test
+    body, so no busy timeout is waited out. ``mark_as_trash`` runs under the
+    house DEFERRED ``BEGIN``, and SQLite cannot park a read transaction
+    waiting to upgrade to a writer (it would deadlock), so the promotion
+    returns ``SQLITE_BUSY`` at once rather than honouring ``busy_timeout``.
     """
     host, screen, db, db_path = _real_media_host(tmp_path, items=2)
     other = sqlite3.connect(db_path, isolation_level=None)
+    warnings: list[dict] = []
+    sink = logger.add(
+        lambda message: warnings.append(dict(message.record)),
+        level="WARNING",
+        filter=lambda record: record["name"].endswith("library_screen"),
+    )
     try:
         other.execute("BEGIN IMMEDIATE")
         async with host.run_test(size=(235, 52)) as pilot:
@@ -211,9 +222,118 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
                 "Could not delete 1 of 1 selected media item."
             ]
             assert all(kwargs.get("severity") == "warning" for _, kwargs in notified)
+            # The per-item failure itself, not just its aggregate side
+            # effects: the delete loop's own warning must have been raised.
+            assert "Failed to delete Library media item in bulk delete." in [
+                record["message"] for record in warnings
+            ]
     finally:
+        logger.remove(sink)
         try:
             other.execute("ROLLBACK")
         finally:
             other.close()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_rows_still_open_while_the_page_sits_behind_the_mutation_gate(tmp_path):
+    """task-31220: recovery is never gated by what it recovers from.
+
+    Critique #5 sat behind ``Media changed; retry to load a current page.``
+    with every row disabled -- the gate is about a page whose ORDER and
+    MEMBERSHIP may have moved, which says nothing about whether an item the
+    list is still showing can be read. Pressing a row must load it.
+    """
+    host, screen, db, db_path = _real_media_host(tmp_path, items=3)
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            await _browse_media(screen, pilot)
+            controller = screen._library_media_browse_controller
+            target = screen_media_ids(screen)[1]
+
+            # Exactly the state a committed bulk delete leaves behind.
+            screen._begin_library_media_mutation()
+            controller.reconcile_committed_mutation(remove_ids=())
+            screen._library_media_mutation_scope = None
+            screen._library_media_mutation_authority = None
+            screen._sync_library_media_browse_state(None)
+            await pilot.pause()
+
+            assert controller.freshness == "stale"
+            assert controller.stale_copy == (
+                "Media changed; retry to load a current page."
+            )
+            assert screen._library_media_bulk_delete_in_flight is False
+
+            row = next(
+                button
+                for button in screen.query(".library-media-row")
+                if str(getattr(button, "media_id", "")) == target
+            )
+            assert row.disabled is False
+            row.press()
+            await pilot.pause()
+
+            assert screen._selected_media_id == target
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
+    """Step 5's substitute for the live outage: a failing request seam.
+
+    The briefed live simulation (a scratch profile whose media DB path is a
+    directory) cannot reach this state at all -- with no first page there is
+    no stale gate, only the cold ``Couldn't load media`` error. So the outage
+    is injected here instead, at the real mounted surface: a real page
+    applies, the service then times out, and the pager's own status Static is
+    read after each of two Retry presses.
+    """
+    host, screen, db, db_path = _real_media_host(tmp_path, items=3)
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            await _browse_media(screen, pilot)
+            controller = screen._library_media_browse_controller
+
+            # Stale the page exactly as a committed mutation does.
+            screen._begin_library_media_mutation()
+            controller.reconcile_committed_mutation(remove_ids=())
+            screen._library_media_mutation_scope = None
+            screen._library_media_mutation_authority = None
+            screen._sync_library_media_browse_state(None)
+            await pilot.pause()
+            status = screen.query_one("#library-media-status", Static)
+            assert "Media changed" in str(status.renderable)
+
+            service = host.app_instance.media_reading_scope_service
+
+            async def _times_out(**_kwargs):
+                raise TimeoutError
+
+            service.search_media = _times_out
+
+            painted: list[str] = []
+            for _ in range(2):
+                screen.query_one("#library-media-retry", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not controller.loading,
+                    message="The failed retry never settled.",
+                )
+                await pilot.pause()
+                painted.append(
+                    str(screen.query_one("#library-media-status", Static).renderable)
+                )
+
+            assert painted == [
+                "Retry failed · Library took longer than 5 s to answer"
+            ] * 2
+            # Recovery is never gated by what it recovers from.
+            rows = screen.query(".library-media-row")
+            assert len(rows) == 3
+            assert all(row.disabled is False for row in rows)
+            assert screen.query_one("#library-media-retry", Button).disabled is False
+    finally:
         db.close_connection()

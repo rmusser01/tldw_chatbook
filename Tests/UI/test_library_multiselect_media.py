@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import inspect
 import types
 from types import SimpleNamespace
 
@@ -65,6 +66,11 @@ def _bind_media_mutation_seams(fake):
     fake._sync_library_media_viewer_mutation_gate = lambda: None
     fake._begin_library_media_mutation = types.MethodType(
         LibraryScreen._begin_library_media_mutation, fake
+    )
+    # task-31220: the one seam every mutation handler claims the shared
+    # write interlock through.
+    fake._claim_library_media_mutation = types.MethodType(
+        LibraryScreen._claim_library_media_mutation, fake
     )
     fake._required_library_media_backing_id = types.MethodType(
         LibraryScreen._required_library_media_backing_id, fake
@@ -1496,6 +1502,9 @@ async def test_undo_partial_failure_narrows_receipt_and_warns(tmp_path):
     # instance), so entry focus must be armed here too, not only on full
     # success.
     assert fake._entry_focus_arm_calls == [True]
+    # task-31220 interlock audit: a restore that raises still releases the
+    # shared write interlock through this worker's own ``finally``.
+    assert fake._library_media_bulk_delete_in_flight is False
 
     db.close_connection()
 
@@ -2511,3 +2520,196 @@ async def test_reader_generate_keeps_its_own_state_and_warning(monkeypatch):
     assert fake._library_media_generating_analysis is False
     assert recomposes == [1]
     assert fake._notified and "returned nothing" in fake._notified[0][0]
+
+
+# ---------------------------------------------------------------------------
+# task-31220: the wedge -- recovery is never gated by what it recovers from.
+# ---------------------------------------------------------------------------
+
+
+def _gated_list_state() -> LibraryMediaCanvasState:
+    """A normal (non-select) Media list with two rows, as the gate finds it."""
+    return dataclasses.replace(
+        _select_mode_canvas_state(), select_mode=False, count=2
+    )
+
+
+class _StaleGatedMediaCanvasApp(ConsolidatedCSSApp):
+    """The exact state critique #5 was wedged in: a stale page, no write."""
+
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_gated_list_state(),
+            stale_action_reason="Media changed; retry to load a current page.",
+            id="library-media-canvas",
+        )
+
+
+class _WriteGatedMediaCanvasApp(ConsolidatedCSSApp):
+    """A write genuinely in flight -- rows stay gated until it settles."""
+
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_gated_list_state(),
+            mutation_action_reason="Media change in progress.",
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rows_stay_open_under_the_stale_gate_while_mutations_stay_disabled():
+    """Reading is not a mutation: a stale page still opens its rows.
+
+    Critique #5 saw every row disabled behind ``Media changed; retry to load
+    a current page.``, which left no way to reach the items the gate was
+    complaining about. Only the mutating actions belong behind that gate.
+    """
+    async with _StaleGatedMediaCanvasApp().run_test() as pilot:
+        rows = pilot.app.query(".library-media-row")
+        assert len(rows) == 2
+        for row in rows:
+            assert row.disabled is False
+        for action_id in (
+            "#library-media-export",
+            "#library-media-select-toggle",
+            "#library-media-sort",
+            "#library-media-review",
+        ):
+            assert pilot.app.query_one(action_id, Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_rows_stay_gated_while_a_media_write_is_actually_in_flight():
+    async with _WriteGatedMediaCanvasApp().run_test() as pilot:
+        rows = pilot.app.query(".library-media-row")
+        assert len(rows) == 2
+        for row in rows:
+            assert row.disabled is True
+            assert str(row.tooltip) == "Media change in progress."
+
+
+def _claim_fake(*, begin_raises=None, worker_raises=None):
+    """A screen stub whose fence or worker scheduling refuses the claim."""
+    fake = SimpleNamespace(_library_media_bulk_delete_in_flight=False)
+    _bind_media_mutation_seams(fake)
+    worker_calls = []
+    fake._worker_calls = worker_calls
+
+    def run_worker(work, **kwargs):
+        if worker_raises is not None:
+            raise worker_raises
+        worker_calls.append((work, kwargs))
+
+    fake.run_worker = run_worker
+    if begin_raises is not None:
+        def _begin():
+            raise begin_raises
+
+        fake._begin_library_media_mutation = _begin
+    fake._claim_library_media_mutation = types.MethodType(
+        LibraryScreen._claim_library_media_mutation, fake
+    )
+    return fake
+
+
+@pytest.mark.parametrize("failure_kind", ("fence", "schedule"))
+def test_media_write_claim_releases_the_interlock_when_no_worker_ever_runs(
+    failure_kind,
+):
+    """A claim that never reaches a worker is the wedge.
+
+    The six mutation handlers set the shared interlock BEFORE scheduling.
+    Every worker body clears it in a ``finally``, so the one unrecoverable
+    window is a claim whose fence or ``run_worker`` raises: the coroutine is
+    never awaited, no ``finally`` ever runs, and Media stays behind
+    ``Media change in progress.`` until the app restarts.
+    """
+    boom = RuntimeError("fence/scheduling refused")
+    fake = _claim_fake(
+        begin_raises=boom if failure_kind == "fence" else None,
+        worker_raises=boom if failure_kind == "schedule" else None,
+    )
+
+    async def _work():
+        return None
+
+    with pytest.raises(RuntimeError, match="refused"):
+        fake._claim_library_media_mutation(_work())
+
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._worker_calls == []
+
+
+def test_media_write_claim_schedules_into_the_one_shared_exclusive_group():
+    fake = _claim_fake()
+
+    async def _work():
+        return None
+
+    work = _work()
+    fake._claim_library_media_mutation(work)
+
+    assert fake._library_media_bulk_delete_in_flight is True
+    assert fake._worker_calls == [
+        (work, {"exclusive": True, "group": "library_media_bulk_delete"})
+    ]
+    work.close()
+
+
+def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
+    """ADR-055's one-flag rule, made structural.
+
+    Auditing six hand-written claim sites is how the release gap survived;
+    there is now exactly ONE assignment of the flag, inside the seam whose
+    own tests above prove it always releases.
+    """
+    source = inspect.getsource(library_screen_module)
+    assert source.count("_library_media_bulk_delete_in_flight = True") == 1
+    assert "_library_media_bulk_delete_in_flight = True" in inspect.getsource(
+        LibraryScreen._claim_library_media_mutation
+    )
+    for handler in (
+        LibraryScreen.handle_library_media_bulk_delete_confirm,
+        LibraryScreen.handle_library_media_bulk_delete_undo,
+        LibraryScreen.handle_library_media_delete_confirm,
+        LibraryScreen.handle_library_media_edit_save,
+        LibraryScreen.handle_library_media_trash_restore,
+        LibraryScreen.handle_library_media_trash_delete_confirm,
+    ):
+        assert "_claim_library_media_mutation" in inspect.getsource(handler), (
+            handler.__name__
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
+    """Site 5's ``finally`` covered only the trailing detail re-fetch.
+
+    An unavailable edit service notifies BEFORE that ``try`` opens, so a
+    notify that raises (app teardown) left the interlock claimed forever.
+    """
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=True,
+        _library_media_editing=True,
+        app_instance=SimpleNamespace(media_reading_scope_service=None),
+        _refreshed=[],
+    )
+    _bind_media_mutation_seams(fake)
+    fake._refresh_library_media_detail = lambda media_id: fake._refreshed.append(
+        media_id
+    )
+    fake._notify_library_media_edit_warning = types.MethodType(
+        LibraryScreen._notify_library_media_edit_warning, fake
+    )
+
+    def _notify(message, **kwargs):
+        raise RuntimeError("app is shutting down")
+
+    fake.app_instance.notify = _notify
+
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await LibraryScreen._save_library_media_edit(
+            fake, "local:media:1", title="t", author="a", url="", keywords=[]
+        )
+
+    assert fake._library_media_bulk_delete_in_flight is False
