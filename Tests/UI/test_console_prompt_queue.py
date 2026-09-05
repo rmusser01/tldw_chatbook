@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -35,7 +34,6 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 def _activity(
@@ -247,7 +245,17 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
 
 @pytest.mark.asyncio
-async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> None:
+async def test_confirm_navigation_is_a_pure_allow_with_manager_open() -> None:
+    """TASK-31520 rewrite: the lifecycle dialog is retired with the loss.
+
+    Pre-reuse, a busy/paused queue raised a Stay/Leave dialog from
+    ``confirm_navigation`` because leaving destroyed the screen. The chat
+    route is reusable now -- the queue registry, the paused chain, and the
+    session all survive navigation -- so the gate answers True. What still
+    matters: the CALL must be a pure gate with no side effects -- it must
+    not dismiss the open manager, discard the unsaved edit, or move focus
+    (the real navigation seam owns overlay dismissal separately).
+    """
     _app, host = _ready_host()
     async with host.run_test(size=(100, 30)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -272,7 +280,6 @@ async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> 
         controller.prompt_queue_coordinator.publish_registry_change(session_id)
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-
         await pilot.click("#console-prompt-queue-manage")
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal)
@@ -283,17 +290,13 @@ async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> 
         edit.text = "unsaved manager edit"
         edit.focus()
 
-        confirmation_task = asyncio.create_task(console.confirm_navigation())
-        for _ in range(5):
-            await pilot.pause()
-            if isinstance(host.screen_stack[-1], ConfirmationDialog):
-                break
-        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
-        host.screen_stack[-1].query_one("#cancel-button", Button).press()
+        assert await console.confirm_navigation() is True, (
+            "nothing is lost by navigating under reuse; the gate must allow"
+        )
         await pilot.pause()
-
-        assert await confirmation_task is False
-        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal)
+        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal), (
+            "the gate must not dismiss the open manager"
+        )
         assert edit.text == "unsaved manager edit"
         assert edit.has_focus
 
