@@ -774,6 +774,73 @@ def test_auto_state_requires_a_matching_runtime_observation(tmp_path: Path) -> N
     assert dict(observed.compatibility.state_settings)["flash-attn"] == "on"
 
 
+@pytest.mark.parametrize(
+    ("option", "original", "runtime_key"),
+    [
+        ("--flash-attn", "off", "flash-attn"),
+        ("--n-gpu-layers", "0", "gpu-layers"),
+        ("--device", "none", "device"),
+    ],
+)
+def test_unresolved_auto_runtime_values_do_not_create_compatibility(
+    option: str,
+    original: str,
+    runtime_key: str,
+    tmp_path: Path,
+) -> None:
+    """An observed launch-domain auto value is not effective runtime evidence."""
+    executable, model = _launch_files(tmp_path)
+    command = list(_explicit_command(executable, model))
+    value_index = command.index(original, command.index(option))
+    command[value_index] = "auto"
+    prepared = prepare_launch(tuple(command), {}, _claim(), "launch-unresolved-auto")
+
+    assert prepared.disabled_reason is None
+    finalized = finalize_launch(prepared, _ready(model, (runtime_key, "auto")))
+
+    assert finalized.compatibility is None
+    assert runtime_key in finalized.disabled_reason
+
+
+@pytest.mark.parametrize("source", ["cli", "environment"])
+def test_explicit_auto_parallelism_resolves_to_observed_slot_count(
+    source: str, tmp_path: Path
+) -> None:
+    """Pinned -1=auto forms must resolve to the verified positive slot count."""
+    executable, model = _launch_files(tmp_path)
+    command = list(_explicit_command(executable, model))
+    env: dict[str, str] = {}
+    if source == "cli":
+        command.extend(("--parallel", "-1"))
+    else:
+        parallel_index = command.index("--parallel")
+        del command[parallel_index : parallel_index + 2]
+        env["LLAMA_ARG_N_PARALLEL"] = "-1"
+    observation = ReadinessObservation(
+        slots=tuple(
+            SlotObservation(
+                slot_id=slot_id,
+                busy=False,
+                tokens=7,
+                context_size=2048,
+                observed_at=12.5,
+            )
+            for slot_id in range(2)
+        ),
+        build_info="427291b5b34c",
+        model_path=str(model.resolve()),
+        runtime_values=(),
+    )
+
+    finalized = finalize_launch(
+        prepare_launch(tuple(command), env, _claim(), f"launch-auto-parallel-{source}"),
+        observation,
+    )
+
+    assert finalized.disabled_reason is None
+    assert dict(finalized.compatibility.state_settings)["parallel"] == "2"
+
+
 def test_explicit_flash_attention_value_needs_no_auto_observation(
     tmp_path: Path,
 ) -> None:

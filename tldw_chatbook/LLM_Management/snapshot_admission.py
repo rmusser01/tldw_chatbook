@@ -33,6 +33,12 @@ _SPLIT_MODEL = re.compile(
 )
 _TRUE_VALUES = frozenset({"1", "true", "on", "enabled"})
 _FALSE_VALUES = frozenset({"0", "false", "off", "disabled"})
+_UNRESOLVED_RUNTIME_VALUES: dict[str, frozenset[str]] = {
+    "device": frozenset({"@auto", "auto"}),
+    "flash-attn": frozenset({"auto"}),
+    "gpu-layers": frozenset({"auto"}),
+    "mmproj-device": frozenset({"@auto", "auto"}),
+}
 _CACHE_TYPES = frozenset(
     {"f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"}
 )
@@ -482,7 +488,9 @@ def _canonicalize(kind: str, value: str) -> str:
         return rendered
     if kind == "parallel":
         rendered = _integer(value)
-        if int(rendered) == 0 or int(rendered) < -1:
+        if rendered == "-1":
+            return "@auto"
+        if int(rendered) <= 0:
             raise ValueError("invalid parallel count")
         return rendered
     if kind == "keep":
@@ -1084,7 +1092,11 @@ def finalize_launch(
                 disabled_reason=f"The observed {key} setting is not valid launch evidence.",
             )
         try:
-            runtime_values[key] = _canonicalize(kind, value)
+            normalized = _canonicalize(kind, value)
+            unresolved_values = _UNRESOLVED_RUNTIME_VALUES.get(key)
+            if unresolved_values and normalized.casefold() in unresolved_values:
+                raise ValueError("unresolved automatic value")
+            runtime_values[key] = normalized
         except ValueError:
             return replace_descriptor(
                 descriptor,
