@@ -45,7 +45,7 @@ created at 02:03 and moves with all plan and dependency references.
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Reconfirm task and ADR allocations.
-2. Create ADR-116 from the approved design.
+2. Create ADR-120 from the approved design.
 3. Amend `004-personas-destination-native-workbench.md`, ADR-030, ADR-037,
    ADR-046, ADR-083, and ADR-085.
 4. Link preserved ADR-031 and ADR-033.
@@ -56,14 +56,14 @@ created at 02:03 and moves with all plan and dependency references.
 
 <!-- SECTION:NOTES:BEGIN -->
 - ADR required: yes. ADR path:
-  `backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`.
+  `backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`.
   Reason: the programme needs one authority for durable derived indexes, typed
   local identity, cross-surface activation/repair, semantic consent, and
   long-lived surface ownership before runtime implementation.
 - Fetched `origin/dev` and swept every remote ref, registered worktree, and open
-  pull request. No older claimant exists for TASK-31241 or ADR-116; the merge
+  pull request. No older claimant exists for TASK-31241 or ADR-120; the merge
   candidate contains exactly the intended task and ADR paths.
-- Created ADR-116 with the approved local-only identity union, selected-branch
+- Created ADR-120 with the approved local-only identity union, selected-branch
   Keyword/Meaning corpus, Console-owned activation, Library-only CAS repair,
   opt-in embeddings-only Meaning generations, and surface boundaries.
 - Added narrow dated amendments to ADR-004
@@ -80,10 +80,10 @@ created at 02:03 and moves with all plan and dependency references.
   canonical ADR filename mismatch.
 - Fix Round 1 removed the unrelated storage-restart amendment, amended
   `004-personas-destination-native-workbench.md` for Roleplay per-character
-  browse versus Library global/archive ownership, renamed ADR-116 to the
+  browse versus Library global/archive ownership, renamed ADR-120 to the
   approved `local-semantic-search` path, and updated every committed reference
   plus the source implementation plan.
-- ADR-116 now makes future maintenance effective only after a complete ready
+- ADR-120 now makes future maintenance effective only after a complete ready
   initial generation and makes Delete atomically remove ready/staging
   generations, disable saved future maintenance, clear semantic query caches,
   synchronize original/draft Settings state to Off, and preserve source chats.

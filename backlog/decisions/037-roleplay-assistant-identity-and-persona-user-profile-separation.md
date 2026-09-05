@@ -94,7 +94,7 @@ the shared written design is approved.
 
 ## Amendment (2026-09-03, TASK-31241 — local conversation navigation identity)
 
-[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
 names the selected local conversation database as the **Data Profile** and
 exposes its existing durable `local_authority_id` as `data_authority_id` for
 character-conversation navigation. This is distinct from the independently

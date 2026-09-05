@@ -88,7 +88,7 @@ and the approved [Roleplay Resume Prior Character Chat Design](../../Docs/superp
 
 ### 2026-09-03 amendment: typed activation and aggregate Roleplay draft veto
 
-[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
 preserves historical saved display identity and exact ID-only resume while
 making cross-surface activation Console-owned, cancellable, and result typed.
 Context, `Ctrl+K`, and Roleplay pass an immutable resolved local character key

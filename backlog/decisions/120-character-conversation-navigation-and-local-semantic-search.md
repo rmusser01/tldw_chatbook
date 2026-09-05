@@ -1,6 +1,12 @@
-# ADR-116: Character conversation navigation and local semantic search
+# ADR-120: Character conversation navigation and local semantic search
 
 Status: Accepted
+Renumbering: provisional ADR-116 moved to ADR-120 for Keyword release isolation;
+the shipped Schedules ADR retains 116. Local/remote ref and worktree allocation
+review on 2026-09-05 confirms 117–119 occupied and 120 owned by this programme.
+
+Delivery status: navigation and Keyword only in the 2026-09-05 delivery scope.
+Meaning and its Settings/runtime contracts below remain deferred requirements.
 Date: 2026-09-03
 Related Task: [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md)
 Related Spec: [Character Conversation Navigation and Local Meaning Search Design](../../Docs/superpowers/specs/2026-09-03-character-conversation-navigation-design.md)

@@ -20,7 +20,7 @@ back all of its DDL, data, and version changes.
 
 ## Amendment (2026-09-03, TASK-31241 — character-chat search generations)
 
-[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
 applies this ADR's authoritative-source and eventual-cleanup principles to a
 separately owned character-conversation search projection; it does not broaden
 the media index. The active Data Profile's conversation SQLite database is

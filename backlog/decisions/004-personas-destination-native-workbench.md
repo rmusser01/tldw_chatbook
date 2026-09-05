@@ -16,7 +16,7 @@ routes resolve to `personas`.
 
 ## Amendment (2026-09-03, TASK-31241 — Roleplay conversation browsing)
 
-[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
 extends the destination-native Roleplay workbench with complete, searchable,
 keyset-paginated conversation browsing for one exact resolved local Character
 card. Roleplay owns that per-character browse, read-only preview, and exact

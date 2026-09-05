@@ -85,11 +85,11 @@ providers, pytest/pytest-asyncio, Ruff, modular TCSS and generated CSS bundles.
 ADR required: yes
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: the programme introduces durable derived indexes, a local identity and
 repair contract, cross-screen activation and draft-veto boundaries, semantic
-consent/lifecycle policy, and long-lived navigation structure. `ADR-116` is the
+consent/lifecycle policy, and long-lived navigation structure. `ADR-120` is the
 current collision-free allocation; Task 1 must re-sweep before creating it and
 renumber the unshipped path plus every reference if an older claimant lands.
 
@@ -103,7 +103,7 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 ### Governance
 
 - Create
-  `backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`.
+  `backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`.
 - Modify `backlog/decisions/004-personas-destination-native-workbench.md`
   plus ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085 as named in the
   programme ADR check.
@@ -180,7 +180,7 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 **Files:**
 
 - Create:
-  `backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+  `backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 - Modify: `backlog/decisions/004-personas-destination-native-workbench.md`
 - Modify: `backlog/decisions/030-derived-index-lifecycle-and-atomic-media-migrations.md`
 - Modify:
@@ -197,13 +197,13 @@ ADR-031 and ADR-033 remain linked, unchanged authorities.
 **Interfaces:**
 
 - Consumes: the approved design and preserved ADR-031/ADR-033 contracts.
-- Produces: ADR-116's exact local authority, identity union, selected-branch
+- Produces: ADR-120's exact local authority, identity union, selected-branch
   corpus, activation, repair, consent, generation, and surface-ownership rules.
 
 ADR required: yes
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: this task creates the programme's architectural authority before code.
 
@@ -211,7 +211,7 @@ Reason: this task creates the programme's architectural authority before code.
 
 Run the remote/worktree task and ADR sweeps from
 `backlog/docs/lessons-backlog-hygiene.md`, fetch current `origin/dev`, and record
-that `TASK-31241` and ADR-116 have no older claimant. If either collides, apply
+that `TASK-31241` and ADR-120 have no older claimant. If either collides, apply
 the older-arrival rule and change every unshipped reference in this plan, spec,
 and task chain before continuing.
 
@@ -221,10 +221,10 @@ Run:
 
 ```bash
 backlog task edit 31241 -s "In Progress"
-backlog task edit 31241 --plan "1. Reconfirm task and ADR allocations.\n2. Create ADR-116 from the approved design.\n3. Amend 004-personas-destination-native-workbench.md, ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085.\n4. Link preserved ADR-031 and ADR-033.\n5. Run documentation and reference checks."
+backlog task edit 31241 --plan "1. Reconfirm task and ADR allocations.\n2. Create ADR-120 from the approved design.\n3. Amend 004-personas-destination-native-workbench.md, ADR-030, ADR-037, ADR-046, ADR-083, and ADR-085.\n4. Link preserved ADR-031 and ADR-033.\n5. Run documentation and reference checks."
 ```
 
-- [ ] **Step 3: Write ADR-116 before amending its consumers**
+- [ ] **Step 3: Write ADR-120 before amending its consumers**
 
 The Decision section must state these exact owned contracts:
 
@@ -243,7 +243,7 @@ name-based repair, and silent late-result reordering.
 
 - [ ] **Step 4: Amend the six existing ADRs with narrow dated sections**
 
-Each amendment links ADR-116 and `TASK-31241` and changes only its owned seam:
+Each amendment links ADR-120 and `TASK-31241` and changes only its owned seam:
 
 ```text
 ADR-004 (`004-personas-destination-native-workbench.md`)
@@ -261,7 +261,7 @@ Run:
 
 ```bash
 rg -n "ADR-031|031-tui-keybinding|ADR-033|033-settings" \
-  backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md \
+  backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md \
   Docs/superpowers/specs/2026-09-03-character-conversation-navigation-design.md
 git diff --check
 ```
@@ -279,7 +279,7 @@ git add backlog/decisions/004-personas-destination-native-workbench.md \
   backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md \
   backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md \
   backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md \
-  backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md \
+  backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md \
   "backlog/tasks/task-31241 - Align-character-conversation-navigation-decisions.md"
 git commit -m "docs: align character conversation navigation decisions"
 ```
@@ -301,7 +301,7 @@ git commit -m "docs: align character conversation navigation decisions"
 
 **Interfaces:**
 
-- Consumes: ADR-116 and the existing `CharactersRAGDB.get_local_authority_id()`
+- Consumes: ADR-120 and the existing `CharactersRAGDB.get_local_authority_id()`
   authority.
 - Produces these immutable contracts for Tasks 3–8:
 
@@ -405,9 +405,9 @@ class CharacterConversationNavigationService:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
-Reason: this task directly implements ADR-116's already-decided identity,
+Reason: this task directly implements ADR-120's already-decided identity,
 storage, projection, and Keyword boundaries.
 
 - [ ] **Step 1: Start TASK-31242 and record the current schema allocation**
@@ -648,7 +648,7 @@ class RoleplayDraftSnapshot:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 3 implements the ADR's previously decided activation, draft-veto,
 repair, and surface-ownership contracts.
@@ -833,10 +833,10 @@ class ConsoleCharacterContextController:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: the Context position, bounds, accordion behavior, and read-only
-ownership are already decided by ADR-116 and amended ADR-083.
+ownership are already decided by ADR-120 and amended ADR-083.
 
 - [ ] **Step 1: Start TASK-31244 and pin the no-continuation boundary**
 
@@ -977,9 +977,9 @@ class ConsoleSwitcherCharacterResult:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
-Reason: the third mode and trust invariants are already owned by ADR-116 and
+Reason: the third mode and trust invariants are already owned by ADR-120 and
 amended ADR-085; ADR-031 continues to authorize F3 locally.
 
 - [ ] **Step 1: Start TASK-31245 and capture incumbent trust tests**
@@ -1212,7 +1212,7 @@ class CharacterConversationSemanticIndex:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 6 implements the ADR's derived-index, privacy, generation, and
 direct-query choices. Its additive semantic state follows amended ADR-030.
@@ -1371,9 +1371,9 @@ class CharacterSemanticSettingsDraft:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
-Reason: Task 7 implements ADR-116's consent/lifecycle UI while preserving
+Reason: Task 7 implements ADR-120's consent/lifecycle UI while preserving
 ADR-033's staged Save/Revert versus immediate reviewed-action model.
 
 - [ ] **Step 1: Start TASK-31247 and baseline Settings commit-model tests**
@@ -1549,7 +1549,7 @@ class CharacterSwitcherSearchCoordinator:
 ADR required: no
 
 ADR path:
-`backlog/decisions/116-character-conversation-navigation-and-local-semantic-search.md`
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`
 
 Reason: Task 8 integrates the already-approved two-leg presentation and closes
 cross-surface evidence without adding a new architecture boundary.

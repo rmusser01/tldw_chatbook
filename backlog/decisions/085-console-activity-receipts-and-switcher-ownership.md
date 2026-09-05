@@ -110,7 +110,7 @@ a separate server contract, task, and ADR after the local release.
 
 ## Amendment (2026-09-03, TASK-31241 — Character chats mode and activation)
 
-[ADR-116](116-character-conversation-navigation-and-local-semantic-search.md)
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
 adds `Character chats` as a third `Ctrl+K` mode beside Active and History while
 preserving the switcher's operational ownership. Every ordinary open still
 starts in Active, and blank Active Enter retains MRU-other-tab behavior. F3
