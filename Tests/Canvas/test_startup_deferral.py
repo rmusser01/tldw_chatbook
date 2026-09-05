@@ -25,6 +25,14 @@ CONTROL_ENV = {
     "CHATBOOK_CANVAS_CONTROL_VERSION": "1",
 }
 REPO_ROOT = Path(__file__).resolve().parents[2]
+USER_OPEN_DIALOG_MODULES = frozenset(
+    {
+        "tldw_chatbook.Widgets.Console.console_prompt_queue_modal",
+        "tldw_chatbook.Widgets.Console.console_review_notes_modal",
+        "tldw_chatbook.Widgets.Console.console_side_chat_modal",
+    }
+)
+CHATBOOK_CONFLICT_MODULE = "tldw_chatbook.Chatbooks.conflict_resolver"
 
 
 def _isolated_environment(tmp_path: Path) -> dict[str, str]:
@@ -177,6 +185,67 @@ def test_console_owners_do_not_import_compiler_until_first_compile(
                 )
                 assert plan.runtime_profile == "canvas-v1"
                 assert compiler_name in sys.modules
+                """
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=_isolated_environment(tmp_path),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_console_screen_defers_user_open_only_dialog_modules(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import sys
+
+                import tldw_chatbook.UI.Screens.chat_screen
+
+                dialog_modules = {set(USER_OPEN_DIALOG_MODULES)!r}
+                loaded = sorted(dialog_modules.intersection(sys.modules))
+                assert loaded == [], loaded
+                """
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=_isolated_environment(tmp_path),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_local_chatbook_service_defers_conflict_policy_until_import(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import sys
+
+                from tldw_chatbook.Chatbooks.local_chatbook_service import (
+                    LocalChatbookService,
+                )
+
+                assert {CHATBOOK_CONFLICT_MODULE!r} not in sys.modules
+                service = LocalChatbookService({{}}, registry_path="registry.json")
+                assert service.db_paths == {{}}
+                assert {CHATBOOK_CONFLICT_MODULE!r} not in sys.modules
                 """
             ),
         ],

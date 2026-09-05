@@ -97,11 +97,75 @@ Independent static review passed; no production guard was relaxed.
   CSS **787,764/804,000 bytes**, pre-import pass **496/500 modules**,
   **365,641/378,740 LOC**, largest route **112,023/123,319 LOC**.
 
-TASK-31741 remains in progress for the first-paint blocker under ADR-097. No
-budget/snapshot increase, scheduler safety change, PR, push or merge has occurred.
-`origin/dev` has meanwhile advanced; another exact-base check remains required
-before publishing the merge candidate. First-use deferral tests and corrections
-must preserve concrete Canvas lifecycle ownership and first-create auto-open.
+Startup follow-up under ADR-097 (thresholds and snapshots unchanged):
+
+- Group A (`0afa56dec`) defers Chatbook archive engines behind existing public
+  exports and operation patch seams. Valid import-closure RED:2 failed/3 passed;
+  final seven-module archive selection: **87 passed, 1 warning, 7.58s**.
+  First paint990→984, removing six archive-related residents with no additions.
+- Group B (`81f288e8f`) avoids native served-control construction and binds the
+  existing runtime's stable settlement listener without creating a browser
+  authority until first publication/open. First-create delivery, concurrent
+  first-use identity, rebinding, disable and disposal controls pass: **41 tests**.
+  First paint984→978, removing five browser modules and one timing-dependent
+  scheduler heartbeat resident. No scheduler safety path was changed.
+- Canvas CSS (`e6ba6becf`) adds exact control classes to two existing rule
+  subjects, with declarations unchanged and generated CSS matching. The new
+  computed-style controls first failed only on the intended missing classes;
+  final **8 passed, 1 warning, 1.97s**, at80×24 and120×40. Broad ancestor subjects
+  return276→274. Ruff, format and bundle generation pass. This is computed-style
+  evidence, not screenshot equivalence across every theme.
+- Group C (`6f7719fdf`) shares strict execution-flag normalization without
+  constructing remote policy for a bool-only read; full Settings admission
+  validation remains. Compiler imports move to actual compilation/error use,
+  preserving keyword limits, injected compilers and exact exception ordering.
+  Valid RED: **2 failed, 54 passed, 5.83s**. Expanded final verification after
+  signature/ordering refinements: **139 passed, 1 warning, 22.57s**.
+  First paint978→975: compiler/web_auth absent and the emergency-stop first-tick
+  resident absent by timing only, not a guaranteed product saving.
+- Independent static reviews pass for A, B, C and the CSS correction. New/tiny
+  owned-file lint/format checks pass; unchanged legacy lint counts remain
+  qualified (config160, message controller33, message actions7→6).
+- Browser requalification after A/B/C at6f7719fdf: **89 passed, 2 skipped,
+  1 warning, 166.01s** across the same three native/served/zero-egress files.
+  Mandatory Chromium passes; Firefox/WebKit remain not installed.
+- Post-startup preflight identifies only one diagnostic digest change in app.py.
+  The statement audit against0512c3f68 reports387→387 calls, one moved/re-indented
+  statement, zero added/removed. It is the unchanged fixed invalid-spawn warning
+  nested under Group B's served-environment presence check. The inventory was
+  regenerated after that review; all five other preflight categories passed.
+- Local PR Fast Lane selection: **749 passed, 6 failed, 1 warning, 237.15s**.
+  All six process-lease failures occur at multiprocessing `SemLock` creation
+  with OS errno28, before exercising lease behavior. The untouched exact-dev
+  archive reproduces all six: **6 failed, 1 warning, 0.88s**. The volume reports
+  289GiB available; this is not evidence that disk files need deletion.
+  No OS limits, semaphore objects, tests or guards were changed. Protected CI
+  must still pass; this local run is explicitly not a green Fast Lane claim.
+
+Group D restores the startup ratchet by deferring three user-open-only dialogs
+and the local Chatbook conflict enum to their existing operation entrypoints.
+The first mixed run was5 failed/4 passed: two expected closure failures and three
+preexisting positive-fixture failures. Untouched dev reproduced the latter three
+in12.83s. Supplying the actual workspace registry to two real-SQLite fixtures and
+the current route keyword to the offline gateway yields the valid pre-product
+RED: **2 failed, 7 passed, 1 warning, 12.17s**. No production persistence or
+provider gate changed. Final expanded startup/dialog/archive controls:
+**32 passed, 1 warning, 17.61s**; independent static review passes.
+
+The measured census975→971 sheds exactly conflict_resolver, prompt_queue_modal,
+review_notes_modal and side_chat_modal, with no additions. The complete six-file
+startup selection passes **19 tests, 6 warnings, 28.27s**: import638/660,
+first paint971/972, broad CSS274/274, CSS787819/804000bytes and pre-import496/500
+with unchanged LOC totals above. Warnings include low-headroom diagnostics,
+Requests and the host joblib SemLock limitation; none are hidden. UI latency and
+stall-persistence controls pass **9 tests, 3 warnings, 22.35s**. These are scoped
+checks, not a full repository sweep. The one-module first-paint headroom remains
+tight and protected CI must independently verify its platform.
+
+TASK-31741 remains in progress for final latest-base/preflight/PR integration.
+No budget/snapshot increase, scheduler safety change, PR, push or merge has
+occurred at this checkpoint. Latest fetched dev isd9d5763d6; its delta from7aa
+is AudioTap code/tests plus schedules and snapshot follow-up documentation.
 
 ## Earlier V1 checkpoints
 

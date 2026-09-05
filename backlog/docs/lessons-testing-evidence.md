@@ -11725,3 +11725,16 @@ Rule: check terminal generation state and tool outcomes before diagnosing
 postcommit state. Native transcript paths may contain unsaved UI notices; test
 their projection separately from durable graph validation, without dropping
 missing user/assistant origins or weakening the validator.
+
+## An errno28 multiprocessing failure is not evidence to delete disk files
+
+Incident (TASK-31741 Canvas integration, 2026-09-05): local PR Fast Lane passed
+749 tests but six process-lease tests failed while constructing multiprocessing
+SemLock, before exercising lease behavior. The untouched dev archive reproduced
+all six failures, while the volume reported289GiB free. Joblib also warned that
+it would operate serially. No OS resources or limits were changed; protected CI
+remained required rather than calling the local selection green.
+
+Rule: identify the failing allocation and compare the unchanged baseline before
+interpreting an OS resource message. Retain environmental qualifications; do not
+delete unrelated files, weaken gates or infer resource ownership from errno alone.

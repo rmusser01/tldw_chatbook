@@ -582,7 +582,6 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
-from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
 from ...Widgets.Console.console_transcript import (
     ConsoleReviewNotesRequested,
     console_transcripts_on_screen,
@@ -595,7 +594,6 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
-from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_conversation_inspector import (
     TAB_COSTS,
@@ -648,7 +646,6 @@ from ...Widgets.Console.console_prompt_comparison_modal import (
     PromptComparisonResult,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
 from ...Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
 )
@@ -14657,6 +14654,21 @@ class ChatScreen(BaseAppScreen):
             ),
         )
 
+    def _open_console_prompt_queue(self, session_id: str, revision: int) -> Any:
+        """Open the prompt queue manager on its explicit first use."""
+
+        from ...Widgets.Console.console_prompt_queue_modal import (
+            ConsolePromptQueueModal,
+        )
+
+        return self.app.push_screen(
+            ConsolePromptQueueModal(
+                session_id=session_id,
+                revision=revision,
+                queue_controller=self._prompt_queue,
+            )
+        )
+
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
@@ -15112,15 +15124,7 @@ class ChatScreen(BaseAppScreen):
             )
             yield ConsolePromptQueueRegion(
                 id="console-prompt-queue",
-                on_manage_requested=(
-                    lambda session_id, revision: self.app.push_screen(
-                        ConsolePromptQueueModal(
-                            session_id=session_id,
-                            revision=revision,
-                            queue_controller=self._prompt_queue,
-                        )
-                    )
-                ),
+                on_manage_requested=self._open_console_prompt_queue,
                 on_primary_requested=(
                     lambda session_id, revision, action: self.run_worker(
                         self._prompt_queue.handle_primary_intent(
@@ -21150,6 +21154,8 @@ class ChatScreen(BaseAppScreen):
             if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
             else None
         )
+        from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
+
         self.app.push_screen(
             ConsoleSideChatModal(
                 service=ConsoleSideChatService(self._ensure_console_provider_gateway()),
@@ -21389,6 +21395,10 @@ class ChatScreen(BaseAppScreen):
                     )
                     self.notify("Could not delete the note.", severity="warning")
                     return False
+
+            from ...Widgets.Console.console_review_notes_modal import (
+                ConsoleReviewNotesModal,
+            )
 
             changed = await self.app.push_screen_wait(
                 ConsoleReviewNotesModal(

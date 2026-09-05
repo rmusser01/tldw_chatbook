@@ -26,7 +26,6 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
 from .chatbook_models import ContentType
-from .conflict_resolver import ConflictResolution
 
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 _REGISTRY_LOCKS: dict[Path, threading.RLock] = {}
@@ -956,6 +955,8 @@ class LocalChatbookService:
         conflict_value = payload.get(
             "conflict_resolution", ChatbookImportRequest().conflict_resolution
         )
+        from .conflict_resolver import ConflictResolution
+
         conflict_resolution = ConflictResolution(str(conflict_value))
         importer = ChatbookImporter(self.db_paths)
         success, message = importer.import_chatbook(
