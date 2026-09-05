@@ -766,6 +766,7 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
             media_reading_scope_service=SlowMediaService(),
             chat_conversation_scope_service=SlowConversationService(),
             notes_user_id="default_user",
+            app_config={},
         )
     )
 
@@ -837,6 +838,7 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(
             media_reading_scope_service=BlockingAsyncMediaService(),
             chat_conversation_scope_service=BlockingAsyncConversationService(),
             notes_user_id="default_user",
+            app_config={},
         )
     )
 
