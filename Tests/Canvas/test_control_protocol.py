@@ -28,6 +28,22 @@ def _message(message_type: str, payload: dict, *, request_id: str = "request-1")
     )
 
 
+@pytest.mark.parametrize("generation", [None, "", 3, "x" * 257])
+def test_served_selection_requires_bounded_original_generation(generation):
+    payload = {
+        "action": "follow",
+        "expected_session_id": "session-a",
+        "expected_canvas_id": "canvas-a",
+        "expected_revision_id": "revision-a",
+        "expected_selection_generation": generation,
+    }
+    with pytest.raises(ControlProtocolError, match="invalid_payload_field"):
+        _message("selection.request", payload)
+    payload.pop("expected_selection_generation")
+    with pytest.raises(ControlProtocolError, match="missing_payload_field"):
+        _message("selection.request", payload)
+
+
 def test_codec_round_trips_a_typed_health_request() -> None:
     message = _message("health.request", {})
 
@@ -135,7 +151,7 @@ def test_error_frames_are_content_free_and_bounded() -> None:
         ("health.response", {"status": 1}),
         (
             "selection.response",
-            {"canvas_id": "canvas-a", "revision_id": "revision-a", "following": "yes"},
+            {"canvas_id": "canvas-a", "revision_id": "revision-a", "following": "yes", "selection_generation": "intent-a"},
         ),
         (
             "canvas.events",

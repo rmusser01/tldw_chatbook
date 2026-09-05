@@ -1048,9 +1048,11 @@ async def test_canonical_adversarial_corpus_stays_in_native_product_route(
                         create_new=False,
                     )
                 except CanvasCompileError as error:
-                    assert {issue.code for issue in error.issues} == {"html-limit"}
-                    assert egress_server.requests == [], case["name"]
-                    continue
+                    pytest.fail(
+                        f"unexpected admission refusal: {case['name']}:"
+                        f"{sorted({issue.code for issue in error.issues})}",
+                        pytrace=False,
+                    )
                 accepted_sequence += 1
                 await page.get_by_text(
                     f"Revision {accepted_sequence}", exact=True

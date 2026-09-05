@@ -33,6 +33,19 @@ def _scope(**changes: str) -> CanvasCapabilityScope:
     return replace(base, **changes)
 
 
+def test_selection_generation_is_part_of_exact_capability_authority() -> None:
+    store = CanvasCapabilityStore()
+    original = _scope(selection_generation="intent-a")
+    grant = store.issue(original, ttl_seconds=10)
+    for generation in (None, "intent-b"):
+        with pytest.raises(CanvasCapabilityError, match="scope"):
+            store.consume(
+                grant.token,
+                expected_scope=replace(original, selection_generation=generation),
+            )
+    assert store.consume(grant.token, expected_scope=original) == original
+
+
 def test_capabilities_are_random_hashed_at_rest_and_redacted() -> None:
     store = CanvasCapabilityStore()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -10,8 +11,15 @@ from pathlib import Path
 
 import pytest
 from playwright.async_api import async_playwright, expect
+from textual.widgets import Button
 
+from Tests.Canvas.browser.canvas_live_chatbook_child import _ScriptedCanvasGateway
 from Tests.Chatbooks.test_chatbook_canvas_round_trip import _seed_canvas_graph
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
@@ -34,11 +42,13 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
 @dataclass
@@ -135,7 +145,7 @@ class _NativeFlowAuthority:
     async def read_events(
         self, scope: CanvasGatewayScope, *, after_event_id: str | None
     ) -> tuple[CanvasGatewayEvent, ...]:
-        event = self.events.get(scope.revision_id)
+        event = self.events.get(self.latest_revision)
         if event is None or event.event_id == after_event_id:
             return ()
         return (event,)
@@ -190,6 +200,213 @@ def _chromium_executable(browser_type: object) -> str:
     if not executable:
         pytest.fail("real Playwright Chromium is required for the Canvas native flow")
     return executable
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_native_console_create_publication_automatically_opens_browser(
+    tmp_path, monkeypatch
+):
+    app = _build_test_app(configured_default="chat")
+    database = CharactersRAGDB(tmp_path / "native-create.sqlite", "native-create")
+    app.chachanotes_db = database
+    _configure_native_ready_console(app, model="gpt-4o")
+    provider = _ScriptedCanvasGateway()
+    app.console_provider_gateway_factory = lambda: provider
+    opened_urls = []
+    monkeypatch.setattr(app, "open_url", opened_urls.append)
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await pilot.pause()
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.load_draft("Create the requested Canvas")
+            console.query_one("#console-send-message", Button).press()
+            for _ in range(300):
+                if opened_urls:
+                    break
+                await asyncio.sleep(0.05)
+            assert len(opened_urls) == 1, (
+                "create publication did not invoke native opener"
+            )
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    executable_path=_chromium_executable(playwright.chromium),
+                )
+                page = await browser.new_page()
+                await page.goto(opened_urls[0])
+                await expect(
+                    page.frame_locator("#canvas-preview").locator(
+                        "#chatbook-app-revision"
+                    )
+                ).to_have_text("v1")
+                await browser.close()
+    finally:
+        await dispose_console_runtime(app)
+        database.close()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "code", "retry"),
+    [
+        (409, "selection_changed", True),
+        (409, "unknown", False),
+        (503, "events_unavailable", False),
+        (503, "gateway_unavailable", False),
+        (401, "session_refused", False),
+    ],
+)
+async def test_shell_retries_only_validated_stale_selection(status, code, retry):
+    authority = _NativeFlowAuthority()
+    authority.publish("revision-1", kind="selection_changed", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("revision-1"))
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            injected = asyncio.Event()
+            recovered = asyncio.Event()
+
+            async def event_response(route):
+                if not injected.is_set():
+                    await route.fulfill(status=status, json={"error": code})
+                    injected.set()
+                else:
+                    await route.continue_()
+                    recovered.set()
+
+            await page.route("**/api/events", event_response)
+            await page.goto(launch.browser_url)
+            await asyncio.wait_for(injected.wait(), 5)
+            if retry:
+                await asyncio.wait_for(recovered.wait(), 5)
+                await expect(page.locator("#connection-state")).to_have_text(
+                    "Connected"
+                )
+                await expect(
+                    page.frame_locator("#canvas-preview").get_by_role(
+                        "heading", name="revision-1"
+                    )
+                ).to_be_visible()
+            else:
+                await expect(page.locator("#connection-state")).to_have_text(
+                    "Disconnected"
+                )
+                await expect(page.locator("#canvas-preview")).to_have_attribute(
+                    "src", "about:blank"
+                )
+                assert not recovered.is_set()
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,status,connected",
+    [("selection_changed", 409, True), ("gateway_unavailable", 503, False)],
+)
+async def test_stale_navigation_is_discarded_but_unknown_failure_closes(
+    code, status, connected
+):
+    authority = _NativeFlowAuthority()
+    authority.publish("revision-1", kind="selection_changed", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("revision-1"))
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            calls = []
+
+            async def refuse(route):
+                calls.append(True)
+                await route.fulfill(status=status, json={"error": code})
+
+            await page.route("**/api/navigate", refuse)
+            await page.goto(launch.browser_url)
+            await expect(page.locator("#pin-button")).to_be_visible()
+            await page.locator("#pin-button").click()
+            if connected:
+                await expect(
+                    page.frame_locator("#canvas-preview").get_by_role(
+                        "heading", name="revision-1"
+                    )
+                ).to_be_visible()
+                await expect(page.locator("#connection-state")).to_have_text(
+                    "Connected"
+                )
+                await expect(page.locator("#pin-button")).to_be_visible()
+            else:
+                await expect(page.locator("#connection-state")).to_have_text(
+                    "Disconnected"
+                )
+                await expect(page.locator("#canvas-preview")).to_have_attribute(
+                    "src", "about:blank"
+                )
+            assert len(calls) == 1  # Refresh state; never replay the stale command.
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_old_failed_navigation_cannot_close_newer_valid_selection():
+    authority = _NativeFlowAuthority()
+    authority.publish("revision-1", kind="selection_changed", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("revision-1"))
+    release, entered, resumed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            page.on(
+                "request",
+                lambda request: (
+                    resumed.set()
+                    if release.is_set() and request.url.endswith("/api/events")
+                    else None
+                ),
+            )
+
+            async def delayed_failure(route):
+                if not entered.is_set():
+                    entered.set()
+                    await release.wait()
+                    await route.fulfill(
+                        status=503, json={"error": "gateway_unavailable"}
+                    )
+                else:
+                    await route.continue_()
+
+            await page.route("**/api/navigate", delayed_failure)
+            await page.goto(launch.browser_url)
+            await page.locator("#pin-button").click()
+            await asyncio.wait_for(entered.wait(), 5)
+            await page.locator("#pin-button").click()
+            await expect(page.locator("#follow-button")).to_be_visible()
+            release.set()
+            await asyncio.wait_for(resumed.wait(), 5)
+            await expect(page.locator("#connection-state")).to_have_text("Connected")
+            await expect(page.locator("#follow-button")).to_be_visible()
+            await browser.close()
+    finally:
+        release.set()
+        await gateway.aclose()
 
 
 @pytest.mark.loopback_network
@@ -300,9 +517,6 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
         await page.get_by_text("Pinned", exact=True).wait_for()
         await expect(page.locator("#temporary-badge")).to_be_hidden()
         authority.publish("revision-2", sequence=2)
-        gateway.change_selection(
-            browser_session_id="browser-native-flow", scope=_scope("revision-2")
-        )
         await page.get_by_text("New version available", exact=True).wait_for()
         await frame.get_by_role("heading", name="revision-1").wait_for()
 
@@ -331,9 +545,6 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
         assert await page.evaluate("document.activeElement.id") == "source-button"
 
         authority.publish("revision-3", sequence=3)
-        gateway.change_selection(
-            browser_session_id="browser-native-flow", scope=_scope("revision-3")
-        )
         await frame.get_by_role("heading", name="revision-3").wait_for()
 
         authority.publish("revision-branch", kind="selection_changed", sequence=4)
@@ -341,6 +552,13 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
             browser_session_id="browser-native-flow", scope=_scope("revision-branch")
         )
         await frame.get_by_role("heading", name="revision-branch").wait_for()
+        await page.get_by_role("button", name="Pin revision").click()
+        await page.get_by_text("Pinned", exact=True).wait_for()
+        gateway.change_selection(
+            browser_session_id="browser-native-flow", scope=_scope("revision-1")
+        )
+        await frame.get_by_role("heading", name="revision-1").wait_for()
+        await page.get_by_text("Pinned", exact=True).wait_for()
         await browser.close()
 
     await gateway.aclose()

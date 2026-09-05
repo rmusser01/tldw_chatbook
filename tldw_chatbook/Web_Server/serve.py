@@ -31,6 +31,7 @@ from ..Canvas.gateway import (
     CanvasGatewayOption,
     CanvasGatewayProjection,
     CanvasGatewayScope,
+    CanvasSelectionChanged,
     CanvasSourceResponse,
 )
 from ..Canvas.web_auth import (
@@ -146,6 +147,13 @@ class _ServedCanvasAuthorityProxy:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         try:
             return await broker.request(child_id, message_type, payload, timeout=2.0)
+        except ControlProtocolError as error:
+            if (
+                message_type == "selection.request"
+                and error.code == "selection_refused"
+            ):
+                raise CanvasSelectionChanged("selection_changed") from None
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
         except Exception:  # noqa: BLE001 - private transport failures stay bounded
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
 
@@ -164,6 +172,11 @@ class _ServedCanvasAuthorityProxy:
         metadata = payload.get("render_metadata")
         if not isinstance(metadata, dict) or not isinstance(
             metadata.get("source"), str
+        ):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        if (
+            scope.selection_generation is None
+            or metadata.get("selection_generation") != scope.selection_generation
         ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         return payload, metadata
@@ -194,6 +207,7 @@ class _ServedCanvasAuthorityProxy:
             tuple(payload["active_message_ids"]),
             payload["selected_canvas_id"],
             payload["selected_revision_id"],
+            payload["selection_generation"],
         )
 
     async def read_source(self, scope: CanvasGatewayScope):
@@ -242,7 +256,15 @@ class _ServedCanvasAuthorityProxy:
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
 
     async def navigate(self, scope, *, action, canvas_id=None, title=None):
-        payload: dict[str, object] = {"action": action}
+        if scope.selection_generation is None:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        payload: dict[str, object] = {
+            "action": action,
+            "expected_session_id": scope.conversation_session_id,
+            "expected_canvas_id": scope.canvas_id,
+            "expected_revision_id": scope.revision_id,
+            "expected_selection_generation": scope.selection_generation,
+        }
         if canvas_id is not None:
             payload["canvas_id"] = canvas_id
         if title is not None:
@@ -253,6 +275,7 @@ class _ServedCanvasAuthorityProxy:
             conversation_session_id=scope.conversation_session_id,
             canvas_id=str(response.payload["canvas_id"]),
             revision_id=str(response.payload["revision_id"]),
+            selection_generation=response.payload["selection_generation"],
         )
         return CanvasGatewayNavigation(
             next_scope, await self.describe_selection(next_scope)
@@ -951,6 +974,7 @@ class ChatbookWebServerMixin:
                     "canvas_id": canvas_id,
                     "revision_id": revision_id,
                     "conversation_session_id": payload["session_id"],
+                    "selection_generation": payload["selection_generation"],
                 }
         except ControlProtocolError as error:
             if error.code == "scope_unavailable":
@@ -979,6 +1003,9 @@ class ChatbookWebServerMixin:
         revision_id = result.get("revision_id")
         if not isinstance(canvas_id, str) or not isinstance(revision_id, str):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
+        generation = result.get("selection_generation")
+        if not isinstance(generation, str) or not generation:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
         scope = CanvasGatewayScope(
             browser_session_id=browser_session_id,
             conversation_session_id=str(
@@ -986,6 +1013,7 @@ class ChatbookWebServerMixin:
             ),
             canvas_id=canvas_id,
             revision_id=revision_id,
+            selection_generation=result["selection_generation"],
         )
         existing = self._served_canvas_launches.get(browser_session_id)
         if existing is None or not self._served_canvas_gateway.has_shell_binding(
@@ -997,7 +1025,9 @@ class ChatbookWebServerMixin:
             prior_scope, launch = existing
             if prior_scope != scope:
                 self._served_canvas_gateway.change_selection(
-                    browser_session_id=browser_session_id, scope=scope
+                    browser_session_id=browser_session_id,
+                    scope=scope,
+                    synchronize_only=True,
                 )
                 self._served_canvas_launches[browser_session_id] = (scope, launch)
         result["url"] = launch.browser_url

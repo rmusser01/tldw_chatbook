@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
+from textual.widgets import Button
+
 from Tests.UI.app_factory import (
     _build_test_app,
     drain_active_service_patches,
@@ -20,6 +22,7 @@ from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Widgets.Console.console_canvas_card import ConsoleCanvasCard
 
 
 def _document(version: str) -> str:
@@ -294,6 +297,54 @@ def main() -> None:
         app.chat_api_model_value = "gpt-4o"
         gateway = _ScriptedCanvasGateway()
         app.console_provider_gateway_factory = lambda: gateway
+
+        def reopen_exact_created_card():
+            # Test keyboard adapter presses the real transcript-card button;
+            # routing, selected revision and authority remain production-owned.
+            card = next(
+                card
+                for card in app.screen.query(ConsoleCanvasCard)
+                if card.presentation.revision_id == gateway._revision_id
+            )
+            screen = app.screen
+            original_open = screen._open_console_canvas_selection
+
+            def acknowledge_applied_selection():
+                handler = app.served_canvas_handler
+                scope = handler.scope
+                exact = scope is not None and scope.revision_id == gateway._revision_id
+                pinned = (
+                    exact and not handler._authority.describe_selection(scope).following
+                )
+                (data_root / "canvas-live-card-pressed").write_text(
+                    "selected-pinned" if pinned else "selection-not-applied",
+                    encoding="ascii",
+                )
+
+            async def observe_open_completion(**kwargs):
+                screen._open_console_canvas_selection = original_open
+                result = await original_open(**kwargs)
+                # The real card handler has no further await after this call;
+                # acknowledge on the next refresh, after its dispatch returns.
+                app.call_after_refresh(acknowledge_applied_selection)
+                return result
+
+            screen._open_console_canvas_selection = observe_open_completion
+            card.query_one("Button", Button).press()
+
+        app.action_canvas_fixture_reopen = reopen_exact_created_card
+        app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
+
+        def acknowledge_composer_focus():
+            focused = app.focused
+            while focused is not None and focused.id != "console-native-composer":
+                focused = focused.parent
+            (data_root / "canvas-live-composer-focused").write_text(
+                "focused" if focused is not None else "other", encoding="ascii"
+            )
+
+        app.action_canvas_fixture_focus_ack = acknowledge_composer_focus
+        app._bindings.bind("f11", "canvas_fixture_focus_ack", priority=True)
         app.run()
     finally:
         if database is not None:

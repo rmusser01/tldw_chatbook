@@ -322,6 +322,11 @@ class ProductRouteRecorder:
             (() => {
               const original = MessagePort.prototype.postMessage;
               MessagePort.prototype.postMessage = function(message, ...rest) {
+                if (message && message.type === 'canvas:status') {
+                  globalThis.__canvasRouteRuntimeStatus = {
+                    state: message.state, code: message.code ?? null,
+                  };
+                }
                 if (message && message.type === 'canvas:execution-ack') {
                   Promise.resolve(globalThis.__canvasRouteExecutionAck()).then((approved) => {
                     if (approved) Reflect.apply(original, this, [message, ...rest]);
@@ -578,6 +583,11 @@ async def exercise_adversarial_preview(
         assert await shell.locator("#compatibility-title").text_content() == (
             "Preview issue"
         )
+        status = await preview.locator(":root").evaluate(
+            "() => globalThis.__canvasRouteRuntimeStatus"
+        )
+        assert status is not None and status.get("state") == "failed"
+        assert status.get("code") == case["expected_code"], "runtime failure code"
     settle = case.get("settle_milliseconds")
     if type(settle) is int:
         await asyncio.sleep(settle / 1000)
@@ -706,6 +716,23 @@ async def start_live_served_stack(
 ) -> LiveServedStack:
     """Start production create_server over direct TLS with a deterministic child."""
 
+    async with AsyncExitStack() as rollback:
+        stack = await _construct_live_served_stack(
+            tmp_path,
+            monkeypatch,
+            access_token=access_token,
+            child_module=child_module,
+            trusted_proxy=trusted_proxy,
+            rollback=rollback,
+        )
+        rollback.pop_all()
+        return stack
+
+
+async def _construct_live_served_stack(
+    tmp_path, monkeypatch, *, access_token, child_module, trusted_proxy, rollback
+) -> LiveServedStack:
+
     if (
         re.fullmatch(
             r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", child_module
@@ -717,9 +744,12 @@ async def start_live_served_stack(
         monkeypatch.delenv(name, raising=False)
     child_temp = tmp_path / "test_data" / "child-tmp"
     child_temp.mkdir(parents=True, exist_ok=True)
+    rollback.callback(shutil.rmtree, tmp_path / "test_data")
     monkeypatch.setenv("TMPDIR", str(child_temp))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     port = reserve_loopback_port()
+    rollback.callback((tmp_path / "served-cert.pem").unlink, missing_ok=True)
+    rollback.callback((tmp_path / "served-key.pem").unlink, missing_ok=True)
     certificate, private_key = generate_tls_material(tmp_path)
     public_url = f"https://127.0.0.1:{port}"
     monkeypatch.setattr(
@@ -751,6 +781,7 @@ async def start_live_served_stack(
 
     server._chatbook_app_service_class = record_service
     runner = web.AppRunner(app)
+    rollback.push_async_callback(runner.cleanup)
     await runner.setup()
     backend_port = reserve_loopback_port() if trusted_proxy else port
     site = web.TCPSite(
@@ -765,6 +796,7 @@ async def start_live_served_stack(
     proxy_counts = {"http": 0, "websocket": 0}
     if trusted_proxy:
         proxy_session = ClientSession(auto_decompress=False)
+        rollback.push_async_callback(proxy_session.close)
         upstream = f"http://127.0.0.1:{backend_port}"
 
         async def forward(request):
@@ -857,6 +889,7 @@ async def start_live_served_stack(
         proxy_app = web.Application(client_max_size=16 * 1024 * 1024)
         proxy_app.router.add_route("*", "/{path:.*}", forward)
         proxy_runner = web.AppRunner(proxy_app, shutdown_timeout=3)
+        rollback.push_async_callback(proxy_runner.cleanup)
         await proxy_runner.setup()
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(certificate, private_key)

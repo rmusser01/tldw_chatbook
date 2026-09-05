@@ -22,7 +22,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
-from .limits import CanvasLimits
+from .limits import CanvasLimits, validate_opaque_identifier
 
 CONTROL_PROTOCOL_VERSION = 1
 # A generated download may carry 10 MiB of decoded bytes as a base64 data URL.
@@ -70,6 +70,7 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "selected_canvas_id",
                 "selected_revision_id",
                 "run_id",
+                "selection_generation",
             }
         ),
         frozenset(),
@@ -94,11 +95,11 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset(),
     ),
     "selection.request": (
-        frozenset({"action"}),
+        frozenset({"action", "expected_session_id", "expected_canvas_id", "expected_revision_id", "expected_selection_generation"}),
         frozenset({"canvas_id", "revision_id", "title"}),
     ),
     "selection.response": (
-        frozenset({"canvas_id", "revision_id", "following"}),
+        frozenset({"canvas_id", "revision_id", "following", "selection_generation"}),
         frozenset(),
     ),
     "canvas.events": (
@@ -227,6 +228,17 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
     }
     mapping_fields = {"render_metadata", "metadata", "request", "presentation"}
     for key, value in payload.items():
+        if key in {
+            "selection_generation",
+            "expected_selection_generation",
+            "expected_session_id",
+            "expected_canvas_id",
+            "expected_revision_id",
+        }:
+            try:
+                validate_opaque_identifier(value, field_name="selection expectation")
+            except ValueError:
+                raise ControlProtocolError("invalid_payload_field") from None
         if key in string_fields and not isinstance(value, str):
             raise ControlProtocolError("invalid_payload_field")
         if (

@@ -142,6 +142,81 @@ async def _post_json(
 
 @pytest.mark.asyncio
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("revision", ["revision-a", "revision-b"])
+async def test_original_browser_epoch_is_checked_before_authority_mutation(
+    revision, monkeypatch
+):
+    authority = _Authority([])
+    mutations = []
+    monkeypatch.setattr(
+        authority,
+        "navigate",
+        lambda *args, **kwargs: mutations.append(True),
+        raising=False,
+    )
+    gateway = CanvasGateway(authority=authority)
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as client:
+            origin, csrf, _ = await _ready_bridge(
+                client, gateway, launch, prepare=False
+            )
+            issued = {"action": "follow", "selection_epoch": 0}
+            gateway.change_selection(
+                browser_session_id="browser-a", scope=_scope(revision_id=revision)
+            )
+            response = await _post_json(
+                client,
+                _launch_url(launch, "api/navigate"),
+                issued,
+                origin=origin,
+                csrf=csrf,
+            )
+            assert response.status == 409
+            assert await response.json() == {"error": "selection_changed"}
+            assert mutations == []
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("synchronize_only", [True, False])
+@pytest.mark.parametrize("different_scope", [True, False])
+async def test_same_scope_parent_sync_preserves_load_but_explicit_selection_revokes(
+    synchronize_only,
+    different_scope,
+):
+    gateway = CanvasGateway(authority=_Authority([]))
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as client:
+            await _ready_bridge(client, gateway, launch, prepare=False)
+            active = gateway._sessions[gateway._session_ids["browser-a"]]
+            epoch, load = active.selection_epoch, active.current_load_id
+            gateway.change_selection(
+                browser_session_id="browser-a",
+                scope=_scope(revision_id="revision-b") if different_scope else _scope(),
+                synchronize_only=synchronize_only,
+            )
+            preserved = synchronize_only and not different_scope
+            assert (active.selection_epoch == epoch) is preserved
+            assert (active.current_load_id == load) is preserved
+            response = await client.get(
+                _launch_url(launch, "api/plan"),
+                headers={"Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "same-origin"},
+            )
+            assert response.status == (200 if preserved else 401)
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
 async def test_same_revision_reload_rejects_an_awaited_old_load_plan(monkeypatch):
     authority = _Authority([])
     started, release = asyncio.Event(), asyncio.Event()
@@ -934,12 +1009,13 @@ async def test_full_capability_store_cannot_leak_pending_shell_bindings() -> Non
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scoped() -> (
-    None
-):
+@pytest.mark.parametrize("selection_generation", [None, "intent-a"])
+async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scoped(
+    selection_generation,
+) -> None:
     authority = _Authority([])
     gateway = CanvasGateway(authority=authority)
-    launch = await gateway.open_shell(_scope())
+    launch = await gateway.open_shell(_scope(selection_generation=selection_generation))
     assert gateway.origin is not None
     origin = gateway.origin
     jar = aiohttp.CookieJar(unsafe=True)
@@ -974,6 +1050,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
             "canvas_id": "canvas-a",
             "revision_id": "revision-a",
         }
+        assert gateway._sessions[gateway._session_ids["browser-a"]].scope.selection_generation == selection_generation
 
         frame = await _post_json(
             session,
@@ -1114,16 +1191,66 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         assert (await session.get(_launch_url(launch, "api/events"))).status == 401
 
     assert authority.calls == [
-        ("plan", _scope()),
-        ("events", _scope()),
-        ("source", _scope()),
-        ("bridge_prepare", _scope()),
-        ("bridge", _scope()),
+        ("plan", _scope(selection_generation=selection_generation)),
+        ("events", _scope(selection_generation=selection_generation)),
+        ("source", _scope(selection_generation=selection_generation)),
+        ("bridge_prepare", _scope(selection_generation=selection_generation)),
+        ("bridge", _scope(selection_generation=selection_generation)),
     ]
     assert not any(
         path.resource.canonical.endswith("/api/conversations")
         for path in gateway.routes
     )
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_events_deliver_exact_external_selection_without_publication() -> None:
+    class QuietAuthority(_Authority):
+        blocked = False
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def read_events(self, scope, *, after_event_id):
+            if self.blocked:
+                self.entered.set()
+                await self.release.wait()
+            return ()
+
+    authority = QuietAuthority([])
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope())
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        boot = await _post_json(
+            session,
+            _launch_url(launch, "api/boot"),
+            {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+            origin=gateway.origin,
+        )
+        assert boot.status == 200
+        original = await (await session.get(_launch_url(launch, "api/events"))).json()
+        selected = CanvasGatewayScope(
+            "browser-a", "conversation-a", "canvas-a", "revision-history"
+        )
+        gateway.change_selection(browser_session_id="browser-a", scope=selected)
+        changed = await (await session.get(_launch_url(launch, "api/events"))).json()
+        assert changed["events"] == []
+        assert changed.get("selection") == {
+            "canvas_id": "canvas-a",
+            "revision_id": "revision-history",
+        }
+        assert changed["selection_epoch"] > original["selection_epoch"]
+        authority.blocked = True
+        pending = asyncio.create_task(session.get(_launch_url(launch, "api/events")))
+        await authority.entered.wait()
+        gateway.change_selection(browser_session_id="browser-a", scope=selected)
+        authority.release.set()
+        stale = await pending
+        assert stale.status == 409
+        assert await stale.json() == {"error": "selection_changed"}
     await gateway.aclose()
 
 

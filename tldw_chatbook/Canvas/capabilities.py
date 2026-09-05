@@ -55,6 +55,7 @@ class CanvasCapabilityScope:
     action: CanvasCapabilityAction
     gateway_namespace: str = "gateway-default"
     shell_incarnation_id: str = "shell-default"
+    selection_generation: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -71,6 +72,8 @@ class CanvasCapabilityScope:
             )
         if self.action not in _ACTIONS:
             raise CanvasCapabilityError("unsupported Canvas capability action")
+        if self.selection_generation is not None:
+            validate_opaque_identifier(self.selection_generation, field_name="selection generation")
 
 
 @dataclass(frozen=True, slots=True, repr=False)

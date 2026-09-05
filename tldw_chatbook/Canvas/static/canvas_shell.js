@@ -27,6 +27,9 @@
   let csrf = "";
   let selection = null;
   let displayedRevisionId = "";
+  let selectionEpoch = -1;
+  let selectionOperation = 0;
+  let pendingNavigations = 0;
   let displayedMetadata = {};
   let latestRevisionId = "";
   let lastEventId = "";
@@ -46,6 +49,11 @@
     const headers = {"Content-Type": "application/json", ...extraHeaders};
     if (csrf) headers["X-Canvas-CSRF"] = csrf;
     const response = await fetch(api(path), {method: "POST", headers, body: JSON.stringify(value), cache: "no-store", signal});
+    if (path === "api/navigate" && response.status === 409 && (await response.json()).error === "selection_changed") {
+      const error = new Error("Canvas selection changed.");
+      error.code = "selection_changed";
+      throw error;
+    }
     if (!response.ok) throw new Error(`Canvas request failed: ${response.status}`);
     return response.json();
   }
@@ -69,6 +77,7 @@
   }
 
   function applyProjection(projection) {
+    if (Number.isInteger(projection.selection_epoch)) selectionEpoch = projection.selection_epoch;
     selection = projection.selection;
     displayedRevisionId = selection.revision_id;
     latestRevisionId = selection.revision_id;
@@ -87,11 +96,27 @@
   }
 
   async function navigate(action, values = {}, {updated = false, reload = true} = {}) {
-    await cancelPendingBridge({restoreFocus: false});
-    const previous = displayedRevisionId;
-    const projection = await post("api/navigate", {action, ...values});
-    applyProjection(projection);
-    if (reload) await loadFrame({updated, previousRevisionId: previous});
+    const operation = ++selectionOperation;
+    const expectedEpoch = selectionEpoch;
+    pendingNavigations += 1;
+    try {
+      await cancelPendingBridge({restoreFocus: false});
+      const previous = displayedRevisionId;
+      const projection = await post("api/navigate", {action, ...values, selection_epoch: expectedEpoch});
+      if (closed || operation !== selectionOperation) return;
+      applyProjection(projection);
+      if (reload) await loadFrame({updated, previousRevisionId: previous, operation});
+    } catch (error) {
+      if (error.code !== "selection_changed") {
+        if (!closed && operation === selectionOperation) showDisconnected();
+        return;
+      }
+      // Discard this stale command, never replay it against new intent. The
+      // existing poll refreshes exact authoritative state without extra timers.
+      if (!closed && operation === selectionOperation) selectionEpoch = -1;
+    } finally {
+      pendingNavigations -= 1;
+    }
   }
 
   function showNotice(copy, {previous = false, follow = false} = {}) {
@@ -584,8 +609,9 @@
     return response.text();
   }
 
-  async function loadFrame({updated = false, scriptsDisabled = false, previousRevisionId = ""} = {}) {
+  async function loadFrame({updated = false, scriptsDisabled = false, previousRevisionId = "", operation = selectionOperation} = {}) {
     await cancelPendingBridge({restoreFocus: false});
+    if (closed || operation !== selectionOperation) return;
     rendererReady = false;
     pendingPlan = null;
     if (currentPort) currentPort.close();
@@ -594,9 +620,11 @@
     ui.loading.hidden = false;
     ui.loading.textContent = "Preparing isolated preview…";
     const frame = await post("api/frame", {});
+    if (closed || operation !== selectionOperation) return;
     const planResponse = await fetch(api("api/plan"), {cache: "no-store"});
     if (!planResponse.ok) throw new Error("Canvas render plan is unavailable.");
     const planPayload = await planResponse.json();
+    if (closed || operation !== selectionOperation) return;
     const issues = Array.isArray(planPayload.compatibility_issues) ? planPayload.compatibility_issues : [];
     const {compatibility_issues: _shellOnlyIssues, ...rendererPlan} = planPayload;
     pendingPlan = rendererPlan;
@@ -645,11 +673,36 @@
 
   async function pollEvents() {
     if (closed) return;
+    let observedOperation = selectionOperation;
     try {
+      if (pendingNavigations > 0) return;
       const headers = lastEventId ? {"Last-Event-ID": lastEventId} : {};
       const response = await fetch(api("api/events"), {headers, cache: "no-store"});
+      if (response.status === 409 && (await response.json()).error === "selection_changed") return;
       if (!response.ok) throw new Error("event channel unavailable");
       const payload = await response.json();
+      if (closed || observedOperation !== selectionOperation) return;
+      // Transcript-card opens change the exact server selection without a new
+      // revision publication. Refresh that selection, not the reachable head;
+      // the authoritative projection preserves a requested historical pin.
+      const disconnected = payload.events?.at(-1)?.kind === "disconnected";
+      if (!disconnected && Number.isInteger(payload.selection_epoch) && payload.selection_epoch !== selectionEpoch) {
+        const operation = ++selectionOperation;
+        observedOperation = operation;
+        const previous = displayedRevisionId;
+        await cancelPendingBridge({restoreFocus: false});
+        const stateResponse = await fetch(api("api/state"), {cache: "no-store"});
+        if (stateResponse.status === 409 && (await stateResponse.json()).error === "selection_changed") return;
+        if (!stateResponse.ok) throw new Error("selection unavailable");
+        const projection = await stateResponse.json();
+        if (closed || operation !== selectionOperation) return;
+        applyProjection(projection);
+        const updated = following && previous !== displayedRevisionId && payload.events?.some(
+          event => event.kind === "updated" && event.revision_id === displayedRevisionId
+        );
+        await loadFrame({operation, updated, previousRevisionId: previous});
+        if (closed || operation !== selectionOperation) return;
+      }
       for (const event of payload.events || []) {
         lastEventId = event.event_id;
         if (event.kind === "disconnected") {
@@ -672,7 +725,7 @@
       }
       if (!branchUnavailable) setConnection("Connected");
     } catch (_) {
-      showDisconnected();
+      if (observedOperation === selectionOperation) showDisconnected();
     } finally {
       if (!closed) pollTimer = window.setTimeout(pollEvents, 350);
     }

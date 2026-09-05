@@ -129,6 +129,8 @@ class CanvasGatewayScope:
     canvas_id: str
     revision_id: str
 
+    selection_generation: str | None = None
+
     def __post_init__(self) -> None:
         for field_name in (
             "browser_session_id",
@@ -139,6 +141,8 @@ class CanvasGatewayScope:
             validate_opaque_identifier(
                 getattr(self, field_name), field_name=field_name.replace("_", " ")
             )
+        if self.selection_generation is not None:
+            validate_opaque_identifier(self.selection_generation, field_name="selection generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +240,10 @@ class CanvasGatewayProjection:
     origin_turn_id: str
     temporary: bool
     following: bool
+
+
+class CanvasSelectionChanged(ValueError):
+    """An originally issued selection command no longer owns current intent."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,7 +523,8 @@ class ServedCanvasControlHandler:
             self._clear_prepared()
             self._clear_receipts()
         self._authority = authority
-        self._scope = scope
+        self._scope = replace(scope, selection_generation=uuid4().hex)
+        self._selection_following = None
 
     def clear(self) -> None:
         self._authority = None
@@ -575,16 +584,25 @@ class ServedCanvasControlHandler:
                         revision_id=selected_revision_id,
                     )
                     if current_scope != scope:
-                        scope = current_scope
+                        scope = replace(current_scope, selection_generation=uuid4().hex)
                         self._scope = scope
                         self._clear_prepared()
                         self._clear_receipts()
                 projection = await _maybe_await(authority.describe_selection(scope))
+                prior_following = getattr(self, "_selection_following", None)
+                if (
+                    prior_following is not None
+                    and projection.following != prior_following
+                ):
+                    scope = replace(scope, selection_generation=uuid4().hex)
+                    self._scope = scope
+                self._selection_following = projection.following
                 if projection.following:
                     navigation = await _maybe_await(
                         authority.navigate(scope, action="follow")
                     )
-                    scope = navigation.scope
+                    if navigation.scope != scope:
+                        scope = replace(navigation.scope, selection_generation=uuid4().hex)
                     self._scope = scope
                     canvas_scope = (
                         await _maybe_await(snapshot_reader(scope))
@@ -612,6 +630,7 @@ class ServedCanvasControlHandler:
                     "selected_canvas_id": scope.canvas_id,
                     "selected_revision_id": scope.revision_id,
                     "run_id": run_id,
+                    "selection_generation": scope.selection_generation,
                 },
             )
 
@@ -651,6 +670,7 @@ class ServedCanvasControlHandler:
                     "render_metadata": {
                         "source": source.source,
                         "projection": _projection_wire(projection),
+                        "selection_generation": scope.selection_generation,
                     },
                 },
             )
@@ -685,6 +705,15 @@ class ServedCanvasControlHandler:
             )
 
         if request.message_type == "selection.request":
+            if (
+                request.payload["expected_session_id"] != scope.conversation_session_id
+                or request.payload["expected_canvas_id"] != scope.canvas_id
+                or request.payload["expected_revision_id"] != scope.revision_id
+                or request.payload["expected_selection_generation"]
+                != scope.selection_generation
+                or scope.selection_generation is None
+            ):
+                raise ControlProtocolError("selection_refused")
             try:
                 navigation = await _maybe_await(
                     authority.navigate(
@@ -695,8 +724,9 @@ class ServedCanvasControlHandler:
                     )
                 )
             except (RuntimeError, TypeError, ValueError):
-                raise ControlProtocolError("selection_refused") from None
-            self._scope = navigation.scope
+                raise ControlProtocolError("navigation_refused") from None
+            self._scope = replace(navigation.scope, selection_generation=uuid4().hex)
+            self._selection_following = navigation.projection.following
             self._clear_prepared()
             self._clear_receipts()
             return self._response(
@@ -706,6 +736,7 @@ class ServedCanvasControlHandler:
                     "canvas_id": navigation.scope.canvas_id,
                     "revision_id": navigation.scope.revision_id,
                     "following": navigation.projection.following,
+                    "selection_generation": self._scope.selection_generation,
                 },
             )
 
@@ -1451,9 +1482,17 @@ class CanvasGateway:
         )
 
     def change_selection(
-        self, *, browser_session_id: str, scope: CanvasGatewayScope
+        self,
+        *,
+        browser_session_id: str,
+        scope: CanvasGatewayScope,
+        synchronize_only: bool = False,
     ) -> None:
-        """Replace one shell's exact selection and revoke its previous load."""
+        """Replace exact selection, revoking loads except already-applied passive sync.
+
+        Explicit selections always revoke, including same-revision pin/follow
+        changes. Only a delayed parent scope poll may request synchronization.
+        """
 
         if scope.browser_session_id != browser_session_id:
             raise ValueError("Canvas browser session mismatch")
@@ -1462,6 +1501,8 @@ class CanvasGateway:
             session = self._sessions.get(digest) if digest is not None else None
             if session is None:
                 raise ValueError("Canvas browser session is unavailable")
+            if synchronize_only and session.scope == scope and not session.unavailable:
+                return
             previous = session.scope
             self.capabilities.revoke_selection(
                 browser_session_id=previous.browser_session_id,
@@ -1625,12 +1666,7 @@ class CanvasGateway:
             )
         except CanvasCapabilityError:
             return _error_response("boot_unavailable", 401)
-        gateway_scope = CanvasGatewayScope(
-            browser_session_id=scope.browser_session_id,
-            conversation_session_id=scope.conversation_session_id,
-            canvas_id=scope.canvas_id,
-            revision_id=scope.revision_id,
-        )
+        gateway_scope = _gateway_scope(scope)
         if binding.browser_session_id != gateway_scope.browser_session_id:
             return _error_response("boot_unavailable", 401)
         replacing = gateway_scope.browser_session_id in self._session_ids
@@ -1735,22 +1771,37 @@ class CanvasGateway:
         if session is None:
             return _error_response("session_refused", 401)
         scope = session.scope
+        selection_epoch = session.selection_epoch
         projection = await _maybe_await(self._authority.describe_selection(scope))
+        if session.selection_epoch != selection_epoch and self._session_is_current(
+            session, session.scope
+        ):
+            return _error_response("selection_changed", 409)
         if (
             not self._session_is_current(session, scope)
+            or session.selection_epoch != selection_epoch
             or not isinstance(projection, CanvasGatewayProjection)
             or projection.scope != scope
         ):
             return _error_response("state_unavailable", 503)
-        return web.json_response(_projection_wire(projection))
+        return web.json_response({**_projection_wire(projection), "selection_epoch": selection_epoch})
 
     async def _navigate(self, request: web.Request) -> web.Response:
         session = self._require_session(request, csrf=True)
         if session is None:
             return _error_response("session_refused", 403)
         value = await self._read_json(request)
-        if not isinstance(value, Mapping) or set(value) - {"action", "canvas_id", "title"}:
+        if not isinstance(value, Mapping) or set(value) - {
+            "action",
+            "canvas_id",
+            "title",
+            "selection_epoch",
+        }:
             return _error_response("invalid_navigation", 400)
+        if type(value.get("selection_epoch")) is not int:
+            return _error_response("invalid_navigation", 400)
+        if value["selection_epoch"] != session.selection_epoch:
+            return _error_response("selection_changed", 409)
         action = value.get("action")
         canvas_id = value.get("canvas_id")
         title = value.get("title")
@@ -1767,6 +1818,8 @@ class CanvasGateway:
                     captured, action=action, canvas_id=canvas_id, title=title
                 )
             )
+        except CanvasSelectionChanged:
+            return _error_response("selection_changed", 409)
         except (TypeError, ValueError):
             return _error_response("navigation_refused", 409)
         if (
@@ -1782,7 +1835,12 @@ class CanvasGateway:
             browser_session_id=captured.browser_session_id,
             scope=navigation.scope,
         )
-        return web.json_response(_projection_wire(navigation.projection))
+        return web.json_response(
+            {
+                **_projection_wire(navigation.projection),
+                "selection_epoch": session.selection_epoch,
+            }
+        )
 
     async def _renderer(self, request: web.Request) -> web.Response:
         if (
@@ -1858,6 +1916,7 @@ class CanvasGateway:
         if session is None:
             return _error_response("session_refused", 401)
         scope = session.scope
+        selection_epoch = session.selection_epoch
         after = request.headers.get("Last-Event-ID")
         if after is not None:
             try:
@@ -1867,8 +1926,13 @@ class CanvasGateway:
         events = await _maybe_await(
             self._authority.read_events(scope, after_event_id=after)
         )
+        if session.selection_epoch != selection_epoch and self._session_is_current(
+            session, session.scope, allow_unavailable=True
+        ):
+            return _error_response("selection_changed", 409)
         if (
             not self._session_is_current(session, scope, allow_unavailable=True)
+            or session.selection_epoch != selection_epoch
             or not isinstance(events, tuple)
             or not all(isinstance(event, CanvasGatewayEvent) for event in events)
             or not all(event.canvas_id == scope.canvas_id for event in events)
@@ -1876,6 +1940,11 @@ class CanvasGateway:
             return _error_response("events_unavailable", 503)
         return web.json_response(
             {
+                "selection": {
+                    "canvas_id": scope.canvas_id,
+                    "revision_id": scope.revision_id,
+                },
+                "selection_epoch": selection_epoch,
                 "events": [
                     {
                         "event_id": event.event_id,
@@ -1885,7 +1954,7 @@ class CanvasGateway:
                         "metadata": dict(event.metadata),
                     }
                     for event in events
-                ]
+                ],
             }
         )
 
@@ -2687,6 +2756,7 @@ def _capability_scope(
         action=action,
         gateway_namespace=gateway_namespace,
         shell_incarnation_id=shell_incarnation_id,
+        selection_generation=scope.selection_generation,
     )
 
 
@@ -2696,6 +2766,7 @@ def _gateway_scope(scope: CanvasCapabilityScope) -> CanvasGatewayScope:
         conversation_session_id=scope.conversation_session_id,
         canvas_id=scope.canvas_id,
         revision_id=scope.revision_id,
+        selection_generation=scope.selection_generation,
     )
 
 
