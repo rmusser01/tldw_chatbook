@@ -315,9 +315,21 @@ class SyncFailed(Message):
         error: Human-readable failure text for the UI. Sourced either
             from a raised exception or from the error the engine recorded
             on a ``SyncOutcome`` whose status is ``"error"``.
+        outcome: The engine's ``SyncOutcome`` for the attempt, when one
+            exists (a raised exception outside the engine has none) --
+            final review finding 6: without it, an automation-phase
+            failure in the SAME cycle as the reminder-phase failure this
+            event already reports (`SyncOutcome.phase_errors`) had no
+            route to the UI at all on the failed path, only the
+            succeeded-reminder-phase path (`SyncCompleted`). Typed
+            ``object`` to keep this event module free of a
+            service-layer import, same as ``SyncCompleted.outcome``.
     """
 
-    def __init__(self, owner_id: str, error: str) -> None:
+    def __init__(
+        self, owner_id: str, error: str, outcome: object | None = None
+    ) -> None:
         super().__init__()
         self.owner_id = owner_id
         self.error = error
+        self.outcome = outcome

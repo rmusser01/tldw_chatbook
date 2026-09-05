@@ -550,7 +550,10 @@ button, and retrying resubmits the same task.
 A queued move can also be stranded rather than rejected — you point the
 app at a different server, or drop the connection entirely, while a
 local → server transfer is still waiting. That queued mutation can never
-be delivered, so the next sync settles it to *failed* with the reason
+be delivered, so the next time the Schedules screen opens (this check
+does not need a reachable server, or even a configured one — it is a
+local check, so it also covers the connection-dropped case, not only a
+sync-eligible server switch) settles it to *failed* with the reason
 *"The server this move was queued for is no longer configured."* rather
 than leaving the row reading "(Moving to server…)" with nothing behind
 it. The task is editable again and carries the usual **Retry

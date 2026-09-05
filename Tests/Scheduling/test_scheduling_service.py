@@ -2246,11 +2246,15 @@ def test_transfer_refusal_allows_happy_path_both_directions(db, monkeypatch):
 # -- refresh_server_reachability (task-3, ruling 4) ------------------------
 
 
-def test_refresh_server_reachability_defaults_false_until_probed(db):
-    """`server_reachable` starts `False` -- ruling 4: "until a probe has
-    succeeded, the option must not be offered"."""
+def test_refresh_server_reachability_defaults_none_until_probed(db):
+    """`server_reachable` starts `None` (unprobed, final review finding
+    2) -- distinct from `False` (probed and failed) so the header can
+    tell "haven't checked" apart from "checked and failed" -- but still
+    falsy, so ruling 4's "until a probe has succeeded, the option must
+    not be offered" still holds via `_server_available`'s `bool(...)`
+    wrap."""
     svc = SchedulingService(db=db, server_client=None)
-    assert svc.server_reachable is False
+    assert svc.server_reachable is None
 
 
 @pytest.mark.asyncio
@@ -2291,6 +2295,76 @@ async def test_refresh_server_reachability_false_when_probe_raises(db):
     assert svc.server_reachable is False, (
         "a failed re-probe must not leave the stale 'reachable' verdict standing"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ServerClientPolicyError("scheduler.automations.list.server denied"),
+        ServerClientValidationError("401 unauthorized"),
+    ],
+)
+async def test_refresh_server_reachability_policy_denial_is_not_unreachable(
+    db, exc
+):
+    """Final review finding 7: a local policy denial (`ServerClientPolicy
+    Error`, refused before any network attempt) or a genuine 401/403 from
+    the server (`ServerClientValidationError`) is a PERMISSION problem,
+    not evidence the server is unreachable -- conflating either into
+    "unreachable" additionally blocked reminder transfer (unrelated to
+    the automations permission the probe is actually gated on) on a
+    permission gate that has nothing to do with it. Neither exception
+    establishes anything new about the network, so a PRIOR reachable
+    verdict must survive it, and `server_permission_denied` must record
+    the distinct signal."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = exc
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = True  # a prior probe had succeeded
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True, "a prior reachable verdict must survive a permission denial"
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_policy_denial_leaves_unprobed_as_unprobed(
+    db,
+):
+    """The FIRST-EVER probe hitting a policy denial establishes nothing
+    about the network either way -- `server_reachable` must stay `None`
+    (unprobed), not flip to a confident `True` or `False` it hasn't
+    earned."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientPolicyError("denied")
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is False  # bool(None) is False -- still "not confirmed"
+    assert svc.server_reachable is None
+    assert svc.server_permission_denied is True
+
+
+def test_transfer_refusal_names_permissions_not_the_network(db):
+    """`transfer_refusal`'s copy must distinguish a permission problem
+    from "not reachable" -- final review finding 7's honest-refusal
+    grammar."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    svc._server_reachable = False
+    svc._server_permission_denied = True
+    row = db.get_reminder_task(_make_reminder(db))
+
+    reason = svc.transfer_refusal(row, "to_server")
+
+    assert reason is not None
+    assert "permission" in reason.lower()
+    assert "not reachable" not in reason
 
 
 # -- transfer_warnings -----------------------------------------------------
