@@ -7,7 +7,7 @@ import re
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Canvas.limits import (
@@ -202,6 +202,7 @@ _SCHEMAS: dict[str, ToolSchema] = {
 
 _DESCRIPTIONS = {name: schema.description for name, schema in _SCHEMAS.items()}
 _ERROR_MESSAGES = {
+    "canvas_disabled": "Canvas is disabled. Restart Chatbook after re-enabling it.",
     "canvas_scope_unavailable": "Canvas is unavailable for this tool call.",
     "invalid_arguments": "Canvas tool arguments are invalid.",
     "invalid_canvas_id": "Canvas identifier is invalid.",
@@ -230,6 +231,7 @@ class CanvasToolProvider:
         *,
         scope: CanvasScope,
         enabled: bool = True,
+        enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         if not isinstance(scope, CanvasScope):
             raise TypeError("scope must be a CanvasScope")
@@ -240,6 +242,14 @@ class CanvasToolProvider:
         self._coordinator = coordinator
         self._scope = scope
         self._enabled = enabled
+        if enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_config_policy
+
+            enabled_reader = lambda: get_canvas_config_policy().enabled
+        if not callable(enabled_reader):
+            raise TypeError("enabled_reader must be callable")
+        self._enabled_reader = enabled_reader
+        self._disabled_latched = not self._read_enabled()
         self._provider_instance_id = uuid4().hex
         self._authorities: dict[
             int, weakref.ReferenceType[CanvasToolRegistrationAuthority]
@@ -294,11 +304,30 @@ class CanvasToolProvider:
         """Fail closed on coordinator errors or a stale session/run binding."""
 
         try:
-            return self._enabled and bool(
+            return self.canvas_enabled and bool(
                 self._coordinator.is_scope_current(self._scope)
             )
         except Exception:  # noqa: BLE001 - availability checks retain no payload
             return False
+
+    def _read_enabled(self) -> bool:
+        """Read the configured switch without mutating the restart latch."""
+
+        try:
+            return self._enabled and self._enabled_reader() is True
+        except Exception:  # noqa: BLE001 - policy reads fail closed
+            return False
+
+    @property
+    def canvas_enabled(self) -> bool:
+        """Return availability, latching an observed disable until restart."""
+
+        if self._disabled_latched:
+            return False
+        if not self._read_enabled():
+            self._disabled_latched = True
+            return False
+        return True
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         if not self.scope_is_current():
@@ -340,6 +369,8 @@ class CanvasToolProvider:
             return _error("invalid_arguments")
         if name not in CANVAS_TOOL_NAMES:
             return _error("invalid_arguments")
+        if not self.canvas_enabled:
+            return _error("canvas_disabled")
         if not self._invocation_context_is_current():
             return _error("canvas_scope_unavailable")
         try:

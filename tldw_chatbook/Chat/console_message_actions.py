@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Literal
+from typing import Callable, Literal
 
 from markdown_it import MarkdownIt
 
@@ -405,9 +405,34 @@ class ConsoleMessageActionService:
         *,
         available_save_destinations: set[str] | None = None,
         unavailable_save_reasons: dict[str, str] | None = None,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_config_policy
+
+            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_latched = not self._read_canvas_enabled()
+
+    def _read_canvas_enabled(self) -> bool:
+        """Read the configured switch without changing the restart latch."""
+
+        try:
+            return self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - action availability fails closed
+            return False
+
+    def _canvas_enabled(self) -> bool:
+        """Return availability, latching an observed disable until restart."""
+
+        if self._canvas_disabled_latched:
+            return False
+        if not self._read_canvas_enabled():
+            self._canvas_disabled_latched = True
+            return False
+        return True
 
     @classmethod
     def _base_actions_with(
@@ -521,13 +546,14 @@ class ConsoleMessageActionService:
             )
         if getattr(message, "video_metadata", None) is not None:
             completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
-        for block in assistant_canvas_html_blocks(message):
-            completed_actions.extend(
-                (
-                    (f"canvas-open-{block.index}", "Open in Canvas"),
-                    (f"canvas-open-new-{block.index}", "Open as new"),
+        if self._canvas_enabled():
+            for block in assistant_canvas_html_blocks(message):
+                completed_actions.extend(
+                    (
+                        (f"canvas-open-{block.index}", "Open in Canvas"),
+                        (f"canvas-open-new-{block.index}", "Open as new"),
+                    )
                 )
-            )
         if not self._is_forkable_row(message):
             completed_actions = [
                 (action_id, label)
@@ -839,6 +865,15 @@ class ConsoleMessageActionService:
                 visible_copy=self._disabled_reason(message),
             )
         if action_id.startswith("canvas-open-"):
+            if not self._canvas_enabled():
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy=(
+                        "Canvas is disabled. Restart Chatbook after re-enabling it."
+                    ),
+                    target_message_id=message.id,
+                )
             try:
                 block_index = int(action_id.rsplit("-", 1)[1])
             except (ValueError, IndexError):

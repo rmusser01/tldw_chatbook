@@ -19505,20 +19505,28 @@ class ChatScreen(BaseAppScreen):
         return apply
 
     def _console_canvas_authority(self) -> Any:
+        runtime = self._console_runtime()
+        if not runtime.canvas_enabled():
+            raise RuntimeError("Canvas is disabled")
         store = self._ensure_console_chat_store()
         if store.active_session_id is None:
             raise RuntimeError("Canvas session is unavailable")
-        runtime = self._console_runtime()
-        return runtime.ensure_canvas_native_authority(
+        authority = runtime.ensure_canvas_native_authority(
             scope_resolver=self._console_canvas_scope,
             bridge_sink=self._prefill_console_canvas_repair,
             bridge_prepare=self._prepare_console_canvas_submit,
             auto_open=self._schedule_console_canvas_tool_open,
             publication_guard=self._console_canvas_publication_is_current,
         )
+        if authority is None:
+            raise RuntimeError("Canvas is disabled")
+        return authority
 
     def _console_canvas_publication_is_current(self, publication: Any) -> bool:
         """Accept a settled mutation only for the live native chat branch."""
+
+        if not self._console_runtime().canvas_enabled():
+            return False
 
         scope = getattr(publication, "scope", None)
         revisions = getattr(publication, "revisions", ())
@@ -19547,6 +19555,14 @@ class ChatScreen(BaseAppScreen):
         """Auto-open a created tool Canvas or let its live shell hot-reload."""
 
         def schedule() -> None:
+            from tldw_chatbook.config import get_canvas_config_policy
+
+            policy = get_canvas_config_policy()
+            if (
+                not self._console_runtime().canvas_enabled()
+                or not policy.auto_open_on_create
+            ):
+                return
             gateway = self._console_runtime().canvas_gateway
             if gateway is not None and gateway.has_browser_session_for(session_id):
                 return
@@ -19649,6 +19665,8 @@ class ChatScreen(BaseAppScreen):
                 error_code=None,
             )
         gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
+        if gateway is None:
+            raise RuntimeError("Canvas is disabled")
         self._canvas_last_open_request = (
             session_id,
             canvas_id,

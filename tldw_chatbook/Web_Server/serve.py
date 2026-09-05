@@ -44,7 +44,7 @@ from ..Canvas.web_auth import (
     build_web_auth_policy,
     resolve_web_access_token,
 )
-from ..config import get_cli_setting
+from ..config import CanvasConfigPolicy, get_canvas_config_policy, get_cli_setting
 from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
@@ -445,6 +445,7 @@ class ChatbookWebServerMixin:
         *args,
         web_auth_policy: WebAuthPolicy | None = None,
         web_ssl_context: ssl.SSLContext | None = None,
+        canvas_policy: CanvasConfigPolicy | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -456,6 +457,9 @@ class ChatbookWebServerMixin:
             )
         self._web_auth = WebAuthManager(web_auth_policy)
         self._web_ssl_context = web_ssl_context
+        self._canvas_policy = canvas_policy or get_canvas_config_policy()
+        self._canvas_disabled_latched = not self._canvas_policy.enabled
+        self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
         self._served_canvas_gateway = CanvasGateway(
             authority=_ServedCanvasAuthorityProxy(self)
@@ -539,16 +543,21 @@ class ChatbookWebServerMixin:
                 self.handle_served_shell_asset,
                 name="served_shell_asset",
             ),
-            web.get(
-                "/static/chatbook-canvas/{name}",
-                self._served_canvas_gateway.public_runtime_asset,
-                name="served_canvas_runtime_asset",
-            ),
             web.get("/static/js/textual.js", self.handle_textual_js, name="textual_js"),
             web.static("/static", self.statics_path, show_index=False, name="static"),
         ]
+        if self._canvas_enabled():
+            routes.insert(
+                -2,
+                web.get(
+                    "/static/chatbook-canvas/{name}",
+                    self._served_canvas_gateway.public_runtime_asset,
+                    name="served_canvas_runtime_asset",
+                ),
+            )
         app.add_routes(routes)
-        self._served_canvas_gateway.mount_on_app(app, origin=self.public_url)
+        if self._canvas_enabled():
+            self._served_canvas_gateway.mount_on_app(app, origin=self.public_url)
 
         app.on_startup.append(self.on_startup)
         app.on_shutdown.append(self.on_shutdown)
@@ -670,6 +679,11 @@ class ChatbookWebServerMixin:
 
         if not request.path.startswith("/canvas/gateway-"):
             return await handler(request)
+        if not self._canvas_enabled():
+            await self._disable_canvas_runtime()
+            from aiohttp import web
+
+            raise web.HTTPNotFound(text="Canvas unavailable")
         session = request.get("chatbook_browser_session")
         browser_session_id = "" if session is None else session.session_id
         return await self._served_canvas_gateway.handle_mounted_request(
@@ -743,13 +757,28 @@ class ChatbookWebServerMixin:
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
 
-        self._canvas_control_broker = CanvasControlBroker()
-        await self._canvas_control_broker.start()
+        if self._canvas_enabled():
+            self._canvas_control_broker = CanvasControlBroker()
+            await self._canvas_control_broker.start()
+            self._canvas_policy_watch_task = asyncio.create_task(
+                self._watch_canvas_policy(),
+                name="chatbook-served-canvas-policy",
+            )
+        else:
+            self._canvas_control_broker = None
         await super().on_startup(app)
 
     async def on_shutdown(self, app) -> None:
         """Revoke all child control capabilities with the served process."""
 
+        policy_task = getattr(self, "_canvas_policy_watch_task", None)
+        self._canvas_policy_watch_task = None
+        if policy_task is not None:
+            policy_task.cancel()
+            try:
+                await policy_task
+            except asyncio.CancelledError:
+                pass
         broker = getattr(self, "_canvas_control_broker", None)
         if broker is not None:
             await broker.aclose()
@@ -759,6 +788,41 @@ class ChatbookWebServerMixin:
         self._served_browser_children.clear()
         self._web_auth.revoke_all()
         await super().on_shutdown(app)
+
+    def _canvas_enabled(self) -> bool:
+        """Read the global kill switch while honoring the restart latch."""
+
+        if self._canvas_disabled_latched:
+            return False
+        try:
+            return get_canvas_config_policy().enabled is True
+        except Exception:  # noqa: BLE001 - server feature gate fails closed
+            return False
+
+    async def _watch_canvas_policy(self, *, interval_seconds: float = 0.25) -> None:
+        """Revoke every served child promptly after the shared switch turns off."""
+
+        while self._canvas_enabled():
+            await asyncio.sleep(interval_seconds)
+        await self._disable_canvas_runtime()
+
+    async def _disable_canvas_runtime(self) -> None:
+        """Idempotently revoke served Canvas control and browser delivery."""
+
+        if self._canvas_disabled_latched and getattr(
+            self, "_canvas_control_broker", None
+        ) is None:
+            self._served_canvas_launches.clear()
+            self._served_browser_children.clear()
+            return
+        self._canvas_disabled_latched = True
+        broker = getattr(self, "_canvas_control_broker", None)
+        self._canvas_control_broker = None
+        if broker is not None:
+            await broker.aclose()
+        await self._served_canvas_gateway.aclose()
+        self._served_canvas_launches.clear()
+        self._served_browser_children.clear()
 
     async def _expire_websocket_session(self, session) -> None:
         """Revoke a connected channel at its moving idle/absolute deadline."""
@@ -826,6 +890,9 @@ class ChatbookWebServerMixin:
     async def served_canvas_state(self, browser_session_id: str) -> dict[str, object]:
         """Return only the Canvas state owned by one exact authenticated child."""
 
+        if not self._canvas_enabled():
+            await self._disable_canvas_runtime()
+            raise ServedCanvasUnavailable("canvas_disabled")
         child_id = self._served_browser_children.get(browser_session_id)
         broker = getattr(self, "_canvas_control_broker", None)
         if child_id is None or broker is None:
@@ -912,6 +979,9 @@ class ChatbookWebServerMixin:
         session = request.get("chatbook_browser_session")
         if session is None:
             raise web.HTTPNotFound(text="Canvas unavailable")
+        if not self._canvas_enabled():
+            await self._disable_canvas_runtime()
+            raise web.HTTPNotFound(text="Canvas unavailable")
         try:
             state = await self.served_canvas_state(session.session_id)
         except ServedCanvasUnavailable:
@@ -954,8 +1024,8 @@ class ChatbookWebServerMixin:
             )
             app_service_class = getattr(self, "_chatbook_app_service_class", None)
             broker = getattr(self, "_canvas_control_broker", None)
-            if app_service_class is None or broker is None:
-                raise RuntimeError("served Canvas control broker is unavailable")
+            if app_service_class is None:
+                raise RuntimeError("served terminal app service is unavailable")
             app_service = app_service_class(
                 self.command,
                 write_bytes=websocket.send_bytes,
@@ -1123,15 +1193,17 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
             return environment
 
         async def start(self, width: int, height: int) -> None:
-            launch = self._canvas_control_broker.issue_child(self.app_service_id)
-            self._canvas_control_environment = dict(launch.environment)
+            if self._canvas_control_broker is not None:
+                launch = self._canvas_control_broker.issue_child(self.app_service_id)
+                self._canvas_control_environment = dict(launch.environment)
             try:
                 await super().start(width, height)
             except BaseException:
-                await self._canvas_control_broker.revoke_child(self.app_service_id)
+                if self._canvas_control_broker is not None:
+                    await self._canvas_control_broker.revoke_child(self.app_service_id)
                 self._canvas_control_environment.clear()
                 raise
-            self._canvas_control_started = True
+            self._canvas_control_started = self._canvas_control_broker is not None
 
         async def stop(self) -> None:
             try:
@@ -1139,7 +1211,10 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
             finally:
                 if self._canvas_control_started:
                     self._canvas_control_started = False
-                    await self._canvas_control_broker.revoke_child(self.app_service_id)
+                    if self._canvas_control_broker is not None:
+                        await self._canvas_control_broker.revoke_child(
+                            self.app_service_id
+                        )
                 self._canvas_control_environment.clear()
 
     ChatbookAppService.__name__ = "ChatbookAppService"
@@ -1292,6 +1367,7 @@ def create_server(
         public_url=public_url,
         web_auth_policy=web_auth_policy,
         web_ssl_context=ssl_context,
+        canvas_policy=get_canvas_config_policy(),
     )
 
     return server

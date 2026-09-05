@@ -773,6 +773,90 @@ def test_completed_tool_mutation_publishes_and_requests_first_auto_open_after_co
     assert events[-1].revision_id == created.revision.revision_id
 
 
+def test_completed_tool_update_hot_reloads_without_requesting_auto_open():
+    session_id = "temporary-tool-update"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    created_scope = _branch_scope(
+        session_id, session_id, ("assistant-root",), "interactive-root"
+    )
+    created = controller.interactive_create_canvas(
+        created_scope,
+        origin_message_id="assistant-root",
+        title="Existing",
+        html="<!doctype html><p>root</p>",
+        temporary=True,
+    )
+    update_scope = _branch_scope(
+        session_id,
+        session_id,
+        ("assistant-root", "assistant-update"),
+        "tool-update",
+    )
+    opened: list[str] = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: update_scope,
+        canvas_controller=controller,
+        auto_open=lambda _requested, info: opened.append(info.revision_id),
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    run = controller.register_run(
+        update_scope, assistant_message_id="assistant-update", temporary=True
+    )
+    updated = run.update_canvas(
+        update_scope,
+        tool_call_id="canvas-update-call",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<!doctype html><p>updated</p>",
+    )
+    settlement = run.finish_assistant_run(
+        "assistant-update", actual_run_id=update_scope.run_id, terminal_status="done"
+    )
+
+    assert settlement is not None
+    assert controller.confirm_exact_settlement(settlement) is True
+    assert opened == []
+    assert authority._events[(session_id, created.revision.canvas_id)][-1].revision_id == (
+        updated.revision.revision_id
+    )
+
+
+def test_disable_before_settlement_confirmation_suppresses_browser_effects():
+    session_id = "temporary-disabled-publication"
+    enabled = [True]
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    scope = _scope(session_id)
+    opened: list[str] = []
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: scope,
+        canvas_controller=controller,
+        auto_open=lambda _requested, info: opened.append(info.revision_id),
+        enabled_reader=lambda: enabled[0],
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    run = controller.register_run(
+        scope, assistant_message_id="assistant-1", temporary=True
+    )
+    run.create_canvas(
+        scope,
+        tool_call_id="disabled-create",
+        title="Preserved",
+        html="<!doctype html><p>preserved</p>",
+    )
+    settlement = run.finish_assistant_run(
+        "assistant-1", actual_run_id=scope.run_id, terminal_status="done"
+    )
+
+    enabled[0] = False
+    assert settlement is not None
+    assert controller.confirm_exact_settlement(settlement) is True
+    assert opened == []
+    assert authority._events == {}
+    assert controller.promotion_contribution(session_id).revision_count == 1
+
+
 def test_settlement_listener_retry_only_retries_incomplete_auto_open():
     session_id = "temporary-partial-publication"
     controller = ConsoleCanvasController()

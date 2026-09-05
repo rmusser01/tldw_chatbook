@@ -698,7 +698,12 @@ class ConsoleRuntime:
     _console_chat_store` followed by an `is None` early return).
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
+    ) -> None:
         """Bind the holder to one app object.
 
         Args:
@@ -729,6 +734,13 @@ class ConsoleRuntime:
         self._canvas_gateway: Any | None = None
         self._canvas_gateway_authority: Any | None = None
         self._canvas_native_authority: Any | None = None
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_config_policy
+
+            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_latched = False
+        self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -873,6 +885,8 @@ class ConsoleRuntime:
     def ensure_canvas_gateway(self, *, authority: Any) -> Any:
         """Return this app runtime's native Canvas gateway, creating it lazily."""
 
+        if not self._canvas_enabled():
+            return None
         if self._canvas_gateway is not None:
             if self._canvas_gateway_authority is not authority:
                 raise ValueError("Canvas gateway is bound to a different authority")
@@ -889,6 +903,7 @@ class ConsoleRuntime:
         binder = getattr(authority, "bind_gateway_invalidator", None)
         if callable(binder):
             binder(self._canvas_gateway.mark_browser_session_unavailable)
+        self._start_canvas_policy_watcher()
         return self._canvas_gateway
 
     def ensure_canvas_native_authority(
@@ -902,6 +917,8 @@ class ConsoleRuntime:
     ) -> Any:
         """Return the single Console-bound Canvas browser authority."""
 
+        if not self._canvas_enabled():
+            return None
         if self._canvas_native_authority is None:
             from tldw_chatbook.Canvas.native_authority import (
                 NativeConsoleCanvasAuthority,
@@ -914,6 +931,7 @@ class ConsoleRuntime:
                 bridge_prepare=bridge_prepare,
                 auto_open=auto_open,
                 publication_guard=publication_guard,
+                enabled_reader=self._canvas_enabled,
             )
             self._canvas_controller.add_settlement_listener(
                 self._canvas_native_authority.on_settlement_publication
@@ -927,6 +945,67 @@ class ConsoleRuntime:
                 publication_guard=publication_guard,
             )
         return self._canvas_native_authority
+
+    def _canvas_enabled(self) -> bool:
+        """Read the global kill switch and the restart-required runtime latch."""
+
+        if self._disposed or self._canvas_disabled_latched:
+            return False
+        try:
+            return self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - execution policy fails closed
+            return False
+
+    def canvas_enabled(self) -> bool:
+        """Expose this app runtime's restart-latched Canvas availability."""
+
+        return self._canvas_enabled()
+
+    async def apply_canvas_policy(self) -> None:
+        """Idempotently revoke all browser delivery after Canvas is disabled.
+
+        Re-enabling requires a process restart. Stored and staged artifact data
+        remain owned by their existing repositories and lifecycle controllers.
+        """
+
+        if self._canvas_enabled():
+            return
+        self._canvas_disabled_latched = True
+        gateway, self._canvas_gateway = self._canvas_gateway, None
+        authority, self._canvas_native_authority = self._canvas_native_authority, None
+        self._canvas_gateway_authority = None
+        close_gateway = getattr(gateway, "aclose", None)
+        if callable(close_gateway):
+            result = close_gateway()
+            if inspect.isawaitable(result):
+                await result
+        dispose_authority = getattr(authority, "dispose", None)
+        if callable(dispose_authority):
+            result = dispose_authority()
+            if inspect.isawaitable(result):
+                await result
+
+    def _start_canvas_policy_watcher(self) -> None:
+        """Watch shared config while a native Canvas preview can be open."""
+
+        task = self._canvas_policy_watch_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._canvas_policy_watch_task = loop.create_task(
+            self._watch_canvas_policy(),
+            name="console-canvas-policy-watch",
+        )
+
+    async def _watch_canvas_policy(self) -> None:
+        """Revoke native delivery promptly after an external config disable."""
+
+        while self._canvas_enabled():
+            await asyncio.sleep(0.25)
+        await self.apply_canvas_policy()
 
     def _sync_canvas_native_context(self, session_id: str | None) -> None:
         """Forward live store context changes to an already-built authority."""
@@ -1469,6 +1548,7 @@ class ConsoleRuntime:
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         kwargs.setdefault("activity_receipts", self._activity_receipts)
+        kwargs.setdefault("canvas_enabled_reader", self._canvas_enabled)
         raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
         kwargs.setdefault(
             "cancel_raw_cli_session",
@@ -1751,6 +1831,14 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        canvas_policy_watch_task = self._canvas_policy_watch_task
+        self._canvas_policy_watch_task = None
+        if canvas_policy_watch_task is not None and not canvas_policy_watch_task.done():
+            canvas_policy_watch_task.cancel()
+            try:
+                await canvas_policy_watch_task
+            except asyncio.CancelledError:
+                pass
         maintenance_task = self._legacy_trace_maintenance_task
         if maintenance_task is not None and not maintenance_task.done():
             maintenance_task.cancel()

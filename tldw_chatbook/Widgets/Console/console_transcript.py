@@ -5199,7 +5199,7 @@ class ConsoleTranscript(VerticalScroll):
                 lines.append(status_line)
             if message.id == self.selected_message_id:
                 lines.append(self._plain_action_row(message))
-                lines.append(ConsoleMessageActionService().plain_action_guide(message))
+                lines.append(self._canvas_action_service().plain_action_guide(message))
 
         for unit in group_console_transcript_messages(self._messages):
             message = unit.standalone
@@ -7889,7 +7889,7 @@ class ConsoleTranscript(VerticalScroll):
         return kwargs
 
     def _action_groups(self, message: ConsoleChatMessage):
-        return ConsoleMessageActionService().action_groups(
+        return self._canvas_action_service().action_groups(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
             original_attempt_available=bool(
@@ -7955,9 +7955,27 @@ class ConsoleTranscript(VerticalScroll):
             classes="console-transcript-action-row",
         )
 
-    @staticmethod
-    def _plain_action_row(message: ConsoleChatMessage) -> str:
-        return ConsoleMessageActionService().plain_action_row(message)
+    def _canvas_action_service(self) -> ConsoleMessageActionService:
+        """Build actions against the app runtime's restart-latched Canvas gate."""
+
+        def enabled() -> bool:
+            try:
+                app = self.app
+            except Exception:  # noqa: BLE001 - unmounted projections fail closed
+                return False
+            runtime = getattr(app, "console_runtime", None)
+            reader = getattr(runtime, "canvas_enabled", None)
+            if not callable(reader):
+                return False
+            try:
+                return reader() is True
+            except Exception:  # noqa: BLE001 - transcript actions fail closed
+                return False
+
+        return ConsoleMessageActionService(canvas_enabled_reader=enabled)
+
+    def _plain_action_row(self, message: ConsoleChatMessage) -> str:
+        return self._canvas_action_service().plain_action_row(message)
 
     @staticmethod
     def _action_button(

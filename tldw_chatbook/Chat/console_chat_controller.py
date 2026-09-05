@@ -3049,6 +3049,7 @@ class ConsoleChatController:
         activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
     ) -> None:
         self.store = store
@@ -3085,6 +3086,11 @@ class ConsoleChatController:
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
         self._cancel_raw_cli_session = cancel_raw_cli_session
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_config_policy
+
+            canvas_enabled_reader = lambda: get_canvas_config_policy().enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -22202,7 +22208,11 @@ class ConsoleChatController:
         canvas_provider = None
         canvas_authority = None
         canvas_controller = getattr(self.store, "canvas_turn_controller", None)
-        if canvas_controller is not None and session is not None:
+        try:
+            canvas_enabled = self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+            canvas_enabled = False
+        if canvas_enabled and canvas_controller is not None and session is not None:
             from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
             from tldw_chatbook.Canvas.models import CanvasScope
 

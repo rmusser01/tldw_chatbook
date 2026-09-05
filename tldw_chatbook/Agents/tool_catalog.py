@@ -1635,7 +1635,14 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
-        return list(self._ensure_catalog_cache().entries)
+        entries = self._ensure_catalog_cache().entries
+        provider = self._canvas_provider
+        return [
+            entry
+            for entry in entries
+            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
+            or (provider is not None and self._authenticated_canvas_name(provider, entry.name))
+        ]
 
     def find(
         self,
@@ -1881,7 +1888,15 @@ class ToolCatalogRegistry:
         tool_id, provider = record.tool_id, record.provider
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
-                return ToolResult.blocked("Canvas authority is unavailable.")
+                from .canvas_tool_provider import CanvasToolProvider
+
+                if isinstance(provider, CanvasToolProvider) and not provider.canvas_enabled:
+                    return ToolResult.blocked(
+                        "Canvas is disabled. Restart Chatbook after re-enabling it."
+                    )
+                return ToolResult.blocked(
+                    "Canvas authority is unavailable."
+                )
             if name in {"canvas_create", "canvas_update"} and not (
                 self.is_canvas_reversible_conversation_local_mutation(name)
             ):

@@ -47,6 +47,18 @@
     window.dispatchEvent(new Event("resize"));
   }
 
+  function disableCanvas() {
+    latest = null;
+    userClosed = false;
+    frame.setAttribute("src", "about:blank");
+    region.hidden = true;
+    workbench.classList.add("terminal-only");
+    openButton.hidden = true;
+    closeButton.hidden = true;
+    setStatus("Canvas disabled — restart Chatbook after re-enabling it");
+    window.dispatchEvent(new Event("resize"));
+  }
+
   function applyState(detail) {
     if (!detail || typeof detail !== "object") return;
     if (detail.status === "ready") {
@@ -88,6 +100,10 @@
   async function refreshCanvasState() {
     try {
       const response = await fetch("/canvas/api/session", {cache: "no-store"});
+      if (response.status === 404) {
+        disableCanvas();
+        return;
+      }
       if (!response.ok) throw new Error("unavailable");
       applyState(await response.json());
     } catch (_) {

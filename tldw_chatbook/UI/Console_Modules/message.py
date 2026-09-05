@@ -400,7 +400,9 @@ class ConsoleMessageController:
         # `_console_speaking_message_id`) or a staying screen method still
         # reads/writes -- see `chat_screen.py`'s own "Message cluster state"
         # comment block for the exact list.
-        self._console_message_action_service = ConsoleMessageActionService()
+        self._console_message_action_service = ConsoleMessageActionService(
+            canvas_enabled_reader=self._canvas_enabled
+        )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
@@ -413,6 +415,18 @@ class ConsoleMessageController:
         self._pending_console_swipe_selection: str | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
+
+    def _canvas_enabled(self) -> bool:
+        """Read the app-owned restart-latched Canvas execution gate."""
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        reader = getattr(runtime, "canvas_enabled", None)
+        if not callable(reader):
+            return False
+        try:
+            return reader() is True
+        except Exception:  # noqa: BLE001 - message actions fail closed
+            return False
 
     @property
     def run_worker(self) -> Any:

@@ -155,6 +155,7 @@ class NativeConsoleCanvasAuthority:
         bridge_prepare: Callable[[CanvasBridgeTarget], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
         publication_guard: Callable[[Any], bool] | None = None,
+        enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self._scope_resolver = scope_resolver
         self._canvas_controller = canvas_controller
@@ -162,6 +163,7 @@ class NativeConsoleCanvasAuthority:
         self._bridge_prepare = bridge_prepare
         self._auto_open = auto_open
         self._publication_guard = publication_guard
+        self._enabled_reader = enabled_reader or (lambda: True)
         self._gateway_invalidator: Callable[[str], None] | None = None
         self._selection: dict[str, _Selection] = {}
         self._parsed_block_imports: OrderedDict[
@@ -213,6 +215,12 @@ class NativeConsoleCanvasAuthority:
 
     def on_settlement_publication(self, publication: Any) -> None:
         """Publish committed tool revisions that still belong to the live branch."""
+
+        try:
+            if self._enabled_reader() is not True:
+                return
+        except Exception:  # noqa: BLE001 - policy reads fail closed
+            return
 
         scope = getattr(publication, "scope", None)
         revisions = getattr(publication, "revisions", ())
@@ -286,11 +294,14 @@ class NativeConsoleCanvasAuthority:
                 receipt.state_published = True
             if receipt.auto_opened:
                 return
+            if not any(revision.parent_revision_id is None for revision in revisions):
+                receipt.auto_opened = True
+                return
             if receipt.auto_open_in_flight:
                 raise RuntimeError("canvas_publication_already_opening")
             receipt.auto_open_in_flight = True
         try:
-            if self._auto_open is not None:
+            if self._enabled_reader() is True and self._auto_open is not None:
                 self._auto_open(scope.session_id, info)
         except Exception:
             with self._lock:

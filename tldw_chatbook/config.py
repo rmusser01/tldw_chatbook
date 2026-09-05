@@ -54,6 +54,7 @@ from pydantic import (
 #
 # Local Imports
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
+from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -98,6 +99,158 @@ if TYPE_CHECKING:
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
 # Client ID used by the Server API itself when writing to sync logs
+
+
+CanvasRemoteAccessStatus = Literal[
+    "loopback",
+    "authenticated_tls",
+    "refused",
+    "misconfigured",
+    "insecure_development",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasConfigPolicy:
+    """Effective Canvas execution and delivery policy without credentials."""
+
+    enabled: bool
+    auto_open_on_create: bool
+    limits: CanvasLimits
+    remote_access_status: CanvasRemoteAccessStatus
+    remote_access_summary: str
+    diagnostics: tuple[str, ...] = ()
+
+
+_CANVAS_CONFIG_KEYS = frozenset({"enabled", "auto_open_on_create"})
+
+
+def _strict_canvas_bool(
+    section: Mapping[str, Any],
+    key: str,
+    *,
+    default: bool,
+    invalid_diagnostic: str,
+    diagnostics: list[str],
+) -> bool:
+    """Read one exact Canvas boolean, failing closed on malformed values."""
+
+    if key not in section:
+        return default
+    value = section.get(key)
+    if type(value) is bool:
+        return value
+    diagnostics.append(invalid_diagnostic)
+    return False
+
+
+def _canvas_remote_access_status(
+    web: Mapping[str, Any], *, environ: Mapping[str, str]
+) -> tuple[CanvasRemoteAccessStatus, str]:
+    """Derive credential-free served-mode status from effective settings."""
+
+    from tldw_chatbook.Canvas.web_auth import is_loopback_host
+
+    host = str(web.get("host") or "localhost").strip()
+    if is_loopback_host(host):
+        return (
+            "loopback",
+            "Loopback only — browsers on this Chatbook host enter locally.",
+        )
+
+    environment_token = environ.get("TLDW_CHATBOOK_WEB_ACCESS_TOKEN", "")
+    configured_token = web.get("access_token")
+    credential_present = bool(
+        (isinstance(environment_token, str) and environment_token)
+        or (isinstance(configured_token, str) and configured_token)
+    )
+    if not credential_present:
+        return (
+            "refused",
+            "Remote access refused — configure the dedicated Chatbook web access token.",
+        )
+
+    public_url = str(web.get("public_url") or "").strip()
+    direct_tls = bool(web.get("tls_certificate")) and bool(web.get("tls_private_key"))
+    allow_insecure = web.get("allow_insecure_remote_http") is True
+    if public_url.lower().startswith("https://") or direct_tls:
+        return (
+            "authenticated_tls",
+            "Authenticated TLS/proxy — dedicated browser admission is configured.",
+        )
+    if allow_insecure:
+        return (
+            "insecure_development",
+            "Insecure development mode — authenticated remote HTTP can be observed on the network.",
+        )
+    return (
+        "misconfigured",
+        "Remote access misconfigured — use direct TLS or an exact HTTPS public URL behind a trusted proxy.",
+    )
+
+
+def build_canvas_config_policy(
+    config: Mapping[str, Any] | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> CanvasConfigPolicy:
+    """Build the sole normalized Canvas policy from untrusted configuration."""
+
+    values = config if isinstance(config, Mapping) else {}
+    raw_canvas = values.get("canvas")
+    diagnostics: list[str] = []
+    if raw_canvas is None:
+        canvas: Mapping[str, Any] = {}
+    elif isinstance(raw_canvas, Mapping):
+        canvas = raw_canvas
+    else:
+        canvas = {}
+        diagnostics.append("canvas must be a table; Canvas is disabled")
+
+    enabled = _strict_canvas_bool(
+        canvas,
+        "enabled",
+        default=True,
+        invalid_diagnostic="canvas.enabled must be a boolean; Canvas is disabled",
+        diagnostics=diagnostics,
+    )
+    if raw_canvas is not None and not isinstance(raw_canvas, Mapping):
+        enabled = False
+    auto_open = _strict_canvas_bool(
+        canvas,
+        "auto_open_on_create",
+        default=True,
+        invalid_diagnostic=(
+            "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
+        ),
+        diagnostics=diagnostics,
+    )
+    if raw_canvas is not None and not isinstance(raw_canvas, Mapping):
+        auto_open = False
+    if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
+        diagnostics.append(
+            "Canvas quota overrides are unsupported; hard limits remain fixed"
+        )
+
+    raw_web = values.get("web_server")
+    web = raw_web if isinstance(raw_web, Mapping) else {}
+    remote_status, remote_summary = _canvas_remote_access_status(
+        web, environ=os.environ if environ is None else environ
+    )
+    return CanvasConfigPolicy(
+        enabled=enabled,
+        auto_open_on_create=auto_open,
+        limits=CanvasLimits(),
+        remote_access_status=remote_status,
+        remote_access_summary=remote_summary,
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def get_canvas_config_policy() -> CanvasConfigPolicy:
+    """Return the current effective Canvas policy from the shared config cache."""
+
+    return build_canvas_config_policy(load_cli_config_and_ensure_existence())
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
@@ -5192,6 +5345,14 @@ profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store sele
 # silently widening exposure.
 bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -- there is no authentication.
 port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
+
+[canvas]
+# One global execution/delivery/tool-advertisement kill switch. Turning this
+# off preserves stored Canvas revisions and Chatbook export/import data.
+enabled = true
+# Successful assistant canvas_create operations open the preview automatically.
+# Updates hot-reload an already-open preview but never force a new browser open.
+auto_open_on_create = true
 
 [web_server]
 # Web server configuration for running tldw_chatbook in a browser

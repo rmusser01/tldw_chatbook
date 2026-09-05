@@ -12,6 +12,14 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[canvas]
+# Global execution/delivery/tool-advertisement kill switch. Stored revisions
+# and Chatbook export/import data remain intact when this is off.
+enabled = true
+# Auto-open only after a successful assistant canvas_create. Updates hot-reload
+# an already-open preview and explicit user Open actions remain manual.
+auto_open_on_create = true
+
 [web_server]
 # Browser-served Chatbook defaults to loopback and needs no token ceremony there.
 enabled = true

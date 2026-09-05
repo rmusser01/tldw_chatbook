@@ -184,7 +184,11 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         assert screen.query_one("#settings-open-provider-credentials")
         assert screen.query_one("#settings-open-advanced-config")
         ownership = screen._ownership_record(SettingsCategoryId.PRIVACY_SECURITY)
-        assert ownership.owns_config_sections == ("console.raw_cli_permitted",)
+        assert ownership.owns_config_sections == (
+            "canvas.enabled",
+            "canvas.auto_open_on_create",
+            "console.raw_cli_permitted",
+        )
 
         checkbox = card.query_one("#settings-raw-cli-permitted", Checkbox)
         arm_button = card.query_one("#settings-raw-cli-arm", Button)
