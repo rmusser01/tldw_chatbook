@@ -65,7 +65,8 @@ def _make_watchlist(db: SubscriptionsDB, name: str = "w") -> int:
 
 
 def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -> int:
-    briefing_id = db.insert_briefing(watchlist_id)
+    # Export fixtures are finished history, not concurrent generating claims.
+    briefing_id = db.insert_briefing(watchlist_id, status="complete")
     with db.transaction() as conn:
         conn.execute(
             "UPDATE briefings SET created_at = ? WHERE id = ?",
