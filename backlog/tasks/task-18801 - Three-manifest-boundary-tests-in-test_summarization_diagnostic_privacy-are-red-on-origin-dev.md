@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-18 23:52'
-updated_date: '2026-09-05 20:20'
+updated_date: '2026-09-05 23:17'
 labels:
   - tests
 dependencies: []
@@ -37,7 +37,7 @@ Reproduced on a dedicated detached worktree of origin/dev with nothing else appl
 <!-- AC:BEGIN -->
 - [ ] #1 The three manifest-boundary tests pass on a clean origin/dev checkout
 - [x] #2 Whichever of the checked-in inventory or the recorded fixture SHA is stale is identified and the fix explains which drifted and why
-- [x] #3 Tests/LLM_Calls/test_summarization_diagnostic_privacy.py runs green as a whole
+- [ ] #3 Tests/LLM_Calls/test_summarization_diagnostic_privacy.py runs green as a whole
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +50,6 @@ Reproduced on a dedicated detached worktree of origin/dev with nothing else appl
 
 <!-- SECTION:NOTES:BEGIN -->
 Reconciled the rebased review branch without changing privacy assertions or diagnostic policy. The fixture still pinned 8f2ab91f... from an older unrelated-owner inventory. Reviewed current drift with --statements against manifest commit717f1951da: exactly ten identical warning statements moved from ChatScreen to retrieval.py (same statement-digest multiset, levels, arguments and exception handling); no new statement or sink. Rebuilt only those two owner rows. Independent checked/generated normalized projections both equal ac5cd5bf7bc9d5f35d80fd71a78953ea96cd6cc60fced84b2e4f60c332bc04f1. Totals unchanged:584owners,1336TASK492calls,7615TASK494calls,11sinks. Updated only the two fixture hashes; all257 complete summarization privacy tests pass in128.81s, including unrelated-drift, summary, owner/digest-schema and unreconciled-digest mutant guards. XML:/private/tmp/tldw-18801-summary-privacy-reconciled.xml. ADR not required: governed evidence reconciliation, no new boundary. AC1 remains unchecked because clean origin/dev has not received this draft branch; no merge or upstream-green claim.
+
+Post-second-rebase qualification at ed53b51793: inventory rebuild matches exactly (589 owners,1336 TASK492 calls,30 upstream TASK31551 calls,7615 TASK494 calls,12 sinks). Complete inventory+summary privacy selection:322passed5failed463.74s. Three failures are this task recurring after upstream inventory changed: normalized checked hash caa76e94acdbf3d61961e90bcfe307c21ed5c09bfc061d7c054ba497ff817684 versus prior ac5cd5bf7bc9d5f35d80fd71a78953ea96cd6cc60fced84b2e4f60c332bc04f1. The two other failures are virtualenv-exclusion fixture summary dictionaries omitting the new upstream task_31551_calls:0 field. AC3 is reopened for the current tree. No digest or privacy guard was changed in this qualification. Next: review upstream owner/sink delta and reconcile this governed boundary, preserving negative mutants. XML:/private/tmp/tldw-rebased-diagnostic-qualification.xml.
 <!-- SECTION:NOTES:END -->
