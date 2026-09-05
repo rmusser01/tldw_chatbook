@@ -1,5 +1,29 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Latest-dev reuse integration
+
+Rebased through dev `5f12507c1` (Library reuse) and `64ce47a04` (Console reuse).
+Library integration passed 106 focused tests and two changed lifecycle tests.
+A broader selection was interrupted at 173 passed / 5 failed; all five failures
+reproduced on untouched `5f12507c1` (three stale Notes-row selector assertions,
+two incomplete `active_authority` test doubles). No unrelated Library fixes were
+added. Console reuse integration passed 131 targeted tests. Normal real b10816/
+Gemma text/vision UAT passed on both rebases (252.25s and 252.67s respectively),
+with text 22/23, same image 105/106, changed image 19/106, retention/Delete, and
+owned-child cleanup. The last run predates the suspension guard below.
+
+Independent integration review then found Environment collectors could still run
+after a reusable Console was covered: suspension preserves `display`. A mounted
+regression reproduced four collector dispatches while covered. The shared rail
+accessor now requires `self.app.screen is self`, also fencing deferred network
+dispatch, and resume refreshes an existing owner after workspace reconciliation.
+The timer remains a cheap no-op while covered; never-opened Inspect stays cold.
+Textual `is_current` was unsuitable because it includes background screens; that
+initial harness-assumption failure is retained alongside the genuine RED result.
+Final Environment/controller/reuse/suspend/census verification: **55 passed**,
+61.78s; independent re-review clear; baseline-relative lint and whitespace pass.
+Existing ADR-097 applies. Current-head CI remains the final merge gate.
+
 ## Approved Console startup remediation
 
 The owner approved fixing the inherited Console regression in PR #2419.

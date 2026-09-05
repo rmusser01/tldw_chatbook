@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 17:23'
+updated_date: '2026-09-05 18:07'
 labels: []
 dependencies: []
 references:
@@ -67,9 +67,18 @@ Recheck allocation before integration.
 - [x] #10 Five-second probe deadlines are separate from explicit ten-minute Save/Restore submission deadlines; preparation and elapsed operation status remain visible and slow valid operations are not failed at the probe deadline.
 - [x] #11 The Save area visibly states the effective newest-N retention limit across all models, including count changes and narrow terminal layouts.
 - [x] #12 The integrated Console keeps Environment collectors off closed-Inspect startup while first-open, refresh, and reopen behavior remain usable
+- [x] #13 Suspended reusable Console screens do not dispatch Environment collectors, and returning to an open Inspect rail refreshes using the retained owner
 <!-- AC:END -->
 
 ## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Latest-dev integration plan: reproduce Environment dispatch while a reusable
+Console is covered, gate the controller's existing rail accessor on screen
+activity, and refresh the retained owner on ordinary resume. Verify mounted
+suspend/resume, existing deferred-controller guards, startup census and live UAT.
+ADR required: no new ADR. Existing ADR-097 applies; this preserves visible-only
+collection across the newly inherited Console screen-reuse lifecycle.
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md. Reason: accepted snapshot ownership and retention contract; ADR-029 and ADR-036 also apply. Execute Docs/superpowers/plans/2026-09-04-llamacpp-slot-snapshots.md in six reviewed units: (1) strict settings and effective launch admission; (2) private transactional storage and integrity; (3) bounded loopback-only management HTTP; (4) app-owned operation and subprocess lifecycle; (5) manual Models widget and canonical F9 settings; (6) isolated real-server reuse evidence and closeout. Units 1–5 are implemented and reviewed. Task6 supplies safeguards, an opt-in production-path harness, and honest evidence documentation; its required real-server execution remains pending. Use targeted RED/GREEN tests and check criteria only when their evidence exists.
@@ -78,6 +87,16 @@ ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapsho
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Latest-dev reuse integration: Library baseline failures were paired against an
+untouched archive; 106 focused plus two changed lifecycle tests passed. Console
+reuse passed 131 targeted checks, then independent review exposed Environment
+collection while covered. A mounted RED proved four dispatches; top-screen
+identity gates the shared accessor (including deferred network dispatch), and
+ordinary resume refreshes the retained owner. Final affected verification:
+55 passed; independent re-review clear, no new baseline-relative lint findings,
+whitespace clean. Both rebased live text/vision UAT runs passed (252.25s/252.67s).
+ADR-097 applies; no new owner, policy, dependency or raised budget.
+
 Implemented app-owned manual snapshots with private atomic publication and
 commit-before-prune retention, strict launch compatibility and bounded loopback
 HTTP, retained file workers and exact-claim Stop barriers, and Models/F9 controls
@@ -156,6 +175,10 @@ CSS/inventory reproduction and whitespace checks pass. Existing ADR-097/ADR-119
 apply; no budget change or broad test sweep. GitHub review/check settlement and
 the requested remote merge remain the external integration steps.
 <!-- SECTION:NOTES:END -->
+
+<!-- SECTION:PLAN:END -->
+
+<!-- SECTION:PLAN:END -->
 
 Owner-approved inherited Console fix: first-use Environment ownership keeps the
 four collectors/projection modules off closed-Inspect startup. First-open paints
