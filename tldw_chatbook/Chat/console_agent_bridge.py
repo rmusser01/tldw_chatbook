@@ -1534,7 +1534,11 @@ def format_todo_marker(tasks: list[dict[str, object]]) -> str:
 
 
 def format_question_marker(
-    asked_by: str, questions: list[dict[str, Any]], result: dict[str, Any]
+    asked_by: str,
+    questions: list[dict[str, Any]],
+    result: dict[str, Any],
+    *,
+    asker_label: str | None = None,
 ) -> str:
     """Render the transcript record of a resolved ``ask_user`` round (PRD A14).
 
@@ -1547,11 +1551,19 @@ def format_question_marker(
         asked_by: ``"agent"`` or ``"sub-agent"``.
         questions: The validated questions the round showed.
         result: The PRD A6 result dict the tool returned.
+        asker_label: task-31382: the sub-agent's display label when the run
+            carries one; the header then names it.
 
     Returns:
         The marker text.
     """
-    who = "a sub-agent" if asked_by == "sub-agent" else "the agent"
+    from tldw_chatbook.Agents.run_context import clean_subagent_label
+
+    label = clean_subagent_label(asker_label)
+    if asked_by == "sub-agent":
+        who = f"sub-agent '{label}'" if label else "a sub-agent"
+    else:
+        who = "the agent"
     lines = [f"? Questions from {who} ({len(questions)}):"]
     answers = result.get("answers") if result.get("answered") else None
     reason = str(result.get("reason") or "cancelled")

@@ -13993,9 +13993,12 @@ class ConsoleChatController:
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         actor = current_run_actor()
         asked_by = "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+        # task-31382: name WHICH sub-agent is asking when the run carries a label.
+        asker_label = actor.label if asked_by == "sub-agent" and actor is not None else None
         card_payload: dict[str, Any] = {
             "questions": [dict(question) for question in questions],
             "asked_by": asked_by,
+            "asker_label": asker_label,
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
@@ -14041,7 +14044,9 @@ class ConsoleChatController:
                 with contextlib.suppress(Exception):
                     bridge.append_question_marker(
                         owning_session_id,
-                        format_question_marker(asked_by, questions, result),
+                        format_question_marker(
+                            asked_by, questions, result, asker_label=asker_label
+                        ),
                     )
             return result
         finally:
