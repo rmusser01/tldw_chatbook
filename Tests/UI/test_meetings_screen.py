@@ -132,6 +132,17 @@ def _text(widget) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _rendered(widget) -> str:
+    """What the Static actually PAINTS, after markup parsing.
+
+    `Static.renderable` is `tldw_chatbook/__init__.py`'s compatibility shim
+    aliasing `.content` -- the RAW string handed to `update()`, unparsed --
+    so `_text()` cannot see markup being swallowed and is no evidence at all
+    for a markup question. `.visual` is the parsed `Content`.
+    """
+    return str(widget.visual)
+
+
 async def _boot(tmp_path, **owner_kwargs):
     app = _build_test_app()
     owner = FakeOwner(tmp_path, **owner_kwargs)
@@ -332,6 +343,88 @@ async def test_recoverable_folder_offers_recover_and_submits(tmp_path, monkeypat
         assert submitted[0]["source_path"] == str(folder / "mixed.wav")
         assert submitted[0]["detected_type"] == "audio"
         assert "ingest-job-8" in _text(screen.query_one("#meetings-footer", Static))
+
+
+@pytest.mark.asyncio
+async def test_stop_failure_re_enables_start_instead_of_wedging(tmp_path):
+    """I2: `_stop_worker` had no try/except. A raising `owner.stop()` (e.g.
+    `write_meeting_json` onto a read-only recordings dir) killed the worker,
+    so `_on_stopped` never ran, `_stop_requested` stayed True -- which also
+    suppresses the state-event finalisation path -- and all three buttons
+    stayed disabled with no way back short of leaving the screen.
+    """
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+
+        def boom(reason="user"):
+            raise OSError("Read-only file system: meeting.json")
+
+        owner.stop = boom
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        assert screen._stop_requested is False
+        assert screen.query_one("#meetings-start", Button).disabled is False
+        assert screen.query_one("#meetings-stop", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_partial_keeps_whisper_bracket_tokens(tmp_path):
+    """Whisper emits bracketed tokens ("[BLANK_AUDIO]", "[Music]", "[laughs]")
+    inside real transcript text; a markup-enabled Static swallows them as
+    Rich tags (and raises outright on an unclosed one)."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.emit("partial", ("[laughs] hello", None))
+        await pilot.pause(0.1)
+        partial = screen.query_one("#meetings-partial", Static)
+        # `_rendered`, not `_text`: with markup on, Rich parses "[laughs]"
+        # as a style tag and paints " hello…" while `.renderable` still
+        # reports the unparsed original.
+        assert "[laughs]" in _rendered(partial)
+
+
+@pytest.mark.asyncio
+async def test_missing_recorder_reports_on_the_rail_and_keeps_start_disabled(tmp_path):
+    """C1: on an install with no numpy / no audio backend the mic factory
+    cannot produce a recorder at all. Start must not be offered."""
+    host, owner = await _boot(tmp_path)
+    owner.prepared.capture_error = "Audio recording functionality requires NumPy"
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        provider = _text(screen.query_one("#meetings-provider-status", Static))
+        assert provider == "Transcriber: Audio recording functionality requires NumPy"
+        assert screen.query_one("#meetings-start", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_failed_recovery_reports_and_re_offers_recover(tmp_path, monkeypatch):
+    """A truncated meeting.json used to raise straight out of `_recover_worker`,
+    which then died silently with the Recover button left disabled."""
+    folder = tmp_path / "2026-09-04_1000"
+    folder.mkdir()
+    host, owner = await _boot(tmp_path, recoverable=(folder,))
+
+    def boom(_folder):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    monkeypatch.setattr("tldw_chatbook.UI.Screens.meetings_screen.recover_folder", boom)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-recover")
+        await pilot.pause(0.3)
+        footer = _text(screen.query_one("#meetings-footer", Static))
+        assert footer.startswith("Recovery failed:") and "Expecting value" in footer
+        assert screen.query_one("#meetings-recover", Button).disabled is False
 
 
 @pytest.mark.asyncio

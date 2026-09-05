@@ -104,8 +104,12 @@ class MeetingsScreen(BaseAppScreen):
                     )
                 with Vertical(id="meetings-canvas", classes="destination-workbench-pane"):
                     yield RichLog(id="meetings-transcript", wrap=True, highlight=False, markup=False)
-                    yield Static("", id="meetings-partial")
-                    yield Static("", id="meetings-footer")
+                    # markup=False: transcripts carry Whisper's own bracket
+                    # tokens ("[BLANK_AUDIO]", "[Music]"), and folder paths
+                    # reach the footer -- Rich markup would swallow them or
+                    # raise on an unclosed tag.
+                    yield Static("", id="meetings-partial", markup=False)
+                    yield Static("", id="meetings-footer", markup=False)
                     yield Button(
                         "Open in Library", id="meetings-open-library", disabled=True,
                         tooltip="Open Library's Import rail with this meeting's recording queued.",
@@ -163,9 +167,14 @@ class MeetingsScreen(BaseAppScreen):
         mode = prepared.tap_mode
         system_copy = mode.reason if mode.kind != "unavailable" else f"Unavailable, mic only ({mode.reason})"
         self.query_one("#meetings-system-status", Static).update(f"System audio: {system_copy}")
-        self.query_one("#meetings-provider-status", Static).update(
-            f"Transcriber: {prepared.provider} {prepared.model}".rstrip() + " (finalises per segment)"
+        # A missing recorder (no numpy, no audio backend) is reported where
+        # the provider goes, and Start stays disabled below: offering a
+        # Start that can only fail is worse than saying why (review C1).
+        provider_copy = (
+            prepared.capture_error
+            or f"{prepared.provider} {prepared.model}".rstrip() + " (finalises per segment)"
         )
+        self.query_one("#meetings-provider-status", Static).update(f"Transcriber: {provider_copy}")
         if prepared.diarization_available:
             diar = "Speaker labels after the meeting: on"
         else:
@@ -201,7 +210,7 @@ class MeetingsScreen(BaseAppScreen):
         else:
             recovery.update("")
             recover.disabled = True
-        if not (self._owner is not None and self._owner.is_active):
+        if not prepared.capture_error and not (self._owner is not None and self._owner.is_active):
             self.query_one("#meetings-start", Button).disabled = False
 
     # ---- device pickers ---------------------------------------------------
@@ -272,8 +281,23 @@ class MeetingsScreen(BaseAppScreen):
 
     @work(exclusive=True, group="meetings-stop", thread=True)
     def _stop_worker(self) -> None:
-        result = self._owner.stop(reason="user")
+        try:
+            result = self._owner.stop(reason="user")
+        except Exception as exc:  # noqa: BLE001 - the screen must not stay wedged
+            # Without this, a raising stop() (e.g. write_meeting_json onto a
+            # read-only recordings dir) killed the worker: `_on_stopped`
+            # never ran, `_stop_requested` stayed True so the "stopped"
+            # state event's own finalisation was suppressed too, and all
+            # three buttons stayed disabled with no way back (review I2).
+            self.app.call_from_thread(self._stop_failed, str(exc))
+            return
         self.app.call_from_thread(self._on_stopped, result)
+
+    def _stop_failed(self, reason: str) -> None:
+        self._stop_requested = False
+        self._detach()
+        self._set_buttons("stopped")
+        self.app_instance.notify(f"Meeting failed to stop cleanly: {reason}", severity="error")
 
     def _on_stopped(self, result: MeetingResult | None) -> None:
         self._detach()
@@ -388,7 +412,16 @@ class MeetingsScreen(BaseAppScreen):
 
     @work(exclusive=True, group="meetings-recover", thread=True)
     def _recover_worker(self, folder: Path) -> None:
-        payload = recover_folder(folder)
+        # Guarded separately from the submit below: a truncated or malformed
+        # meeting.json used to raise straight out of the worker, which then
+        # died silently with the Recover button left disabled and nothing on
+        # screen. Recovery failing and ingest failing are different
+        # outcomes, so they get different copy (final whole-branch review).
+        try:
+            payload = recover_folder(folder)
+        except Exception as exc:  # noqa: BLE001
+            self.app.call_from_thread(self._recovery_failed, f"Recovery failed: {exc}")
+            return
         started = str(payload.get("started_at", ""))[:16].replace("T", " ")
         try:
             job_id = self._owner._submit_on_ui_thread(
@@ -404,6 +437,11 @@ class MeetingsScreen(BaseAppScreen):
     def _recovered(self, copy: str) -> None:
         self.query_one("#meetings-footer", Static).update(copy)
         self.query_one("#meetings-recovery", Static).update("")
+
+    def _recovery_failed(self, copy: str) -> None:
+        """Nothing was recovered: keep the recovery line and offer Recover again."""
+        self.query_one("#meetings-footer", Static).update(copy)
+        self.query_one("#meetings-recover", Button).disabled = False
 
     @on(Button.Pressed, "#meetings-open-library")
     def _open_library(self) -> None:
