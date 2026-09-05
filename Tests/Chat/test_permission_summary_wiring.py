@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat import permission_summary_service as summary_service
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 from tldw_chatbook.Chat.permission_summary_service import (
     PermissionSummaryResolution,
 )
@@ -17,6 +18,10 @@ def _bare_controller():
     ctrl = object.__new__(ConsoleChatController)
     ctrl._pending_approval_rounds = {}
     ctrl._approval_state_lock = threading.Lock()
+    # task-31384: session activation re-derives the non-approval kinds
+    # through the host; a real one over this bare double stays inert
+    # (no app, no setters) while the approval path under test is untouched.
+    ctrl._interrupt_host = InterruptRoundHost(ctrl)
     ctrl.app = None
     ctrl.update_pending_approval_summary = None
     return ctrl
