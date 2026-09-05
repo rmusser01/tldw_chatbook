@@ -801,7 +801,7 @@ async def test_cancelling_blocked_local_thread_suppresses_late_response_without_
 
 
 @pytest.mark.asyncio
-async def test_wire_excludes_library_tools_while_in_process_manifest_keeps_all_18(
+async def test_wire_excludes_library_tools_while_in_process_manifest_keeps_all_21(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     server = _compose_server(monkeypatch, tmp_path)
@@ -817,8 +817,13 @@ async def test_wire_excludes_library_tools_while_in_process_manifest_keeps_all_1
         }
         library_names = set(LIBRARY_TOOL_DESCRIPTORS)
 
-        assert len(library_names) == 24
+        assert len(library_names) == 21
         assert library_names <= manifest_names
+        assert {
+            "library_list_collections",
+            "library_get_collection",
+            "library_search_collections",
+        }.isdisjoint(manifest_names)
         assert wire_names == set(BUILTIN_TOOL_NAMES)
         assert wire_names.isdisjoint(library_names)
     finally:
@@ -1238,10 +1243,11 @@ async def test_legacy_client_spawn_uses_gateway_output_line_limit(
     )
 
     def fake_connection(
-        created_process: object, *, client_name: str
+        created_process: object, *, client_name: str, server_request_dispatcher: Any
     ) -> SimpleNamespace:
         assert created_process is process
         assert client_name == "line-limit-client"
+        assert server_request_dispatcher is None
         return connection
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
