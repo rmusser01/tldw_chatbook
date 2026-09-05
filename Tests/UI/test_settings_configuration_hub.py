@@ -504,8 +504,9 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
     (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
     Gen (video-generation-foundation) brought it to 25; Agents
-    (supervisor-fleet PR-1 task 6) brought it to 26; Web Search (TASK-32189)
-    brought it to 27. This pins the literal
+    (supervisor-fleet PR-1 task 6) brought it to 26; Personal Context, Network,
+    and Tool Profiles brought it to 29; Web Search (TASK-32189) brought it
+    to 30. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
@@ -1668,6 +1669,11 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
             assert "active RAG profile" in " ".join(record.owns_config_sections)
+        elif category is SettingsCategoryId.SCHEDULES:
+            assert record.writes_allowed
+            assert "briefing_schedules_enabled" in " ".join(
+                record.owns_config_sections
+            )
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
@@ -2475,7 +2481,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
@@ -2484,9 +2490,9 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
-        screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
-        await pilot.pause()
-        await pilot.click("#settings-preview-appearance")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-preview-appearance"
+        )
         text = _visible_text(screen)
 
         assert app.theme == "textual-light"
@@ -2499,7 +2505,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
 async def test_settings_appearance_focused_input_keeps_typed_text_visible():
     app = _build_test_app()
     app.app_config["general"] = {"palette_theme_limit": 1}
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
@@ -5462,7 +5468,7 @@ async def test_settings_category_search_filters_and_enter_opens_first_match():
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         assert screen.query_one("#settings-category-privacy-security").display
@@ -5490,12 +5496,12 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         visible_text = _visible_text(screen)
         assert (
-            "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+            "Filter: priv | 3 matches | Enter opens Privacy & Security" in visible_text
         )
         assert screen.query_one("#settings-category-privacy-security").has_class(
             "settings-primary-search-match"
