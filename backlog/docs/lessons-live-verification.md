@@ -1961,3 +1961,25 @@ did not reach as far as the mechanism did.
   fix that round 2 had to make again.
 - Re-derive before re-driving. The cheapest step in a fix round is grepping the call sites
   of the function you are about to change; the most expensive is a second live gate.
+
+## The theme palette matches "Theme: Switch to Textual Light", not the theme id (TASK-31429, 2026-09-04)
+
+**What happened.** Driving a live theme switch through the command palette
+for the Console-rail colour check: typing `textual-light` (the id every
+config file and test uses) returned zero hits, and the one hit for the
+generic query, "Theme: Change Theme", only posts a notification telling
+you to search — activating it looked like the palette had silently
+dismissed itself (the TASK-397 fast-Down+Enter trap was the first, wrong,
+suspect). `ThemeCommandProvider.search` (app.py) builds each hit as
+`"Theme: Switch to " + name.replace("_"," ").replace("-"," ").title()` and
+fuzzy-matches the QUERY against that Title-Cased string, so the hyphen in
+the id is what killed the match.
+
+**What to do.** Query the palette with the rendered command text — `Switch
+to Textual Light`, `Switch to Apricot` — narrow to one hit, then Down,
+Enter. Two smaller traps from the same session: SGR clicks on the rail's
+section-header toggles registered only on the NEXT input event (the header
+looked untoggled in the capture taken right after the click, then opened
+when the following key arrived), so capture again before concluding a
+click was dead; and Ctrl+Shift+Right (expand every rail section) did
+nothing when sent through tmux — open sections one at a time instead.
