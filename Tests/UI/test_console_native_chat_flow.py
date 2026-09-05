@@ -1379,9 +1379,23 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         }
 
 
+async def _unmount_installed_console(app, console: ChatScreen) -> None:
+    """Dispose a suspended cached Console through Textual's real removal path."""
+    assert console not in app.screen_stack
+    assert app.is_screen_installed(console)
+    identity, cached_console = app._reusable_screen_instances.pop("chat")
+    assert cached_console is console
+    assert identity == app._current_runtime_identity()
+    app.uninstall_screen(console)
+    await console.remove()
+    assert not console.is_attached
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dispose_console", [False, True], ids=["reuse", "recreate"])
 async def test_conversation_settings_return_real_navigation_restores_fresh_console_modal(
     monkeypatch,
+    dispose_console: bool,
 ):
     """Drive Configure → Settings → Return through the production app router."""
 
@@ -1440,6 +1454,11 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             await pilot.pause(0.05)
         assert fresh_settings is not None
         assert fresh_settings._provider_return_target is not None
+        if dispose_console:
+            await _unmount_installed_console(app, original_console)
+        else:
+            assert original_console.is_attached
+            assert app.is_screen_installed(original_console)
         await _wait_for_selector(
             fresh_settings,
             pilot,
@@ -1468,7 +1487,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             ]
             if (
                 consoles
-                and consoles[-1] is not original_console
+                and app.current_tab == "chat"
                 and isinstance(app.screen_stack[-1], ConsoleSettingsModal)
             ):
                 returned_console = consoles[-1]
@@ -1478,7 +1497,12 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
 
         assert returned_console is not None
         assert returned_modal is not None
-        assert returned_console is not original_console
+        if dispose_console:
+            assert returned_console is not original_console
+        else:
+            assert returned_console is original_console
+        assert returned_modal is not original_modal
+        assert returned_console._ensure_console_chat_store() is store
         assert app.current_tab == "chat"
         await _wait_for_selector(
             returned_modal,
@@ -1596,7 +1620,9 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
             status_cancelled.set()
             raise
 
-    monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(str(message)))
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
     monkeypatch.setattr(
         ChatScreen,
         "_mount_conversation_settings_return_status",
@@ -1643,7 +1669,7 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
         returned_console = app._navigation_outgoing_screen()
         returned_modal = app.screen
         assert isinstance(returned_console, ChatScreen)
-        assert returned_console is not original_console
+        assert returned_console is original_console
         assert isinstance(returned_modal, ConsoleSettingsModal)
         assert returned_console._suspended_conversation_settings is None
         assert (
@@ -1655,15 +1681,19 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
             target.return_revision,
         )
 
-        # The production router dismisses the modal before replacing and
-        # unmounting its content Console. The accepted lifecycle does not
-        # persist the force-dismissed modal draft; it only keeps the already
-        # completed handoff from becoming retry work again.
-        await app.handle_screen_navigation(NavigateToScreen("home"))
-        await wait_for_signal(
-            status_cancelled,
-            what="post-transfer status worker cancellation",
-        )
+        # Ordinary navigation dismisses the modal but only suspends Console.
+        # Explicit removal below exercises the actual unmount contract.
+        try:
+            await app.handle_screen_navigation(NavigateToScreen("home"))
+            assert returned_console.is_attached
+            assert not status_cancelled.is_set()
+            await _unmount_installed_console(app, returned_console)
+            await wait_for_signal(
+                status_cancelled,
+                what="post-transfer status worker cancellation",
+            )
+        finally:
+            allow_status.set()
         status_after_unmount = app.pending_handoffs.exact_revision_status(
             HandoffChannel.CONVERSATION_SETTINGS_RETURN,
             target.return_revision,
@@ -2473,10 +2503,10 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unmount_releases_acquired_exact_claim(
+async def test_conversation_settings_return_suspend_releases_claim_and_unmount_cancels_restore(
     monkeypatch,
 ):
-    """Unmount is a settlement boundary even when restore suppresses cancellation."""
+    """Suspend releases the claim; real unmount cancels the uncooperative restore."""
 
     app = _build_production_app(configured_default="chat")
     _configure_native_ready_console(app)
@@ -2520,35 +2550,45 @@ async def test_conversation_settings_return_unmount_releases_acquired_exact_clai
         monkeypatch.setattr(
             console._settings_navigation, "_open_console_settings", hold_restore
         )
-        console.apply_navigation_context(target.to_context())
-        console._settings_navigation._consume_pending_conversation_settings_return()
-        await wait_for_signal(
-            restore_started, what="Conversation settings restore claim"
-        )
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "in_flight"
-        )
-        replacement_revision = app.pending_handoffs.stage(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-            ConversationSettingsReturnIntent(
-                session.id,
-                store.session_settings_revision(session.id),
-                "model",
-                None,
-            ),
-        )
-
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        await wait_for_signal(
-            restore_cancelled,
-            what="Conversation settings restore worker cancellation",
-        )
-
+        removal_task = None
         try:
+            console.apply_navigation_context(target.to_context())
+            console._settings_navigation._consume_pending_conversation_settings_return()
+            await wait_for_signal(
+                restore_started, what="Conversation settings restore claim"
+            )
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "in_flight"
+            )
+            replacement_revision = app.pending_handoffs.stage(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                ConversationSettingsReturnIntent(
+                    session.id,
+                    store.session_settings_revision(session.id),
+                    "model",
+                    None,
+                ),
+            )
+
+            await app.handle_screen_navigation(NavigateToScreen("settings"))
+            assert console.is_attached
+            assert not restore_cancelled.is_set()
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "superseded"
+            )
+            removal_task = asyncio.create_task(_unmount_installed_console(app, console))
+            await wait_for_signal(
+                restore_cancelled,
+                what="Conversation settings restore worker cancellation",
+            )
             assert console not in app.screen_stack
             assert (
                 app.pending_handoffs.exact_revision_status(
@@ -2565,6 +2605,8 @@ async def test_conversation_settings_return_unmount_releases_acquired_exact_clai
             assert app.pending_handoffs.release(replacement_claim)
         finally:
             allow_restore_exit.set()
+            if removal_task is not None:
+                await removal_task
 
 
 def test_console_store_uses_app_citation_repository_for_matching_database():
