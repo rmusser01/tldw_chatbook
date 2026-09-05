@@ -11496,3 +11496,30 @@ cancelled stream. Shielding only the callback did not make the stream wait.
 The regression now uses that actual gateway and waits for its worker's terminal
 acknowledgement; both callback and stream drain the same assistant-owned task
 before terminal settlement.
+
+## Trace integration tests must use the production boundary factory (TASK-31714, 2026-09-05)
+
+During mounted snapshot UAT, ordinary second sends failed even without any
+snapshot operations. Existing controller tests used a hand-built append-only
+trace boundary; lower-level factory tests supplied already-correct descriptors.
+Both missed private persisted-ID annotations surviving in semantic history but
+being removed from the wire, which caused saved descriptors to become artifacts
+at the real agent boundary. A real SQLite/controller/agent/gateway test using
+`ConsoleTraceBoundaryFactory` reproduced the failure before the correction.
+The same UAT then exposed a separate tool-loop `trace_turn_unavailable` rejection
+that the custom test boundary also bypasses.
+
+Use the production factory for at least one multi-turn and tool-loop integration
+test; fake only inference. Compare native-reader reconstruction before/after a
+later turn, and keep a changed-history negative control. A completed call row or
+a mocked append boundary alone does not prove historical request reconstruction.
+
+Follow-up, TASK-31737: the real production-boundary tool test also exposed that
+response settlement is queued when the next model call begins; requiring a
+terminal `complete` row incorrectly blocked a valid `response_started` chain.
+Independent review then reproduced an old chain being admitted after a newer
+chain dispatched the identical prompt. Surface equality did not prove current
+call ownership. A failing same-surface/new-run test led to an atomic ordered
+call-boundary event and latest-call check. Use durable call order for supersession,
+not surface identity or timestamps, and exercise deferred settlement in the real
+agent path rather than forcing it synchronous in the test.
