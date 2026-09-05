@@ -87,3 +87,5 @@ WAVE-4 COMPLETE.
 Task 4: complete (commits 6c71826b1 + 29039a6ad; battery green, sweep zero unexplained, probe slower-than-band under measured load — honest caveat recorded)
 ALL WAVE-4 TASKS COMPLETE — dispatching final whole-branch review (fable)
 FINAL REVIEW (wave 4): MERGE-READY WITH CONDITIONS (fable); fix wave + dev merge executed; see task-4-report + this commit.
+FINAL FIX WAVE (wave 4): DONE (4bf1187f8/282b229d5/2fc0003b8/e0db469f3; dev merge 1-conflict-as-predicted; pins 41574/1302 + 3142; pushed). NEW honest discovery: 7 pre-existing skills-canvas reds never before surfaced, proven at 29039a6ad — PR body + follow-up candidate.
+FINAL FIX WAVE re-review: all clear (Parts 1+2). WAVE 4 COMPLETE. PR + convergence loop.
