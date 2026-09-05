@@ -193,6 +193,24 @@ def _validate_evidence(evidence: CompatibilityEvidence) -> CompatibilityEvidence
     return value
 
 
+def _validate_metadata(record: SnapshotRecord, snapshot_id: str) -> None:
+    """Establish schema-v1 ownership before catalog use or tombstone deletion."""
+    member = _MEMBER.fullmatch(record.filename)
+    if (
+        record.schema_version != 1
+        or _UUID.fullmatch(record.snapshot_id) is None
+        or snapshot_id != record.snapshot_id
+        or member is None
+        or member[3] != record.snapshot_id
+        or int(member[1]) != record.source_slot
+        or record.bytes <= 0
+        or record.tokens <= 0
+    ):
+        raise _error("invalid_metadata")
+    datetime.strptime(record.created_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    _validate_evidence(record.compatibility)
+
+
 class SnapshotStore:
     """One profile's private retained catalog and isolated launch working files."""
 
@@ -319,20 +337,9 @@ class SnapshotStore:
 
     def _record(self, path: Path) -> SnapshotRecord:
         record = SnapshotRecord.model_validate_json(_read_json(path))
-        member = _MEMBER.fullmatch(record.filename)
-        if (
-            record.schema_version != 1
-            or _UUID.fullmatch(record.snapshot_id) is None
-            or path.name != f"{record.snapshot_id}.json"
-            or member is None
-            or member[3] != record.snapshot_id
-            or int(member[1]) != record.source_slot
-            or record.bytes <= 0
-            or record.tokens <= 0
-        ):
+        if path.suffix != ".json":
             raise _error("invalid_metadata")
-        datetime.strptime(record.created_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        _validate_evidence(record.compatibility)
+        _validate_metadata(record, path.stem)
         with open_private_binary(self.catalog / record.filename) as binary:
             info = os.fstat(binary.stream.fileno())
             _check_member(self.catalog / record.filename, _identity(info))
@@ -723,20 +730,18 @@ class SnapshotStore:
                     continue
                 try:
                     value = json.loads(_read_json(path))
-                    if set(value) != {"record", "device", "inode"} or any(
-                        type(value[key]) is not int for key in ("device", "inode")
+                    if (
+                        not isinstance(value, dict)
+                        or set(value) != {"record", "device", "inode"}
+                        or any(
+                            type(value[key]) is not int for key in ("device", "inode")
+                        )
                     ):
                         continue
                     record = SnapshotRecord.model_validate_json(
                         json.dumps(value["record"])
                     )
-                    member = _MEMBER.fullmatch(record.filename)
-                    if (
-                        record.snapshot_id != path.stem
-                        or member is None
-                        or member[3] != path.stem
-                    ):
-                        continue
+                    _validate_metadata(record, path.stem)
                     if (self.catalog / f"{path.stem}.json").exists():
                         continue  # Commit marker was not yet tombstoned: retain it.
                     try:
