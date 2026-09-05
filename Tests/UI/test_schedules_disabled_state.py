@@ -173,8 +173,15 @@ def test_waiting_projection_without_next_run_reads_dash():
     assert _format_next_run(projection) == "-"
 
 
-def test_real_dispatch_lifecycle_leaves_next_run_labelled_disabled(tmp_path):
-    """End-to-end over the REAL DB, not a hand-built post-dispatch model."""
+def test_real_dispatch_lifecycle_leaves_next_run_labelled_completed(tmp_path):
+    """End-to-end over the REAL DB, not a hand-built post-dispatch model.
+
+    UAT finding 3e: a fired one-time reminder used to read Disabled here
+    (this test's own former name/assertions pinned that bug) while the
+    Queue's `_reminder_bucket` bucketed the SAME row Completed -- the two
+    seams disagreeing on the same reminder, under a Completed chip. Now
+    reconciled: `_task_status` checks `reminder_has_fired` first.
+    """
     from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
     from tldw_chatbook.Scheduling.services.scheduling_service import (
         SchedulingService,
@@ -201,9 +208,33 @@ def test_real_dispatch_lifecycle_leaves_next_run_labelled_disabled(tmp_path):
     # The state the bug depended on, asserted rather than assumed.
     assert task.enabled is False
     assert task.next_run_at is None
+    assert task.last_run_at is not None
 
-    assert _task_status(task) is TaskStatus.DISABLED
-    assert _format_next_run(task) == "— (disabled)"
+    assert _task_status(task) is TaskStatus.COMPLETED
+    assert _format_next_run(task) == "—"
+
+
+def test_fired_reminder_status_agrees_with_the_queue_bucket():
+    """UAT finding 3e: the bucket seam (drives the Queue chip/glyph,
+    `unified_rows._reminder_bucket`) and the label seam (drives the
+    detail badge/next-run text, `task_detail._task_status`) must bucket
+    the SAME fired one-time reminder the same way -- a row simultaneously
+    "Completed" under the chip and "Disabled" in its own detail pane was
+    the exact defect."""
+    from tldw_chatbook.UI.Screens.scheduling.unified_rows import _reminder_bucket
+
+    fired = ReminderTask(
+        id="task-fired",
+        title="Backup",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=_RUN_AT,
+        next_run_at=None,
+        last_run_at=_RUN_AT,
+        enabled=False,
+    )
+    assert _reminder_bucket(fired) == "completed"
+    assert _task_status(fired) is TaskStatus.COMPLETED
+    assert _format_next_run(fired) == "—"
 
 
 # --- review F5: behavior consumers use the underlying status --------------
