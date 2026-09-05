@@ -23,6 +23,8 @@ from typing import Any, Callable, Optional
 
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
 FRAME_BYTES = 640
 SINK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MACOS_MIN = (14, 2)
@@ -116,7 +118,10 @@ def ensure_helper(
     if bundled is not None:
         return bundled
     if not helper_source_path().exists():
-        logger.warning("audiotap helper source missing: {}", helper_source_path())
+        logger.warning(
+            "audiotap helper source missing: {}",
+            redact_user_paths(str(helper_source_path())),
+        )
         return None
     target = dev_helper_path(data_dir)
     if target.exists():
@@ -131,7 +136,10 @@ def ensure_helper(
         capture_output=True, text=True,
     )
     if getattr(result, "returncode", 1) != 0 or not target.exists():
-        logger.warning("audiotap helper compile failed: {}", getattr(result, "stderr", ""))
+        logger.warning(
+            "audiotap helper compile failed: {}",
+            redact_user_paths(str(getattr(result, "stderr", ""))),
+        )
         return None
     return target
 

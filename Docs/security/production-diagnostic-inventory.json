@@ -1,5 +1,15 @@
 {
   "classification_rules": {
+    "TASK-31551": {
+      "files": [
+        "tldw_chatbook/Audio/meeting_capture.py",
+        "tldw_chatbook/Audio/meeting_owner.py",
+        "tldw_chatbook/Audio/meeting_session.py",
+        "tldw_chatbook/Audio/system_audio_tap.py",
+        "tldw_chatbook/UI/Screens/meetings_screen.py"
+      ],
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
+    },
     "TASK-492": {
       "files": [
         "tldw_chatbook/Agents/mcp_tool_provider.py"
@@ -146,6 +156,27 @@
     },
     {
       "call_count": 4,
+      "diagnostic_digest": "3a9f0ab5e1b4354d11c6",
+      "owner": "TASK-31551",
+      "path": "tldw_chatbook/Audio/meeting_capture.py",
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "8f9396e6c24c439ac750",
+      "owner": "TASK-31551",
+      "path": "tldw_chatbook/Audio/meeting_owner.py",
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
+    },
+    {
+      "call_count": 6,
+      "diagnostic_digest": "8ce3aa527dcc584afa73",
+      "owner": "TASK-31551",
+      "path": "tldw_chatbook/Audio/meeting_session.py",
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
+    },
+    {
+      "call_count": 4,
       "diagnostic_digest": "6f9e5b0b90e7a8c34e26",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/realtime_mic_tap.py",
@@ -164,6 +195,13 @@
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/streaming_sink.py",
       "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 8,
+      "diagnostic_digest": "752f14e7135873c3c586",
+      "owner": "TASK-31551",
+      "path": "tldw_chatbook/Audio/system_audio_tap.py",
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
       "call_count": 210,
@@ -2838,6 +2876,13 @@
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/media_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "27f964117a07593a82e2",
+      "owner": "TASK-31551",
+      "path": "tldw_chatbook/UI/Screens/meetings_screen.py",
+      "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
       "call_count": 8,
@@ -11349,9 +11394,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 573,
+    "owner_files": 578,
     "path_privacy_candidate_calls": 715,
     "persistent_sink_files": 10,
+    "task_31551_calls": 24,
     "task_492_calls": 1337,
     "task_494_calls": 7593
   }
