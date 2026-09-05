@@ -1705,7 +1705,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._apply_tree_data_to_live_surfaces()
         await self._refresh_items_pending_arrivals()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="wc-daily-report-banner")
     async def _resolve_daily_report_banner(self) -> None:
         """Mount the demo banner only when it can teach something.
 
@@ -10912,18 +10912,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 and self.is_mounted
                 and self._briefing_watchlist_id() == watchlist_id
             ):
-                await self._load_briefings(
+                self._request_briefings_refresh(
                     select_briefing_id=(None if generation_failed else generated_id),
                     expect_durable_receipt=accepted,
+                    generation_failed=generation_failed,
+                    watchlist_id=watchlist_id,
                 )
-                if (
-                    generation_failed
-                    and self._artifacts_view_state != "storage_mismatch"
-                ):
-                    self._set_artifacts_view_state(
-                        "failed",
-                        "Briefing generation failed. Last good content is still shown.",
-                    )
 
     # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
     # Task 5). Sibling of the Generate chain immediately above: own
