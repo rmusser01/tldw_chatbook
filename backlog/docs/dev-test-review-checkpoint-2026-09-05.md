@@ -120,3 +120,38 @@ Post-rebase evidence:
   settings-return failures above remain open.
 - Nineteen review-only task-ID collisions were disambiguated without changing
   upstream tasks; all 3,378 task/archive records now have unique identities.
+
+## Resumed repairs after publishing the draft
+
+The review remains in progress. The following complete-file results supersede
+the corresponding open items above; they are overlapping selections, not a
+unique-test total or full-suite claim.
+
+- Trace settlement: **37 passed**. Tests now independently reach the UTF-8 byte
+  ceiling and sanitizer codepoint ceiling; recovery uses the actual reservation
+  timestamp without changing the grace period or fail-closed behavior.
+- Agent/regeneration/controller: **376 passed** across six complete files.
+  A real agent failure now keeps its notice visible beneath the restored original
+  answer. Routing/profile fixtures match current admission seams, and branching
+  persistence is verified in real SQLite. The run reported descriptor growth;
+  test-owned database teardown is being repaired separately, not ignored.
+- Branching after review-driven database cleanup: **6 passed**. Teardown awaits
+  the controller and closes the exact fixture database's worker connections.
+- Console settings: **416 passed**, with runtime warnings treated as errors.
+  Thread-start fault injection no longer alters global stdlib threading, and the
+  Inspector test includes the upstream Subagents section in its exact ordering.
+- Native Console navigation: **349 passed**. Both cached reuse and explicit
+  disposal/recreation are exercised, including exact handoff claims and real
+  worker cancellation on unmount.
+- Chunking Lab: **346 passed** across complete UI, core, DB, service and import
+  files. First-use imports restore the unchanged preimport limit: **500 modules**
+  and 377,271 source lines. No ceiling or snapshot was loosened.
+
+Remaining work includes Console/Library size decomposition, three Notes
+theme/rendering failures, test-owned descriptor cleanup, and the continued
+non-UI sweep. The Notes scroll mismatch has not reproduced after rebasing;
+its targeted cases pass, while the complete Notes file records 157 passes and
+three distinct theme/rendering failures. The resumed sweep also exposed stale
+summarization diagnostic-boundary hashes after rebasing and a Library media
+selection readiness failure; both remain recorded for investigation. Final
+diagnostic reconciliation must follow the reviewed controller moves.
