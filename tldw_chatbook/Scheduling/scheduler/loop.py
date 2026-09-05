@@ -82,10 +82,23 @@ class SchedulerLoop:
         handler_timeout_seconds: float | None = HANDLER_TIMEOUT_SECONDS,
         heartbeat_path: Path | None = None,
         emergency_stop_path: Path | None = None,
+        on_reminder_dispatched: Callable[[str], None] | None = None,
     ) -> None:
         self.db = db
         self.handlers = handlers
         self.poll_interval = poll_interval
+        # UAT finding 3a: the only route from "a reminder just fired" to
+        # "the workbench's row repaints" -- `mark_reminder_dispatched`
+        # below is where the row's own fired/enabled/next_run_at state
+        # actually changes, so this fires AFTER that write, on both the
+        # handler-succeeded and handler-failed branches (both call it).
+        # Posting from `ReminderHandler.handle` instead (which also has
+        # an `app_getter`) would race the DB write: that call returns
+        # before `mark_reminder_dispatched` runs, so a UI refresh
+        # triggered there could reload the pre-fire row. Guarded the same
+        # way `on_queue_changed` is guarded elsewhere in this package --
+        # a broken callback must never fail a dispatch.
+        self.on_reminder_dispatched = on_reminder_dispatched
         # TASK-26025: durable liveness. None uses the default user-data
         # path; injectable for tests. last_success/error persist across
         # ticks so a stalled loop's last state is inspectable.
@@ -676,6 +689,7 @@ class SchedulerLoop:
                     False,
                     grace_seconds=self.missed_fire_grace_seconds,
                 )
+                self._notify_reminder_dispatched(task_id)
             return False
 
         await self._finish_run_ledger(
@@ -693,7 +707,33 @@ class SchedulerLoop:
                 grace_seconds=self.missed_fire_grace_seconds,
                 timed_out=timed_out,
             )
+            self._notify_reminder_dispatched(task_id)
         return not timed_out
+
+    def _notify_reminder_dispatched(self, task_id: Any) -> None:
+        """Tell the app a reminder's row just changed (finding 3a).
+
+        Called once `mark_reminder_dispatched` has actually committed, on
+        both the success/timed-out and handler-failed paths -- either
+        one can flip the row's bucket (fired, or still armed for retry).
+        Never allowed to fail the dispatch: same tolerance
+        `SchedulingService.on_queue_changed` already applies to its own
+        callback. `getattr` (not `self.on_reminder_dispatched` directly):
+        several existing tests build a `SchedulerLoop` via
+        `SchedulerLoop.__new__(...)` and hand-set only the attributes
+        they need, bypassing `__init__` entirely -- this must not raise
+        `AttributeError` for those.
+        """
+        callback = getattr(self, "on_reminder_dispatched", None)
+        if callback is None:
+            return
+        try:
+            callback(task_id)
+        except Exception:  # noqa: BLE001 -- a broken callback must not break dispatch
+            logger.exception(
+                "on_reminder_dispatched callback failed for task {task_id}",
+                task_id=task_id,
+            )
 
     async def _begin_run_ledger(
         self, task: dict[str, Any], task_type: str, task_id: Any, now: datetime

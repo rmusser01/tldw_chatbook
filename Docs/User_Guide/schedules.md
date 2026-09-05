@@ -175,6 +175,14 @@ Local owner and no scheduling server connected, the bar collapses to a
 single line ("Local schedules — no scheduling server connected; sync is
 off"), and the **Clear** button only appears once a sync error exists.
 
+A sync cycle runs several independent phases (reminders, then automation
+review/definition pushback, definitions pull, results pull); one of them
+failing never overwrites the others' honest report. If your reminders
+synced cleanly but, say, an automation results pull hit a stale server,
+you get the success toast **and** a separate "Sync completed with
+issues — …" notice naming that one phase — never a blanket "Sync failed"
+that would make a genuinely successful push look lost.
+
 ## Scheduler liveness
 
 Below the sync bar, a one-line **scheduler liveness** indicator distinguishes
@@ -359,11 +367,13 @@ and its Next Run reads **— (disabled)** instead of a concrete time it
 will not honor, in both the detail pane and the queue row's subtitle.
 Enabling it restores the recorded last outcome and the real next run.
 
-This covers a one-time reminder that has already fired: running it
-disables it and clears its next run, so it reads **Disabled** in the
-detail badge with a Next Run of **— (disabled)** — the same as a task
-you disabled by hand. A fired one-time reminder shows the `✓` glyph in
-the queue and moves under the **Completed** chip.
+This does **not** cover a one-time reminder that has already fired:
+dispatching it also disables it and clears its next run internally, but
+the screen reads that specific shape as **finished**, not disabled —
+the detail badge and Next Run agree with the queue row: **Completed**,
+Next Run **—**, the `✓` glyph, and the **Completed** chip, everywhere at
+once. A task you disabled yourself (its next run is still armed
+underneath) is the only shape that reads **Disabled** / **— (disabled)**.
 
 ## Ran late — what happens to overdue reminders
 
@@ -723,6 +733,24 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules UAT remediation, Task 2 (the stale-
+display cluster) — 2026-09-04. Two corrections to prior copy in this
+page, both fixed defects: the **Disabled tasks** section used to
+describe a fired one-time reminder as reading "Disabled" with a
+"— (disabled)" Next Run while simultaneously sitting under the
+**Completed** chip — that was the bug (badge and chip disagreeing on
+the same row), not a documented quirk; it now reads Completed
+everywhere. The **Sync bar honesty** section gained a paragraph on
+mixed-cycle sync (one phase fails, another succeeds): the toast now
+reports both truths separately rather than a blanket "Sync failed"
+masking a phase that actually succeeded. Also fixed without a copy
+change: a scheduler-fired reminder's row now repaints without
+navigating away and back, and the scheduler-liveness line refreshes
+every 5s instead of only alongside the 60s relative-time ticker.
+Pinned by `Tests/UI/test_schedules_disabled_state.py`,
+`Tests/UI/test_schedules_workbench.py`, and
+`Tests/Scheduling/test_sync_engine.py`/`test_scheduler_loop.py`.*
 
 *Verified against the schedules redesign PR-4 — 2026-09-04 (docs pass
 against shipped code/tests, live check pending the redesign program's

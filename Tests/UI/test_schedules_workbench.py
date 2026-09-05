@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from loguru import logger as _loguru_logger
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -25,6 +26,7 @@ from textual import on
 from tldw_chatbook.Scheduling.events import (
     DefinitionRunNowRequested,
     DeleteTaskRequested,
+    ReminderDispatched,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
@@ -45,9 +47,14 @@ from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
 from tldw_chatbook.Scheduling.services import (
     scheduling_service as scheduling_service_module,
 )
+from tldw_chatbook.Scheduling.services.sync_engine import SyncOutcome
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.results_tab import ResultsHostScreen, ResultsTab
-from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    NEXT_RUN_REFRESH_SECONDS,
+    SCHEDULER_LIVENESS_REFRESH_SECONDS,
+    SchedulesWorkbench,
+)
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -3034,15 +3041,24 @@ async def test_follow_console_ignored_when_disabled():
 
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_notifies_and_uses_empty_state():
-    """A service failure surfaces an error notification and consistent empty copy."""
+    """A service failure surfaces an error notification; on the very
+    first (never-succeeded) load there is no prior state to preserve, so
+    the detail pane simply keeps its pre-load compose-time copy (UAT
+    Major 5: the fix is to stop DESTROYING good state on a later
+    failure, not to paint a bespoke first-failure copy)."""
     async with WorkbenchTestAppWithFailingService().run_test() as pilot:
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
+        assert any(severity == "error" for severity, _ in notify_calls), notify_calls
         empty_state = pilot.app.screen.query_one(
             "#scheduling-task-detail-empty-state", Static
         )
-        assert "No scheduled tasks yet" in empty_state.visual.plain
+        assert "Select a task from the queue" in empty_state.visual.plain
 
 
 # redesign PR-2, Task 2: the four watchlist-row tests that used to live
@@ -3128,23 +3144,58 @@ class WorkbenchTestAppWithToggleFailingService(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_load_tasks_service_error_clears_stale_rows():
-    """A service failure after data was loaded clears the table and internal task list."""
+async def test_load_tasks_service_error_keeps_the_last_good_rows():
+    """UAT Major 5: a service failure AFTER data was loaded must not
+    destroy the last-good display -- a read failure is not evidence the
+    queue is empty. This used to clear the table and the internal task
+    list on ANY exception here, with nothing short of a fresh mount able
+    to restore it; this test's own former name/assertions pinned that
+    bug."""
     async with WorkbenchTestAppWithToggleFailingService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 1
+        workbench = pilot.app.screen
+        tasks_before = list(workbench._tasks)
+        rows_before = list(workbench._all_rows)
 
-        await pilot.app.screen.load_tasks()
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
+        await workbench.load_tasks()
         await pilot.pause()
 
-        assert table.row_count == 0
-        empty_state = pilot.app.screen.query_one(
-            "#scheduling-task-detail-empty-state", Static
-        )
-        assert "No scheduled tasks yet" in empty_state.visual.plain
+        assert table.row_count == 1, "the table must keep the last-good rows"
+        assert workbench._tasks == tasks_before
+        assert workbench._all_rows == rows_before
+        assert any(severity == "error" for severity, _ in notify_calls), notify_calls
+
+
+@pytest.mark.asyncio
+async def test_load_tasks_failure_logs_which_step_raised():
+    """UAT Major 5's logging hook: a bare `logger.exception("Failed to
+    load tasks")` covering three distinct calls (reminders listing,
+    definitions listing, row build) left no way to pin the raiser
+    without reproducing it live. The log line must now name the step,
+    the exception type, and enough context to find it without a repro."""
+    records: list[str] = []
+    sink_id = _loguru_logger.add(
+        lambda message: records.append(message.record["message"]), level="ERROR"
+    )
+    try:
+        async with WorkbenchTestAppWithFailingService().run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+    finally:
+        _loguru_logger.remove(sink_id)
+
+    assert any(
+        "listing tasks" in r and "RuntimeError" in r and "owner_id=" in r
+        for r in records
+    ), records
 
 
 class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
@@ -3571,6 +3622,158 @@ def test_sync_failed_event():
     msg = SyncFailed("server:1", error="timeout")
     assert msg.owner_id == "server:1"
     assert msg.error == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_mixed_sync_cycle_toasts_success_and_surfaces_the_phase_failure():
+    """UAT finding 3c pin: a cycle whose reminder phase succeeded (and,
+    per the same-cycle scenario, a definition push too) alongside an
+    UNRELATED phase's failure (a business 404) must never toast "Sync
+    failed" -- and must never silently drop the failure either. Both
+    truths, as separate notices."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
+        # Isolate the toast-mapping logic under test from the rest of
+        # this handler's refresh side effects (already covered by other
+        # tests in this file).
+        workbench._refresh_owner_select = lambda: None
+        workbench._request_tasks_refresh = lambda *a, **k: None
+        workbench._refresh_conflicts_badge = lambda: None
+        workbench._refresh_results_badge = lambda: None
+
+        outcome = SyncOutcome(
+            "ok",
+            pulled=0,
+            pushed=1,
+            phase_errors=("Automation results pull: business 404 (stale server)",),
+        )
+        workbench._on_sync_completed(SyncCompleted("local", conflict_count=0, outcome=outcome))
+
+        assert len(notify_calls) == 2, notify_calls
+        success_severity, success_message = notify_calls[0]
+        assert success_severity == "information"
+        assert "failed" not in success_message.lower(), (
+            "the success toast must never say 'failed'"
+        )
+        failure_severity, failure_message = notify_calls[1]
+        assert failure_severity == "warning"
+        assert "Automation results pull" in failure_message
+        assert "business 404" in failure_message
+
+
+def test_reminder_dispatched_relays_to_the_mounted_workbench():
+    """UAT finding 3a pin: `TldwCli.on_reminder_dispatched` (the `post_
+    message` fallback bridge -- `on_queue_changed` only reaches the
+    scheduler loop's own in-memory queue, never a screen) must find a
+    live `SchedulesWorkbench` on the screen stack and trigger a refresh,
+    the exact route a scheduled reminder fire otherwise has none of."""
+    from tldw_chatbook.app import TldwCli
+
+    workbench = SchedulesWorkbench(app_instance=SimpleNamespace(scheduling_service=None))
+    refresh_calls: list[bool] = []
+    workbench._request_tasks_refresh = lambda *, refresh_definitions=True: (
+        refresh_calls.append(refresh_definitions)
+    )
+    # A plain fake, not a real `App` -- `screen_stack` is a real Textual
+    # App's own read-only property, and this relay's only real contract
+    # is "reads `self.screen_stack`, finds the workbench, calls its
+    # refresh" -- no live app/message pump needed to pin that.
+    fake_app = SimpleNamespace(screen_stack=[object(), workbench])
+
+    TldwCli.on_reminder_dispatched(fake_app, ReminderDispatched("task-1"))
+
+    assert refresh_calls == [False], (
+        "a fired reminder must trigger a reminder-only refresh without navigating away and back"
+    )
+
+
+def test_reminder_dispatched_is_a_no_op_with_no_workbench_mounted():
+    """The relay must not raise when Schedules isn't the active screen."""
+    from tldw_chatbook.app import TldwCli
+
+    fake_app = SimpleNamespace(screen_stack=[object()])
+
+    TldwCli.on_reminder_dispatched(fake_app, ReminderDispatched("task-1"))
+
+
+def test_post_reminder_dispatched_posts_the_message():
+    """`SchedulerLoop.on_reminder_dispatched` is wired to this bound
+    method (`app.py`'s scheduler-loop construction) -- it must post a
+    real `ReminderDispatched` carrying the fired task's id."""
+    from tldw_chatbook.app import TldwCli
+
+    posted: list[object] = []
+    app = WorkbenchTestAppWithService()
+    app.post_message = lambda message: posted.append(message)
+
+    TldwCli._post_reminder_dispatched(app, "task-7")
+
+    assert len(posted) == 1
+    assert isinstance(posted[0], ReminderDispatched)
+    assert posted[0].task_id == "task-7"
+
+
+@pytest.mark.asyncio
+async def test_liveness_strip_gets_its_own_faster_interval_timer():
+    """UAT finding 3d pin: the scheduler-liveness strip used to be
+    repainted only as a side effect of the 60s next-run ticker, so a
+    0-30s value was static for up to a full minute between samples. It
+    must now be scheduled on its OWN interval, faster than that ticker,
+    calling `_refresh_scheduler_liveness` directly."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        scheduled: list[tuple[float, object]] = []
+        real_set_interval = workbench.set_interval
+
+        def fake_set_interval(seconds, callback, *a, **k):
+            scheduled.append((seconds, callback))
+            return real_set_interval(seconds, callback, *a, **k)
+
+        workbench.set_interval = fake_set_interval
+
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        liveness_timers = [s for s, cb in scheduled if cb == workbench._refresh_scheduler_liveness]
+        next_run_timers = [s for s, cb in scheduled if cb == workbench._refresh_next_run_rendering]
+        assert liveness_timers == [SCHEDULER_LIVENESS_REFRESH_SECONDS]
+        assert next_run_timers == [NEXT_RUN_REFRESH_SECONDS]
+        assert SCHEDULER_LIVENESS_REFRESH_SECONDS < NEXT_RUN_REFRESH_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume_pause_and_restart_the_liveness_timer_too():
+    """The liveness timer must follow the same hidden-clock discipline
+    (TASK-23022) the next-run timer already has -- paused while covered,
+    resumed (and refreshed immediately) on uncover."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        paused = []
+        resumed = []
+        workbench._liveness_refresh_timer.pause = lambda: paused.append(True)
+        workbench._liveness_refresh_timer.resume = lambda: resumed.append(True)
+        refreshed = []
+        workbench._refresh_scheduler_liveness = lambda: refreshed.append(True)
+
+        workbench.on_screen_suspend()
+        assert paused == [True]
+
+        workbench.on_screen_resume()
+        assert resumed == [True]
+        assert refreshed == [True]
 
 
 @pytest.mark.asyncio

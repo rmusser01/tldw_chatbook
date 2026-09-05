@@ -287,6 +287,26 @@ class SyncCompleted(Message):
         self.outcome = outcome
 
 
+class ReminderDispatched(Message):
+    """Posted (to the App) after the scheduler loop dispatches a reminder.
+
+    UAT finding 3a: nothing outside the workbench's own user-initiated
+    actions ever re-read the DB while the screen was open, so a fired
+    reminder kept painting "Waiting" until the next 60s ticker or a
+    navigation away and back. `SchedulerLoop` has no route to a screen
+    (it is UI-agnostic by design), so it fires this through the app
+    (`TldwCli.on_reminder_dispatched`), which relays it to the
+    `SchedulesWorkbench` if one is currently mounted. Carries only the
+    task id, informational only for now -- the handler does a full
+    `_request_tasks_refresh()` rather than a targeted repaint, since a
+    fired one-time reminder's bucket/next-run text both change together.
+    """
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__()
+        self.task_id = task_id
+
+
 class SyncFailed(Message):
     """Posted when a sync attempt fails.
 

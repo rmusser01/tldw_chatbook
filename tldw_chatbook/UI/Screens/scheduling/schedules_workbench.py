@@ -127,6 +127,15 @@ QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
 #: not current, per the hidden-progress-clock rule (TASK-23022).
 NEXT_RUN_REFRESH_SECONDS = 60.0
 
+#: Cadence for the scheduler-liveness strip (UAT finding 3d). It used to
+#: be repainted only as a side effect of the 60s ticker above, so a
+#: 0-30s "last tick Ns ago" value was visibly static for up to a full
+#: minute between samples. `scheduler_liveness_line` is one JSON-file
+#: read plus a string compare -- cheap enough for its own faster,
+#: independent cadence. Also paused while the screen is not current
+#: (same rule, TASK-23022).
+SCHEDULER_LIVENESS_REFRESH_SECONDS = 5.0
+
 #: Defensive cap for the server definitions' follow-the-pages load -- the
 #: loop exists so the tail of a large definition list is never silently
 #: hidden, not to render unbounded rows.
@@ -437,6 +446,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
         self._next_run_refresh_timer: Timer | None = None
+        self._liveness_refresh_timer: Timer | None = None
         # task-15476: the task id currently shown in the detail/inspector
         # panes, tracked independently of row index so a filter keystroke
         # can restore the same selection instead of always jumping to row 0.
@@ -724,6 +734,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._next_run_refresh_timer = self.set_interval(
             NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
         )
+        # UAT finding 3d: its own faster, independent cadence -- it used
+        # to be repainted only as a side effect of the timer above, so a
+        # 0-30s value was static for up to a full minute between samples.
+        self._liveness_refresh_timer = self.set_interval(
+            SCHEDULER_LIVENESS_REFRESH_SECONDS, self._refresh_scheduler_liveness
+        )
         self._request_tasks_refresh()
         self._refresh_scheduler_liveness()
         self._start_server_notification_observer()
@@ -1005,8 +1021,10 @@ class SchedulesWorkbench(BaseAppScreen):
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
 
-        Also refreshes the scheduler-liveness line (TASK-26025) so a loop
-        that dies while the screen is open turns visibly stale.
+        UAT finding 3d: the scheduler-liveness line used to be refreshed
+        only as a side effect of this 60s ticker -- it now has its own
+        faster `_liveness_refresh_timer` (started alongside this one in
+        `on_mount`), so this method no longer touches it.
 
         Skips unless this screen is the top of the stack. (Textual's
         ``is_current`` also counts screens behind the top one --
@@ -1019,9 +1037,6 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         if self.app.screen is not self:
             return
-        # TASK-26025: refresh liveness even on an empty queue -- a stall
-        # with nothing queued is exactly the case AC#2 must distinguish.
-        self._refresh_scheduler_liveness()
         # redesign PR-2, Task 2: `_visible_rows`, not the reminder-only
         # `_visible_tasks` -- a Queue showing only definition rows still
         # has relative next-run text that must not go stale.
@@ -1030,16 +1045,18 @@ class SchedulesWorkbench(BaseAppScreen):
         self._render_table(tick=True)
 
     def on_screen_suspend(self) -> None:
-        """Stop the relative-time refresh while another screen covers this.
+        """Stop the relative-time and liveness refreshes while covered.
 
         Hidden clocks must not tick unseen (TASK-23022); the resume
         handler refreshes immediately so no stale text is ever shown.
         """
         if self._next_run_refresh_timer is not None:
             self._next_run_refresh_timer.pause()
+        if self._liveness_refresh_timer is not None:
+            self._liveness_refresh_timer.pause()
 
     def on_screen_resume(self) -> None:
-        """Refresh relative times and restart the cadence when uncovered.
+        """Refresh relative times/liveness and restart both cadences.
 
         No ``super().on_screen_resume()``: Textual's dispatcher invokes
         every handler along the MRO for one event (see BaseAppScreen's
@@ -1047,7 +1064,13 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         if self._next_run_refresh_timer is not None:
             self._next_run_refresh_timer.resume()
+        if self._liveness_refresh_timer is not None:
+            self._liveness_refresh_timer.resume()
         self._refresh_next_run_rendering()
+        # UAT finding 3d: `_refresh_next_run_rendering` no longer covers
+        # this (its own decoupled timer does) -- refresh it immediately
+        # on uncover too, same "no stale text is ever shown" rule.
+        self._refresh_scheduler_liveness()
         # redesign PR-4 task 5: the retired Queue-tab `TabActivated`
         # staleness consumer's new home -- see `_consume_definitions_stale`.
         self._consume_definitions_stale()
@@ -1168,6 +1191,13 @@ class SchedulesWorkbench(BaseAppScreen):
             await self._refresh_console_context()
             return
 
+        # UAT Major 5 (unpinned): names WHICH step raised, since a bare
+        # `logger.exception("Failed to load tasks")` covering three
+        # distinct calls (reminders listing, definitions listing, row
+        # build) left no way to pin the raiser without reproducing it
+        # live. Updated before each step so the except below always
+        # names the one in flight when it failed.
+        stage = "listing tasks"
         try:
             combined = await service.list_tasks(
                 owner_id=None, include_projections=False
@@ -1175,6 +1205,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # Defensive, not load-bearing: `include_projections=False`
             # already guarantees every row is a `ReminderTask`.
             reminders = [task for task in combined if isinstance(task, ReminderTask)]
+            stage = "loading automation definitions"
             do_full_definitions_fetch = refresh_definitions or self._definitions_stale
             definitions = (
                 await self._load_queue_definitions(service)
@@ -1183,6 +1214,8 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             if do_full_definitions_fetch:
                 self._definitions_stale = False
+
+            stage = "building unified rows"
 
             def _build_rows() -> list[UnifiedRow]:
                 results = service.db.list_automation_results(
@@ -1196,24 +1229,28 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
 
             all_rows = await asyncio.to_thread(_build_rows)
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to load tasks")
+        except Exception as exc:  # noqa: BLE001
+            # UAT Major 5: a read failure is not evidence the queue is
+            # empty. This used to reset `_tasks`/`_all_rows`, clear the
+            # table, and blank every detail/inspector pane on ANY
+            # exception here -- destroying the last-good display over a
+            # transient read error, with nothing short of a fresh mount
+            # able to restore it. Now it keeps whatever was already on
+            # screen and only reports the failure.
+            logger.exception(
+                "Failed to load tasks while {stage} (owner_id={owner_id}, "
+                "refresh_definitions={refresh_definitions}): {exc_type}: {exc}",
+                stage=stage,
+                owner_id=getattr(service, "owner_id", None),
+                refresh_definitions=refresh_definitions,
+                exc_type=type(exc).__name__,
+                exc=exc,
+            )
             self.app_instance.notify(
-                "Could not load tasks. Check the scheduling service and retry.",
+                "Could not refresh tasks (showing the last-loaded queue). "
+                "Check the scheduling service and retry.",
                 severity="error",
             )
-            self._tasks = []
-            self._all_rows = []
-            self._update_mark_all_read_visibility()
-            table = self.query_one("#scheduling-task-table", DataTable)
-            table.clear()
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-                None, queue_empty=True
-            )
-            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
-            self.query_one(
-                "#scheduling-queue-definition-detail", DefinitionDetail
-            ).set_definition(None)
             await self._refresh_console_context()
             return
 
@@ -4344,6 +4381,19 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             message = "Sync finished — nothing to pull or push."
         self.app_instance.notify(message, severity="information")
+        # UAT finding 3c: `outcome.status`/`.error` now describe ONLY the
+        # reminder phase -- an automation phase (definition push/pull,
+        # results pull) that failed in the same cycle no longer collapses
+        # this into a `SyncFailed` "Sync failed: ..." toast (that would
+        # lie about a reminder phase, or an unrelated definition push,
+        # that genuinely succeeded). Its own truth still has to reach the
+        # user, as its own notice rather than silently dropped.
+        phase_errors = tuple(getattr(outcome, "phase_errors", ()) or ())
+        if phase_errors:
+            self.app_instance.notify(
+                "Sync completed with issues — " + "; ".join(phase_errors),
+                severity="warning",
+            )
         self._refresh_owner_select()
         self._request_tasks_refresh()
         self._refresh_conflicts_badge()

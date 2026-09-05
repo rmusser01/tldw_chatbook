@@ -63,6 +63,17 @@ _SYNC_MAX_PAGES = 4
 #: them (final review I4).
 _TRANSFER_ACTIONS = ("transfer_to_server", "release_from_server")
 
+#: `_push_definition_mutation`'s outcome vocabulary that means "a mutation
+#: actually reached the server this cycle" (UAT finding 3c) -- everything
+#: else (`invalid`/`orphaned`/`unsynced`/`transfer_skipped`/
+#: `transfer_cas_skipped`/`transfer_failed`/`transfer_orphaned`/
+#: `unknown`/`{action}_not_found`) settled without a real push. Read by
+#: `_replay_definition_mutations`, the only other writer of
+#: `last_push_at` besides `_sync_reminders`'s own reminder-scoped one.
+_DEFINITION_PUSH_SUCCESS_OUTCOMES = frozenset(
+    {"created", "updated", "released", "transferred", "pause", "resume", "archive"}
+)
+
 
 @dataclass(frozen=True)
 class SyncOutcome:
@@ -81,12 +92,26 @@ class SyncOutcome:
       pulled or pushed; not an error.
     - ``error``: the attempt failed. ``error`` carries the message that
       was also recorded as a persisted sync error.
+
+    ``status``/``error`` describe ONLY the reminder phase (`_sync_
+    reminders`) -- the automation phases (review pushback, definition
+    push, definitions pull, results pull) are independently contained by
+    `_run_phase` and run regardless of the reminder phase's own outcome.
+    UAT finding 3c: `sync_now` used to collapse any later phase's error
+    into `status="error"` + `error=phase_errors[0]`, so a cycle whose
+    definition push succeeded still toasted "Sync failed" over an
+    unrelated results-pull 404. ``phase_errors`` carries those phases'
+    own LABELED failures (e.g. ``"Automation results pull: ..."``)
+    instead, so a caller can report the reminder outcome honestly *and*
+    surface the rest as its own notice -- never silently dropped, never
+    misreported as the whole cycle failing.
     """
 
     status: str
     pulled: int = 0
     pushed: int = 0
     error: str | None = None
+    phase_errors: tuple[str, ...] = ()
 
 
 def now_utc_iso() -> str:
@@ -223,7 +248,7 @@ class SyncEngine:
             target_owner, "Automation review pushback", self._replay_review_mutations
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation review pushback: {error}")
         if pushed_review_ids:
             logger.info(
                 f"Automation review pushback for {target_owner}: "
@@ -248,7 +273,7 @@ class SyncEngine:
             self._replay_definition_mutations,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation definition push: {error}")
         definition_push_counts, pushed_lifecycle_server_ids = (
             definition_push_result
             if definition_push_result is not None
@@ -271,7 +296,7 @@ class SyncEngine:
             skip_lifecycle_server_ids=pushed_lifecycle_server_ids,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation definitions pull: {error}")
         if counts:
             logger.info(f"Automation definitions pull for {target_owner}: {counts}")
 
@@ -282,7 +307,7 @@ class SyncEngine:
             skip_review_server_ids=skip_review_server_ids,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation results pull: {error}")
         if counts:
             logger.info(f"Automation results pull for {target_owner}: {counts}")
 
@@ -301,8 +326,15 @@ class SyncEngine:
         # already carries its own message and is left alone. Results/
         # definitions already pulled by an earlier phase this round are
         # not rolled back.
-        if reminder_outcome.status in ("ok", "not_applicable") and phase_errors:
-            return replace(reminder_outcome, status="error", error=phase_errors[0])
+        #
+        # UAT finding 3c: this used to collapse ANY later-phase error into
+        # `status="error"` (masking a genuinely successful reminder/
+        # definition-push phase behind "Sync failed"). `status`/`error`
+        # now describe ONLY the reminder phase; `phase_errors` carries
+        # the labeled rest so a caller can report both honestly instead
+        # of picking one truth to tell.
+        if phase_errors:
+            return replace(reminder_outcome, phase_errors=tuple(phase_errors))
 
         return reminder_outcome
 
@@ -603,6 +635,17 @@ class SyncEngine:
                 and server_definition_id
             ):
                 pushed_lifecycle_server_ids.add(server_definition_id)
+        if any(outcome in _DEFINITION_PUSH_SUCCESS_OUTCOMES for outcome in counts):
+            # UAT finding 3c: `_sync_reminders` is the ONLY existing
+            # `last_push_at` writer, and only for its own reminder
+            # pushes -- a definition edit/lifecycle push (with nothing
+            # on the reminder side this cycle) left the header showing
+            # "Last push: -" forever. Direct call, not
+            # `asyncio.to_thread`, matching every other `self.db.*` call
+            # in this method. Only stamped on a genuine push (not
+            # `invalid`/`unsynced`/`transfer_skipped`/etc.) so an
+            # all-noop cycle can never move it.
+            self.db.update_sync_state(owner_id, last_push_at=now_utc_iso())
         return counts, frozenset(pushed_lifecycle_server_ids)
 
     async def _push_definition_mutation(self, mutation: dict, owner_id: str) -> str:
