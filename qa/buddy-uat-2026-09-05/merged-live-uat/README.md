@@ -55,3 +55,32 @@ The [capture receipt](microphone-20260905-fd8d5bba24/microphone.json) and
 exit, matching source identity, no app exception, and unchanged normal config.
 No raw audio was saved or sent. This is partial listening/cleanup evidence, not
 successful speech/provider/playback acceptance.
+
+
+## Post-fix human voice acceptance
+
+The user confirmed that no phrase was spoken in the preceding
+`microphone-20260905-fd8d5bba24` window, explaining its empty speech result.
+
+A new explicitly started run, `microphone-20260905-587d0a8874`, tested revision
+`e9a1543d2774cee135abb5a989a4f1eacf5fd4e9`. Local capture lasted 20.02 seconds,
+delivered 123520 VAD-accepted PCM bytes, and local faster-whisper recognized the
+expected words in a 38-character transcript. DeepSeek completed a nonempty reply;
+Kokoro delivered 68608 audio bytes to a drained playback sink. The user confirmed
+“Yes, clearly.” when asked whether the spoken reply was heard.
+
+Buddy reported `listening` during capture and ended `idle`. The receipt's
+`dictation_session_released=false` measures the reusable session object, not the
+microphone stream: ordinary successful stop intentionally retains that object,
+while `stop_dictation` stops the recorder. It must not be treated as a leak
+assertion. The live receipt did not directly inspect the recorder handle. The
+child exited cleanly, with matching source identity, no application exception,
+and unchanged normal configuration. No raw audio was saved or sent to DeepSeek.
+
+[Capture receipt](microphone-20260905-587d0a8874/microphone.json),
+[execution identity](microphone-20260905-587d0a8874/execution.json), and
+[human confirmation](microphone-20260905-587d0a8874/human-confirmation.json) preserve
+this evidence. This accepts the local dictation/provider/readback route and the
+listening-state fix. It does not certify server browser voice or the complete
+OpenAI realtime human interaction; thinking/speaking transitions were not sampled
+in this harness.
