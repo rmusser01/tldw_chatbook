@@ -31,7 +31,7 @@ REQUIRED_NODES = (
     "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection",
     "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
     "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions",
-    "Tests/LLM_Management/test_gguf_server_sources.py::test_vllm_command_snapshot_is_unchanged",
+    "Tests/LLM_Management/test_vllm_setup.py::test_vllm_command_snapshot_is_unchanged",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")

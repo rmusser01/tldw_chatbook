@@ -182,6 +182,12 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     snapshot_from_session_settings,
 )
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointAdoptionReceipt,
+    ConsoleEndpointPolicyState,
+    ConsoleEndpointRollbackOutcome,
+    ConsoleEphemeralEndpointPolicy,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsLiveCommit,
@@ -985,6 +991,21 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Persist the latest complete Console settings snapshot."""
 
+    def adopt_console_session_endpoint_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleEndpointAdoptionReceipt:
+        """Persist endpoint-safe settings and return an exact rollback receipt."""
+
+    def rollback_console_session_endpoint_adoption(
+        self,
+        *,
+        receipt: ConsoleEndpointAdoptionReceipt,
+    ) -> bool:
+        """Restore pre-adoption metadata while the receipt still owns the row."""
+
     def update_conversation_title(
         self,
         *,
@@ -1287,6 +1308,11 @@ class ConsoleChatSession:
     library_destination_runtime: ConsoleLibraryDestinationRuntimeState = field(
         default_factory=ConsoleLibraryDestinationRuntimeState
     )
+    #: Verified endpoint selected for this live process only. Fork snapshots
+    #: may carry it in memory so the child keeps the same live-only authority;
+    #: conversation metadata, sync, import, export, and promotion never
+    #: serialize it.
+    ephemeral_endpoint_policy: ConsoleEphemeralEndpointPolicy | None = None
     draft: str = ""
     #: Session-lifetime evidence that the composer has held user-authored text.
     #: Clearing the draft does not make that work safe to overwrite.
@@ -6052,9 +6078,15 @@ class ConsoleChatStore:
         settings = session.settings
         if not isinstance(settings, ConsoleSessionSettings):
             raise ValueError("Console fork settings are unavailable.")
+        endpoint_policy = session.ephemeral_endpoint_policy
+        persisted_settings = replace(
+            settings,
+            base_url=None if endpoint_policy is not None else settings.base_url,
+            pinned_prefill=None,
+        )
         return ConsoleForkConfigurationSnapshot(
             workspace_id=session.workspace_id,
-            settings=replace(settings, pinned_prefill=None),
+            settings=persisted_settings,
             rag_scope=session.rag_scope_holder.scope,
             context_policy_overrides=session.context_policy_overrides,
             library_policy=self.session_library_policy_candidate(session.id),
@@ -6072,6 +6104,7 @@ class ConsoleChatStore:
                 session.project_instruction_state
             ),
             thinking_history_policy=session.thinking_history_policy,
+            ephemeral_endpoint_policy=endpoint_policy,
         )
 
     def _fork_configuration_fingerprint(
@@ -7447,6 +7480,7 @@ class ConsoleChatStore:
             workspace_id=configuration.workspace_id,
             persisted_conversation_id=snapshot.fork_conversation_id,
             settings=configuration.settings,
+            ephemeral_endpoint_policy=configuration.ephemeral_endpoint_policy,
             context_policy_overrides=configuration.context_policy_overrides,
             library_policy_holder=ConsoleLibraryPolicyHolder(policy_snapshot),
             library_policy_hydrated=not snapshot.durable,
@@ -7581,6 +7615,27 @@ class ConsoleChatStore:
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
         return self._session_or_raise(session_id).settings
+
+    def effective_session_settings(
+        self,
+        session_id: str,
+    ) -> ConsoleSessionSettings | None:
+        """Return settings with a matching live-only endpoint policy applied."""
+
+        session = self._session_or_raise(session_id)
+        settings = session.settings
+        policy = session.ephemeral_endpoint_policy
+        if settings is None or policy is None:
+            return settings
+        return policy.effective_settings(settings)
+
+    def session_ephemeral_endpoint_policy(
+        self,
+        session_id: str,
+    ) -> ConsoleEphemeralEndpointPolicy | None:
+        """Return the process-local endpoint policy for one Console session."""
+
+        return self._session_or_raise(session_id).ephemeral_endpoint_policy
 
     def session_settings_revision(self, session_id: str) -> int:
         """Return the process-local revision of modal-owned session settings."""
@@ -8571,7 +8626,10 @@ class ConsoleChatStore:
     ) -> ConsoleChatSession:
         """Replace settings and refresh an existing durable resume snapshot."""
         session = self._session_or_raise(session_id)
-        changed = session.settings != settings
+        changed = (
+            session.settings != settings
+            or session.ephemeral_endpoint_policy is not None
+        )
         if mark_user_work and changed:
             session.has_user_work = True
         elif not mark_user_work:
@@ -8581,6 +8639,9 @@ class ConsoleChatStore:
                 )
             session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
+        # An ordinary explicit/automatic settings replacement owns the whole
+        # selection and therefore retires any earlier session-only handoff.
+        session.ephemeral_endpoint_policy = None
         session.generation_settings_revision += 1
         session.settings_persistence_failures.pop(
             ConsoleSettingsComponent.GENERATION_SETTINGS,
@@ -8614,6 +8675,173 @@ class ConsoleChatStore:
         if changed:
             self._bump_settings_revision(session_id)
         return session
+
+    def adopt_session_ephemeral_endpoint(
+        self,
+        session_id: str,
+        *,
+        settings: ConsoleSessionSettings,
+        policy: ConsoleEphemeralEndpointPolicy,
+    ) -> ConsoleEndpointAdoptionReceipt | None:
+        """Publish one verified live endpoint without serializing that endpoint.
+
+        Existing conversations persist the endpoint-safe ``settings`` first.
+        Only after that durable write returns is the raw settings snapshot and
+        live-only endpoint policy published together in the session.
+        """
+
+        if not isinstance(settings, ConsoleSessionSettings) or not isinstance(
+            policy, ConsoleEphemeralEndpointPolicy
+        ):
+            raise TypeError("Exact Console endpoint adoption state is required")
+        if policy.state is not ConsoleEndpointPolicyState.ACTIVE:
+            raise ValueError("A new Console endpoint policy must be active")
+        if settings.provider != policy.provider or settings.model != policy.model:
+            raise ValueError("Console endpoint policy must match durable settings")
+
+        with self._fork_source_transition(session_id):
+            session = self._session_or_raise(session_id)
+            receipt: ConsoleEndpointAdoptionReceipt | None = None
+            if session.persisted_conversation_id is not None:
+                persistence = self.persistence
+                writer = getattr(
+                    persistence,
+                    "adopt_console_session_endpoint_settings",
+                    None,
+                )
+                if not callable(writer):
+                    raise RuntimeError(
+                        "Console persistence cannot safely adopt a live endpoint"
+                    )
+                receipt = writer(
+                    conversation_id=session.persisted_conversation_id,
+                    settings=settings,
+                )
+                if not isinstance(receipt, ConsoleEndpointAdoptionReceipt):
+                    raise RuntimeError("Console endpoint adoption receipt is invalid")
+
+            changed = (
+                session.settings != settings
+                or session.ephemeral_endpoint_policy != policy
+            )
+            if changed:
+                session.has_user_work = True
+            session.settings = settings
+            session.ephemeral_endpoint_policy = policy
+            session.generation_settings_revision += 1
+            session.settings_persistence_failures.pop(
+                ConsoleSettingsComponent.GENERATION_SETTINGS,
+                None,
+            )
+            self._bump_payload_revision(session_id)
+            if changed:
+                self._bump_settings_revision(session_id)
+            return receipt
+
+    def rollback_session_ephemeral_endpoint_adoption(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+        expected_policy: ConsoleEphemeralEndpointPolicy,
+        prior_settings: ConsoleSessionSettings,
+        prior_policy: ConsoleEphemeralEndpointPolicy | None,
+        prior_has_user_work: bool,
+        receipt: ConsoleEndpointAdoptionReceipt | None,
+    ) -> ConsoleEndpointRollbackOutcome:
+        """Restore exact adoption state or block the endpoint on durable failure."""
+
+        if (
+            not isinstance(expected_settings, ConsoleSessionSettings)
+            or not isinstance(expected_policy, ConsoleEphemeralEndpointPolicy)
+            or not isinstance(prior_settings, ConsoleSessionSettings)
+            or (
+                prior_policy is not None
+                and not isinstance(prior_policy, ConsoleEphemeralEndpointPolicy)
+            )
+            or type(prior_has_user_work) is not bool
+            or (
+                receipt is not None
+                and not isinstance(receipt, ConsoleEndpointAdoptionReceipt)
+            )
+        ):
+            raise TypeError("Exact Console endpoint rollback state is required")
+
+        with self._fork_source_transition(session_id):
+            session = self._session_or_raise(session_id)
+            if (
+                session.settings != expected_settings
+                or session.ephemeral_endpoint_policy != expected_policy
+            ):
+                return ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE
+
+            if receipt is not None:
+                persistence = self.persistence
+                rollback = getattr(
+                    persistence,
+                    "rollback_console_session_endpoint_adoption",
+                    None,
+                )
+                try:
+                    restored = callable(rollback) and rollback(receipt=receipt)
+                except Exception:
+                    restored = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=receipt.conversation_id,
+                    ).exception(
+                        "Failed to restore durable Console metadata after "
+                        "endpoint adoption."
+                    )
+                if not restored:
+                    session.ephemeral_endpoint_policy = replace(
+                        expected_policy,
+                        state=ConsoleEndpointPolicyState.BLOCKED,
+                    )
+                    self._bump_payload_revision(session_id)
+                    self._bump_settings_revision(session_id)
+                    return ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
+
+            session.settings = prior_settings
+            session.ephemeral_endpoint_policy = prior_policy
+            session.has_user_work = prior_has_user_work
+            session.generation_settings_revision += 1
+            self._bump_payload_revision(session_id)
+            self._bump_settings_revision(session_id)
+            return ConsoleEndpointRollbackOutcome.RESTORED
+
+    def rollback_session_settings_replacement(
+        self,
+        session_id: str,
+        *,
+        expected_settings: ConsoleSessionSettings,
+        prior_settings: ConsoleSessionSettings,
+        prior_has_user_work: bool,
+    ) -> bool:
+        """Compensate one exact failed settings replacement.
+
+        The normal replacement path deliberately marks a changed session as
+        user-owned. A failed cross-screen adoption must restore that ownership
+        bit along with the settings or a pristine default session can no longer
+        follow later default refreshes.
+        """
+
+        if (
+            not isinstance(expected_settings, ConsoleSessionSettings)
+            or not isinstance(prior_settings, ConsoleSessionSettings)
+            or type(prior_has_user_work) is not bool
+        ):
+            raise TypeError("Exact Console settings rollback state is required.")
+        with self._fork_source_transition(session_id):
+            session = self._session_or_raise(session_id)
+            if session.settings == prior_settings:
+                session.has_user_work = prior_has_user_work
+                return True
+            if session.settings != expected_settings:
+                return False
+            session = self._replace_session_settings(session_id, prior_settings)
+            session.has_user_work = prior_has_user_work
+            return True
 
     def session_draft(self, session_id: str) -> str:
         """Return the in-memory composer draft for a native Console session."""
@@ -14593,6 +14821,13 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
             self._settle_owned_dispatch_terminal(message, "complete")
+            # The checkpoint settlement above owns the terminal content write,
+            # so this shortcut bypasses both ordinary persistence paths that
+            # flush local-only exchange captures.  Preserve the same
+            # version-neutral capture contract once the durable message row is
+            # known to exist.
+            if message.exchanges:
+                self._persist_exchanges_only(message)
             self._settle_provider_trace_settlements(
                 message.id,
                 message.persisted_message_id,
@@ -16346,11 +16581,20 @@ class ConsoleChatStore:
             )
 
         scope_type, workspace_id = self._persistence_scope(session)
+        persisted_settings = (
+            replace(session.settings, base_url=None)
+            if session.settings is not None
+            and session.ephemeral_endpoint_policy is not None
+            else session.settings
+        )
         metadata: dict[str, object] = {}
-        if session.settings is not None:
+        if persisted_settings is not None:
+            serialized_settings = asdict(persisted_settings)
+            if session.ephemeral_endpoint_policy is not None:
+                serialized_settings.pop("base_url", None)
             metadata["console_session_settings"] = {
                 "version": 1,
-                **asdict(session.settings),
+                **serialized_settings,
             }
         if session.rag_scope_holder.scope is not None:
             metadata["rag_scope"] = serialize_scope(session.rag_scope_holder.scope)
@@ -16379,8 +16623,8 @@ class ConsoleChatStore:
                 )
             )
         staged_generation_snapshot = (
-            snapshot_from_session_settings(session.settings)
-            if session.settings is not None
+            snapshot_from_session_settings(persisted_settings)
+            if persisted_settings is not None
             and session.generation_settings_revision > 0
             else None
         )

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Callable
 # 3rd-Party Imports
 from textual import on
 from textual.app import ComposeResult, compose as compose_widgets
-from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
@@ -54,7 +53,10 @@ from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers i
 )
 from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
     VLLM_BUTTON_HANDLERS,
+    handle_vllm_local_directory_browse_requested,
+    handle_vllm_python_environment_browse_requested,
 )
+from .LLM_Management.vllm_setup_view import VllmSetupView
 from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     current_llm_destination,
     server_lifecycle_snapshot,
@@ -529,7 +531,6 @@ class LLMManagementWindow(Container):
     SERVER_CONTROLS = {
         "llamacpp": ("llamacpp-start-server-button", "llamacpp-stop-server-button"),
         "llamafile": ("llamafile-start-server-button", "llamafile-stop-server-button"),
-        "vllm": ("vllm-start-server-button", "vllm-stop-server-button"),
         "onnx": ("onnx-start-server-button", "onnx-stop-server-button"),
         "mlx": ("mlx-start-server-button", "mlx-stop-server-button"),
         "ollama": ("ollama-start-service-button", "ollama-stop-service-button"),
@@ -548,22 +549,6 @@ class LLMManagementWindow(Container):
         )
         for provider in GGUF_PROVIDERS
     }
-
-    # htop-style view cycling (single printable keys; focused text inputs
-    # consume them first, so forms are unaffected). See ADR-031.
-    BINDINGS = [
-        Binding("[", "prev_llm_view", "Previous view", show=False),
-        Binding("]", "next_llm_view", "Next view", show=False),
-        Binding("1", "jump_view(0)", "View 1", show=False),
-        Binding("2", "jump_view(1)", "View 2", show=False),
-        Binding("3", "jump_view(2)", "View 3", show=False),
-        Binding("4", "jump_view(3)", "View 4", show=False),
-        Binding("5", "jump_view(4)", "View 5", show=False),
-        Binding("6", "jump_view(5)", "View 6", show=False),
-        Binding("7", "jump_view(6)", "View 7", show=False),
-        Binding("8", "jump_view(7)", "View 8", show=False),
-        Binding("9", "jump_view(8)", "View 9", show=False),
-    ]
 
     def __init__(
         self,
@@ -603,6 +588,7 @@ class LLMManagementWindow(Container):
         self._lazy_server_bodies: dict[str, tuple[Widget, ...]] = {}
         self._populated_views: set[str] = set()
         self._populating_views: set[str] = set()
+        self._vllm_preflight_generation = 0
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -640,9 +626,7 @@ class LLMManagementWindow(Container):
         Ollama autofill, UX-078). Sequencing adds the ordering guarantee;
         it must not add failure coupling.
         """
-        for step in (
-            self._initialize_view,
-        ):
+        for step in (self._initialize_view,):
             try:
                 result = step()
                 if inspect.isawaitable(result):
@@ -731,6 +715,8 @@ class LLMManagementWindow(Container):
             raise RuntimeError(f"Deferred body for {view_name!r} is unavailable")
 
         self._populated_views.add(view_name)
+        if view_name == "vllm":
+            self._sync_vllm_lifecycle()
         self.call_after_refresh(self._view_population_ready, view_name)
 
     def _view_population_ready(self, view_name: str) -> None:
@@ -1293,76 +1279,7 @@ class LLMManagementWindow(Container):
 
             # vLLM View
             with _LazyServerPane(id="llm-view-vllm", classes="llm-view"):
-                yield Label("vLLM Configuration", classes="section-title")
-                yield Label(
-                    "High-performance LLM serving with vLLM", classes="description"
-                )
-
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start Server",
-                        id="vllm-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop Server",
-                        id="vllm-stop-server-button",
-                        classes="action_button",
-                        disabled=True,
-                    )
-
-                with Container(classes="input_container"):
-                    yield Label("Python Interpreter Path:", classes="inline-label")
-                    yield Input(
-                        id="vllm-python-path",
-                        value="python",
-                        placeholder="e.g., /path/to/venv/bin/python",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="vllm-browse-python-button",
-                        classes="browse_button",
-                        tooltip="Choose the Python interpreter used to launch vLLM.",
-                    )
-
-                with Container(classes="input_container"):
-                    yield Label(
-                        "Model Path (or HuggingFace Repo ID):", classes="inline-label"
-                    )
-                    yield Input(
-                        id="vllm-model-path",
-                        placeholder="e.g., /path/to/model or HuggingFaceName/ModelName",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="vllm-browse-model-button",
-                        classes="browse_button",
-                        tooltip="Choose a local model directory for vLLM, or type a Hugging Face repo ID.",
-                    )
-
-                yield Label("Host:", classes="label")
-                yield Input(id="vllm-host", value="127.0.0.1")
-
-                yield Label("Port:", classes="label")
-                yield Input(id="vllm-port", placeholder="8000")
-                yield Static(
-                    "Default 8000 — change it if another server already uses that port.",
-                    classes="prereq-hint",
-                )
-
-                yield Label("Additional Arguments:", classes="label")
-                yield TextArea(
-                    id="vllm-additional-args",
-                    classes="additional_args_textarea",
-                    theme="vscode_dark",
-                )
-
-                yield RichLog(
-                    id="vllm-log-output",
-                    classes="log_output",
-                    wrap=True,
-                    highlight=True,
-                )
+                yield VllmSetupView(id="vllm-setup-view")
 
             # ONNX View
             with _LazyServerPane(id="llm-view-onnx", classes="llm-view"):
@@ -2026,6 +1943,22 @@ class LLMManagementWindow(Container):
         except Exception as exc:
             self._recover_failed_action(button.id, exc)
 
+    @on(VllmSetupView.LocalDirectoryBrowseRequested)
+    async def _on_vllm_local_directory_browse_requested(
+        self, event: VllmSetupView.LocalDirectoryBrowseRequested
+    ) -> None:
+        await handle_vllm_local_directory_browse_requested(
+            self, self.app_instance, event
+        )
+
+    @on(VllmSetupView.PythonEnvironmentBrowseRequested)
+    async def _on_vllm_python_environment_browse_requested(
+        self, event: VllmSetupView.PythonEnvironmentBrowseRequested
+    ) -> None:
+        await handle_vllm_python_environment_browse_requested(
+            self, self.app_instance, event
+        )
+
     def _recover_failed_action(self, action_id: str, exc: Exception) -> None:
         """Restore truthful controls and surface bounded, non-sensitive recovery."""
 
@@ -2111,7 +2044,10 @@ class LLMManagementWindow(Container):
     ) -> None:
         """Refresh one destination and surface only bounded worker status."""
 
-        self._sync_process_controls(provider)
+        if provider == "vllm":
+            self._sync_vllm_lifecycle(status)
+        else:
+            self._sync_process_controls(provider)
         if status is not None:
             self.app_instance.notify(status[:200], severity="error")
 
@@ -2120,6 +2056,16 @@ class LLMManagementWindow(Container):
 
         for provider in self.SERVER_CONTROLS:
             self._sync_process_controls(provider)
+        self._sync_vllm_lifecycle()
+
+    def _sync_vllm_lifecycle(self, status: str | None = None) -> None:
+        """Project app lifecycle state into the mounted vLLM setup view."""
+
+        try:
+            view = self.query_one("#vllm-setup-view", VllmSetupView)
+        except QueryError:
+            return
+        view.project_lifecycle(active=self._server_active("vllm"), status=status)
 
     def _begin_async_presentation(self, channel: str) -> int:
         """Reserve the next local completion generation for one output channel."""

@@ -16,6 +16,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
 )
 from pydantic import (
@@ -30,10 +31,75 @@ CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
+_VLLM_DRAFT_INPUT_LIMITS = {
+    "profile_name": 120,
+    "python_environment": 4096,
+    "hugging_face_model": 96,
+    "local_model_directory": 4096,
+    "bind_address": 255,
+    "existing_server_url": 2048,
+    "port": 5,
+    "tensor_parallel_size": 10,
+    "maximum_model_length": 10,
+    "gpu_memory_utilization": 32,
+}
 TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
 TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
 TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+class VllmDraftInputEvent(BaseModel):
+    """Strict lexical boundary for one editable vLLM setup control."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    control_id: Literal[
+        "profile_name",
+        "python_environment",
+        "hugging_face_model",
+        "local_model_directory",
+        "bind_address",
+        "existing_server_url",
+        "port",
+        "tensor_parallel_size",
+        "maximum_model_length",
+        "gpu_memory_utilization",
+    ]
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        control_id = info.data.get("control_id")
+        limit = _VLLM_DRAFT_INPUT_LIMITS.get(control_id)
+        if limit is None or len(value) > limit:
+            raise ValueError("invalid vLLM setup value")
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ValueError("invalid vLLM setup value")
+        return value
+
+
+def validate_vllm_draft_input(control_id: object, value: object) -> str:
+    """Return one exact, bounded vLLM draft edit without semantic coercion.
+
+    Args:
+        control_id: Stable identifier for the editable setup control.
+        value: Candidate Textual input value.
+
+    Returns:
+        The exact validated string, including syntactically partial edits.
+
+    Raises:
+        ValueError: If the identifier, type, length, or characters are invalid.
+    """
+
+    try:
+        return VllmDraftInputEvent.model_validate(
+            {"control_id": control_id, "value": value}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("vLLM setup value is invalid") from None
 
 
 class ToolArgumentsInput(BaseModel):
