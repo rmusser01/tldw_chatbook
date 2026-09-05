@@ -43,6 +43,25 @@ entry counts cannot prove completion. Keep malformed-state checks strict rather
 than retrying arbitrary parse failures. Here the existing rendered final-response
 token provides the ordering boundary, so no new polling protocol is needed.
 ---
+## Populated replacement widgets are not yet layout evidence
+
+**TASK-31656, 2026-09-05.** The broad Watchlists run reached the expected
+briefing row count but failed its real-CSS placement check with a zero-width
+table. `ArtifactsPane.compose` adds rows before yielding its replacement
+`DataTable`; `_press_generate` mistook that row count for a finished repaint.
+A bounded delay of the first populated replacement's layout reproduced the
+same zero-region failure while the undelayed case passed. The full-file run
+also caught the earlier replacement phase: `query_one` raised `NoMatches`
+after the old table was removed but before its replacement mounted.
+Subsequent full-file runs exposed the identical assumption in the Cast table
+and Synthesize detail helpers; all three needed current-widget readiness.
+
+**What to do.** Before a helper hands off to geometry assertions, require the
+current replacement widget to be mounted, displayed, and have nonzero geometry
+as well as matching data. Keep the actual placement and painted-content checks:
+readiness is not proof that the layout fits the terminal. Bound the wait and fail
+explicitly if the rendered state never arrives; a temporarily absent replacement
+belongs in that same readiness poll, not an unconditional `query_one`.
 
 ## A prepended script directory cannot override an already imported sibling name
 
