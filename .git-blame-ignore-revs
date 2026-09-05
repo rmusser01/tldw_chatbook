@@ -169,3 +169,18 @@ ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
 # fix, not new logic, same shape as the export/collections/search+RAG/
 # skills series' own closing commits above.
 e6148e29acf10fe1b74f6098bf8775136e1234e6
+
+# Wave-6 task 1: prompts state object + shims (prompts series 1/3). 43 of
+# the 46 "prompt"-named LibraryScreen.__init__ fields relocated verbatim
+# into LibraryPromptsState (UI/Library_Modules/library_prompts_state.py --
+# NOT the unrelated, pre-existing Library/library_prompts_state.py domain
+# module of the same basename), with a generated getter/setter property
+# shim keeping every original flat name alive over self._prompts_state
+# (three prefixes: _library_prompt_, _library_prompts_, and the bare
+# _selected_prompt_id). Zero method bodies touched; all 23 relocated
+# comment lines verified byte-for-byte identical. Also seeds
+# _prompts_state in the one object.__new__-bypassed test fixture the shim
+# newly broke (recipe §3's seventh shape) -- one mechanical line, no
+# assertions touched. Filed in the SAME series that made the move, per the
+# gap wave 5 had to backfill for four earlier state PRs.
+f59db7c94dec199a5f3f418191febf050812a03a
