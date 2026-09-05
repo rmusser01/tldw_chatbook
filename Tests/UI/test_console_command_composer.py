@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_submission_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
 from tldw_chatbook.Widgets.Console import console_composer_bar as composer_module
@@ -544,6 +545,8 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
         _answer_pending_question_with_draft=lambda draft: False,
     )
 
+    build_console_submission_controller(screen)
+    screen._submission._console_pending_send_stash = screen._console_pending_send_stash
     assert await ChatScreen._send_console_message_from_visible_action(screen) is True
     assert len(dispatched) == 1
     dispatched_text, escaped = dispatched[0]

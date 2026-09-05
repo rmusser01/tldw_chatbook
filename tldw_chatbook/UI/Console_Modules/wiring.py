@@ -91,6 +91,7 @@ from .settings_navigation import ConsoleSettingsNavigationController
 from .provider_selection import ConsoleProviderSelectionController
 from .commands import ConsoleCommandsController
 from .context_cost import ConsoleContextCostController
+from .submission import ConsoleSubmissionController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -870,6 +871,103 @@ def build_console_settings_controllers(screen: Any) -> None:
     )
 
 
+def build_console_submission_controller(screen: Any) -> None:
+    """Wire named composer submission dependencies without capturing siblings."""
+    screen._submission = ConsoleSubmissionController(
+        _pending_image_attachment=lambda: screen._console_pending_image_attachment(),
+        _attachment_block_reason=lambda: screen._console_attachment_blocked_reason(),
+        app_instance_accessor=lambda: screen.app_instance,
+        _active_console_settings_readiness=lambda *args, **kwargs: (
+            screen._active_console_settings_readiness(*args, **kwargs)
+        ),
+        _answer_pending_question_with_draft=lambda *args, **kwargs: (
+            screen._answer_pending_question_with_draft(*args, **kwargs)
+        ),
+        _append_native_console_system_message=lambda *args, **kwargs: (
+            screen._append_native_console_system_message(*args, **kwargs)
+        ),
+        _blocked_skill_summaries=lambda context: (
+            screen._skill._console_skill_blocked_summaries(context)
+        ),
+        _clear_console_composer_draft=lambda *args, **kwargs: (
+            screen._clear_console_composer_draft(*args, **kwargs)
+        ),
+        _console_command_rewind=lambda *args, **kwargs: screen._console_command_rewind(
+            *args, **kwargs
+        ),
+        _console_composer_or_none=lambda *args, **kwargs: (
+            screen._console_composer_or_none(*args, **kwargs)
+        ),
+        _consume_pending_console_launch=lambda *args, **kwargs: (
+            screen._consume_pending_console_launch(*args, **kwargs)
+        ),
+        _dismiss_console_guidance=lambda *args, **kwargs: (
+            screen._dismiss_console_guidance(*args, **kwargs)
+        ),
+        _dispatch_console_command=lambda *args, **kwargs: (
+            screen._dispatch_console_command(*args, **kwargs)
+        ),
+        _dispatch_draft=lambda *args, **kwargs: screen._dispatch_console_draft_send(
+            *args, **kwargs
+        ),
+        _dispatch_prompt=lambda *args, **kwargs: screen._prompt_queue.dispatch(
+            *args, **kwargs
+        ),
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _fetch_skill_context=lambda: screen._skill._fetch_console_skill_context(),
+        _focus_console_composer_if_needed=lambda *args, **kwargs: (
+            screen._focus_console_composer_if_needed(*args, **kwargs)
+        ),
+        _invalidate_persisted_rows_cache=lambda: (
+            screen._workspace._invalidate_console_persisted_rows_cache()
+        ),
+        _query_composer=lambda: screen.query_one(
+            "#console-native-composer", ConsoleComposerBar
+        ),
+        _record_console_first_send=lambda *args, **kwargs: (
+            screen._record_console_first_send(*args, **kwargs)
+        ),
+        _respond_to_blocked_skill=lambda *args: (
+            screen._skill._console_skill_blocked_match_response(*args)
+        ),
+        _restore_stash=lambda stash: screen._restore_console_send_stash(stash),
+        _start_console_transcript_sync_timer=lambda *args, **kwargs: (
+            screen._start_console_transcript_sync_timer(*args, **kwargs)
+        ),
+        _start_raw_command=lambda command: screen._raw_cli.start_user_command(command),
+        _stop_draft_spend_refresh=lambda: screen._console_draft_spend_refresh.stop(),
+        _sync_console_command_popup=lambda *args, **kwargs: (
+            screen._sync_console_command_popup(*args, **kwargs)
+        ),
+        _sync_native_console_chat_ui=lambda *args, **kwargs: (
+            screen._sync_native_console_chat_ui(*args, **kwargs)
+        ),
+        _unknown_command_hint=lambda name: (
+            screen._commands._console_unknown_command_hint(name)
+        ),
+        run_worker=lambda worker, *, group, exclusive=False, exit_on_error=True: (
+            screen.run_worker(
+                worker, group=group, exclusive=exclusive, exit_on_error=exit_on_error
+            )
+        ),
+        _console_chat_store_accessor=lambda: screen._console_chat_store,
+        _console_command_registry_accessor=lambda: screen._console_command_registry,
+        _console_undo_histories_accessor=lambda: screen._console_undo_histories,
+        _console_visible_draft_session_id_accessor=lambda: (
+            screen._console_visible_draft_session_id
+        ),
+        is_mounted_accessor=lambda: screen.is_mounted,
+        _watchdog_seconds_accessor=lambda: (
+            screen._CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS
+        ),
+    )
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
@@ -906,6 +1004,8 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    build_console_submission_controller(screen)
+
     screen._context_cost = ConsoleContextCostController(
         app_instance_accessor=lambda: screen.app_instance,
         _active_console_provider_model_display=lambda *args, **kwargs: (
