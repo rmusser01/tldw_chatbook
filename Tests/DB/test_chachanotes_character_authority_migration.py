@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
     open_current_chachanotes_from_legacy,
 )
 
@@ -284,45 +285,39 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     path = tmp_path / "v27-to-v28.sqlite"
     before_columns, expected_authority = _seed_v27_database(path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        path, client_id="migration-test"
-    )
-    connection = db.get_connection()
-
-    # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
-    # bumped it again; a real CharactersRAGDB always migrates fully to
-    # whatever is current, so assert dynamically. Neither the v28->v29
-    # (kept_briefings/kept_scripts) nor the v29->v30 (messages.usage_json)
-    # migration touches `conversations`, so the column-delta assertion below
-    # is unaffected.
-    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
-    after_columns = _conversation_columns(connection)
-    assert after_columns - before_columns == {"assistant_authority_id"}
-    authority_column = next(
-        row
-        for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
-        if row[1] == "assistant_authority_id"
-    )
-    assert authority_column[2] == "TEXT"
-    assert authority_column[3] == 0
-
-    actual = dict(
-        connection.execute(
-            """
-            SELECT id, assistant_authority_id
-            FROM conversations
-            ORDER BY id
-            """
-        ).fetchall()
-    )
-    assert actual == {
+    expected = {
         "generic-legacy": None,
         "local-noncanonical": None,
         "local-proven": expected_authority,
         "persona-legacy": None,
         "server-legacy": None,
     }
-    assert connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
+    authority_query = "SELECT id, assistant_authority_id FROM conversations ORDER BY id"
+    # Pin the exact v27→v28 delta before later migrations add their own fields.
+    with chachanotes_db_at_version(path, 28, client_id="migration-test") as db:
+        connection = db.get_connection()
+        assert _version(connection) == 28
+        assert _conversation_columns(connection) - before_columns == {
+            "assistant_authority_id"
+        }
+        authority_column = next(
+            row
+            for row in connection.execute("PRAGMA table_info(conversations)")
+            if row[1] == "assistant_authority_id"
+        )
+        assert authority_column[2] == "TEXT"
+        assert authority_column[3] == 0
+        assert dict(connection.execute(authority_query).fetchall()) == expected
+        assert connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
+
+    current = open_current_chachanotes_from_legacy(path, client_id="migration-test")
+    try:
+        connection = current.get_connection()
+        assert _version(connection) == current._CURRENT_SCHEMA_VERSION
+        assert dict(connection.execute(authority_query).fetchall()) == expected
+        assert connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
+    finally:
+        current.close_connection()
 
 
 def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
