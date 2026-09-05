@@ -37,3 +37,21 @@ Two earlier attempts are preserved: [first attempt](microphone-20260905-1b48acf6
 At the user's explicit request, the existing Codex OAuth access token was passed in memory to Chatbook's production `OpenAIRealtimeSession`. The [authentication probe](codex-oauth-realtime-auth.json) received `session.created`. The [production session probe](codex-oauth-realtime-provider.json) then returned the exact requested synthetic reply, “The blue notebook is ready.”, and 105600 bytes of output PCM, with zero errors and session closure.
 
 The [frozen harness](codex-oauth-realtime-provider-harness.txt) documents the path exercised. No microphone was opened and the returned audio was not played. These results establish current OAuth authentication and provider response compatibility; they do not establish human realtime voice acceptance, a saved Chatbook OAuth connection, or token refresh behavior. Credentials were not persisted in these artifacts or copied into Chatbook settings.
+
+
+## Post-fix microphone replay: no accepted speech
+
+User-started run `microphone-20260905-fd8d5bba24` tested Chatbook revision
+`6d2d677ac3ff385d4da4c578ad196337d829ea36`. A five-second countdown preceded
+a 20.04-second capture window. Buddy reported `listening` during capture and
+returned to `idle`; dictation returned to idle and released its session. The
+recorder delivered zero speech bytes after VAD filtering, so no transcript was
+submitted to DeepSeek and no playback occurred. Device enumeration identified
+MacBook Pro Microphone as the sole/default input. This does not distinguish missed
+speech from an input/VAD problem; the user's observation is pending.
+
+The [capture receipt](microphone-20260905-fd8d5bba24/microphone.json) and
+[execution receipt](microphone-20260905-fd8d5bba24/execution.json) record clean process
+exit, matching source identity, no app exception, and unchanged normal config.
+No raw audio was saved or sent. This is partial listening/cleanup evidence, not
+successful speech/provider/playback acceptance.
