@@ -50,7 +50,7 @@ class ConsoleProviderPicker(Widget):
     MAX_RESULTS = 30
     _GROUP_ORDER = ("Cloud", "Local", "Custom", "Other")
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProviderPicker {
         height: auto;
         width: 1fr;

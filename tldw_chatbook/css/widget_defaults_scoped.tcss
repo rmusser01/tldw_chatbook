@@ -228,6 +228,39 @@
     }
 
 
+/* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
+
+
+    SkillImportChoiceModal #skill-import-choice {
+        width: 88;
+        max-width: 100%;
+        height: 28;
+        max-height: 100%;
+        min-height: 14;
+        background: $panel;
+        border: round $accent;
+        padding: 1 2;
+    }
+    SkillImportChoiceModal #skill-import-choice-title,
+    SkillImportChoiceModal #skill-import-choice-help {
+        height: auto;
+    }
+    SkillImportChoiceModal #skill-import-choice-list {
+        height: 1fr;
+        min-height: 4;
+        background: $surface-darken-1;
+    }
+    SkillImportChoiceModal #skill-import-choice-actions {
+        height: 3;
+    }
+    SkillImportChoiceModal #skill-import-choice-actions Button {
+        width: auto;
+        min-width: 10;
+        height: 3;
+        margin-right: 1;
+    }
+
+
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
 
@@ -1969,6 +2002,80 @@
     }
 
 
+/* ===== WIDGET: AutomationDefinitionForm (UI/Screens/scheduling/forms/automation_definition_form.py) ===== */
+
+
+
+
+
+    AutomationDefinitionForm #automation-form-footer {
+        dock: bottom;
+        height: auto;
+        background: $surface;
+    }
+
+    AutomationDefinitionForm #automation-scope-sources-group,
+    AutomationDefinitionForm #automation-run-at-group,
+    AutomationDefinitionForm #automation-cron-group,
+    AutomationDefinitionForm #automation-timezone-group,
+    AutomationDefinitionForm #automation-preset-time-group,
+    AutomationDefinitionForm #automation-cron-custom-group,
+    AutomationDefinitionForm #automation-provider-group {
+        height: auto;
+    }
+
+    AutomationDefinitionForm #automation-form-errors {
+        display: none;
+    }
+
+    AutomationDefinitionForm #automation-question {
+        height: 3;
+        max-height: 5;
+    }
+
+    AutomationDefinitionForm .form-title {
+        text-style: bold;
+        text-align: center;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .form-label {
+        color: $text-muted;
+        padding: 1 0 0 0;
+    }
+
+    AutomationDefinitionForm .form-helper {
+        color: $text-muted;
+        height: auto;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .form-preview {
+        color: $text-muted;
+        height: auto;
+        min-height: 1;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .error-text {
+        color: $error;
+        text-style: bold;
+        height: auto;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .button-container {
+        align: center middle;
+        height: auto;
+        padding: 0;
+        margin-top: 1;
+    }
+
+    AutomationDefinitionForm .button-container Button {
+        margin: 0 1;
+    }
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
 
@@ -2727,6 +2834,59 @@
     }
 
 
+/* ===== WIDGET: ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py) ===== */
+
+
+    ConsoleSaveMarkdownModal #console-save-markdown-box {
+        width: 64;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-input {
+        width: 1fr;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-actions {
+        height: auto;
+        align-horizontal: right;
+        margin-top: 1;
+    }
+
+
+/* ===== WIDGET: ConsoleSelectionMenu (Widgets/Console/console_selection_menu.py) ===== */
+
+
+    /* One row per action (clamp-fix review): the library Button chrome
+       (line-pad 1 + tall bottom border) stacked 3 rows per button, so the
+       6-action feedback variant measured ~24 rows and towered over short
+       transcripts, bleeding past the owner-box clamp onto the composer.
+       !important is load-bearing: the library's variant/hover/disabled
+       rules re-assert border-top/bottom at equal-or-higher specificity. */
+
+    /* ANSI color mode (increment review): the library's disabled rule
+       (Button:ansi.-style-flat:disabled, specificity (0,3,1)) beats the
+       generic compact rule above ((0,0,2)) -- both !important, so
+       specificity decides -- and re-grew tall borders on the run-gated
+       pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
+       rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
+       to ALL action IDs, not just the two gated ones: any action may
+       end up disabled, and every action must stay one row in every state
+       and color mode. */
+
+
+    /* Shrink guard for boxes shorter than even the compact menu: the
+       measured clamp adds this class, trading the container border and
+       the hint line for 3 more usable rows, with scrolling if the actions
+       still cannot all fit. */
+
+
+
+
 /* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
 
 
@@ -2801,6 +2961,31 @@
     }
 
     ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py) ===== */
+
+
+
+    ConsoleTerminalSessionModal #console-terminal-session-modal {
+        width: 72;
+        max-width: 94%;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ConsoleTerminalSessionModal #console-terminal-session-error {
+        min-height: 1;
+        color: $error;
+    }
+
+    ConsoleTerminalSessionModal #console-terminal-session-actions {
         height: auto;
         margin-top: 1;
         align-horizontal: right;
