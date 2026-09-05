@@ -297,7 +297,7 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
 
         fake_time = {"t": 0.0}
         monkeypatch.setattr(
-            "tldw_chatbook.UI.Screens.chat_screen.time.monotonic",
+            "tldw_chatbook.UI.Console_Modules.agent.time.monotonic",
             lambda: fake_time["t"],
         )
 
