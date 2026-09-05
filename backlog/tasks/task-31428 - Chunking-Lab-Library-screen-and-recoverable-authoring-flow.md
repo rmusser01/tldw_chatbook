@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 06:05'
+updated_date: '2026-09-05 06:27'
 labels:
   - chunking
   - chunking-lab
@@ -50,7 +50,7 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes; existing ADR078 and ADR118 apply. Prior correction plan and evidence remain in the main Chunking Lab plan/reports. User-requested AC15 follow-up: reproduce the two runtime consumer guards; add behavior tests; place admission-time preprocessing and sanitation behind narrow template_runtime adapters without changing budgets/prescan ordering or widening guards; targeted runtime/runner checks; scoped independent review; final combined feature/compatibility gate; complete AC15 and documentation only after evidence. Follow-up plan: Docs/superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md.
+ADR required: yes for existing runtime boundary under ADR078/118; no new ADR for test-only fixture correction. Follow Docs/superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md. Task1 runtime adapters are implemented and independently approved. Task2: deterministic RED for late initial-screen callback against each local Lab fixture; explicitly claim manual initial-screen ownership in those fixtures only; targeted screen/recovery verification and independent review; rerun combined feature/compatibility gate; complete AC15 and current docs only after green evidence. Preserve prior failures as history; no production startup/shared factory change or full sweep.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

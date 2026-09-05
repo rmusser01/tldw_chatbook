@@ -78,3 +78,65 @@ sanitized = sanitize_template_input(text)
 - [ ] Run the amended runtime/runner/preflight/execution/coordinator selection and static/format/whitespace checks. Existing legacy runtime lint exclusions may be retained only with the documented baseline comparison. Record exact command/output and warnings.
 - [ ] Commit the scoped code/test change and write an implementation report with cause, RED/GREEN evidence, changed interfaces and limitations. Release the index. Controller gets a fresh independent spec/quality review, then reruns the prior 468-case targeted gate plus new tests on stable code.
 - [ ] After independent review and a green targeted gate, controller checks AC15, reconciles documentation status and marks TASK-31428 Done via CLI. No blanket full-suite/cross-platform claim or merge/push.
+
+### Task 2: Make the manually mounted Lab test fixtures own their initial screen
+
+**Context:** Task1 passed independent review. The combined gate then passed 470
+tests but exposed a separate Lab fixture race: enabled seven-second splash startup
+can push Chat over a manually mounted Lab. A bounded 0.5-second enabled-splash
+diagnostic observed the actual Lab→Chat push; setting the existing initial-screen
+ownership flag prevented that same push. Evidence is in this plan's ignored
+`lab-startup-race-diagnosis.md`. This is a test-only correction, not a production
+startup fix or an expansion of the shared app factory.
+
+ADR required: no.
+ADR path: N/A (existing ADR078/118 are unchanged).
+Reason: test fixture setup only; no shipped ownership or policy change.
+
+**Files:**
+- Modify: `Tests/UI/test_chunking_lab_screen.py` local `lab_app` fixture.
+- Modify: `Tests/UI/test_chunking_lab_recovery_flow.py` local `lab_app` fixture.
+- Add regression in each owning module, exercising its own fixture.
+
+**Interfaces:** Both local fixtures still return a fresh real TldwCli; tests
+continue to mount their own initial screens. No new shared fixture API or runtime
+API is introduced.
+
+- [ ] Add and observe RED in a regression using each real fixture. Enter
+  `app.run_test()`, manually push the real ChunkingLabScreen, await Lab readiness,
+  invoke the real deferred startup entry point, and assert Lab stays active:
+
+```python
+async with lab_app.run_test() as pilot:
+    screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+    await lab_app.push_screen(screen)
+    await screen.wait_until_ready()
+    await lab_app._push_initial_screen()
+    assert lab_app.screen is screen
+    assert lab_app._initial_screen_pushed is True
+```
+
+This is a direct, deterministic trigger of the measured callback boundary, not a
+sleep-and-retry fixture or a fake startup function. Keep isolation and close/drain
+the existing owner through the modules' normal teardown conventions.
+
+- [ ] In both existing local fixtures, explicitly claim manual initial-screen
+  ownership before returning the app, with a short explanatory comment:
+
+```python
+app = _build_test_app()
+app._initial_screen_pushed = True
+return app
+```
+
+Do not set this flag in production or the shared app factory; do not disable
+splash, alter timer durations in committed tests, replace startup functions,
+change Lab behavior, or broaden the test selection to unrelated navigation suites.
+
+- [ ] Verify both RED regressions are GREEN, then run both entire Lab screen and
+  recovery-flow modules with exact commands/output retained. Run scoped lint,
+  formatting and whitespace checks, preserving pre-existing format debt if any.
+- [ ] Commit only the two test modules; write task-2-report.md and release index.
+  Controller obtains fresh focused independent review, reruns the combined final
+  gate, and completes task/docs only when green. Preserve the failed aggregate run
+  and causal evidence as history; no full-suite or cold-start qualification claim.
