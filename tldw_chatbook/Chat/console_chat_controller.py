@@ -22224,6 +22224,12 @@ class ConsoleChatController:
                 except KeyError:
                     active_path = []
                     break
+                if (
+                    not session.ephemeral
+                    and path_message.persisted_message_id is None
+                    and path_message.role is ConsoleMessageRole.SYSTEM
+                ):
+                    continue
                 active_path.append(path_message.persisted_message_id or path_message.id)
             canvas_run_id = str(uuid4())
             canvas_scope = CanvasScope(

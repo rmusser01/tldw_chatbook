@@ -5529,6 +5529,99 @@ async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("ephemeral", "seed_role", "persist_seed", "expected_ok"),
+    [
+        (False, ConsoleMessageRole.SYSTEM, False, True),
+        (False, ConsoleMessageRole.SYSTEM, True, True),
+        (False, ConsoleMessageRole.USER, False, False),
+        (False, ConsoleMessageRole.ASSISTANT, False, False),
+        (True, ConsoleMessageRole.SYSTEM, False, True),
+    ],
+)
+async def test_canvas_scope_projects_only_native_system_rows_by_durability(
+    tmp_path,
+    ephemeral,
+    seed_role,
+    persist_seed,
+    expected_ok,
+):
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-path-{ephemeral}-{seed_role.value}-{persist_seed}.sqlite",
+        "canvas-path",
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        seen["scope_path"] = provider._scope.active_message_ids
+        seen["native_path"] = tuple(store.active_path_message_ids(kwargs["session_id"]))
+        with use_run_id(run_id), use_tool_call_id("path-projection-call"):
+            seen["result"] = provider.invoke(
+                "canvas:canvas_create",
+                {"title": "Path projection", "html": "<p>synthetic</p>"},
+            )
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_ERROR,
+        )
+        return run_id, RunOutcome(
+            status=RUN_ERROR,
+            steps=[],
+            final_text="",
+        )
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = store.create_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=ConsoleSessionSettings(provider="llama_cpp"),
+            ephemeral=ephemeral,
+        )
+        session.project_instruction_state = (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+        if not ephemeral:
+            assert store.persist_session_if_needed(session.id) is not None
+        seed = store.append_message(
+            session.id,
+            role=seed_role,
+            content="synthetic seed",
+            persist=persist_seed,
+        )
+
+        submitted = await controller.submit_draft("project this path")
+
+        assert submitted.accepted is True
+        assert seen["result"].ok is expected_ok
+        if ephemeral:
+            assert seen["scope_path"] == seen["native_path"]
+        elif persist_seed:
+            assert seed.persisted_message_id in seen["scope_path"]
+        elif seed_role is ConsoleMessageRole.SYSTEM:
+            assert seed.id not in seen["scope_path"]
+        else:
+            assert seed.id in seen["scope_path"]
+            assert json.loads(seen["result"].error)["code"] == "invalid_scope"
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     (
         "failed_run_uses_canvas",
         "successful_retry_uses_canvas",
@@ -5571,6 +5664,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         agent_runtime_enabled=True,
     )
     bound_runs = []
+    invoke_results = []
 
     def run_reply(**kwargs):
         provider = kwargs["canvas_provider"]
@@ -5586,6 +5680,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
                     "canvas:canvas_create",
                     {"title": f"Attempt {attempt}", "html": f"<p>{attempt}</p>"},
                 )
+            invoke_results.append(invoked)
             assert invoked.ok is True
         status = RUN_ERROR if attempt == 1 else RUN_DONE
         coordinator.finish_assistant_run(
@@ -5672,11 +5767,16 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         else:
             retried = await controller.retry_message(assistant.id)
             assert retried.accepted is True
+            assert store.get_message(assistant.id).status == "complete"
 
         assert len(bound_runs) == 2
         assert bound_runs[0][1] != bound_runs[1][1]
-        assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+        settlement = canvas.settlement_for_assistant(assistant.id)
+        assert settlement is not None
+        assert settlement.state.value == "committed"
         durable_assistant = store.get_message(assistant.id)
+        if successful_retry_uses_canvas:
+            assert invoke_results[-1].ok is True
         rows = db.execute_query(
             "SELECT html, origin_message_id FROM canvas_revisions ORDER BY sequence"
         ).fetchall()
