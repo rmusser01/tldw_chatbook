@@ -606,7 +606,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 2 | **export** — **complete** (wave-2 Tasks 2–4) | 3 | 13 fields moved; 22 of 51 "export"-named method candidates moved / 29 excluded (18 other-subsystem, 2 `@work` framework-decorator self-type-assertion hazard, 9 unbound-fake-self/silent-Mock test bypasses); see §12 for the series' actual, as-landed numbers |
 | 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
 | 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
-| 3 | skills | 15 | |
+| 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | ingest | 23 | |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
@@ -2891,4 +2891,251 @@ All commands run from `.worktrees/library-decomp-foundation`,
    what makes "zero unexplained branch-unique failures" a claim that
    survives a noisier-than-usual run rather than a claim that only holds
    on a quiet machine.
+
+### Wave-4 close
+
+Wave-4 (`.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills`,
+branch `refactor/library-decomp-wave4-skills-ingest`) scoped itself to
+skills alone at Task 1 despite the branch name (the plan's own 2026-09-04
+measure found skills at 133/38 raw and ingest at 78/20; ingest was deferred
+to a future wave rather than rushed alongside skills in the same series).
+The skills series (Tasks 1-3, above) is complete. This section is Task 4's
+own wave-level pin-trajectory re-derivation, verification battery, and
+lessons.
+
+#### Pin trajectory — full wave-4 chain
+
+Re-derived from `git log` (the `_BUDGETS` value in
+`Tests/Architecture/test_screen_size_ratchet.py` and
+`Tests/Architecture/test_library_modules_size_ratchet.py` at each commit,
+not carried over from any report):
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-4 start) | `2372ea764` | 43225 / 1311 | — (file does not exist yet) |
+| 1 | Skills state (RED — wiring test + state module + characterization pins; screen untouched) | `ef289548a` | 43225 / 1311 (unchanged) | — |
+| 1 | Skills state (GREEN, series complete) | `87c318d57` | 43179 / 1311 | — |
+| 2 | Skills controller (RED — wiring-test additions only) | `5ecf223d4` | 43179 / 1311 (unchanged) | — |
+| 2 | Skills controller (GREEN, born-governed) | `60857a2be` | 41247 / 1311 | 3099 |
+| 2 | (blame-ignore, no functional change) | `679a90d1b` | 41247 / 1311 (unchanged) | 3099 (unchanged) |
+| 2 | Fix round 1/5 — CRITICAL `focused` fix + recipe §3's sixth bypass shape (series complete) | `bf13b133b` + `f472f7512` | 41247 / 1311 (unchanged) | 3131 |
+| 3 | Skills cleanup (GREEN, series complete) | `ed4c29d45` | 41155 / 1295 | 3140 |
+| 3 | (blame-ignore, no functional change) | `2a744c434` | 41155 / 1295 (unchanged) | 3140 (unchanged) |
+| 3 | Fix round 1/5 — doc-only count corrections | `f42f75d98` | 41155 / 1295 (unchanged) | 3140 (unchanged) |
+
+Full chain, screen: `43225/1311 → 43179/1311 → 41247/1311 → 41155/1295`
+(final). Full chain, controller: born `3099` at its very first commit (Task
+2's own report documents a `3181 → 3113 → 3099` sequence, but all three
+numbers belong to uncommitted working-tree drafts from the SAME session —
+neither of the two earlier numbers was ever a landed commit, so `git log`
+shows only the final, already-corrected value at the controller's birth
+commit) `→ 3131` (Task 2's post-landing review fix round: the CRITICAL
+`focused` property) `→ 3140` (Task 3, comment-only: two module-docstring
+corrections).
+
+Net wave-4 shrink: 2070 screen lines, 16 methods (the 16 pruned skills
+delegators — a pure move is always net-zero methods on the screen; only a
+delegator prune changes the method count). Task 4's own fresh `_measure()`
+call (both ratchet files' own semantics, not `wc -l`) gives **41155 lines /
+1295 methods** for the screen and **3140 lines** for the controller — EXACT
+matches to both recorded pins, zero drift, nothing to lower.
+
+#### Verification battery (Task 4, this close)
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`, `-p no:randomly` where applicable.
+
+- **Fresh `_measure()` on both ratchet files**: 41155/1295 (screen), 3140
+  (controller) — exact match to both recorded pins, zero drift.
+- **All five wiring suites + 3 characterization files + support-layer
+  surface + both size guards, combined single run**: **83 passed, 2
+  failed** — both the documented pre-existing `chat_screen.py` ratchet rows
+  (recipe §7's own standing list), unrelated to this diff.
+- **Full `Tests/Architecture/` run**: **543 passed, 1 skipped, 16 failed** —
+  one FEWER than Task 2's own documented 17 (`test_persistent_diagnostic_
+  inventory.py::test_task_15743_exception_types_survive_loguru_forwarding`'s
+  sibling assertions now partially SKIP rather than fail, per the file's own
+  skip reason: "TASK-15743 pinned commits fdee8a31f/afee9672a are not
+  fetchable [...] force-pushed and deleted" — an external git-object
+  availability change, unrelated to this diff). All 16 remaining failures
+  match the SAME categories Task 1/2 already documented as pre-existing,
+  unrelated-file churn (Console realtime/review-selection boundary ×2,
+  console wave6 closeout/inventory ×4, default-timeout-session-guard ×1,
+  persistent-diagnostic-inventory ×2, chat_screen ratchet ×2, timer-path-
+  static-update-inventory ×3, worker-exclusive-group-inventory ×2) — zero
+  Library/Skills-scoped failures.
+- **`-k "skill and library"` sweep** (`Tests/UI`+`Tests/Library`, single
+  process, final tree): **10 failed, 272 passed, 22073 deselected** — EXACT
+  match to Task 3's own documented baseline, name-for-name. Zero new
+  failures.
+- **`Tests/Skills/` full run** (fourth root): **538 passed, 1 failed**
+  (`test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_
+  approve_flow`) — the OTHER documented pre-existing failure
+  (`test_import_real_superpowers_skills_lands_trust_pending`,
+  environment-dependent) passed this run, consistent with its own
+  "environment-dependent" characterization across all three prior tasks.
+  Zero new failures.
+- **preflight**: `./scripts/preflight.sh` — all six derived-artifact checks
+  pass (CSS bundle, profile-owned-path census, diagnostic inventory,
+  backlog task-id sweep — 3188 task files including this close's own 2 new
+  follow-up filings, chachanotes table allowlist, index plan pins).
+
+#### Full sequential xdist paired-baseline sweep — whole-wave span
+
+Branch = wave-4 tip (`f42f75d98` + this close task's own doc-only edits,
+which touch no test or production-logic file — a comment-only docstring
+correction in `library_skills_state.py`, two backlog task filings, and this
+recipe's own edits). Baseline = a path-scoped `git checkout 2372ea764 --
+tldw_chatbook Tests` overlay of the wave-4 START commit (the multi-commit-
+back equivalent of the per-task `git stash -u` technique, per §16's own
+precedent for a WAVE-level rather than per-task comparison), run, then
+restored via `git checkout HEAD -- tldw_chatbook Tests` (verified
+`_measure()` back to 41155/1295 and `git status` clean afterward). Run
+SEQUENTIALLY, not concurrently, per §7's own "concurrent runs amplify
+flakiness" lesson.
+
+**Machine load, recorded at the start of this sweep**: load average 22.72,
+21.91, and 8 concurrent `pytest` processes already running on this machine
+(`ps aux`) — sustained heavy CONCURRENT load from several unrelated
+long-running test processes throughout wave-4 (Task 3's own report already
+recorded load average between ~19 and ~51 over its own run); recorded again
+here per §19 lesson 5's own "the paired comparison is what keeps this valid
+regardless of load" discipline.
+
+| | Failed | Passed | Wall time |
+|---|---|---|---|
+| Branch (`f42f75d98` + close) | 372 | 3932 | 1699.84s (28:19) |
+| Baseline (`2372ea764`) | 365 | 3934 | 1398.41s (23:18) |
+
+Both counts sit at or just past the documented ~330–371 historical backdrop
+(recipe §7) — branch's 372 is 1 over the previous recorded high of 371 —
+consistent with this run's own recorded machine load being the heaviest of
+any sweep in this wave. Diffing the two failure-name sets: **356 shared, 9
+baseline-unique** (noise in the opposite direction, not investigated further
+per §7's own precedent — one of the 9,
+`test_library_adaptive_reader_closeout.py::
+test_closeout_single_app_route_cycle`, is the SAME test TASK-31422 above
+files a follow-up for: it failed on the BASELINE and passed on the branch
+here, the opposite direction from Task 1's own observation of it, which is
+itself further evidence for that filing's own premise — the failure is
+direction-independent flakiness, not something either tree's code
+introduces), **16 branch-unique**. All 16 resolved without a single
+unexplained name: 12 passed cleanly on a combined single-process re-run
+(ordinary xdist noise); the remaining 4
+(`test_library_media_reader_traversal_t22207.py::
+test_focus_traversal_builds_zero_bodies_for_pass_through_rows`,
+`test_library_prompts_canvas.py::
+test_library_prompt_undo_refreshes_applied_page_and_preserves_basket`,
+`test_library_shell.py::
+test_library_starter_production_geometry_and_focus_order[size0]`,
+`test_library_shell.py::
+test_library_starter_production_geometry_and_focus_order[size1]`) each
+passed cleanly in TRUE isolation on the branch. None of the 16 touches a
+Skills file, Skills-owned code, or this task's own doc-only diff — several
+are Media/Notes/Prompts/Collections/Audio tests already named as
+pre-existing xdist noise in wave-1/2/3's own sweeps (recipe §7,
+`test_library_entry_compose_once.py::
+test_source_worker_completion_during_mount_dispatch_reconciles_once` and
+`test_library_shell.py::
+test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`
+among them). **Zero unexplained branch-unique failures across the whole
+wave-4 span.**
+
+#### Probe run
+
+```
+perl -e 'alarm 150; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_probe.py
+```
+
+| interaction | settle (ms) | max gap (ms) | recompose | full-update | mounts | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 794 | 328 | 0 | 2 | 173 | 115 |
+| media (re-click same) | 442 | 118 | 0 | 2 | 85 | 115 |
+| media (re-click same, 2nd) | 460 | 96 | 0 | 2 | 89 | 115 |
+| notes (switch) | 539 | 279 | 0 | 1 | 110 | 110 |
+| notes (re-click same) | 312 | 76 | 0 | 1 | 38 | 110 |
+| media (switch-back) | 747 | 286 | 0 | 1 | 175 | 115 |
+| notes (switch, 2nd) | 853 | 587 | 0 | 1 | 110 | 115 |
+| media (switch-back, 2nd) | 606 | 171 | 0 | 1 | 175 | 115 |
+
+Every row is HIGHER than the wave-2 close band (§16: settle 264-485 ms, max
+gap 54-195 ms) — most sharply `notes (switch, 2nd)`'s 587 ms max gap versus
+§16's own highest recorded gap of 195 ms. This is NOT evidence of a
+code-level regression: this task's diff is documentation-only (recipe
+edits, two backlog filings, one comment-only docstring correction), and
+every prior wave-4 task's own report already confirms the skills move
+touches zero code on the Media/Notes rail-switch click path this probe
+exercises (a completely separate subsystem). The load evidence above is the
+far more plausible explanation — this probe measures wall-clock settle time
+and main-thread gap under whatever CPU contention exists at run time, and
+this session's own machine was running 8+ concurrent `pytest` processes and
+sitting at a load average of ~22.7 for the ENTIRE sweep window this probe
+ran inside of, versus wave-2 close's own probe run, which recorded "no
+prior run exists to diff against" and gives no load context of its own
+either way. Recorded here as this wave's own close-time baseline (like
+wave-2's), with the load caveat attached rather than either silently
+matched to the old band or wrongly flagged as a regression.
+
+#### Lessons
+
+1. **A battery-found hazard's own count correction needs the SAME evidence
+   discipline as any other claim — re-derive the full tuple, not just the
+   one number that changed.** Wave-4 saw this pattern three separate times
+   in one series: Task 1's own "three `@property`/`@x.setter` pairs"
+   arithmetic error (should have been six; 2 raw `FunctionDef`s − 1 unique
+   name = 1 gap per name, 6 names = 6 gap) propagated unfixed through Task
+   2's own report text AND its controller's module docstring — caught in
+   the report by Task 2's own post-landing review fix round but missed in
+   the docstring copy until Task 3 caught it independently; Task 3's own
+   delegator-census restructure count needed a review fix round to correct
+   an "18 vs. 28" discrepancy; and Task 2's own mover-count tuple (91 → 87
+   → 86, across two in-session battery-caught regressions, Forms B and C of
+   §3's sixth bypass shape) required re-deriving every DEPENDENT count
+   (exclusion tallies, constructor parameter counts) after each correction,
+   not just patching the number that changed — recorded as its own standing
+   rule in §3's closing paragraph ("a battery-found hazard shrinking the
+   mover set legitimately amends the RED tuple"). Three independent
+   incidents in one wave converging on the same failure shape (a stale
+   count surviving past the point where better evidence existed) makes this
+   worth stating as its own numbered lesson, not three unrelated minor-
+   review findings: **any time a mechanical census's own output changes
+   after the fact — a battery-found hazard, a review correction, a
+   re-run — every number derived FROM that census, not just the one that
+   visibly changed, needs re-deriving before the next report or docstring
+   copies it forward.**
+2. **A CRITICAL production bug can be invisible to the FULL verification
+   battery a task brief mandates, and only surface under independent
+   review — which is exactly why review is a separate, mandatory gate, not
+   a redundant check on a battery that already passed.** Task 2's own
+   wiring/ratchet suites, its full `Tests/Skills/` run, its `-k "skill and
+   library"` sweep, and its own full sequential xdist paired-baseline sweep
+   all went green with the unbound `focused` bug present (§3's own
+   "unbound-attribute escape" paragraph) — no test anywhere in the standard
+   battery exercises a code path where `getattr(self, "focused", None)`'s
+   silent `None` default changes an assertion's outcome, because Textual's
+   own generic default-focus fallback happens to land on the same widget
+   the bug's own correct behavior would have. Only a coordinator review's
+   own targeted bare-self/`getattr` re-sweep (§3's own closing
+   recommendation: grep the whole moved-body source for `getattr(self,
+   "<literal>"` calls, not just `self.<attr>` accesses) found it, after the
+   commit had already landed. This generalizes past skills specifically: a
+   battery that is green is evidence the KNOWN hazard shapes did not fire,
+   not evidence no hazard exists — the review gate exists precisely to
+   catch the shapes the battery's own design cannot see yet.
+3. **A headless click-probe's absolute numbers move with ambient machine
+   load exactly the way the xdist sweep's absolute failure counts do (§19
+   lesson 5) — record the load alongside the numbers, or the probe's own
+   "must not move outside noise" contract (§9) becomes unfalsifiable.**
+   This close's own probe run posted every interaction slower than the
+   wave-2 close's recorded band, under a machine sitting at a ~22.7 load
+   average with 8+ concurrent `pytest` processes running throughout — a
+   condition wave-2's own probe run recorded no comparable load context
+   for. Because this task's diff touches zero code on the probe's own
+   Media/Notes rail-switch path, the honest read is ambient load, not
+   regression — but that conclusion is only defensible because the load was
+   actually measured and recorded at run time, not asserted after the fact.
+   A future controller-move PR's own before/after probe pair (§9) should
+   capture the SAME `ps aux`/load-average snapshot each time, or a real
+   regression and a noisy machine become indistinguishable from the numbers
+   alone.
 

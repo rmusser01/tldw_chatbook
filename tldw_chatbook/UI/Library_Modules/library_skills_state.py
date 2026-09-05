@@ -6,21 +6,28 @@ State PR of the Skills extraction series (wave-4 task 1, recipe:
 closely, since it also needed a mixed-prefix shim mapping). Every field here
 was moved verbatim out of ``LibraryScreen.__init__`` in
 ``tldw_chatbook/UI/Screens/library_screen.py`` -- same default, same type.
-``library_screen.py`` keeps every original ``_library_skill_<field>``/
-``_library_skills_<field>``/``_selected_skill_name`` attribute name alive as
-a generated getter/setter ``@property`` shim pointing at
+``library_screen.py`` originally kept every original ``_library_skill_
+<field>``/``_library_skills_<field>``/``_selected_skill_name`` attribute
+name alive as a generated getter/setter ``@property`` shim pointing at
 ``self._skills_state.<field>`` (a sentinel-wrapped block right after the
-``LibraryScreen`` class body). A future Skills controller PR will move the
-subsystem's methods off the screen and take over this shim's job the same
-way ``LibraryRagSearchController``/``LibraryCollectionsController`` do for
-their own subsystems; the Skills cleanup PR will then delete this
-screen-side block.
+``LibraryScreen`` class body). The skills cleanup PR (task 3) deleted that
+screen-side shim block entirely once the subsystem's methods had all moved
+to ``LibrarySkillsController`` (task 2) and the screen's own remaining
+references were retargeted to call through that controller instead. The
+controller that took over the subsystem's methods carries its OWN
+generated shim block in its place -- reading/writing through an injected
+``skills_state_accessor`` rather than a direct ``self._skills_state``
+attribute, since the controller does not hold the state object itself. See
+the controller module's own shim-block comment for why that block is
+permanent (not a cleanup-PR deletion target, unlike the one this class's
+own state PR originally shared) -- the same export/collections/search+RAG
+precedent.
 
-Two existing, already-extracted Skills modules are NOT touched by this
+Two existing, already-extracted Skills modules were NOT touched by either
 move: ``library_skill_import_controller.py`` (``LibrarySkillImportCoordinator``)
 and ``library_skills_browse_controller.py`` (``LibrarySkillsBrowseController``).
-Screen methods that merely delegate to either are exclusion candidates for
-the eventual controller-move task, not this state task's concern.
+Screen methods that merely delegated to either were exclusion candidates
+for the controller-move task (task 2), not this state task's own concern.
 
 Three prefixes, not two -- a genuine deviation from the plan's own "two-prefix
 mapping" framing, found by running the recipe's own field-ownership script
