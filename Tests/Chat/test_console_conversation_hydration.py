@@ -47,6 +47,10 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
     load_console_conversation_tree,
     prepare_console_session_data,
 )
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     default_console_session_settings,
@@ -105,6 +109,56 @@ def test_legacy_resume_wrapper_preserves_base_settings_and_restores_row_owners()
         base,
         system_prompt="Canonical row prompt",
         pinned_prefill="Canonical prefill",
+    )
+
+
+def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> None:
+    current_endpoint = "https://current.example.test/v1/chat/completions"
+    app_config = {"api_settings": {"openai": {"api_url": current_endpoint}}}
+    persisted = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-test",
+        base_url="https://example.test/v1",
+        temperature=0.12,
+        top_p=0.34,
+        min_p=0.05,
+        top_k=17,
+        max_tokens=2345,
+        seed=19,
+        presence_penalty=0.25,
+        frequency_penalty=-0.5,
+        reasoning_effort="high",
+        reasoning_summary="detailed",
+        verbosity="low",
+        thinking_effort="medium",
+        thinking_budget_tokens=4096,
+        streaming=False,
+        character_label="Ada",
+        system_prompt="metadata prompt must not win",
+        source="user",
+        pinned_prefill="metadata prefill must not win",
+    )
+    metadata = merge_console_generation_settings(
+        {"pinned_response_prefill": "Canonical prefill"},
+        snapshot_from_session_settings(persisted),
+    )
+
+    restored = hydrate_console_generation_settings(
+        app_config,
+        {
+            "system_prompt": "Canonical row prompt",
+            "metadata": json.dumps(metadata),
+        },
+    ).settings
+
+    assert restored == ConsoleSessionSettings(
+        **{
+            **persisted.__dict__,
+            "base_url": current_endpoint,
+            "character_label": "",
+            "system_prompt": "Canonical row prompt",
+            "pinned_prefill": "Canonical prefill",
+        }
     )
 
 
