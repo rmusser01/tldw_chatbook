@@ -5266,3 +5266,14 @@ The new controllers are born governed at their measured sizes. The screen is
 reduction of 1,233 lines / 18 methods from the actual rebased starting point.
 No existing ceiling increases. New ADR required: no; this directly applies the
 approved screen decomposition design and `DESIGN.md` section 7.
+
+The separate task 31658 follow-up fixes a pre-existing Media entry-focus race
+exposed by the combined characterization run. A facet settlement queued an
+entry-focus callback with guard cleanup, then a page settlement replaced that
+callback with ordinary control focus before recomposition. The latest-wins
+callback queue therefore dropped the cleanup as well as the obsolete intent;
+the lingering guard suppressed real arrow selection indefinitely. Three focused
+regressions fail before the fix and cover accepted replacement, suppressed
+replacement, and an initially suppressed entry sync. Each new browse sync now
+owns its current guard, releasing it when synchronization is suppressed. No stale
+callback is replayed. The screen measures 41,324 lines / 1,301 methods afterward.

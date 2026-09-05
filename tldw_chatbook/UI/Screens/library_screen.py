@@ -16062,12 +16062,11 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
-        if pending_entry_focus_generation is not None:
-            # Canvas recompose temporarily drops DOM focus outside Media.
-            # Treat that automatic fallback as part of this guarded restore;
-            # keyboard and mouse input disarm the generation before callback.
-            self._library_notes_restoring_focus = True
-        _sync_library_canvas(self, "media", then=then)
+        # The latest sync replaces the queued focus callback and its guard.
+        # Suppressed projections never run the callback's cleanup.
+        self._library_notes_restoring_focus = pending_entry_focus_generation is not None
+        if not _sync_library_canvas(self, "media", then=then):
+            self._library_notes_restoring_focus = False
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
         """Restore pager focus without ever landing on a disabled control."""
