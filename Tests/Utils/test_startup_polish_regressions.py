@@ -6,7 +6,6 @@ import builtins
 import importlib
 import sys
 import types
-from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -200,6 +199,39 @@ class _SplashHost(App):
     def compose(self) -> ComposeResult:
         self.screen_under_test = SplashScreen(card_name=self.card_name, duration=10.0)
         yield self.screen_under_test
+
+
+@pytest.mark.parametrize(
+    "module_name, class_name",
+    [
+        ("tech.phonebooths_dialing", "PhoneboothsDialingEffect"),
+        ("psychedelic.hypno_swirl", "HypnoSwirlEffect"),
+        ("gaming.world_map", "WorldMapEffect"),
+    ],
+)
+def test_splash_frames_preserve_art_with_valid_rich_styles(module_name, class_name):
+    from rich.text import Text
+    from textual.widgets import Static
+
+    module = importlib.import_module(
+        f"tldw_chatbook.Utils.Splash_Screens.{module_name}"
+    )
+    effect = getattr(module, class_name)(object(), width=60, height=20)
+    for frame_count in (0, 5, 20):
+        effect.frame_count = frame_count
+        markup = effect.update()
+        Static().update(markup)
+        frame = Text.from_markup(markup)
+        assert len(frame.plain.splitlines()) == 20
+        assert all(len(line) == 60 for line in frame.plain.splitlines())
+        assert frame.spans
+        if class_name == "PhoneboothsDialingEffect":
+            assert frame.plain.count("[#]") == 2
+        elif class_name == "HypnoSwirlEffect":
+            assert "tldw" in frame.plain
+        else:
+            assert "~~~~~" in frame.plain
+            assert ("X" in frame.plain) == (frame_count % 10 < 5)
 
 
 @pytest.fixture(autouse=True)
