@@ -1184,6 +1184,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_loading = row.loading
                         button._library_media_loaded = row.loaded
                         button.tooltip = escape_markup(row.title)
+                        # task-31631 AC#2: the whole row is the toggle
+                        # target. It already was one full-width Button
+                        # ("☐ <title>"), but Textual's ``Button._on_click``
+                        # DROPS any click landing while the previous press's
+                        # 0.2s ``-active`` flash is still on the widget --
+                        # so clicking ☐ and then the same row's title (what
+                        # critique #5 did) lost the second click, and the row
+                        # read as a one-cell target. A list row has no use
+                        # for a press flash; the marker flip is the feedback.
+                        button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",

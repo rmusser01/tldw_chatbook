@@ -1182,6 +1182,8 @@ async def test_f6_content_stop_is_visible_and_content_still_paints():
     scroller, but nothing on screen said so. The cue must be the EXISTING
     border, never an outline: the app-global ``*:focus`` outline paints
     OVER the outermost rows, which is why this asserts painted text too.
+    task-31634 upgraded the tint to a heavy border (glyphs, not colour
+    alone); the sibling test below diffs the painted border row.
     """
     host = _global_key_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -1207,10 +1209,11 @@ async def test_f6_content_stop_is_visible_and_content_still_paints():
 
         box = screen.query_one("#library-media-viewer-content")
         focused_border = box.styles.border_top
-        assert focused_border[0] == unfocused[0] == "solid", (
-            focused_border,
-            unfocused,
-        )
+        # task-31634: the cue is now the GLYPHS as well as the colour --
+        # heavy when focused, the unchanged solid otherwise. Still a
+        # one-cell border either way, so no reading row moves.
+        assert unfocused[0] == "solid", unfocused
+        assert focused_border[0] == "heavy", focused_border
         assert focused_border[1] != unfocused[1], (focused_border, unfocused)
         painted = _painted(host, box.region)
         assert "product demo video walks through" in painted.lower(), painted
@@ -2108,3 +2111,59 @@ async def test_done_does_not_take_the_sort_slot(size):
         canvas = screen.query_one("#library-media-canvas")
         assert "Done" in _painted(host, canvas.region)
         assert done.region.right <= canvas.region.right
+
+
+# ---------------------------------------------------------------------------
+# task-31634: the Reader pane's focus must not be colour-only. Critique #5
+# measured its top border recolouring 1.01:1 -> 6.96:1 with BYTE-IDENTICAL
+# glyphs, so a monochrome or colour-blind reader gets no signal that F6
+# landed. Buttons on the same screen already change glyphs (heavy outline).
+# ---------------------------------------------------------------------------
+
+
+def _top_border_row(host, box) -> str:
+    """Return the painted top-border row of one widget, glyphs included."""
+    region = box.region
+    strips = list(host.screen._compositor.render_strips())
+    return strips[region.y].crop(region.x, region.right).text
+
+
+@pytest.mark.asyncio
+async def test_reader_focus_changes_border_glyphs_not_only_colour():
+    """task-31634 AC#1/AC#2: the focused Reader box paints a HEAVY border.
+
+    Plain text on purpose (the AC is "visible in a plain-text capture"):
+    the previous cue was a recolour of the same ``─`` glyphs, which a
+    plain capture cannot tell apart at all.
+    """
+    host = _global_key_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        box = screen.query_one("#library-media-viewer-content")
+        screen.query_one("#library-search-input", Input).focus()
+        await pilot.pause()
+        unfocused = _top_border_row(host, box)
+
+        for _ in range(6):
+            await pilot.press("f6")
+            await pilot.pause()
+            if str(getattr(screen.focused, "id", "")) in {
+                "library-media-viewer-content-text",
+                "library-media-viewer-content",
+            }:
+                break
+        assert str(getattr(screen.focused, "id", "")) in {
+            "library-media-viewer-content-text",
+            "library-media-viewer-content",
+        }, screen.focused
+        focused = _top_border_row(host, screen.query_one(
+            "#library-media-viewer-content"
+        ))
+
+        assert focused != unfocused, (
+            f"focus is colour-only: {unfocused!r} == {focused!r}"
+        )
+        assert unfocused.startswith("┌") and "─" in unfocused, unfocused
+        assert focused.startswith("┏") and "━" in focused, focused
+        assert "─" not in focused, focused

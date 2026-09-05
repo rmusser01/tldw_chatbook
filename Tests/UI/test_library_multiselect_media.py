@@ -33,6 +33,17 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
+# task-31631 AC#2 drives the REAL screen (row clicks are mouse events, not
+# ``Button.press()`` calls), so it reuses the production-CSS media host and
+# the select-mode entry helper the wave-5 painted tests already own.
+from Tests.UI.test_library_media_render_fixes import (
+    _enter_media_select_mode,
+    _painted,
+    _host as _row_click_host,
+)
+from Tests.UI.test_library_media_side_by_side import _open_media_list
+from Tests.UI.test_library_shell import _wait_for_condition
+
 
 def _bind_media_mutation_seams(fake):
     """Give direct method fakes the production mutation boundary shape."""
@@ -3049,3 +3060,76 @@ async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
         )
 
     assert fake._library_media_bulk_delete_in_flight is False
+
+
+# ---------------------------------------------------------------------------
+# task-31631 AC#2: every click on a media row is a toggle in select mode.
+#
+# Critique #5 P1 read live as "only a click on the one-cell ☐ seeds focus;
+# row-title clicks do nothing". The row is ONE full-width Button whose label
+# is "☐ <title>", so a title click always routed to
+# ``handle_library_media_row`` -- what dropped it is Textual's
+# ``Button._on_click``, which ignores any click that lands while the previous
+# press's 0.2s ``-active`` flash is still on the widget. Clicking ☐ and then
+# the same row's title (exactly what a reviewer does) puts the second click
+# inside that window, so the row reads as a one-cell target.
+#
+# Driven through the REAL screen with real mouse events on purpose: a
+# ``Button.press()`` call bypasses ``_on_click`` entirely and can never see
+# this bug.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_click_on_a_media_row_toggles_it_in_select_mode():
+    """task-31631 AC#2: marker cell and title cells are the same target."""
+    host = _row_click_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        marker_x = row.region.x
+        # Past the marker cell and its padding: inside the title text.
+        title_x = row.region.x + 6
+        row_y = row.region.y
+        assert title_x < row.region.right, row.region
+
+        await pilot.click(offset=(marker_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1, "marker click"
+
+        # The title, immediately after -- the click the live pass lost.
+        await pilot.click(offset=(title_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 0, (
+            "a title click right after a marker click did not toggle the row"
+        )
+
+        await pilot.click(offset=(title_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1, "title click"
+        canvas = screen.query_one("#library-media-canvas")
+        assert "1 selected" in _painted(host, canvas.region)
+
+
+@pytest.mark.asyncio
+async def test_media_row_title_click_still_opens_the_item_in_browse_mode():
+    """Browse mode is untouched: a title click opens the item (task-31631)."""
+    host = _row_click_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        assert screen._library_media_select_mode is False
+        row = screen.query_one("#library-media-row-0", Button)
+        await pilot.click(offset=(row.region.x + 6, row.region.y))
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_reader_session.pending_request is None
+                and screen._library_media_reader_session.loaded_id is not None
+            ),
+            message="A browse-mode title click did not open the item.",
+        )
+        assert screen._library_media_row_selection.count == 0
