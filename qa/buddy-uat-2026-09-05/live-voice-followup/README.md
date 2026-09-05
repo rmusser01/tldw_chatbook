@@ -108,3 +108,16 @@ ownership issue. Live receipts identify their original source base; they are
 not a claim that provider/audio UAT was repeated after rebase.
 
 [Sync-provider review verification](sync-stop-review-verification.json) records the later deterministic/static checks and preserves the earlier live receipts unchanged.
+
+PR2428 also closes TASK31700's preexisting CI boot-census breach. vLLM setup
+imports now occur at exact-target validation; Environment gatherers and its
+retained scanner load at first refresh. UI-ready fell from976 to972 against
+the unchanged972 ratchet; app imports measured639/660. The complete CI guard
+target passed18, and focused closure/Environment checks passed44. Broader
+first-use checks passed379 with one handoff UI failure also reproduced using
+the original source; the task records the exact baseline limitation.
+
+After rebase onto dev `ec55a0ed3`, all production/test patches remain range-diff
+equivalent. The combined CI boot guards, first-use closure and cancellation-drain
+unit tests pass **26/26**. Earlier live receipts retain their original source
+identities; no microphone or provider UAT was rerun for these review/CI fixes.
