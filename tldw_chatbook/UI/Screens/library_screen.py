@@ -4178,7 +4178,9 @@ class LibraryScreen(BaseAppScreen):
             if self._library_conversation_handoff_ready():
                 shortcuts.append(("c", "resume conversation"))
             shortcuts.append(("F6", "next pane"))
-            escape_label = self._library_conversation_escape_label()
+            escape_label = (
+                self._conversations_controller._library_conversation_escape_label()
+            )
             if escape_label:
                 shortcuts.append(("esc", escape_label))
             return tuple(shortcuts)
@@ -9945,14 +9947,6 @@ class LibraryScreen(BaseAppScreen):
             return bool(self.query("#library-conversations-canvas"))
         return False
 
-    def _library_conversation_focus_region(self) -> str:
-        return self._conversations_controller._library_conversation_focus_region()
-
-
-    def _library_conversation_escape_label(self) -> str:
-        return self._conversations_controller._library_conversation_escape_label()
-
-
     def _arm_library_list_entry_focus(
         self,
         *,
@@ -10890,10 +10884,6 @@ class LibraryScreen(BaseAppScreen):
             and self._selected_conversation_id == record_id
         )
 
-    def _adopt_library_conversation_state_selection(self, selected_id: str) -> None:
-        return self._conversations_controller._adopt_library_conversation_state_selection(selected_id)
-
-
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use
     # (they take no explicit group either). Both were previously exclusive
@@ -11059,10 +11049,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_prefetched_total = page.total
         self._library_collections_count_authority = authority.key
         self._library_collections_count_failure = ""
-
-    def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
-        return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
-
 
     @staticmethod
     def _structural_records_for_comparison(
@@ -11408,7 +11394,9 @@ class LibraryScreen(BaseAppScreen):
         )
         if shell.canvas_kind == "conversations":
             state = self._build_library_conversations_state()
-            self._adopt_library_conversation_state_selection(state.selected_id)
+            self._conversations_controller._adopt_library_conversation_state_selection(
+                state.selected_id
+            )
             return LibraryConversationsCanvas(state, id="library-conversations-canvas")
         if shell.canvas_kind == "media":
             # Every media view (list / viewer / trash) resolves through the
@@ -12071,7 +12059,7 @@ class LibraryScreen(BaseAppScreen):
             # Conversation paging has its own failure and retry state. A broad
             # source outage must not replace a successful independent page.
             conversations_state = self._build_library_conversations_state()
-            self._adopt_library_conversation_state_selection(
+            self._conversations_controller._adopt_library_conversation_state_selection(
                 conversations_state.selected_id
             )
             sync_kind = "conversations"
@@ -12368,8 +12356,10 @@ class LibraryScreen(BaseAppScreen):
         *,
         schedule_reconcile: bool = True,
     ) -> bool:
-        normalized_records = self._carry_selected_conversation_into_snapshot(
-            dict(records)
+        normalized_records = (
+            self._conversations_controller._carry_selected_conversation_into_snapshot(
+                dict(records)
+            )
         )
         normalized_counts = dict(counts)
         normalized_total_known = dict(total_known)
@@ -13085,10 +13075,6 @@ class LibraryScreen(BaseAppScreen):
         return self._conversations_controller._conversation_record_id(record, index)
 
 
-    def _selected_conversation_record(self) -> tuple[int, Mapping[str, Any]] | None:
-        return self._conversations_controller._selected_conversation_record()
-
-
     @classmethod
     def _conversation_message_count_label(cls, record: Mapping[str, Any]) -> str:
         return LibraryConversationsController._conversation_message_count_label(record)
@@ -13105,7 +13091,7 @@ class LibraryScreen(BaseAppScreen):
 
 
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
-        selected = self._selected_conversation_record()
+        selected = self._conversations_controller._selected_conversation_record()
         if selected is None:
             return None
         index, record = selected
@@ -14736,7 +14722,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if shell.canvas_kind == "conversations":
             conversations_state = self._build_library_conversations_state()
-            self._adopt_library_conversation_state_selection(
+            self._conversations_controller._adopt_library_conversation_state_selection(
                 conversations_state.selected_id
             )
             rail = LibraryRail(
@@ -14931,7 +14917,7 @@ class LibraryScreen(BaseAppScreen):
                         yield self._library_canvas_error_widget()
                     elif shell.canvas_kind == "conversations":
                         conversations_state = self._build_library_conversations_state()
-                        self._adopt_library_conversation_state_selection(
+                        self._conversations_controller._adopt_library_conversation_state_selection(
                             conversations_state.selected_id
                         )
                         yield LibraryConversationsCanvas(
@@ -15612,14 +15598,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _prepare_library_conversation_page_request(self, query: str, *, page: int=1, refocus_filter: bool=False, focus_after_apply: str='') -> tuple[str, int]:
         return self._conversations_controller._prepare_library_conversation_page_request(query, page=page, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
-
-
-    def _library_conversation_page_needs_recovery(self) -> bool:
-        return self._conversations_controller._library_conversation_page_needs_recovery()
-
-
-    def _fail_library_conversation_request(self, requested_page: int, requested_query: str, generation: int, *, copy: str='') -> None:
-        return self._conversations_controller._fail_library_conversation_request(requested_page, requested_query, generation, copy=copy)
 
 
     async def _load_library_conversation_page(self, page: int, query: str, generation: int, *, _clamp_attempted: bool=False) -> None:
@@ -21449,7 +21427,7 @@ class LibraryScreen(BaseAppScreen):
                 target_id == "conversations"
                 and row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
                 and self._library_selected_row_id == row_id
-                and self._library_conversation_page_needs_recovery()
+                and self._conversations_controller._library_conversation_page_needs_recovery()
             ):
                 self._start_library_conversation_page_request(
                     self._conversations_state.requested_page,
@@ -24787,7 +24765,9 @@ class LibraryScreen(BaseAppScreen):
             if self._library_emergency_return_eligibility().visible:
                 return False
             if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-                return bool(self._library_conversation_escape_label())
+                return bool(
+                    self._conversations_controller._library_conversation_escape_label()
+                )
             return (
                 self._library_list_canvas_showing_list()
                 or self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -26463,7 +26443,7 @@ class LibraryScreen(BaseAppScreen):
             The selector, or ``""`` when the hop would focus nothing.
         """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-            region = self._library_conversation_focus_region()
+            region = self._conversations_controller._library_conversation_focus_region()
             layout = self._conversations_state.reader_layout
             if region == "work" and layout.items_open:
                 return "#library-conversations-filter"
@@ -34011,13 +33991,13 @@ class LibraryScreen(BaseAppScreen):
         service = getattr(self.app_instance, "chat_conversation_scope_service", None)
         locate_page = getattr(service, "locate_conversation_page", None)
         if not callable(locate_page):
-            self._fail_library_conversation_request(
+            self._conversations_controller._fail_library_conversation_request(
                 1,
                 normalized_query,
                 generation,
                 copy="Conversation is unavailable. Try again.",
             )
-            self._notify_library_conversation_unavailable()
+            self._conversations_controller._notify_library_conversation_unavailable()
             return None
         try:
             located = await self._run_library_service_call(
@@ -34031,7 +34011,7 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             if generation != self._conversations_state.request_generation:
                 return LibraryEntryReconcileResult.SUPERSEDED
-            self._fail_library_conversation_request(
+            self._conversations_controller._fail_library_conversation_request(
                 1,
                 normalized_query,
                 generation,
@@ -34043,20 +34023,20 @@ class LibraryScreen(BaseAppScreen):
         if not entry_is_current():
             return LibraryEntryReconcileResult.SUPERSEDED
         if located is None:
-            self._fail_library_conversation_request(
+            self._conversations_controller._fail_library_conversation_request(
                 1,
                 normalized_query,
                 generation,
                 copy="Conversation is unavailable. Try again.",
             )
-            self._notify_library_conversation_unavailable()
+            self._conversations_controller._notify_library_conversation_unavailable()
             return None
         try:
             records, resolved_page, total, has_more = (
                 self._validate_library_conversation_locator(located, record_id)
             )
         except (TypeError, ValueError):
-            self._fail_library_conversation_request(
+            self._conversations_controller._fail_library_conversation_request(
                 1,
                 normalized_query,
                 generation,
@@ -34081,7 +34061,7 @@ class LibraryScreen(BaseAppScreen):
         if entry_origin:
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
             conversations_state = self._build_library_conversations_state()
-            self._adopt_library_conversation_state_selection(
+            self._conversations_controller._adopt_library_conversation_state_selection(
                 conversations_state.selected_id
             )
             generation = self._library_snapshot_state_generation
@@ -34101,10 +34081,6 @@ class LibraryScreen(BaseAppScreen):
         if self._pending_library_source_open == locator_intent:
             self._pending_library_source_open = None
         return None
-
-    def _notify_library_conversation_unavailable(self) -> None:
-        return self._conversations_controller._notify_library_conversation_unavailable()
-
 
     @staticmethod
     def _validate_library_conversation_locator(response: object, conversation_id: str) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
