@@ -241,7 +241,7 @@ mic: the in-process facade leaves the executor slot free, so the existing
   navigation API accepts a sub-mode (resolved in the plan); fallback is a plain
   switch plus a toast naming the job.
 
-### 3.6 `Packaging/macos/audiotap/main.swift` — helper `tldw-audiotap`
+### 3.6 `tldw_chatbook/Audio/audiotap/main.swift` — helper `tldw-audiotap`
 
 ~150 lines of Swift, macOS 14.2+ APIs:
 
