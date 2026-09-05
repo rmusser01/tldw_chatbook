@@ -1,0 +1,36 @@
+{
+  "run_id": "kokoro-20260905-d84d4bb37e",
+  "child_pid": 4928,
+  "wrapper_pid": 4921,
+  "import_root": "/private/tmp/chatbook-migu-dragging-20260905/tldw_chatbook",
+  "provider": "kokoro",
+  "microphone_opened": false,
+  "visual_before": true,
+  "visual_reason": null,
+  "sink": {
+    "outcome": "drained",
+    "bytes_fed": 128000,
+    "terminal_reason": "drained"
+  },
+  "playbacks": [
+    {
+      "outcome": "drained",
+      "bytes_fed": 128000,
+      "terminal_reason": "drained"
+    }
+  ],
+  "buddy_states": [
+    "idle",
+    "speaking",
+    "idle"
+  ],
+  "elapsed_seconds": 4.6,
+  "speaking_cleared": true,
+  "app_exception": null,
+  "ownership_playback_started": true,
+  "state_after_context_switch_terminal": "speaking",
+  "other_voice_owner_preserved": true,
+  "state_after_other_owner_release": "idle",
+  "speaking_presentation_cleared_after_context_switch": true,
+  "normal_config_unchanged": true
+}

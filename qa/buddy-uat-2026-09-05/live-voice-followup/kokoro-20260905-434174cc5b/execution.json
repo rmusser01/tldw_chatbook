@@ -1,0 +1,22 @@
+{
+  "run_id": "kokoro-20260905-434174cc5b",
+  "mode": "kokoro",
+  "wrapper_pid": 5682,
+  "source_root": "/private/tmp/chatbook-migu-dragging-20260905",
+  "source_revision": "64ce47a04f8b541818270c10c1a6f93b83a18080",
+  "source_branch": "codex/migu-live-voice-uat",
+  "source_status_at_launch": "M \"backlog/tasks/task-31585 - Close-remaining-Migu-Buddy-UAT-interaction-and-voice-gaps.md\"",
+  "runtime_root": "/private/tmp/migu-live-kokoro-20260905-434174cc5b",
+  "profile_root": "/private/tmp/migu-live-kokoro-20260905-434174cc5b/profile",
+  "harness_sha256": "7c2a23e6c1d47f567ddd1d0d8d87f40db16f1966ed9744ac5f9aa9e0d3edc43e",
+  "launched_at": "2026-09-05T18:37:36.025420+00:00",
+  "microphone_authorized": false,
+  "normal_config_unchanged": true,
+  "child_pid": 5687,
+  "exited_at": "2026-09-05T18:37:49.757106+00:00",
+  "child_returncode": 0,
+  "source_revision_at_exit": "64ce47a04f8b541818270c10c1a6f93b83a18080",
+  "source_status_at_exit": "M \"backlog/tasks/task-31585 - Close-remaining-Migu-Buddy-UAT-interaction-and-voice-gaps.md\"",
+  "child_receipt_identity_matches": true,
+  "app_exception": null
+}

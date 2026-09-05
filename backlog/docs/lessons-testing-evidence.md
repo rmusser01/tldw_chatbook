@@ -11474,3 +11474,25 @@ widget `display`. A mounted regression proved four unwanted dispatches. Its firs
 attempt also exposed that `Screen.is_current` includes background screens. Use
 `app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
 exercise real cover/return and retained-owner refresh, not a visibility mock.
+## Stop must drain an offloaded dispatch CAS before terminal settlement
+
+**TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the
+Console reported streaming, before the first token. The UI ended BLOCKED; its
+retained isolated SQLite database still held an empty `dispatch_started`
+assistant and checkpoint revision 2 after the matching child exited. A later
+after-text Stop passed, but that did not resolve the earlier user-facing race.
+The worker-thread CAS outlived cancellation before its result was published;
+the terminal guard mistook the accepted in-memory checkpoint for a previous
+settlement failure. Gate both before and after the real file-backed CAS, drain
+its publication before settling Stop, and verify the persisted terminal owner
+and checkpoint deletion through another connection after the worker finishes.
+Cover both direct-provider and agent pre-worker paths, repeated Stop, and
+another live session. A transcript marker read from the store is only in-memory
+evidence unless the database is checked separately.
+
+PR2428 review exposed a second instance through the real generic synchronous
+gateway: `run_coroutine_threadsafe` detached the dispatch callback from the
+cancelled stream. Shielding only the callback did not make the stream wait.
+The regression now uses that actual gateway and waits for its worker's terminal
+acknowledgement; both callback and stream drain the same assistant-owned task
+before terminal settlement.
