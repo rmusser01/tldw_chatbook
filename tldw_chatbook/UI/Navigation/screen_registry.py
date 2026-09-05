@@ -82,7 +82,21 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         reusable=True,
     ),
     "chat": ScreenRoute(
-        "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
+        "chat",
+        "chat",
+        "tldw_chatbook.UI.Screens.chat_screen",
+        "ChatScreen",
+        # TASK-31520 (audited 2026-09-04, 19-step on_unmount disposition):
+        # per-visit timers stop and live audio abandons in
+        # `on_screen_suspend`; auto-speak/sync-timer/survivor-tick re-arm
+        # in `on_screen_resume`. The runtime view stays ATTACHED across a
+        # suspend -- runs and parked approvals survive navigation (the
+        # `confirm_navigation` gate is retired accordingly; quit still
+        # confirms). `on_unmount`'s remaining teardown (video drain,
+        # roleplay abandon, store-tap uninstall, runtime leave) now runs
+        # at true teardown only -- each was audited as breaking its
+        # feature if wired to suspend.
+        reusable=True,
     ),
     "library": ScreenRoute(
         "library",
