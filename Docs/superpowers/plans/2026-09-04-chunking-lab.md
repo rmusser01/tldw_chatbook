@@ -203,6 +203,7 @@ draft = DraftState(raw_json=raw, parsed_json=parsed_json,
 
 - Create: `tldw_chatbook/DB/Chunking_Lab_DB.py`, `tldw_chatbook/Chunking/lab_autosave.py`.
 - Modify: `tldw_chatbook/DB/private_sqlite.py` (register `db.chunking_lab`).
+- Docs: `backlog/docs/sqlite-private-owner-inventory.md` (enumerate the new registered connection owner alongside its inventory tests).
 - Test: `Tests/DB/test_chunking_lab_db.py`, `Tests/Chunking/test_lab_autosave.py`, `Tests/DB/test_private_sqlite_inventory.py`.
 
 **Interfaces**
@@ -307,6 +308,7 @@ def export_recovery(session: LabSession) -> bytes:
 - Produces `PreviewLimits(sample_bytes: int = 2097152, chunks: int = 10000, result_bytes: int = 33554432, wall_seconds: float = 60.0)` and `LocalPreviewRunner(limits: PreviewLimits)` with `async run(request: RunRequest) -> RunResult`, `async cancel() -> None`, `async close() -> None`. Cancel returns only after child termination and reaping.
 - Produces `LabCoordinator(session: LabSession, writer: AutosaveWriter, runner: LocalPreviewRunner)` with `session -> LabSession`, `async run(candidate_ids: tuple[str, ...]) -> None`, `async cancel() -> None`, `async replace_recovery(payload: bytes) -> None`, `async undo_restore() -> None`, `async clear() -> None`, `async close() -> None`, and `set_session(session: LabSession) -> None` for serialized pure UI transitions. Replacement/clear reject edits until the guarded transition settles.
 - The coordinator exposes copied session/status change events to subscribers; UI widgets never receive process or DB handles. One app/profile owns one coordinator, surviving screen unmount.
+- A pure undo may remove a newly pinned A and invalidate its installed batch (`batch` becomes `None`). `set_session` must stop that batch's worker and remaining queue; no later member may launch or publish. A new Run remains blocked until the prior worker has stopped.
 
 - [ ] Write the failing limit test below and process-backed timeout/cancel tests with a deliberately non-cooperative local test child. Write coordinator tests using recording runner/writer doubles to inspect immutable requests and publication ordering.
 

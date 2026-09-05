@@ -1,11 +1,11 @@
 ---
 id: TASK-31422
 title: Chunking Lab - lossless draft and candidate state
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:11'
-updated_date: '2026-09-05 00:00'
+updated_date: '2026-09-05 00:24'
 labels:
   - chunking
   - chunking-lab

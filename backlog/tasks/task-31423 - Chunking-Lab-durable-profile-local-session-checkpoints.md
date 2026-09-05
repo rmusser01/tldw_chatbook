@@ -1,13 +1,16 @@
 ---
 id: TASK-31423
 title: Chunking Lab - durable profile-local session checkpoints
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-04 23:12'
+updated_date: '2026-09-05 00:24'
 labels:
   - chunking
   - chunking-lab
-dependencies: [TASK-31422]
+dependencies:
+  - TASK-31422
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -28,3 +31,9 @@ Recover the latest durable experiment after reopening or crashing, including inv
 - [ ] #3 Serialized revision-aware autosaves target 300 ms debounce and a one-second maximum normal typing interval; Saved locally only reflects the latest committed revision and conflicts preserve the losing in-memory state.
 - [ ] #4 Crash injection, disk failures, incompatible schemas, concurrent writers, and delayed acknowledgments cannot overwrite valid recovery data, falsely report saved state, or resurrect a cleared epoch.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: implements the approved dedicated recovery store, private ownership and serialized revision-aware writer. 1. Read Task 3 brief, task-3-context and current state/publication contracts. 2. Write failing private SQLite round-trip, atomic result publication, real crash and two-writer conflict tests. 3. Implement versioned checkpoint/blob storage and serialized autosave with honest status and retained references. 4. Run the targeted DB/autosave/private-owner suites, lint and format; review independently. 5. Record AC evidence and implementation notes.
+<!-- SECTION:PLAN:END -->
