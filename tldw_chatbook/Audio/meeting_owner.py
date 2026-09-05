@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from .meeting_session import (
     LocalMeetingSink,
@@ -34,11 +35,16 @@ from .meeting_session import (
     update_meeting_json,
 )
 from .system_audio_tap import TapMode, build_tap, probe
-from .wav_writer import PlaceholderWavWriter, patch_wav_header, wav_needs_patch
+from .wav_writer import HEADER_BYTES, PlaceholderWavWriter, patch_wav_header, wav_needs_patch
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 MEETINGS_DIRNAME = "meetings"
 DIARIZATION_MODULES = ("torch", "torchaudio", "speechbrain", "sklearn")
+BYTES_PER_S = 32000.0
+#: Ingest job states that will never change again. `done` is the only one
+#: that means the raw tracks are safe to delete; the rest simply end the
+#: wait (`IngestJobState`, `Library/library_ingest_jobs.py`).
+TERMINAL_JOB_STATES = frozenset({"done", "failed", "cancelled", "skipped"})
 
 
 def resolve_effective_config():
@@ -48,32 +54,78 @@ def resolve_effective_config():
     return resolve()
 
 
-@dataclass
-class MeetingSettings:
+class MeetingSettings(BaseModel):
+    """Validated `[meetings]` configuration for one meeting session.
+
+    Config values are loosely typed (TOML, env, defaults), so they are
+    validated here at the boundary rather than cast ad hoc downstream:
+    an unusable provider/device/flag raises `ValidationError` naming the
+    field instead of surfacing halfway through a recording. Assignment is
+    validated too -- `apply_device_choice` writes `mic_device` and
+    `system_source` back onto a live instance.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
     provider: str = "auto"
     model: str = ""
     system_source: str = "auto"
     mic_device: str = ""
-    recordings_dir: Path | None = None
+    recordings_dir: Path
     keep_raw_tracks: bool = True
     post_transcribe: bool = True
     post_diarize: bool = True
 
+    @field_validator("recordings_dir", mode="before")
     @classmethod
-    def from_config(cls, get_setting: Callable[[str, str, Any], Any], data_dir: Path) -> "MeetingSettings":
+    def _validate_recordings_dir(cls, value: Any) -> Path:
+        """Run a configured (string) path through the central validator.
+
+        Args:
+            value: A `str` straight from config, or an already-built `Path`.
+
+        Returns:
+            The absolute, resolved recordings directory.
+
+        Raises:
+            ValueError: Empty, not path-shaped, or rejected by
+                `validate_path_simple` (traversal, null bytes, ...).
+        """
         from tldw_chatbook.Utils.path_validation import validate_path_simple
 
+        if isinstance(value, str):
+            if not value.strip():
+                raise ValueError("recordings_dir must not be empty")
+            value = validate_path_simple(value)
+        elif not isinstance(value, Path):
+            raise ValueError("recordings_dir must be a path")
+        return Path(value).resolve()
+
+    @classmethod
+    def from_config(cls, get_setting: Callable[[str, str, Any], Any], data_dir: Path) -> "MeetingSettings":
+        """Build the settings from the `[meetings]` config section.
+
+        Args:
+            get_setting: `(section, key, default)` config accessor.
+            data_dir: User data dir, parent of the default recordings folder.
+
+        Returns:
+            The validated settings.
+
+        Raises:
+            pydantic.ValidationError: A configured value is not usable; the
+                error names the offending field.
+        """
         raw_dir = get_setting("meetings", "recordings_dir", "") or ""
-        recordings_dir = validate_path_simple(raw_dir) if raw_dir else Path(data_dir) / MEETINGS_DIRNAME
         return cls(
-            provider=str(get_setting("meetings", "provider", "auto") or "auto"),
-            model=str(get_setting("meetings", "model", "") or ""),
-            system_source=str(get_setting("meetings", "system_source", "auto") or "auto"),
-            mic_device=str(get_setting("meetings", "mic_device", "") or ""),
-            recordings_dir=Path(recordings_dir).resolve(),
-            keep_raw_tracks=bool(get_setting("meetings", "keep_raw_tracks", True)),
-            post_transcribe=bool(get_setting("meetings", "post_transcribe", True)),
-            post_diarize=bool(get_setting("meetings", "post_diarize", True)),
+            provider=get_setting("meetings", "provider", "auto") or "auto",
+            model=get_setting("meetings", "model", "") or "",
+            system_source=get_setting("meetings", "system_source", "auto") or "auto",
+            mic_device=get_setting("meetings", "mic_device", "") or "",
+            recordings_dir=raw_dir or Path(data_dir) / MEETINGS_DIRNAME,
+            keep_raw_tracks=get_setting("meetings", "keep_raw_tracks", True),
+            post_transcribe=get_setting("meetings", "post_transcribe", True),
+            post_diarize=get_setting("meetings", "post_diarize", True),
         )
 
 
@@ -118,17 +170,19 @@ def scan_recoverable(meetings_dir: Path) -> list[Path]:
 
 def recover_folder(folder: Path) -> dict:
     folder = Path(folder)
-    data_bytes = 0
     for name in ("mixed.wav", "you.wav", "others.wav"):
         path = folder / name
         if wav_needs_patch(path):
-            patched = patch_wav_header(path)
-            if name == "mixed.wav":
-                data_bytes = patched
-    duration_s = data_bytes / 32000.0
+            patch_wav_header(path)
+    # From the file size whenever mixed.wav exists, NOT only when it needed
+    # patching: writers are closed sequentially, so a crash between closing
+    # mixed.wav and closing a raw track leaves a perfectly valid mixed
+    # recording that used to be reported as duration 0 (Qodo Q16).
+    mixed_path = folder / "mixed.wav"
+    data_bytes = max(0, mixed_path.stat().st_size - HEADER_BYTES) if mixed_path.exists() else 0
+    duration_s = data_bytes / BYTES_PER_S
     payload = read_meeting_json(folder)
     if not payload.get("ended_at"):
-        mixed_path = folder / "mixed.wav"
         ended_at = (
             datetime.fromtimestamp(mixed_path.stat().st_mtime)
             if mixed_path.exists()
@@ -200,6 +254,8 @@ class MeetingSessionOwner:
         call_from_thread: Callable[..., Any],
         submit_ingest: Callable[..., Optional[str]],
         job_state: Callable[[str], Optional[str]] = lambda job_id: None,
+        subscribe_jobs: Callable[[Callable[[], None]], None] | None = None,
+        unsubscribe_jobs: Callable[[Callable[[], None]], None] | None = None,
         facade_factory: Callable[[], Any] | None = None,
         dictation_factory: Callable[[MeetingCapture, Any, Any], Any] | None = None,
         tap_probe: Callable[..., TapMode] = probe,
@@ -215,6 +271,9 @@ class MeetingSessionOwner:
         self._call_from_thread = call_from_thread
         self._submit_ingest = submit_ingest
         self._job_state = job_state
+        self._subscribe_jobs = subscribe_jobs
+        self._unsubscribe_jobs = unsubscribe_jobs
+        self._watching_jobs = False
         self._facade_factory = facade_factory or _default_facade_factory
         self._dictation_factory = dictation_factory or _default_dictation_factory
         self._tap_probe = tap_probe
@@ -303,6 +362,7 @@ class MeetingSessionOwner:
                 capture = MeetingCapture(
                     mic_recorder_factory=self._mic_factory, tap=tap, writers=writers,
                     vad_factory=self._vad_factory,
+                    mic_device_name=self.settings.mic_device or None,
                 )
                 meta = MeetingMeta(
                     folder=folder, mode=capture.mode,
@@ -335,6 +395,7 @@ class MeetingSessionOwner:
                     failure = f"meeting failed to start: {exc}"
                 if not started:
                     capture.stop_recording()  # closes the writers; tolerates a never-started mic
+                    self.local_sink.close()   # the JSONL handle, if on_started got that far
                     shutil.rmtree(folder, ignore_errors=True)
                     self.session = None
                     self.local_sink = None
@@ -373,17 +434,20 @@ class MeetingSessionOwner:
             result = session.stop(reason=reason)  # idempotent for sequential callers
             if result is not None:
                 self.last_result = result
+            self._watch_ingest_job()
             return result if result is not None else self.last_result
 
     def shutdown(self) -> None:
         """App quit: finalise files, skip the ingest submit (spec §3.4)."""
         session = self.session
-        if session is None or not self.is_active:
-            return
-        sink = self.local_sink
-        if sink is not None:
-            sink._submit = lambda **kwargs: None
-        self.stop(reason="shutdown")
+        if session is not None and self.is_active:
+            sink = self.local_sink
+            if sink is not None:
+                sink._submit = lambda **kwargs: None
+            self.stop(reason="shutdown")
+        if self.local_sink is not None:
+            self.local_sink.close()
+        self._unwatch_ingest_job()
 
     # ---- watchdog ---------------------------------------------------------
     def _start_watchdog(self) -> None:
@@ -416,18 +480,61 @@ class MeetingSessionOwner:
                 return
 
     # ---- cleanup ----------------------------------------------------------
+    def _watch_ingest_job(self) -> None:
+        """Watch the ingest registry until this meeting's job settles.
+
+        `keep_raw_tracks = false` is only honoured once the Library job that
+        consumed `mixed.wav` finishes, which happens long after `stop()`
+        returns -- and the Meetings screen may be gone by then. The owner
+        outlives the screen, so the wait lives here (Qodo Q12).
+        """
+        if self.settings.keep_raw_tracks or self._subscribe_jobs is None or self._watching_jobs:
+            return
+        sink = self.local_sink
+        if sink is None or not sink.job_id:
+            return
+        self._watching_jobs = True
+        self._subscribe_jobs(self._on_ingest_jobs_changed)
+
+    def _unwatch_ingest_job(self) -> None:
+        """Drop the registry listener, if one is registered."""
+        if not self._watching_jobs:
+            return
+        self._watching_jobs = False
+        if self._unsubscribe_jobs is not None:
+            self._unsubscribe_jobs(self._on_ingest_jobs_changed)
+
+    def _on_ingest_jobs_changed(self) -> None:
+        """Registry listener (UI thread): clean up once the job is terminal."""
+        sink = self.local_sink
+        job_id = getattr(sink, "job_id", None)
+        state = self._job_state(job_id) if job_id else None
+        if state not in TERMINAL_JOB_STATES:
+            return
+        self.cleanup_raw_tracks_if_done()   # a no-op unless the state is "done"
+        self._unwatch_ingest_job()
+
     def cleanup_raw_tracks_if_done(self) -> bool:
-        """Delete you/others once the ingest job is done (best effort, spec §5)."""
+        """Delete you/others once the ingest job is done (best effort, spec §5).
+
+        Returns:
+            True when the job was done and the deletion pass ran. Individual
+            unlink failures are logged and skipped: a raw track that cannot
+            be removed is a disk-space problem, never a lost meeting.
+        """
         if self.settings.keep_raw_tracks or self.last_result is None or self.local_sink is None:
             return False
         job_id = self.local_sink.job_id
         if not job_id or self._job_state(job_id) != "done":
             return False
         folder = Path(self.last_result.meta.folder)
-        for name in ("you.wav", "others.wav"):
+        for name in ("you.wav", "others.wav"):   # never mixed.wav: that is the recording
             path = folder / name
-            if path.exists():
-                path.unlink()
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError as exc:
+                logger.warning("meeting raw track cleanup failed: {}", redact_user_paths(str(exc)))
         return True
 
 
@@ -458,6 +565,14 @@ def build_meeting_session_owner(app: Any) -> "MeetingSessionOwner":
         state = getattr(job, "state", None)
         return getattr(state, "value", state)
 
+    # The ingest registry is UI-thread-only, listener registration included.
+    def subscribe_jobs(listener: Callable[[], None]) -> None:
+        marshal(app.library_ingest_jobs.add_listener, listener)
+
+    def unsubscribe_jobs(listener: Callable[[], None]) -> None:
+        marshal(app.library_ingest_jobs.remove_listener, listener)
+
     return MeetingSessionOwner(
         settings=settings, call_from_thread=marshal, submit_ingest=submit_ingest, job_state=job_state,
+        subscribe_jobs=subscribe_jobs, unsubscribe_jobs=unsubscribe_jobs,
     )

@@ -62,7 +62,29 @@ def _settings(tmp_path, **over) -> mo.MeetingSettings:
     return mo.MeetingSettings(**base)
 
 
-def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, **over):
+class FakeJobRegistry:
+    """Stand-in for `app.library_ingest_jobs`: listeners + one job state."""
+
+    def __init__(self, state: str = "queued"):
+        self.state = state
+        self.listeners: list = []
+
+    def add_listener(self, callback):
+        self.listeners.append(callback)
+
+    def remove_listener(self, callback):
+        if callback in self.listeners:
+            self.listeners.remove(callback)
+
+    def job_state(self, job_id):
+        return self.state
+
+    def fire(self):
+        for callback in list(self.listeners):
+            callback()
+
+
+def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, **over):
     marshalled: list[tuple] = []
     submitted: list[dict] = []
 
@@ -78,7 +100,9 @@ def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, **over):
         settings=_settings(tmp_path, **over),
         call_from_thread=call_from_thread,
         submit_ingest=submit_ingest,
-        job_state=job_state or (lambda job_id: None),
+        job_state=job_state or (registry.job_state if registry else (lambda job_id: None)),
+        subscribe_jobs=registry.add_listener if registry else None,
+        unsubscribe_jobs=registry.remove_listener if registry else None,
         facade_factory=lambda: SimpleNamespace(name="facade"),
         dictation_factory=lambda capture, facade, cfg: FakeDictation(capture),
         tap_probe=lambda **kw: TapMode(tap_kind, "reason", command=("x",)),
@@ -214,6 +238,7 @@ def test_shutdown_finalises_files_without_submitting(tmp_path, monkeypatch):
     owner.shutdown()
     assert not owner.is_active and submitted == []
     assert not wav_needs_patch(session.meta.folder / "mixed.wav")
+    assert owner.local_sink._handle is None          # transcript handle released
     payload = json.loads((session.meta.folder / "meeting.json").read_text())
     assert payload["stop_reason"] == "shutdown" and payload["ended_at"]
 
@@ -287,6 +312,167 @@ def test_cleanup_raw_tracks_only_when_job_done(tmp_path, monkeypatch):
     assert (folder / "mixed.wav").exists()
 
 
+def _tap_owner(tmp_path, monkeypatch, **over):
+    """An owner in call mode (three writers) with a trivial always-up tap."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+
+    class Tap:
+        state = "stopped"
+
+        def start(self, on_frames):
+            return True
+
+        def stop(self):
+            return None
+
+    owner, marshalled, submitted = _owner(tmp_path, tap_kind="native_macos", **over)
+    owner._tap_builder = lambda mode, **kw: Tap()
+    owner.prepare()
+    return owner
+
+
+def test_stop_subscribes_to_the_registry_and_cleans_up_when_the_job_is_done(tmp_path, monkeypatch):
+    """Q12: `cleanup_raw_tracks_if_done` had no production caller at all, so
+    `keep_raw_tracks = false` never deleted anything. The wait outlives the
+    Meetings screen, so the owner (not the screen) holds the listener."""
+    registry = FakeJobRegistry("parsing")
+    owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
+    session = owner.start()
+    folder = session.meta.folder
+    owner.stop()
+    assert len(registry.listeners) == 1
+
+    registry.fire()                       # still parsing: nothing to do yet
+    assert (folder / "you.wav").exists() and registry.listeners
+
+    registry.state = "done"
+    registry.fire()
+    assert not (folder / "you.wav").exists() and not (folder / "others.wav").exists()
+    assert (folder / "mixed.wav").exists()
+    assert registry.listeners == []       # unsubscribed itself
+
+
+def test_a_failed_ingest_job_stops_waiting_without_deleting(tmp_path, monkeypatch):
+    registry = FakeJobRegistry("failed")
+    owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
+    session = owner.start()
+    folder = session.meta.folder
+    owner.stop()
+    registry.fire()
+    assert (folder / "you.wav").exists() and (folder / "others.wav").exists()
+    assert registry.listeners == []
+
+
+def test_keep_raw_tracks_never_subscribes(tmp_path, monkeypatch):
+    registry = FakeJobRegistry("done")
+    owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=True)
+    session = owner.start()
+    owner.stop()
+    assert registry.listeners == []
+    assert (session.meta.folder / "you.wav").exists()
+
+
+def test_shutdown_unsubscribes_the_registry_listener(tmp_path, monkeypatch):
+    registry = FakeJobRegistry("parsing")
+    owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
+    owner.start()
+    owner.stop()
+    assert registry.listeners
+    owner.shutdown()
+    assert registry.listeners == []
+
+
+def test_cleanup_tolerates_an_unlink_failure(tmp_path, monkeypatch):
+    registry = FakeJobRegistry("done")
+    owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
+    session = owner.start()
+    folder = session.meta.folder
+    owner.stop()
+    real_unlink = Path.unlink
+
+    def flaky(self, *args, **kwargs):
+        if self.name == "you.wav":
+            raise PermissionError("Operation not permitted")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky)
+    registry.fire()
+    monkeypatch.undo()
+    assert (folder / "you.wav").exists()          # the failure is tolerated
+    assert not (folder / "others.wav").exists()   # ... and the pass continues
+    assert registry.listeners == []
+
+
+def test_capture_receives_the_configured_microphone_name(tmp_path, monkeypatch):
+    """Q15: the owner persisted and displayed the picked mic but built the
+    capture without it, so meetings recorded from the system default."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path, mic_device="Shure MV7")
+    owner.prepare()
+    session = owner.start()
+    assert session.capture._mic_device_name == "Shure MV7"
+    owner.stop()
+
+    default_owner, _, _ = _owner(tmp_path)
+    default_owner.prepare()
+    default_session = default_owner.start()
+    assert default_session.capture._mic_device_name is None
+    default_owner.stop()
+
+
+def test_recovery_keeps_the_duration_of_an_already_closed_mixed_track(tmp_path):
+    """Q16: duration came only from a mixed.wav that itself needed patching.
+    Writers close sequentially, so a crash after mixed.wav closed but before
+    others.wav did reported a valid 1 s recording as duration 0."""
+    folder = tmp_path / "meetings" / "2026-09-04_1300"
+    folder.mkdir(parents=True)
+    with PlaceholderWavWriter(folder / "mixed.wav") as writer:
+        writer.write(b"\x00\x00" * 320 * 50)   # 1 s, header patched on close
+    unfinished = PlaceholderWavWriter(folder / "others.wav")
+    unfinished.write(b"\x00\x00" * 320 * 10)
+    unfinished._handle.flush()                 # crash before this one closed
+    (folder / "meeting.json").write_text(json.dumps({"schema": 1, "started_at": "2026-09-04T13:00:00", "ended_at": None, "mode": "call"}))
+
+    assert mo.scan_recoverable(tmp_path / "meetings") == [folder]
+    payload = mo.recover_folder(folder)
+    assert payload["duration_s"] == pytest.approx(1.0)
+    assert not wav_needs_patch(folder / "others.wav")
+
+
+def test_settings_reject_an_unusable_config_value(tmp_path):
+    """Q5: loosely typed config values are validated at the boundary now."""
+    from pydantic import ValidationError
+
+    values = {"keep_raw_tracks": "maybe"}
+
+    with pytest.raises(ValidationError) as excinfo:
+        mo.MeetingSettings.from_config(lambda s, k, d: values.get(k, d), data_dir=tmp_path)
+    assert "keep_raw_tracks" in str(excinfo.value)
+
+    with pytest.raises(ValidationError):
+        mo.MeetingSettings(recordings_dir=tmp_path, provider=object())
+
+    # Assignment is validated too: `apply_device_choice` writes these back.
+    settings = mo.MeetingSettings(recordings_dir=tmp_path)
+    settings.mic_device = "Shure MV7"
+    assert settings.mic_device == "Shure MV7"
+    with pytest.raises(ValidationError):
+        settings.system_source = 5
+
+
+def test_settings_recordings_dir_goes_through_the_path_validator(tmp_path, monkeypatch):
+    seen: list[str] = []
+    import tldw_chatbook.Utils.path_validation as pv
+
+    real = pv.validate_path_simple
+    monkeypatch.setattr(pv, "validate_path_simple", lambda p, *a, **kw: seen.append(str(p)) or real(p, *a, **kw))
+    settings = mo.MeetingSettings.from_config(
+        lambda s, k, d: str(tmp_path / "rec") if k == "recordings_dir" else d, data_dir=tmp_path
+    )
+    assert seen == [str(tmp_path / "rec")]
+    assert settings.recordings_dir == (tmp_path / "rec").resolve()
+
+
 def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **callbacks: False)
@@ -297,6 +483,26 @@ def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
     assert owner.session is None
     assert not owner.is_active
     assert list((tmp_path / "meetings").glob("*")) == []
+
+
+def test_failed_start_closes_the_transcript_sink(tmp_path, monkeypatch):
+    """Q4: the sink's JSONL handle is released on every exit from start(),
+    not only on the stop() that never happens after a failed start."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    closed: list[int] = []
+
+    class SpySink(mo.LocalMeetingSink):
+        def close(self) -> None:
+            closed.append(1)
+            super().close()
+
+    monkeypatch.setattr(mo, "LocalMeetingSink", SpySink)
+    monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **callbacks: False)
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    with pytest.raises(RuntimeError):
+        owner.start()
+    assert closed
 
 
 def test_raising_start_cleans_up_and_leaves_no_session(tmp_path, monkeypatch):
