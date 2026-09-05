@@ -25,6 +25,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_ANALYZE_SELECTED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
@@ -190,6 +192,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        analysis_action_reason: str = "",
         compact: bool = False,
         show_preview: bool = True,
         **kwargs: Any,
@@ -202,6 +205,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.analysis_action_reason = analysis_action_reason
         self.compact = compact
         self.show_preview = show_preview
         # Fill the (already 13fr) canvas host, not an independent 13fr --
@@ -229,6 +233,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        analysis_action_reason: str = "",
         compact: bool = False,
         show_preview: bool = True,
     ) -> None:
@@ -247,6 +252,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.analysis_action_reason = analysis_action_reason
         self.compact = compact
         self.show_preview = show_preview
         self.refresh(recompose=True)
@@ -284,7 +290,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             button.styles.height = row_height
             button.styles.min_height = row_height
-            self._gate_stale_action(button, label_rest.lstrip())
+            self._gate_mutation_action(button, label_rest.lstrip())
         try:
             preview = self.query_one("#library-media-preview")
             open_viewer = self.query_one("#library-media-open-viewer", Button)
@@ -329,7 +335,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
-        """Apply the controller's stale-page gate to one unsafe action."""
+        """Apply the controller's stale-OR-mutation gate to one unsafe action.
+
+        Final review M-1: despite the name (and despite reading as the
+        symmetric partner of ``_gate_mutation_action`` below, which gates on
+        write-in-flight only), this disables on EITHER input -- a stale page
+        OR a write actually in flight. Do not assume a mutation ending
+        leaves these controls live if the page is still stale.
+        """
         reason = self.mutation_action_reason or self.stale_action_reason
         if reason:
             button.label = library_disabled_action_label(base_label, True)
@@ -412,6 +425,29 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
             LIBRARY_REVIEW_SELECTED_TOOLTIP,
         )
+
+    def _analyze_selected_button(self) -> Button:
+        """Build the "Analyze" bulk action (task-28007 AC#4).
+
+        Rides its OWN row rather than joining Clear/Export/Review: those
+        three already measure 33 of the pane's 36 cells (`min_width` above),
+        so a fourth 13-cell action clipped every label on that row. Same
+        multi-row grammar the danger row uses. When no analysis provider is
+        configured the resolver's own sentence replaces the F-018 tooltip,
+        so the disabled control says WHY, not just that it is off (AC#5's
+        rule, applied to the bulk gesture).
+        """
+        button = self._bulk_action_button(
+            "Analyze",
+            "library-media-analyze-selected",
+            LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
+            LIBRARY_ANALYZE_SELECTED_TOOLTIP,
+        )
+        if self.analysis_action_reason:
+            button.label = library_disabled_action_label("Analyze", True)
+            button.disabled = True
+            button.tooltip = self.analysis_action_reason
+        return button
 
     def _delete_selected_button(self) -> Button:
         """Build the isolated danger action (task-2853's far-end rule, upgraded)."""
@@ -813,6 +849,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 with actions_row:
                     yield self._clear_selection_button()
                     yield from self._select_mode_bulk_buttons()
+                # task-28007 AC#4: Analyze gets its own row -- see
+                # ``_analyze_selected_button`` for the measurement that put
+                # it here rather than beside Export/Review.
+                analyze_row = Horizontal(
+                    id="library-media-select-analyze", classes="ds-toolbar"
+                )
+                analyze_row.styles.height = "auto"
+                with analyze_row:
+                    yield self._analyze_selected_button()
                 # task-2853's danger-isolation rule, upgraded: Delete gets a
                 # whole row, so it is never adjacent to any other action.
                 danger_row = Horizontal(
@@ -837,6 +882,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         receipt_count = getattr(self.canvas, "delete_receipt_count", 0)
         if receipt_count:
             receipt_word = "item" if receipt_count == 1 else "items"
+            # task-31220 (critique #5): a receipt may only claim success
+            # while its Undo can actually run. A failed restore retitles it
+            # with the same ✗ glyph the Analyze receipt uses for a run
+            # where nothing succeeded, and Undo becomes a retry over the
+            # still-failed ids ``receipt_count`` now names.
+            undo_failure = getattr(self.canvas, "delete_receipt_undo_failure", "")
             # task-31270 (critique #4 P1): two rows -- copy, then actions --
             # at full width. A single content-width Horizontal clipped Undo
             # to "Und" at the Items pane's real width; same multi-row
@@ -851,7 +902,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # task-4025 (ADR-055 Pattern A): the receipt names the
                     # durable path too -- "· in Trash" points at the Trash
                     # view that outlives this receipt's Undo/Dismiss.
-                    f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
+                    f"✗ undo failed · {undo_failure}"
+                    if undo_failure
+                    else f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
                     classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
@@ -861,13 +914,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 actions.styles.height = "auto"
                 with actions:
+                    # task-31220: NOT ``_gate_stale_action``. Undo restores
+                    # exactly the ids this receipt names, so it is the
+                    # receipt's own recovery and a stale PAGE behind it
+                    # cannot invalidate it -- disabling it here broke the
+                    # confirmation's "You can undo right away" promise at
+                    # the one moment it mattered (critique #5). The shared
+                    # write interlock still applies, so a second mutation
+                    # can never be claimed while one is in flight.
+                    undo_label = "Retry undo" if undo_failure else "Undo"
                     undo = Button(
-                        "Undo",
+                        undo_label,
                         id="library-media-bulk-delete-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo, "Undo")
+                    yield self._gate_mutation_action(undo, undo_label)
                     dismiss = Button(
                         "Dismiss",
                         id="library-media-bulk-delete-receipt-dismiss",
@@ -901,13 +963,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 set_actions.styles.height = "auto"
                 with set_actions:
+                    # Final review I-3: NOT ``_gate_stale_action``, for the
+                    # same reason the bulk-delete receipt's Undo above is
+                    # exempt -- this Undo restores exactly the one set its
+                    # own copy names, so a stale PAGE behind it cannot
+                    # invalidate it. Before this branch both receipts' Undo
+                    # were gated identically; leaving this one on the stale
+                    # gate let it sit disabled beside a live sibling
+                    # receipt's Undo with no rule the user could infer.
                     undo_set = Button(
                         "Undo",
                         id="library-media-review-dismiss-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo_set, "Undo")
+                    yield self._gate_mutation_action(undo_set, "Undo")
                     close_receipt = Button(
                         "Dismiss",
                         id="library-media-review-dismiss-receipt-close",
@@ -915,6 +985,102 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                     )
                     yield self._gate_mutation_action(close_receipt, "Dismiss")
+
+        # task-28007 AC#3/AC#4: the bulk-Analyze receipt -- PR A's two-row
+        # grammar (copy, then actions) again, because a set-level run must
+        # report per-item outcomes where the gesture happened rather than
+        # in a toast that outlives nothing. Three states, one block: the
+        # AC#3 Skip/Overwrite choice (nothing has run yet), the live run,
+        # and the settled run with Retry failed/Dismiss.
+        analyze_choice = getattr(self.canvas, "analyze_choice_count", 0)
+        analyze_total = getattr(self.canvas, "analyze_receipt_total", 0)
+        if analyze_choice or analyze_total:
+            analyze_done = getattr(self.canvas, "analyze_receipt_done", 0)
+            analyze_failed = getattr(self.canvas, "analyze_receipt_failed", 0)
+            analyze_running = getattr(self.canvas, "analyze_receipt_running", False)
+            failed_copy = f" · {analyze_failed} failed" if analyze_failed else ""
+            if analyze_choice:
+                # R3: no dangling dash -- the buttons are on the row BELOW,
+                # so a trailing "— " pointed at nothing. ``analyze_total``
+                # is the pressed selection's own size on this path.
+                analyze_copy = (
+                    f"{analyze_choice} of {analyze_total} already analyzed"
+                )
+            elif analyze_running:
+                # 1-based position of the item being analyzed right now.
+                position = min(analyze_done + analyze_failed + 1, analyze_total)
+                analyze_copy = f"Analyzing {position} of {analyze_total}{failed_copy}"
+            else:
+                # A run where NOTHING succeeded must not lead with a tick.
+                # ✗ (U+2717) is this repo's failure glyph (see
+                # UI/Evals/library_rail.py), paired with the ✓ it
+                # replaces here.
+                glyph = "✓" if analyze_done else "✗"
+                analyze_copy = (
+                    f"{glyph} analyzed · {analyze_done} of {analyze_total}"
+                    f"{failed_copy}"
+                )
+            analyze_receipt = Vertical(
+                id="library-media-analyze-receipt",
+                classes="library-media-receipt",
+            )
+            analyze_receipt.styles.height = "auto"
+            with analyze_receipt:
+                yield Static(
+                    analyze_copy,
+                    id="library-media-analyze-receipt-copy",
+                    classes="library-toolbar-count library-media-receipt-copy",
+                    markup=False,
+                )
+                analyze_actions = Horizontal(
+                    classes="ds-toolbar library-media-receipt-actions"
+                )
+                analyze_actions.styles.height = "auto"
+                with analyze_actions:
+                    if analyze_choice:
+                        skip = Button(
+                            "Skip them",
+                            id="library-media-analyze-skip",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(skip, "Skip them")
+                        overwrite = Button(
+                            "Overwrite",
+                            id="library-media-analyze-overwrite",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(overwrite, "Overwrite")
+                    elif not analyze_running and analyze_failed:
+                        retry = Button(
+                            "Retry failed",
+                            id="library-media-analyze-retry",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_stale_action(retry, "Retry failed")
+                    if not analyze_running and not analyze_choice:
+                        # A run in flight has nothing to dismiss yet: the
+                        # counts are still moving and Dismiss would either
+                        # lie (the run continues) or imply a cancel this
+                        # gesture does not offer.
+                        #
+                        # (final review, I-1) The armed CHOICE has no
+                        # Dismiss either: three 13-cell buttons overflow
+                        # the Items pane at its 36-cell floor (the row
+                        # painted "Skip them  Overwrite  Dism", the same
+                        # clipping task-31270 fixed for "Und"), and
+                        # "Skip them" already IS the change-nothing
+                        # outcome -- it retires the card when there is
+                        # nothing left to run.
+                        analyze_dismiss = Button(
+                            "Dismiss",
+                            id="library-media-analyze-receipt-dismiss",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield self._gate_mutation_action(analyze_dismiss, "Dismiss")
 
         status_text = (
             self.pager.status_copy
@@ -1003,7 +1169,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         button.styles.height = row_height
                         button.styles.min_height = row_height
-                        yield self._gate_stale_action(button, label_rest.lstrip())
+                        # task-31220: a row OPEN is a read, so it is gated
+                        # only while a write is actually unsettled -- never by
+                        # the stale gate the open is how you recover from.
+                        # Only the mutating actions (Select/Export/sort/
+                        # Delete/Undo) stay behind ``_gate_stale_action``.
+                        yield self._gate_mutation_action(
+                            button, label_rest.lstrip()
+                        )
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 

@@ -181,7 +181,20 @@ _BUDGETS: dict[str, int] = {
     # 10-file breakdown summing to 38 were added to this module's own
     # docstring so a reviewer can re-derive the number without re-running
     # the census script. 2558 -> 2569.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2569,
+    #
+    # 2026-09-05, wave-5 final review: `origin/dev` merge (89 commits since
+    # this branch's merge-base 68f9d865f). Dev edited one ALREADY-MOVED body
+    # after the move landed -- `handle_library_ingest_clear_finished` gained
+    # a 13-line stale-outcome prune (task-28007's Qodo review round) -- so
+    # the edit follows the body here rather than resurrecting the screen's
+    # copy: +13 ported lines, +5 for the `library_ingest_analyze_outcomes_
+    # accessor` constructor parameter and its 4-line comment, +3 for storing
+    # it, +12 for the same-named property that lets the ported lines stay
+    # byte-for-byte with dev's, and +21 of module docstring recording the
+    # divergence, the new group-(b) binding, and the follow-up task
+    # (task-31651) that folds the field into `LibraryIngestState` proper.
+    # No other body touched; 56 movers unchanged. 2569 -> 2623.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2623,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

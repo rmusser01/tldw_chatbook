@@ -97,6 +97,12 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
     lambda closing over THIS screen, exactly like production -- so a test's
     own ``screen.<name> = Mock()`` override above keeps being observed).
     """
+    # (origin/dev reconciliation merge) ``__init__`` also builds the flat
+    # ``_library_ingest_analyze_outcomes`` dict dev's task-28007 added, which
+    # the controller's new accessor binding reads -- seed it too, same
+    # reason as ``_ingest_controller`` itself.
+    if not hasattr(screen, "_library_ingest_analyze_outcomes"):
+        screen._library_ingest_analyze_outcomes = {}
     screen._ingest_controller = LibraryIngestController(
         screen,
         ingest_state_accessor=lambda: screen._ingest_state,
@@ -164,6 +170,9 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
         ),
         set_library_canvas_resync_pending=(
             lambda value: setattr(screen, "_library_canvas_resync_pending", value)
+        ),
+        library_ingest_analyze_outcomes_accessor=(
+            lambda: screen._library_ingest_analyze_outcomes
         ),
         build_ingest_options_snapshot=(
             lambda *a, **k: screen._build_ingest_options_snapshot(*a, **k)

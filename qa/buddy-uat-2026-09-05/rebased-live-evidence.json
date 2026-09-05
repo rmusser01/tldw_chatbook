@@ -1,0 +1,55 @@
+{
+  "base_commit": "b52080fee0",
+  "provenance": "Live rebased-app UAT including the follow-up speech lease repair; synthetic fixtures only. Production source digests pin the tested code.",
+  "source_sha256": {
+    "tldw_chatbook/UI/Console_Modules/message.py": "348a94d6659e8cba25580672e955c7d957a74209fe0dda25758453cdebfda313",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "f8be325c9ab35ef7a7e80df898756218880b4feee883d2775294bf8c0dd54224",
+    "tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py": "ab244bb7ae1c4f9140dd78f80bf5d9dea037e9ebac539cc129c4fdf6a2667588"
+  },
+  "kokoro": {
+    "provider": "kokoro",
+    "microphone_opened": false,
+    "visual_before": true,
+    "visual_reason": null,
+    "sink": {
+      "outcome": "drained",
+      "bytes_fed": 128000,
+      "terminal_reason": "drained"
+    },
+    "buddy_states": [
+      "idle",
+      "speaking",
+      "idle"
+    ],
+    "elapsed_seconds": 5.6,
+    "speaking_cleared": true,
+    "app_exception": null,
+    "normal_config_unchanged": true
+  },
+  "deepseek": {
+    "provider": "deepseek",
+    "microphone_opened": false,
+    "fixture": "Reply exactly: Migu live check passed.",
+    "run_status": "completed",
+    "visible_copy": "Response complete.",
+    "buddy_states": [
+      "idle",
+      "thinking",
+      "speaking",
+      "idle"
+    ],
+    "final_buddy_state": "idle",
+    "expected_reply": true,
+    "elapsed_seconds": 2.09,
+    "app_exception": null,
+    "normal_config_unchanged": true
+  },
+  "physical_dragging": {
+    "status": "waiting_for_foreground_window",
+    "reason": "Background macOS drag was delivered to Terminal but no geometry changed; no pass claimed."
+  },
+  "openai_realtime": {
+    "status": "blocked",
+    "reason": "No OpenAI credential configured."
+  }
+}

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, OptionList, Select, Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_console_rail_sections import _test_popover
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
     EffectiveMemoryResult,
@@ -35,16 +35,18 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+)
+from tldw_chatbook.Chat.console_settings_defaults import build_console_default_intent
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
-from tldw_chatbook.Widgets.Console.console_model_popover import (
-    ConsoleModelPopover,
-    ConsoleModelPopoverResult,
-)
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
-    ConsoleSettingsResult,
 )
 import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 
@@ -130,15 +132,9 @@ def _generated_effective(
             coverage_kind=coverage,
             origin_kind=origin,
             selection_anchor_message_id=(
-                anchor
-                if origin is MemoryOriginKind.MANUAL_REWIND
-                else None
+                anchor if origin is MemoryOriginKind.MANUAL_REWIND else None
             )
-            or (
-                "message-8"
-                if origin is MemoryOriginKind.MANUAL_REWIND
-                else None
-            ),
+            or ("message-8" if origin is MemoryOriginKind.MANUAL_REWIND else None),
         ),
     )
 
@@ -336,13 +332,8 @@ def test_invalid_effective_memory_derives_no_banner(case: str) -> None:
     assert _derive_banner(effective, rows) is None
 
 
-class _ContextHarness(App[None]):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+class _ContextHarness(ConsolidatedCSSApp):
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()
@@ -372,7 +363,7 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
     app = _ContextHarness()
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
+            _test_popover(
                 settings=_settings(),
                 providers_models={"llama_cpp": ["model-a"]},
                 context_state=_state(),
@@ -399,12 +390,20 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
         assert not app.screen.query("#console-popover-custom-budget")
         app.screen.query_one(
             "#console-popover-compaction-mode", Select
+        ).value = ContextCompactionMode.OFF.value
+        await pilot.pause()
+        app.screen.query_one(
+            "#console-popover-compaction-mode", Select
         ).value = ContextCompactionMode.AUTOMATIC.value
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleModelPopoverResult)
-    assert app.result.compaction_mode is ContextCompactionMode.AUTOMATIC
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert (
+        app.result.live_commit.context_policy_overrides.compaction_mode
+        is ContextCompactionMode.AUTOMATIC
+    )
 
 
 @pytest.mark.asyncio
@@ -436,11 +435,9 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
             "#console-settings-save-default",
             Button,
         )
-        assert str(save_defaults.label) == "Save model defaults"
+        assert str(save_defaults.label) == "Save as provider defaults"
         assert save_defaults.display is False
-        scope = str(
-            app.screen.query_one("#console-settings-scope", Static).renderable
-        )
+        scope = str(app.screen.query_one("#console-settings-scope", Static).renderable)
         assert "this conversation" in scope
         assert "F9 Settings > Console behavior" in scope
         context_labels = {
@@ -478,13 +475,16 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         await pilot.click("#console-settings-save")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleSettingsResult)
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
     assert (
-        app.result.context_policy_overrides.compaction_mode
+        app.result.live_commit.context_policy_overrides.compaction_mode
         is ContextCompactionMode.AUTOMATIC
     )
-    assert app.result.context_policy_overrides.custom_budget_tokens == 70_000
-    assert app.result.thinking_history_policy == "auto"
+    assert (
+        app.result.live_commit.context_policy_overrides.custom_budget_tokens == 70_000
+    )
+    assert not app.result.submission.default_field_mask
 
 
 @pytest.mark.asyncio
@@ -628,15 +628,15 @@ async def test_visual_representation_choices_enable_for_vision_model() -> None:
         await pilot.click("#console-settings-save")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleSettingsResult)
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
     assert (
-        app.result.context_policy_overrides.compaction_representation
+        app.result.live_commit.context_policy_overrides.compaction_representation
         is ContextCompactionRepresentation.HYBRID
     )
 
 
 @pytest.mark.asyncio
-async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
+async def test_provider_default_submission_excludes_memory_and_prompt_ownership(
     monkeypatch,
 ) -> None:
     from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
@@ -671,18 +671,29 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
         await pilot.click("#console-settings-save-default")
         await pilot.pause()
 
-    assert len(writes) == 1
-    assert set(writes[0]) <= {
-        "api_settings.llama_cpp",
-        "console.provider_defaults.llama_cpp",
-        "chat_defaults",
-    }
-    serialized_keys = " ".join(
-        f"{section} {' '.join(values)}" for section, values in writes[0].items()
-    ).lower()
-    assert "memory" not in serialized_keys
-    assert "prompt" not in serialized_keys
-    assert app.result.context_policy_overrides.compaction_mode is (
+    # The modal emits intent; the defaults service owns configuration writes.
+    assert writes == []
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    submission = app.result.submission
+    assert submission.action is ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+    assert submission.default_field_mask == FULL_MODEL_DEFAULT_FIELDS
+    intent = build_console_default_intent(
+        generation=1,
+        action=submission.action,
+        provider_config_key=submission.draft.settings.provider,
+        literal_model_id=submission.draft.settings.model,
+        field_drafts=submission.draft.field_drafts,
+        field_mask=submission.default_field_mask,
+        endpoint=submission.draft.endpoint_draft,
+    )
+    assert set(intent.values) == FULL_MODEL_DEFAULT_FIELDS
+    assert all(
+        owner not in key
+        for key in intent.values
+        for owner in ("memory", "prompt", "compaction", "thinking_history")
+    )
+    assert intent.endpoint_patch is None
+    assert app.result.live_commit.context_policy_overrides.compaction_mode is (
         ContextCompactionMode.AUTOMATIC
     )
 
@@ -696,9 +707,7 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
             "provenance unavailable",
         ),
         (
-            _generated_effective(
-                _memory(), origin=MemoryOriginKind.MANUAL_REWIND
-            ),
+            _generated_effective(_memory(), origin=MemoryOriginKind.MANUAL_REWIND),
             "Manual prefix memory",
             "provenance unavailable",
         ),
@@ -750,9 +759,7 @@ async def test_current_memory_uses_typed_effective_display(
         )
         await pilot.pause()
         rendered = str(
-            app.screen.query_one(
-                "#console-context-memory-metadata", Static
-            ).renderable
+            app.screen.query_one("#console-context-memory-metadata", Static).renderable
         )
         assert metadata in rendered
         assert forbidden not in rendered
@@ -936,9 +943,9 @@ def test_context_controls_add_no_forbidden_keybindings() -> None:
             *ConsoleModelPopover.BINDINGS,
             *ConsoleSettingsModal.BINDINGS,
         )
-        for key in str(
-            binding.key if hasattr(binding, "key") else binding[0]
-        ).split(",")
+        for key in str(binding.key if hasattr(binding, "key") else binding[0]).split(
+            ","
+        )
     }
     assert keys.isdisjoint(forbidden)
 
@@ -986,7 +993,7 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
     app = _ContextHarness()
     async with app.run_test(size=(72, 24)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
+            _test_popover(
                 settings=_settings(),
                 providers_models={"llama_cpp": ["model-a"]},
                 context_state=_state(),
@@ -996,7 +1003,7 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
         await pilot.pause()
 
         hint = app.screen.query_one("#console-popover-fold-hint", Static)
-        actions = app.screen.query_one("#console-popover-actions")
+        actions = app.screen.query_one("#console-popover-main-actions")
         context_button = app.screen.query_one(
             "#console-popover-full-settings",
             Button,
@@ -1073,7 +1080,7 @@ async def test_quick_popover_mounts_with_no_model_selected() -> None:
     app = _ContextHarness()
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(
-            ConsoleModelPopover(
+            _test_popover(
                 settings=ConsoleSessionSettings(
                     provider="llama_cpp",
                     model=None,

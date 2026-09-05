@@ -240,6 +240,7 @@ class ConsoleCostSnapshot:
     has_estimated_entries: bool
     row_count: int
     fleet_tokens: int = 0
+    available: bool = True
 
 
 @dataclass(frozen=True)
@@ -741,6 +742,7 @@ def build_cost_snapshot(
             has_estimated_entries=False,
             row_count=0,
             fleet_tokens=0,
+            available=False,
         )
 
 
@@ -803,11 +805,28 @@ def build_cost_state(
         alert = cache_state == ConsoleCacheState.WARM and bool(break_reason)
         cold = cache_state == ConsoleCacheState.EXPIRED
 
+        if not snapshot.available:
+            return ConsoleCostState(
+                label="unavailable",
+                compact_label="unavailable",
+                tooltip="Cost data unavailable.\n"
+                + _cache_state_line(
+                    cache_state,
+                    cold=cold,
+                    ttl_remaining_s=ttl_remaining_s,
+                    break_reason=break_reason,
+                    projected_delta_usd=projected_delta_usd,
+                ),
+                alert=alert,
+                cold=cold,
+            )
+
         if not snapshot.pricing_known or snapshot.total_usd is None:
-            label = f"{_format_tokens(snapshot.total_tokens)} tok"
+            estimate_prefix = "~" if snapshot.has_estimated_entries else ""
+            label = f"{estimate_prefix}{_format_tokens(snapshot.total_tokens)} tok"
             tooltip_lines = [f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
             if snapshot.has_estimated_entries:
-                tooltip_lines.append("Includes estimated (unsent) rows.")
+                tooltip_lines.append("Includes locally estimated transcript rows.")
             if snapshot.fleet_tokens:
                 tooltip_lines.append(
                     f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "
@@ -831,7 +850,11 @@ def build_cost_state(
             )
             tooltip = "\n".join(tooltip_lines)
             return ConsoleCostState(
-                label=label, compact_label=label, tooltip=tooltip, alert=alert, cold=cold,
+                label=label,
+                compact_label=label,
+                tooltip=tooltip,
+                alert=alert,
+                cold=cold,
             )
 
         amount_text = _format_amount(snapshot.total_usd)
@@ -851,8 +874,7 @@ def build_cost_state(
         tooltip_lines = [total_line, f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
         if snapshot.fleet_tokens:
             tooltip_lines.append(
-                f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "
-                "(not priced)"
+                f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok (not priced)"
             )
         tooltip_lines.append(
             _cache_state_line(
@@ -1023,7 +1045,9 @@ def build_cost_rows_totals(rows: Sequence[ConsoleCostRow]) -> ConsoleCostRowTota
     cost_known = True
     has_estimated = False
     for row in rows:
-        total_tokens += row.uncached_input + row.cache_read + row.cache_write + row.output
+        total_tokens += (
+            row.uncached_input + row.cache_read + row.cache_write + row.output
+        )
         has_estimated = has_estimated or row.estimated
         if row.cost_usd is None:
             cost_known = False

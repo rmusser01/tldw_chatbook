@@ -77,6 +77,32 @@ list-and-preview layout.
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
   labels back in place.
+
+**Media's "Analyze"** (Media only) generates an analysis for every checked
+item in one run, in list order, on its own row under Clear/Export/Review:
+
+- Pressing it leaves select mode and reports progress **in the list**:
+  "Analyzing 3 of 40 · 2 failed" while it runs, then "✓ analyzed · 38 of 40
+  · 2 failed" when it settles ("✗ analyzed · 0 of 3 · 3 failed" if nothing
+  succeeded). **Retry failed** re-runs only the items that failed;
+  **Dismiss** clears the receipt. A clean run says just "✓ analyzed · 40 of
+  40" with no failure count and no Retry.
+- **Items that already have an analysis are never overwritten silently.**
+  If any checked item has one, the first press runs nothing and offers
+  "N of M already analyzed" with **Skip them** (analyze only the rest) and
+  **Overwrite** (analyze everything, replacing what is there) — no
+  Dismiss on this row; "Skip them" already is the change-nothing outcome
+  and retires the card.
+- One run at a time: a second press while one is in flight says "Analysis
+  already running" rather than starting a second.
+- With no analysis provider configured the action reads **"○ Analyze"** and
+  its tooltip carries the same reason the Reader's Generate gives.
+- The run belongs to the Library screen: leaving Library stops it, and a
+  notice says where it got to ("Analysis stopped at 3 of 40 · reopen Select
+  ▸ Analyze to continue; finished items are skipped"). Items already
+  analyzed are skipped by a fresh run, so continuing is just re-selecting
+  them and pressing Analyze again.
+
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -102,10 +128,19 @@ another delete. The viewer's single-item "Delete" leaves the same receipt
 and bulk delete share one undo story. "Undo" restores every item the
 receipt names (or just the ones still outstanding, if a prior undo
 partially failed); "Dismiss" clears the receipt without restoring anything.
-"Undo" is the at-point convenience; the durable way back is the **Trash
-view** the receipt points at (see "Media Trash" below), which lists every
-deleted item — including ones from earlier sessions — and restores them
-per item. (Re-importing the same file from
+Focus moves straight to "Undo" the moment the receipt appears, so pressing
+**Enter** undoes immediately — the confirmation's "You can undo right
+away" is literally true at that instant. "Undo" stays live even if the
+list behind the receipt goes stale in the meantime (a later page change,
+say): it restores exactly the ids the receipt already names, not whatever
+the list happens to show now, so a stale page can never be the reason
+Undo is unavailable. If a restore itself fails, the receipt becomes
+"✗ undo failed · n of m · \<reason\>" and "Undo" becomes "Retry undo",
+retrying only the items still outstanding; a later full success clears
+the receipt as normal. "Undo" is the at-point convenience; the durable way
+back is the **Trash view** the receipt points at (see "Media Trash"
+below), which lists every deleted item — including ones from earlier
+sessions — and restores them per item. (Re-importing the same file from
 [Import & export](import-and-export.md) also still restores a trashed
 match instead of refusing.)
 
@@ -151,7 +186,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
+| "Retry" | Repeats a failed page request. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
@@ -166,6 +201,16 @@ of type 'pdf'."; with a filter query that matches nothing, "No media matched
 articles tagged `day2` — a keyword in no title and no body — filtered live in
 tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
 \"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
+
+*Verified against fix/media-wave5-e @ d5355a37ca — 2026-09-05
+(task-31220 final review, doc-only round: corrected the "Retry" row above —
+rows open read-only under a stale page, only Select/Export/Delete/sort/Select
+all stay gated with a reason — and added the failed-undo receipt
+("✗ undo failed · n of m · \<reason\>" / "Retry undo"), the
+"Couldn't retry · \<reason\>" copy a failed page-request Retry now shows,
+and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
+above. Confirmed against the product code and its tests, not re-verified
+live for this doc-only pass.)*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."
@@ -213,9 +258,13 @@ still spans the pane.
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
-  This section only edits text — it never calls a model; analysis is
-  produced at import time (the "Analyze after import" option) or written by
-  hand here.
+  Analysis is produced at import time (the "Analyze after import" option),
+  written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
+  once one exists) calls the configured analysis provider without leaving
+  the reading flow. With no provider configured it reads **"○ Generate"**
+  and its tooltip names the reason (the same wording the Select-mode bulk
+  **Analyze** tooltip and the Import "Analyze N skipped" gate use), so the
+  gap is visible before you click rather than after.
 - **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
@@ -581,3 +630,23 @@ in the import pipeline; details and verification pointers are on the
 database pages, pinned pager at 100x30 and 170x48, bounded complete facet
 chooser with an unambiguous "All types" choice, retained stale recovery,
 selection clearing, and metadata-only diagnostics).*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4: the
+Select-mode **Analyze** bulk action, its in-list receipt with Retry failed /
+Dismiss, the "N of M already analysed" Skip/Overwrite choice, the disabled
+"○ Analyze" reason, and the stop-notice when a run's screen goes away.
+Verified live at 235x52 with no provider configured, and in real-screen
+tests for the receipt copy and the run itself.)*
+
+*Verified against fix/media-wave4-d @ 759947bb1d — 2026-09-04 (final fix
+round, task-28007: the Skip/Overwrite choice row no longer offers Dismiss
+at the 235x52 reference width — it clipped to "Dism" against the Items
+pane's 36-cell floor — and "Skip them" already is the change-nothing
+outcome; the choice is now also retired on every browse-scope change
+(filter/query, page, type) and on leaving select mode, not just left to
+outlive them. Copy unified on en-US "analyzed"/"analyze" throughout,
+including the receipt string above. Added the Analysis tab's
+**Generate**/**Regenerate** control to this page's Analysis-tab
+description (AC#5) — it was previously undocumented. Verified in
+real-screen tests for the choice row's painted text and its scope-change
+invalidation.)*

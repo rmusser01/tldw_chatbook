@@ -342,15 +342,18 @@ examples):
    reaches it, never moved itself --, ``_safe_text``, ``_select_library_
    rail_row``, ``_server_binding_is_shipped_placeholder``, ``_sync_library_
    emergency_guard_presentation``, ``_sync_library_landing_lifecycle_
-   presentation``); (b) 7 shared shell state accessors this cluster reads
+   presentation``); (b) 8 shared shell state accessors this cluster reads
    (``_library_selected_row_id``, ``_transcribe_cpp_configured``,
    ``_footer_shortcut_registration``, ``_library_canvas_projection_
-   depth``) and reads+writes (``_library_rail_collapsed``, ``_library_
-   landing_attention_signature``, ``_library_canvas_resync_pending`` --
-   the last pair joining framework-service ``is_running`` above for the
-   identical ``_sync_library_canvas`` forwarding reason, mirroring the
-   skills/RAG controllers' own identical pair); (c) NONE -- no wiring
-   accessor pair exists for this subsystem (task 1's own finding: "no
+   depth``, ``_library_ingest_analyze_outcomes`` -- the last one added by
+   the ``origin/dev`` reconciliation merge, a live ``dict`` this cluster
+   mutates in place through its getter, see "One body follows a post-move
+   dev edit" below) and reads+writes (``_library_rail_collapsed``,
+   ``_library_landing_attention_signature``, ``_library_canvas_resync_
+   pending`` -- the last pair joining framework-service ``is_running``
+   above for the identical ``_sync_library_canvas`` forwarding reason,
+   mirroring the skills/RAG controllers' own identical pair); (c) NONE --
+   no wiring accessor pair exists for this subsystem (task 1's own finding: "no
    field holds a live controller/coordinator instance"); (d) N/A -- no
    merely-delegate-to-existing-controller properties exist for Ingest
    (unlike Skills' import-coordinator precedent); (e) 13 named late-binding
@@ -377,6 +380,24 @@ DELETED there and declared fresh on this controller -- the class-constant
 analogue of a state-PR's field deletion for a zero-external-reference
 field. ``LIBRARY_INGEST_SHORTCUTS`` is the one exception (see binding kind 1
 above): it keeps its screen-side test dependency and is never deleted.
+
+**One body follows a post-move dev edit (reconciliation merge).**
+``handle_library_ingest_clear_finished`` gained a 13-line stale-outcome
+prune on ``origin/dev`` (task-28007's Qodo review round, PR #2400 #2)
+AFTER this move landed. The reconciliation merge ports that block HERE
+rather than resurrecting the screen-side body: the screen keeps its
+one-line delegator, and the block reaches dev's new flat screen field
+``_library_ingest_analyze_outcomes`` (a plain ``__init__`` attribute, NOT
+one of the 20 ``LibraryIngestState`` fields) through the ``library_ingest_
+analyze_outcomes_accessor`` binding added for it. The ported lines are
+therefore byte-for-byte with dev's edited original -- the same trick
+``_library_canvas_resync_pending`` already plays for the shell's own
+state -- and the byte-for-byte invariant below now reads "against the
+current ``origin/dev`` body" for this one method. Folding that field into
+``LibraryIngestState`` as a 21st field, and censusing dev's two new
+screen-side ingest methods (``handle_library_ingest_analyze_skipped``,
+``_record_library_ingest_analyze_outcome``) into the decomposition
+tables, is filed as task-31651; this accessor is the interim bridge.
 
 **Construction order -- the usual position.** ``LibraryScreen.__init__``
 builds ``self._ingest_controller`` right after ``self._skills_controller``,
@@ -501,6 +522,11 @@ class LibraryIngestController:
         library_canvas_projection_depth_accessor,
         library_canvas_resync_pending_accessor,
         set_library_canvas_resync_pending,
+        # -- dev's task-28007 bulk-Analyze receipts, bridged by the
+        # origin/dev reconciliation merge (module docstring: "One body
+        # follows a post-move dev edit"). A getter only: the ported block
+        # mutates the returned dict in place.
+        library_ingest_analyze_outcomes_accessor,
         # -- named late-binding callables for the test-bypass/hazard
         # exclusions (group (e)) that a MOVER still calls/references
         # internally.
@@ -588,6 +614,9 @@ class LibraryIngestController:
             library_canvas_resync_pending_accessor
         )
         self._set_library_canvas_resync_pending_fn = set_library_canvas_resync_pending
+        self._library_ingest_analyze_outcomes_accessor = (
+            library_ingest_analyze_outcomes_accessor
+        )
         self._build_ingest_options_snapshot_fn = build_ingest_options_snapshot
         self._build_library_ingest_state_fn = build_library_ingest_state
         self._do_submit_ingest_fn = do_submit_ingest
@@ -719,6 +748,18 @@ class LibraryIngestController:
     @_library_canvas_resync_pending.setter
     def _library_canvas_resync_pending(self, value: bool) -> None:
         self._set_library_canvas_resync_pending_fn(value)
+
+    @property
+    def _library_ingest_analyze_outcomes(self) -> dict[str, tuple[bool, str]]:
+        """Calls the injected ``library_ingest_analyze_outcomes_accessor``.
+
+        Getter only, deliberately: the one moved body that touches this
+        field (``handle_library_ingest_clear_finished``, after the
+        origin/dev reconciliation merge) only ``pop``s from it, and a
+        ``dict`` mutates in place through the getter -- so no setter is
+        needed and the ported lines stay byte-for-byte with dev's.
+        """
+        return self._library_ingest_analyze_outcomes_accessor()
 
     # -- general Library-wide shell helpers (group (a)) --------------------
 
@@ -2474,6 +2515,19 @@ class LibraryIngestController:
                     IngestJobState.SKIPPED,
                 )
             ]
+            # task-28007 (Qodo review round, PR #2400 #2): a bulk-Analyze
+            # outcome is keyed only by media id for the screen's whole
+            # lifetime -- without pruning it here, a LATER job reusing this
+            # same media id (a re-import, a newer document version) would
+            # inherit this stale outcome, hiding "Analyze N skipped" for it
+            # and painting its row as already analyzed even though the
+            # current version has no analysis. Pop exactly the ids of the
+            # jobs actually leaving the registry now, not the recent-
+            # imports ledger extension below (those were already gone
+            # before this press).
+            for job in terminal:
+                if job.media_id is not None:
+                    self._library_ingest_analyze_outcomes.pop(str(job.media_id), None)
             known = {job.job_id for job in terminal}
             terminal.extend(
                 job

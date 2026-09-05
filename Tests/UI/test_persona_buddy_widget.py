@@ -2398,3 +2398,50 @@ async def test_pending_geometry_write_is_flushed_on_unmount():
         await buddy.remove()
         await _wait_until(lambda: controller.persisted)
         assert controller.persisted[-1].geometry == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ("drag", "resize"))
+@pytest.mark.parametrize("intermediate_move", (False, True))
+async def test_native_mouse_release_commits_final_geometry(mode, intermediate_move):
+    """The terminal may report a newer release position than its last move."""
+    from textual._xterm_parser import XTermParser
+
+    controller = _FakeController()
+    controller.preferences = replace(
+        controller.preferences,
+        geometry=PersonaBuddyGeometry(x=10, y=5, width=28, height=12),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        parser = XTermParser()
+        if mode == "drag":
+            x, y = buddy.content_region.x + 5, buddy.content_region.y + 3
+            dx, dy = -4, -2
+            expected = PersonaBuddyGeometry(x=6, y=3, width=28, height=12)
+        else:
+            x, y = buddy.region.right - 1, buddy.region.bottom - 1
+            dx, dy = 4, 2
+            expected = PersonaBuddyGeometry(x=10, y=5, width=32, height=14)
+
+        async def forward(buttons, px, py, suffix):
+            event = parser.parse_mouse_code(
+                f"\x1b[<{buttons};{px + 1};{py + 1}{suffix}"
+            )
+            assert event is not None and event.widget is None
+            app.screen._forward_event(event)
+            await pilot.pause()
+
+        await forward(0, x, y, "M")
+        assert app.mouse_captured is buddy
+        if intermediate_move:
+            await forward(32, x + dx // 2, y + dy // 2, "M")
+        assert controller.persisted == []
+        await forward(0, x + dx, y + dy, "m")
+        await _wait_until(lambda: len(controller.persisted) == 1)
+        assert app.mouse_captured is None
+        assert controller.persisted[0].geometry == expected
+        if mode == "drag":
+            assert (buddy.region.x, buddy.region.y) == (6, 3)

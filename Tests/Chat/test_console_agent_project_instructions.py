@@ -266,7 +266,11 @@ def test_token_omission_notice_keeps_content_free_source_metadata(
             or "proceed"
         ),
     )
-    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 1)
+    # The base request fits; only the optional instruction row exceeds budget.
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "question"}],
@@ -1217,7 +1221,10 @@ def test_disabled_session_does_not_consult_registry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_project_instruction_disable_terminalizes_and_allows_retry(tmp_path):
+@pytest.mark.parametrize("ephemeral", [True, False])
+async def test_project_instruction_disable_terminalizes_and_allows_retry(
+    tmp_path, ephemeral
+):
     """Disabling unavailable instructions must not strand the Console run."""
 
     registry = LocalWorkspaceRegistryService(
@@ -1227,7 +1234,7 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry(tmp_pat
     store = persisted_console_store(
         db_path=tmp_path / "chat.db", workspace_registry=registry
     )
-    session = store.create_session(workspace_id="w1")
+    session = store.create_session(workspace_id="w1", ephemeral=ephemeral)
     store.set_session_project_instruction_state(
         session.id,
         ProjectInstructionControlState(
@@ -1278,13 +1285,26 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry(tmp_pat
 
     first = await controller.submit_draft("first")
 
-    assert first.accepted is False
-    assert first.visible_copy == "project_instructions_disabled"
+    assert first.accepted is (not ephemeral)
+    assert first.visible_copy == (
+        "project_instructions_disabled"
+        if ephemeral
+        else "Accepted turn is retained for recovery."
+    )
     assert session.project_instruction_state == (
         ProjectInstructionControlState.legacy_disabled()
     )
     assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
     assert bridge_calls == []
+
+    if not ephemeral:
+        # Durable acceptance owns the pending response until explicit recovery.
+        blocked = await controller.submit_draft("premature retry")
+        assert blocked.accepted is False
+        assert bridge_calls == []
+        assert store.dispatch_recovery_for_session(session.id) is not None
+        await controller.discard_dispatch_recovery(session.id)
+        assert store.dispatch_recovery_for_session(session.id) is None
 
     second = await controller.submit_draft("second")
 

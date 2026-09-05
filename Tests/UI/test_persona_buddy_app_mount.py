@@ -48,6 +48,11 @@ class _BuddyModal(ModalScreen[None]):
 class _BuddyApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _start_persona_buddy_overlay = TldwCli._start_persona_buddy_overlay
+    _schedule_persona_buddy_overlay = TldwCli._schedule_persona_buddy_overlay
+    _notify_persona_buddy_changed = TldwCli._notify_persona_buddy_changed
+    on_persona_buddy_changed = TldwCli.on_persona_buddy_changed
+    on_base_app_screen_contents_rebuilt = TldwCli.on_base_app_screen_contents_rebuilt
     _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
     is_persona_buddy_confirmed_unavailable = (
         TldwCli.is_persona_buddy_confirmed_unavailable
@@ -64,6 +69,7 @@ class _BuddyApp(ConsolidatedCSSApp):
         self.persona_buddy_controller = PersonaBuddyController(
             preferences=preferences,
             preference_writer=lambda _preferences: True,
+            on_change=self._notify_persona_buddy_changed,
         )
         self._persona_buddy_unavailable_authority = None
         if not production_resolution:
@@ -77,6 +83,7 @@ class _BuddyApp(ConsolidatedCSSApp):
         self.initial_screen = _BuddyScreen(self)
 
     async def on_mount(self) -> None:
+        self._start_persona_buddy_overlay()
         await self.push_screen(self.initial_screen)
 
 
@@ -85,6 +92,60 @@ def _enabled_preferences() -> PersonaBuddyPreferences:
         enabled=True,
         selection=PersonaBuddySelection("local", "persona-1"),
     )
+
+
+@pytest.mark.asyncio
+async def test_threaded_controller_changes_reconcile_without_manual_ui_calls():
+    app = _BuddyApp(PersonaBuddyPreferences())
+    controller = app.persona_buddy_controller
+    controller._on_change = app._notify_persona_buddy_changed
+    async with app.run_test(size=(100, 30)):
+        await asyncio.to_thread(
+            controller.apply_preferences_patch,
+            enabled=True,
+            selection=PersonaBuddySelection("local", "persona-1"),
+        )
+        await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
+        await asyncio.to_thread(controller.apply_preferences_patch, enabled=False)
+        await _wait_until(lambda: not list(app.screen.query(PersonaBuddyWidget)))
+
+
+@pytest.mark.asyncio
+async def test_disabled_navigation_and_recompose_start_no_buddy_workers(monkeypatch):
+    app = _BuddyApp(PersonaBuddyPreferences())
+    calls = []
+    from textual.dom import DOMNode
+
+    original = DOMNode.run_worker
+
+    def counted(node, *args, **kwargs):
+        if "persona-buddy" in kwargs.get("group", ""):
+            calls.append(kwargs["group"])
+        return original(node, *args, **kwargs)
+
+    monkeypatch.setattr(DOMNode, "run_worker", counted)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.screen.recompose()
+        await app.switch_screen(_BuddyScreen(app, "replacement"))
+        await pilot.pause()
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_rebuild_replaces_view_without_screen_owned_buddy_state():
+    app = _BuddyApp(_enabled_preferences())
+    async with app.run_test(size=(100, 30)):
+        await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
+        before = app.screen.query_one(PersonaBuddyWidget)
+        await app.screen.recompose()
+        await _wait_until(
+            lambda: (
+                len(list(app.screen.query(PersonaBuddyWidget))) == 1
+                and app.screen.query_one(PersonaBuddyWidget) is not before
+            )
+        )
+        assert "_persona_buddy_view" not in vars(app.screen)
+        assert "_persona_buddy_reconcile_lock" not in vars(app.screen)
 
 
 @pytest.mark.asyncio
@@ -116,13 +177,13 @@ async def test_close_removes_only_current_generation():
     async with app.run_test(size=(100, 30)):
         await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
         stale = app.screen.query_one(PersonaBuddyWidget)
-        await app.screen.reconcile_persona_buddy_view()
+        await app.reconcile_persona_buddy_view()
         current = app.screen.query_one(PersonaBuddyWidget)
         assert current is stale
 
         await stale.close_and_persist()
         await _wait_until(lambda: not list(app.screen.query(PersonaBuddyWidget)))
-        assert stale.view_generation < app.screen.persona_buddy_view_generation
+        assert stale.view_generation < app._persona_buddy_overlay.generation
 
 
 @pytest.mark.asyncio
@@ -188,6 +249,8 @@ async def test_navigation_replaces_screen_local_view_generation():
 @pytest.mark.asyncio
 async def test_cancelled_delayed_mount_cleans_only_the_created_view(monkeypatch):
     app = _BuddyApp(PersonaBuddyPreferences())
+    # This case controls/cancels the explicit reconcile caller, not the worker.
+    app.persona_buddy_controller._on_change = None
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         preferences = _enabled_preferences()
@@ -202,14 +265,14 @@ async def test_cancelled_delayed_mount_cleans_only_the_created_view(monkeypatch)
             return await original_mount(widget, *args, **kwargs)
 
         monkeypatch.setattr(screen, "mount", delayed_mount)
-        reconcile = asyncio.create_task(screen.reconcile_persona_buddy_view())
+        reconcile = asyncio.create_task(app.reconcile_persona_buddy_view())
         await asyncio.wait_for(started.wait(), timeout=1)
         reconcile.cancel()
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await reconcile
         assert not list(screen.query(PersonaBuddyWidget))
-        assert screen._persona_buddy_view is None
+        assert app._persona_buddy_overlay.view is None
 
 
 @pytest.mark.asyncio
@@ -217,6 +280,7 @@ async def test_delayed_mount_with_superseded_generation_removes_stale_created_vi
     monkeypatch,
 ):
     app = _BuddyApp(PersonaBuddyPreferences())
+    app.persona_buddy_controller._on_change = None
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         await app.persona_buddy_controller.update_preferences(_enabled_preferences())
@@ -230,13 +294,13 @@ async def test_delayed_mount_with_superseded_generation_removes_stale_created_vi
             return await original_mount(widget, *args, **kwargs)
 
         monkeypatch.setattr(screen, "mount", delayed_mount)
-        reconcile = asyncio.create_task(screen.reconcile_persona_buddy_view())
+        reconcile = asyncio.create_task(app.reconcile_persona_buddy_view())
         await asyncio.wait_for(started.wait(), timeout=1)
-        screen._persona_buddy_view_generation += 1
+        app._persona_buddy_overlay.generation += 1
         release.set()
         await reconcile
         assert not list(screen.query(PersonaBuddyWidget))
-        assert screen._persona_buddy_view is None
+        assert app._persona_buddy_overlay.view is None
 
 
 @pytest.mark.asyncio
@@ -412,7 +476,7 @@ async def test_app_owned_preference_write_drains_once_before_new_owner_starts():
         replacement = _BuddyScreen(app, "replacement")
         await app.switch_screen(replacement)
         app.persona_buddy_controller.apply_preferences_patch(open=True)
-        await replacement.reconcile_persona_buddy_view()
+        await app.reconcile_persona_buddy_view()
         await _wait_until(lambda: len(list(replacement.query(PersonaBuddyWidget))) == 1)
         replacement.query_one(PersonaBuddyWidget).action_move_left()
         await asyncio.sleep(0.1)
@@ -516,10 +580,13 @@ async def test_blocked_close_and_stale_geometry_merge_immediately_and_durably():
             app.persona_buddy_controller.current_preferences().geometry
         )
 
-        view.action_close()
-        assert app.persona_buddy_controller.current_preferences().open is False
-        await _wait_until(entered.is_set)
-        view.action_move_left()
+        # Keep the view current while two admitted edits race with persistence.
+        # Once the owner retires a closed view, input must correctly be ignored.
+        async with app._persona_buddy_overlay._lock:
+            view.action_close()
+            assert app.persona_buddy_controller.current_preferences().open is False
+            await _wait_until(entered.is_set)
+            view.action_move_left()
 
         current = app.persona_buddy_controller.current_preferences()
         assert current.open is False
@@ -531,6 +598,124 @@ async def test_blocked_close_and_stale_geometry_merge_immediately_and_durably():
         assert persisted[-1] == final
         assert final.open is False
         assert final.geometry == current.geometry
+
+
+@pytest.mark.asyncio
+async def test_change_burst_keeps_one_inflight_mount_worker(monkeypatch):
+    app = _BuddyApp(PersonaBuddyPreferences())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_mount = app.screen.mount
+        mounts = []
+
+        async def blocked_mount(view):
+            mounts.append(view)
+            entered.set()
+            await release.wait()
+            return await original_mount(view)
+
+        monkeypatch.setattr(app.screen, "mount", blocked_mount)
+        app.persona_buddy_controller.apply_preferences_patch(
+            enabled=True, selection=PersonaBuddySelection("local", "persona-1")
+        )
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        owner = app._persona_buddy_overlay
+        worker = owner._worker
+        for _ in range(20):
+            app.persona_buddy_controller.invalidate_profile()
+        await pilot.pause()
+        assert owner._worker is worker
+        assert not worker.is_cancelled
+        release.set()
+        await _wait_until(lambda: worker.is_finished)
+        assert len(mounts) == 1
+        assert owner.is_current(owner.view)
+
+
+@pytest.mark.asyncio
+async def test_disable_behind_modal_removes_retained_view():
+    app = _BuddyApp(_enabled_preferences())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        owner = app._persona_buddy_overlay
+        previous = owner.view
+        await app.push_screen(_BuddyModal())
+        app.persona_buddy_controller.apply_preferences_patch(enabled=False)
+        await _wait_until(lambda: owner.view is None)
+        assert not previous.is_attached
+        assert not list(app.screen.query(PersonaBuddyWidget))
+        await app.pop_screen()
+        await pilot.pause()
+        assert not list(app.screen.query(PersonaBuddyWidget))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_retirement_replaces_invalidated_view_on_reenable(monkeypatch):
+    app = _BuddyApp(_enabled_preferences())
+    app.persona_buddy_controller._on_change = None
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        owner = app._persona_buddy_overlay
+        previous = owner.view
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_flush():
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(previous, "flush_pending_geometry_persist", blocked_flush)
+        app.persona_buddy_controller.apply_preferences_patch(enabled=False)
+        retire = asyncio.create_task(app.reconcile_persona_buddy_view())
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        retire.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await retire
+        release.set()
+        app.persona_buddy_controller.apply_preferences_patch(enabled=True)
+        await app.reconcile_persona_buddy_view()
+        assert owner.is_current(owner.view)
+        assert owner.view is not previous
+        assert not previous.is_attached
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_retirement_admits_no_replacement_mount(monkeypatch):
+    app = _BuddyApp(_enabled_preferences())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        owner = app._persona_buddy_overlay
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_flush():
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(owner.view, "flush_pending_geometry_persist", blocked_flush)
+        replacement = _BuddyScreen(app, "shutdown-replacement")
+        mounts = []
+        original_mount = replacement.mount
+
+        def record_mount(*widgets, **kwargs):
+            mounts.extend(
+                widget for widget in widgets if isinstance(widget, PersonaBuddyWidget)
+            )
+            return original_mount(*widgets, **kwargs)
+
+        monkeypatch.setattr(replacement, "mount", record_mount)
+        await app.push_screen(replacement)
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        shutdown = asyncio.create_task(owner.shutdown())
+        try:
+            await _wait_until(lambda: owner.closed)
+        finally:
+            release.set()
+        await asyncio.wait_for(shutdown, timeout=2)
+        assert mounts == []
+        assert owner.view is None
 
 
 class _ShutdownOrderBuddyApp(_BuddyApp):

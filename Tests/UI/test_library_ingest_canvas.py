@@ -480,7 +480,9 @@ async def test_type_group_panels_render_for_detected_groups():
             assert "PDF documents" in str(pdf_panel.title)
             assert str(pdf_panel.title) == "PDF documents"
             assert "Import behavior" in str(generic_panel.title)
-            assert str(generic_panel.title) == "Import behavior"
+            # (task-28007 AC#6) The collapsed header states the analysis
+            # state the fold hides; the default is off.
+            assert str(generic_panel.title) == "Import behavior · analysis off"
 
             scope = pilot.app.query_one(
                 "#type-group-pdf .type-group-scope", Static

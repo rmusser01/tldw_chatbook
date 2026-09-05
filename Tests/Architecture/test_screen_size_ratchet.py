@@ -457,7 +457,24 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # shape the conversations exemplar's own Task 7 first hit, not a new
     # one (recipe §11).
     # 40131/1302 -> 40094/1296.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40094, 1296),
+    #
+    # 2026-09-05, wave-5 final review: `origin/dev` merge (89 commits since
+    # this branch's merge-base 68f9d865f). Fresh `_measure()` on the merged
+    # tree: 40094/1296 -> 41028/1313 (+934 lines, +17 methods). The method
+    # delta is EXACTLY dev's own base->dev delta on this class (1302 -> 1319
+    # at 68f9d865f -> 93388ba69), which is the check that the one content
+    # conflict was resolved correctly: no moved body came back and no wave-5
+    # delegator was lost. Line delta: +861 from dev's auto-merged hunks
+    # elsewhere in the file, +69 for dev's two NEW screen-resident ingest
+    # methods (`handle_library_ingest_analyze_skipped`, `_record_library_
+    # ingest_analyze_outcome` -- task-28007, kept on the screen as dev wrote
+    # them), +3 for the new `library_ingest_analyze_outcomes_accessor`
+    # binding, +1 for dev's `library_ingest_analyze_skipped_ids` import
+    # (dev's other two new imports, `format_ingest_progress_line`/`ingest_
+    # progress_action_signature`, were dropped -- their sole screen consumer
+    # moved to the controller in task 2). Re-pinned to the merged tree's own
+    # measured value, not carried forward from either side.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41028, 1313),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

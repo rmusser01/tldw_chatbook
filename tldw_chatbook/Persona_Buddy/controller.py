@@ -334,6 +334,7 @@ class PersonaBuddyController:
             persist_persona_buddy_preferences
         ),
         scheduler: Callable[[Callable[[], None]], object] | None = None,
+        on_change: Callable[[], None] | None = None,
         phase_barrier: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> None:
         if selection is not None and type(selection) is not PersonaBuddySelection:
@@ -364,6 +365,7 @@ class PersonaBuddyController:
         self._repository_factory = repository_factory
         self._portrait_loader = portrait_loader
         self._preference_writer = preference_writer
+        self._on_change = on_change
         self._scheduler = scheduler
         self._phase_barrier = phase_barrier
         self._operation_lock = asyncio.Lock()
@@ -473,7 +475,7 @@ class PersonaBuddyController:
                 self._selection = selection
                 self._preferences = replace(self._preferences, selection=selection)
                 self._preferences_generation += 1
-                self._generation += 1
+                self._advance_generation_locked()
             return self._generation
 
     def invalidate_profile(self) -> int:
@@ -481,7 +483,7 @@ class PersonaBuddyController:
 
         with self._lock:
             self._profile_generation += 1
-            self._generation += 1
+            self._advance_generation_locked()
             return self._profile_generation
 
     def set_viewport_generation(self, generation: int) -> int:
@@ -492,7 +494,7 @@ class PersonaBuddyController:
         with self._lock:
             if generation != self._viewport_generation:
                 self._viewport_generation = generation
-                self._generation += 1
+                self._advance_generation_locked()
             return self._viewport_generation
 
     def observe_persona(self, *, source: str, persona_id: object) -> int:
@@ -537,7 +539,7 @@ class PersonaBuddyController:
                 token=token,
                 kind=_lease_kind(normalized_source, normalized_state),
             )
-            self._generation += 1
+            self._advance_generation_locked()
             return token
 
     def release_state(
@@ -569,7 +571,7 @@ class PersonaBuddyController:
                 if current is None:
                     return False
             del self._leases[key]
-            self._generation += 1
+            self._advance_generation_locked()
             return True
 
     def set_timed_state(
@@ -888,7 +890,7 @@ class PersonaBuddyController:
 
         self._shutdown_requested = True
         with self._lock:
-            self._generation += 1
+            self._advance_generation_locked()
         task = self._shutdown_task
         if task is None:
             task = asyncio.create_task(
@@ -999,7 +1001,7 @@ class PersonaBuddyController:
         self._preferences = preferences
         self._selection = preferences.selection
         self._preferences_generation += 1
-        self._generation += 1
+        self._advance_generation_locked()
 
     async def _after_phase(self, phase: str, ticket: _ResolutionTicket) -> bool:
         barrier = self._phase_barrier
@@ -1237,6 +1239,17 @@ class PersonaBuddyController:
             frames=(),
         )
 
+    def _advance_generation_locked(self) -> None:
+        """Advance authority and enqueue a content-free notification.
+
+        The optional callback must only enqueue work; it may run under the
+        controller lock on a producer thread. The app uses thread-safe
+        post_message, never a synchronous UI callback.
+        """
+        self._generation += 1
+        if self._on_change is not None:
+            self._on_change()
+
     def _discard_expired_locked(self) -> None:
         now = self._clock()
         expired = [
@@ -1248,7 +1261,7 @@ class PersonaBuddyController:
             return
         for key in expired:
             del self._leases[key]
-        self._generation += 1
+        self._advance_generation_locked()
 
     def _resolve_locked(self) -> _StateLease | None:
         leases = tuple(self._leases.values())

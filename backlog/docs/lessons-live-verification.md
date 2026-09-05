@@ -1983,3 +1983,44 @@ looked untoggled in the capture taken right after the click, then opened
 when the following key arrived), so capture again before concluding a
 click was dead; and Ctrl+Shift+Right (expand every rail section) did
 nothing when sent through tmux — open sections one at a time instead.
+
+## A host out of POSIX semaphores fails every multiprocessing pool with "No space left on device" — and the disk is fine (media wave 4 PR D, 2026-09-04)
+
+**The incident.** The Task 3 implementer's live import run (two text files through the
+Library Import canvas) died with `OSError(28, 'No space left on device')` from
+`multiprocessing.Pool`. The data volume was 84% used with 300 GB free. Reproduced outside
+the app with nothing but `python -c "import multiprocessing as mp; mp.Lock()"` — same
+error. Root cause: macOS's named-semaphore limit was exhausted by 38-40 `pytest`
+processes that four other Claude sessions were running in parallel on the same machine;
+it stayed exhausted for the rest of the evening. Every live import for PR #2400 was
+blocked; the gate, the id set and the per-row receipts were verified in real-screen
+app-tests with a stubbed resolver and generator instead, and the PR body says so.
+
+**What to do.**
+- When a live step dies with ENOSPC on a disk that is not full, run the one-line
+  `mp.Lock()` probe before touching the app; count `pytest` processes with
+  `ps -axo command | grep -c '[p]ytest'`.
+- Do not kill other sessions' runs to free the semaphores. Either wait for them to finish
+  or reboot; until then, substitute app-tests and state the gap in the PR — never report a
+  live verification you could not run.
+
+## Playback cleanup does not prove the Buddy received playback state
+
+**PR #2404 / TASK-31585, 2026-09-05.** After rebasing onto dev, trusted
+readback lifecycle tests passed and real Kokoro drained 128,000 PCM bytes, but
+Migu stayed idle throughout. Manual Speak correctly tracked its own presentation
+while only the realtime loop published Buddy voice leases. Connecting the
+existing trusted playback callbacks to a unique request-owned lease produced
+idle → speaking → idle in the real replay; stale-session terminal tests also
+proved that cleanup preserves another voice owner.
+
+**What to do.** Observe the actual Buddy controller and rendered availability
+alongside audio completion. A successful sink and cleared speaking-message ID
+prove audio ownership, not delivery to a separate visual state consumer. Re-run
+from the current PR tree: older live evidence can exercise a superseded host.
+
+## Two live assessments on one profile reproduce a wedge the app warned you about (media critique #5, 2026-09-04)
+
+**The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
+
+**What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
