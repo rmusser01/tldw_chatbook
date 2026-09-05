@@ -54,6 +54,7 @@ from .unified_rows import (
     _humanize_schedule,
     definition_cron_expression,  # noqa: F401  (re-export: definition_detail.py imports this from here)
     owner_display_label,
+    reminder_has_fired,
 )
 
 
@@ -201,6 +202,13 @@ def _format_next_run(
     # badge said "Disabled" (Qodo review). Suppression is a property of the
     # status, not of whether a stale timestamp happens to survive.
     display_status = _task_status(task)
+    # UAT finding 3e: a fired one-time reminder is COMPLETED (not
+    # DISABLED, since `_task_status` above now checks `reminder_has_
+    # fired` first) -- its own branch, not the generic "nothing
+    # scheduled" fallback below, so "Completed" never explains itself as
+    # "— (disabled)".
+    if display_status == TaskStatus.COMPLETED:
+        return "—"
     if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
     if display_status == TaskStatus.PAUSED:
@@ -288,7 +296,18 @@ def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
     left disabled rows showing "Waiting" (task-23101). Enabling restores
     the recorded last outcome. Consumers that need the recorded outcome
     itself use ``_underlying_status`` (review F5).
+
+    UAT finding 3e: this predated the Queue's Completed bucket
+    (`unified_rows._reminder_bucket`) and was never reconciled with it.
+    Dispatching a one-time reminder sets ``enabled=False`` AND clears
+    ``next_run_at`` -- so a fired reminder's row was bucketed Completed
+    (drives the chip/glyph) while this method still said Disabled (drives
+    the badge/next-run text) for the exact same row. Checking
+    ``reminder_has_fired`` first, BEFORE the ``enabled`` override, makes
+    the two seams share the one rule instead of quietly disagreeing.
     """
+    if isinstance(task, ReminderTask) and reminder_has_fired(task):
+        return TaskStatus.COMPLETED
     if isinstance(task, ReminderTask) and not task.enabled:
         return TaskStatus.DISABLED
     return _underlying_status(task)

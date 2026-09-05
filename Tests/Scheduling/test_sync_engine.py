@@ -1079,11 +1079,17 @@ async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
 
     outcome = await engine.sync_now()
 
-    # task-23105-review F2: the reminder phase itself succeeded, but a
-    # pushback phase failed -- that must surface as an error outcome, not
-    # a clean "ok" beside a fresh error badge.
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c (supersedes task-23105-review F2's "must surface as
+    # an error outcome" ruling): the reminder phase itself succeeded, and
+    # that must be reported honestly -- collapsing it to `status="error"`
+    # is exactly the "Sync failed" toast the UAT caught lying over a
+    # phase that had nothing to do with the failure. The pushback
+    # failure still reaches the caller, as its own labeled entry.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation review pushback" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     state = db.get_sync_state("server:1") or {}
@@ -1216,6 +1222,69 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
     assert len(rows) == 1, "create replay + same-cycle pull must yield exactly one row"
     assert rows[0]["id"] == local_id
     assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_push_stamps_last_push_at(tmp_path):
+    """UAT finding 3c: `_sync_reminders` used to be the ONLY writer of
+    `last_push_at`, and only for its own reminder pushes -- a cycle that
+    pushed nothing on the reminder side but DID push a definition create
+    left the sync bar showing "Last push: -" forever, even though a push
+    genuinely happened this cycle."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {"family": "recurring_question", "name": "Draft"},
+            "server_definition_id": None,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Draft",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    assert not (db.get_sync_state("server:1") or {}).get("last_push_at")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert outcome.pushed == 0, "nothing was pushed on the REMINDER side this cycle"
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("last_push_at"), (
+        "a genuine definition push must stamp last_push_at even when the "
+        "reminder phase itself pushed nothing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_noop_cycle_does_not_stamp_last_push_at(tmp_path):
+    """The other half of the same fix: a cycle with no pending definition
+    mutations at all must not fabricate a push timestamp."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    state = db.get_sync_state("server:1") or {}
+    assert not state.get("last_push_at")
 
 
 @pytest.mark.asyncio
@@ -1569,8 +1638,14 @@ async def test_sync_now_definition_create_retryable_error_retains_mutation(tmp_p
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push failure; the failure still
+    # reaches the caller as its own labeled `phase_errors` entry.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_definition")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     row = db.get_automation_definition(local_id)
@@ -1918,8 +1993,13 @@ async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tm
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (lifecycle) failure.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
@@ -2089,7 +2169,11 @@ async def test_sync_now_definition_transfer_timeout_retains_sent_and_mutation(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (transfer) failure.
+    assert outcome.status == "ok"
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
     row = db.get_automation_definition(local_id)
     assert row["transfer_state"] == "to_server_sent", (
         "disarm precedes the request -- an ambiguous failure leaves the "
@@ -2740,7 +2824,11 @@ async def test_sync_now_definition_release_retryable_error_keeps_copy_dormant(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (release) failure.
+    assert outcome.status == "ok"
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_definition")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     copy_row = db.get_automation_definition(copy_id)
@@ -2994,13 +3082,18 @@ async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(t
 
     outcome = await engine.sync_now()
 
-    # task-23105-review F2: a failed automation phase must surface as an
-    # error outcome even though the reminder phase (and the later results
-    # phase) still ran to completion -- results are still pulled, but the
-    # workbench must not toast "Sync completed" next to a fresh error
-    # badge (the controller ruled the prior "ok" pin a plan artifact).
-    assert outcome.status == "error"
-    assert "down" in (outcome.error or "")
+    # UAT finding 3c (supersedes task-23105-review F2's "must surface as
+    # an error outcome" ruling): the reminder phase (and the later
+    # results phase) ran to completion -- that success must be reported
+    # honestly rather than collapsed into `status="error"` next to a
+    # fresh error badge, which is exactly the "Sync failed" toast the
+    # UAT caught misreporting an unrelated phase's failure. The
+    # definitions-phase failure still reaches the caller, labeled.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definitions pull" in outcome.phase_errors[0]
+    assert "down" in outcome.phase_errors[0]
     assert len(db.list_automation_results("server:1")) == 1
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
@@ -3158,9 +3251,10 @@ async def test_sync_now_reminder_policy_refusal_does_not_mask_automation_error(
 ):
     """The reminder phase's own policy action can be refused
     (`not_applicable`) while a DIFFERENT policy action -- an automation
-    phase -- genuinely fails. The old `status == "ok"` guard only caught
-    this when the reminder phase was "ok"; "not_applicable" let the
-    automation failure through unreported."""
+    phase -- genuinely fails. UAT finding 3c: `status`/`error` now
+    describe ONLY the reminder phase (unconditionally, not just when it
+    was "ok") -- the automation failure must still reach the caller, via
+    `phase_errors`, never silently dropped."""
     from tldw_chatbook.Scheduling.services.server_client import (
         ServerClientPolicyError,
     )
@@ -3178,8 +3272,11 @@ async def test_sync_now_reminder_policy_refusal_does_not_mask_automation_error(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "defs down" in (outcome.error or "")
+    assert outcome.status == "not_applicable"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definitions pull" in outcome.phase_errors[0]
+    assert "defs down" in outcome.phase_errors[0]
     assert len(db.list_automation_results("server:1")) == 1  # later phase still ran
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
