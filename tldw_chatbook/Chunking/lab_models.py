@@ -267,66 +267,77 @@ class LabSession(_Snapshot):
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
-        if not self.profile_key or not self.epoch:
-            raise ValueError("Session profile and epoch must be nonempty")
-        if self.revision < 0:
-            raise ValueError("Session revision must be nonnegative")
-        if not 1 <= len(self.candidates) <= 2:
-            raise ValueError("Lab v1 supports at most two candidates")
-
-        editable_b = 0
-        for candidate_id, candidate in self.candidates.items():
-            if (
-                not isinstance(candidate, dict)
-                or candidate.get("candidate_id") != candidate_id
-            ):
-                raise ValueError("Candidate keys must match stable candidate IDs")
-            role = candidate.get("role")
-            if role == "B" and candidate.get("editable") is True:
-                editable_b += 1
-                DraftState.model_validate(candidate.get("draft"))
-            elif role == "A" and candidate.get("editable") is False:
-                PreparedRecipe.model_validate(candidate.get("pinned_recipe"))
-            else:
-                raise ValueError(
-                    "Candidates require one editable B and optional frozen A"
-                )
-        if editable_b != 1:
-            raise ValueError("Lab requires exactly one editable B candidate")
-
-        for sample_hash, sample in self.samples.items():
-            snapshot = SampleSnapshot.model_validate(sample)
-            if snapshot.sample_hash != sample_hash:
-                raise ValueError("Sample keys must match sample identities")
-        if self.view.get("sample_hash") not in self.samples:
-            raise ValueError("Active sample must reference a retained sample")
-
-        for run_id, result in self.results.items():
-            outcome = RunResult.model_validate(result)
-            if outcome.request.run_id != run_id:
-                raise ValueError("Result keys must match run identities")
-        for candidate in self.candidates.values():
-            for field in ("current_run_id", "previous_run_id"):
-                run_id = candidate.get(field)
-                if run_id is not None and run_id not in self.results:
-                    raise ValueError(
-                        f"Candidate {field} must reference a retained result"
-                    )
-
-        if self.batch is not None:
-            if self.batch.get("epoch") != self.epoch:
-                raise ValueError("Batch epoch must match the session")
-            requests = self.batch.get("requests")
-            if not isinstance(requests, dict) or not requests:
-                raise ValueError("Batch requires captured request membership")
-            batch_id = self.batch.get("batch_id")
-            for run_id, request in requests.items():
-                captured = RunRequest.model_validate(request)
-                if (
-                    captured.run_id != run_id
-                    or captured.batch_id != batch_id
-                    or captured.epoch != self.epoch
-                    or captured.candidate_id not in self.candidates
-                ):
-                    raise ValueError("Invalid captured batch request")
+        validate_session_references(self, validate_blobs=True)
         return self
+
+
+def validate_session_references(
+    session: LabSession, *, validate_blobs: bool = False
+) -> None:
+    """Validate the small graph; stores may reuse privately validated blob values.
+
+    ``validate_blobs=False`` is only for owners that have already captured and
+    validated samples, results, and batch requests. Public model publication
+    always performs the full validation, including nested mutable payloads.
+    """
+    if not session.profile_key or not session.epoch:
+        raise ValueError("Session profile and epoch must be nonempty")
+    if session.revision < 0:
+        raise ValueError("Session revision must be nonnegative")
+    if not 1 <= len(session.candidates) <= 2:
+        raise ValueError("Lab v1 supports at most two candidates")
+
+    editable_b = 0
+    for candidate_id, candidate in session.candidates.items():
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("candidate_id") != candidate_id
+        ):
+            raise ValueError("Candidate keys must match stable candidate IDs")
+        role = candidate.get("role")
+        if role == "B" and candidate.get("editable") is True:
+            editable_b += 1
+            DraftState.model_validate(candidate.get("draft"))
+        elif role == "A" and candidate.get("editable") is False:
+            PreparedRecipe.model_validate(candidate.get("pinned_recipe"))
+        else:
+            raise ValueError("Candidates require one editable B and optional frozen A")
+    if editable_b != 1:
+        raise ValueError("Lab requires exactly one editable B candidate")
+
+    for sample_hash, sample in session.samples.items():
+        if validate_blobs:
+            SampleSnapshot.model_validate(sample)
+        if sample["sample_hash"] != sample_hash:
+            raise ValueError("Sample keys must match sample identities")
+    if session.view.get("sample_hash") not in session.samples:
+        raise ValueError("Active sample must reference a retained sample")
+
+    for run_id, result in session.results.items():
+        if validate_blobs:
+            RunResult.model_validate(result)
+        if result["request"]["run_id"] != run_id:
+            raise ValueError("Result keys must match run identities")
+    for candidate in session.candidates.values():
+        for field in ("current_run_id", "previous_run_id"):
+            run_id = candidate.get(field)
+            if run_id is not None and run_id not in session.results:
+                raise ValueError(f"Candidate {field} must reference a retained result")
+
+    if session.batch is not None:
+        if session.batch.get("epoch") != session.epoch:
+            raise ValueError("Batch epoch must match the session")
+        requests = session.batch.get("requests")
+        if not isinstance(requests, dict) or not requests:
+            raise ValueError("Batch requires captured request membership")
+        batch_id = session.batch.get("batch_id")
+        for run_id, request in requests.items():
+            if validate_blobs:
+                RunRequest.model_validate(request)
+            if (
+                request["run_id"] != run_id
+                or request["batch_id"] != batch_id
+                or request["epoch"] != session.epoch
+                or request["candidate_id"] not in session.candidates
+            ):
+                raise ValueError("Invalid captured batch request")
