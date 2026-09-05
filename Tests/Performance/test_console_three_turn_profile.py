@@ -11657,6 +11657,58 @@ async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     assert result["third_provider_started_ns"] is not None
     assert result["terminal_third_assistant"] == "turn-three-complete"
     assert result["mutation_verified"] is True
+    assert result["scratch_mutation_absent"] is True
+
+
+def test_scripted_authority_renews_only_the_admitted_fs_write_definition(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+
+    prepare = getattr(profile, "prepare_scripted_local_tool_authority", None)
+    assert callable(prepare)
+    runtime = profile.prepare_workspace_runtime(tmp_path / "authority", arm="disabled")
+    try:
+        session = SimpleNamespace(workspace_id=runtime.workspace_id)
+        roots = capture_run_admitted_workspace_roots(
+            session=session, registry=runtime.registry
+        )
+        provider = LocalToolProvider(
+            workspace_root=runtime.workspace_root, admitted_roots=roots
+        )
+        hub = provider.hub_tool_for("fs_write")
+        stale = runtime.control_plane.gate_tool_test(hub)
+        assert stale.state == "ask"
+        assert stale.config_changed is True
+
+        assert prepare(runtime, session) == runtime.workspace_root
+
+        renewed = runtime.control_plane.gate_tool_test(hub)
+        assert renewed.state == "allow"
+        assert renewed.origin == "tool_override"
+        assert renewed.config_changed is False
+        assert (
+            runtime.control_plane.gate_tool_test(provider.hub_tool_for("fs_edit")).state
+            == "ask"
+        )
+    finally:
+        runtime.close()
+
+
+def test_scripted_authority_refuses_a_session_outside_the_fixture_workspace(
+    tmp_path: Path,
+) -> None:
+    prepare = getattr(profile, "prepare_scripted_local_tool_authority", None)
+    assert callable(prepare)
+    runtime = profile.prepare_workspace_runtime(tmp_path / "authority", arm="disabled")
+    try:
+        with pytest.raises(AssertionError, match="fixture Workspace binding"):
+            prepare(runtime, SimpleNamespace(workspace_id="unrelated-workspace"))
+    finally:
+        runtime.close()
 
 
 def test_mounted_sample_mutation_path_tracks_revision_authority(tmp_path: Path):

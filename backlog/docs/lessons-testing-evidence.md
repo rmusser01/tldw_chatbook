@@ -67,6 +67,28 @@ and pair lazy-owner guards with a no-result first-use UI test.
 
 ---
 
+## Mounted filesystem benchmarks must use the current authority schema and an installed worker
+
+**TASK-31651, 2026-09-05.** The three-turn benchmark granted `fs_write` using a
+standalone provider descriptor, then ran the mounted Console's ADR-102 provider.
+The latter adds `root_alias`, so the definition-hash guard correctly changed the
+old Allow grant to Ask. The unattended test timed out awaiting approval and then
+checked the obsolete private-scratch mutation path. Its explicitly bound named
+Workspace was the current structured tool's actual authority. After renewing only
+the fixture's exact admitted-root grant, execution exposed a second setup issue:
+the shared virtual environment could import the checkout during pytest, but the
+one-shot worker's `python -I -m` could not import the application at all.
+
+**What to do.** Derive benchmark authority and permission descriptors through the
+current run-admission contract. Prove stale grants still ask before renewing a
+fixture-owned exact grant; never replace the gate with an unconditional Allow.
+Check the bound mutation destination and absence of a scratch fallback. Before
+subprocess verification, confirm `python -I` imports the intended checkout from an
+installed, isolated test environment; pytest's source-path insertion is not proof
+that a separately launched worker can import it.
+
+---
+
 ## Spend forecasts must test admitted media and durable recovery IDs
 
 **PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
