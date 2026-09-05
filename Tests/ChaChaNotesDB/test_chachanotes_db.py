@@ -1341,7 +1341,12 @@ class TestMessageAttachmentsTable:
             )
 
     def test_hard_delete_cascades_attachments(self, db_instance):
+        from tldw_chatbook.Chat.console_semantic_revision import (
+            SemanticRevisionCoordinator,
+        )
+
         _conv, msg_id = _make_conversation_with_message(db_instance)
+        _other_conv, other_id = _make_conversation_with_message(db_instance)
         db_instance.set_message_attachments(
             msg_id,
             [
@@ -1353,8 +1358,32 @@ class TestMessageAttachmentsTable:
                 }
             ],
         )
-        with db_instance.transaction() as cursor:
-            cursor.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+        with pytest.raises(
+            sqlite3.IntegrityError, match="semantic mutation authorization"
+        ):
+            with db_instance.transaction() as cursor:
+                cursor.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+        assert len(db_instance.get_attachments_for_messages([msg_id])[msg_id]) == 1
+        with db_instance.transaction(immediate=True) as cursor:
+            result = SemanticRevisionCoordinator(db_instance).mutate_message(
+                cursor,
+                message_id=msg_id,
+                creation_reason="hard_delete",
+                hard_delete=True,
+            )
+            assert result.deleted
+            assert (
+                cursor.execute(
+                    "SELECT id FROM messages WHERE id = ?", (msg_id,)
+                ).fetchone()
+                is None
+            )
+            assert (
+                cursor.execute(
+                    "SELECT id FROM messages WHERE id = ?", (other_id,)
+                ).fetchone()
+                is not None
+            )
             cursor.execute(
                 "SELECT COUNT(*) FROM message_attachments WHERE message_id = ?",
                 (msg_id,),

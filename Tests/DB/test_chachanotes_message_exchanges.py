@@ -360,7 +360,10 @@ def test_no_sync_log_rows_written(db):
 
 
 def test_hard_delete_cascades(db):
+    from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
+
     mid = _seed_message(db)
+    other_id = _seed_message(db)
     db.append_message_exchanges_local(
         mid,
         [
@@ -374,8 +377,30 @@ def test_hard_delete_cascades(db):
             }
         ],
     )
-    with db.transaction() as cursor:
-        cursor.execute("DELETE FROM messages WHERE id = ?", (mid,))
+    with pytest.raises(sqlite3.IntegrityError, match="semantic mutation authorization"):
+        with db.transaction() as cursor:
+            cursor.execute("DELETE FROM messages WHERE id = ?", (mid,))
+    with db.transaction(immediate=True) as cursor:
+        assert (
+            cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 1
+        )
+        result = SemanticRevisionCoordinator(db).mutate_message(
+            cursor,
+            message_id=mid,
+            creation_reason="hard_delete",
+            hard_delete=True,
+        )
+        assert result.deleted
+        assert (
+            cursor.execute("SELECT id FROM messages WHERE id = ?", (mid,)).fetchone()
+            is None
+        )
+        assert (
+            cursor.execute(
+                "SELECT id FROM messages WHERE id = ?", (other_id,)
+            ).fetchone()
+            is not None
+        )
         count = cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
     assert count == 0
 
