@@ -43,3 +43,11 @@ Hunt round 1 (2026-09-03): 24-round scripted repro (create->complete->picker->di
 ## Renumbering
 
 Renumbered from task-31202 on 2026-09-03: id collision with an older dev arrival (owner rule TASK-19601; older keeps the id).
+
+## Reproduction evidence (critique #5, 2026-09-04 evening, dev c09717a7cb)
+
+Reproduced twice, independently, by two assessment agents running the app under tmux at 235x52 against the real profile — with a second app instance alive on the same profile (the app's own "Another copy of tldw is already using this profile" guard fired and was bypassed) and the host out of POSIX semaphores. Sequence: select mode → select one item → Delete → confirm → receipt `✓ deleted · 1 item · in Trash` with `○ Undo` and `Media changed; retry to load a current page.`; every row, Export, Select, sort and the pager disabled; Retry inert (two clicks, 3 s apart, byte-identical captures); Dismiss clears the receipt but not the gate; `s` inert; a Media → Notes → Media round-trip does not clear it; the DB row is untouched (`is_trash=0, deleted=0`); only killing the process recovers.
+
+Mechanism traced in source: `_delete_library_media_selection` treats "no exception" as success and never reads the service boolean (`MediaDatabase.mark_as_trash` returns `False` without raising when it makes no change), so a write that did not land joins `succeeded` and paints `✓`. `_complete_library_media_mutation` raises the mutation gate through `reconcile_committed_mutation` and refreshes only while the screen holds authority. `handle_library_media_retry`, `handle_library_media_row` and `_toggle_library_media_select_mode` all early-return while `_library_media_bulk_delete_in_flight` is set — exactly the three controls observed inert — so the flag not being released on that path explains the wedge. Undo is stale-gated by design, so a `✓` with a dead Undo is what the code does whenever the gate is up.
+
+Fix shape: derive the receipt from the result (`False` = failure with a reason); release the interlock in a `finally` on every path; never gate Retry behind the interlock it exists to escape; enable Undo iff the receipt says `✓`. Snapshot: `.impeccable/critique/2026-09-05T06-05-33Z__tldw-chatbook-ui-screens-library-screen-py.md`.
