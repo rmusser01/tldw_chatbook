@@ -290,7 +290,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             button.styles.height = row_height
             button.styles.min_height = row_height
-            self._gate_stale_action(button, label_rest.lstrip())
+            self._gate_mutation_action(button, label_rest.lstrip())
         try:
             preview = self.query_one("#library-media-preview")
             open_viewer = self.query_one("#library-media-open-viewer", Button)
@@ -335,7 +335,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
-        """Apply the controller's stale-page gate to one unsafe action."""
+        """Apply the controller's stale-OR-mutation gate to one unsafe action.
+
+        Final review M-1: despite the name (and despite reading as the
+        symmetric partner of ``_gate_mutation_action`` below, which gates on
+        write-in-flight only), this disables on EITHER input -- a stale page
+        OR a write actually in flight. Do not assume a mutation ending
+        leaves these controls live if the page is still stale.
+        """
         reason = self.mutation_action_reason or self.stale_action_reason
         if reason:
             button.label = library_disabled_action_label(base_label, True)
@@ -875,6 +882,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         receipt_count = getattr(self.canvas, "delete_receipt_count", 0)
         if receipt_count:
             receipt_word = "item" if receipt_count == 1 else "items"
+            # task-31220 (critique #5): a receipt may only claim success
+            # while its Undo can actually run. A failed restore retitles it
+            # with the same ✗ glyph the Analyze receipt uses for a run
+            # where nothing succeeded, and Undo becomes a retry over the
+            # still-failed ids ``receipt_count`` now names.
+            undo_failure = getattr(self.canvas, "delete_receipt_undo_failure", "")
             # task-31270 (critique #4 P1): two rows -- copy, then actions --
             # at full width. A single content-width Horizontal clipped Undo
             # to "Und" at the Items pane's real width; same multi-row
@@ -889,7 +902,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # task-4025 (ADR-055 Pattern A): the receipt names the
                     # durable path too -- "· in Trash" points at the Trash
                     # view that outlives this receipt's Undo/Dismiss.
-                    f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
+                    f"✗ undo failed · {undo_failure}"
+                    if undo_failure
+                    else f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
                     classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
@@ -899,13 +914,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 actions.styles.height = "auto"
                 with actions:
+                    # task-31220: NOT ``_gate_stale_action``. Undo restores
+                    # exactly the ids this receipt names, so it is the
+                    # receipt's own recovery and a stale PAGE behind it
+                    # cannot invalidate it -- disabling it here broke the
+                    # confirmation's "You can undo right away" promise at
+                    # the one moment it mattered (critique #5). The shared
+                    # write interlock still applies, so a second mutation
+                    # can never be claimed while one is in flight.
+                    undo_label = "Retry undo" if undo_failure else "Undo"
                     undo = Button(
-                        "Undo",
+                        undo_label,
                         id="library-media-bulk-delete-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo, "Undo")
+                    yield self._gate_mutation_action(undo, undo_label)
                     dismiss = Button(
                         "Dismiss",
                         id="library-media-bulk-delete-receipt-dismiss",
@@ -939,13 +963,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 set_actions.styles.height = "auto"
                 with set_actions:
+                    # Final review I-3: NOT ``_gate_stale_action``, for the
+                    # same reason the bulk-delete receipt's Undo above is
+                    # exempt -- this Undo restores exactly the one set its
+                    # own copy names, so a stale PAGE behind it cannot
+                    # invalidate it. Before this branch both receipts' Undo
+                    # were gated identically; leaving this one on the stale
+                    # gate let it sit disabled beside a live sibling
+                    # receipt's Undo with no rule the user could infer.
                     undo_set = Button(
                         "Undo",
                         id="library-media-review-dismiss-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo_set, "Undo")
+                    yield self._gate_mutation_action(undo_set, "Undo")
                     close_receipt = Button(
                         "Dismiss",
                         id="library-media-review-dismiss-receipt-close",
@@ -1137,7 +1169,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         button.styles.height = row_height
                         button.styles.min_height = row_height
-                        yield self._gate_stale_action(button, label_rest.lstrip())
+                        # task-31220: a row OPEN is a read, so it is gated
+                        # only while a write is actually unsettled -- never by
+                        # the stale gate the open is how you recover from.
+                        # Only the mutating actions (Select/Export/sort/
+                        # Delete/Undo) stay behind ``_gate_stale_action``.
+                        yield self._gate_mutation_action(
+                            button, label_rest.lstrip()
+                        )
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 

@@ -3123,6 +3123,11 @@ def _bind_trash_mutation_seams(fake):
     fake._begin_library_media_mutation = types.MethodType(
         LibraryScreen._begin_library_media_mutation, fake
     )
+    # task-31220: the one seam every mutation handler claims the shared
+    # write interlock through.
+    fake._claim_library_media_mutation = types.MethodType(
+        LibraryScreen._claim_library_media_mutation, fake
+    )
     fake._library_media_backing_id = types.MethodType(
         LibraryScreen._library_media_backing_id, fake
     )
