@@ -57,9 +57,24 @@ def test_recorder_factory_is_used_and_receives_recorder_kwargs(monkeypatch):
 
 
 def test_default_factory_is_the_real_recorder_class(monkeypatch):
+    """No injected factory: `audio_service` must fall back to the real
+    `AudioRecordingService` class. Asserting only `_recorder_factory is
+    None` left the fallback branch itself unexercised -- this drives it,
+    with the class swapped for a fake so no device is opened."""
     _stub_settings(monkeypatch)
-    from tldw_chatbook.Audio import dictation_service_lazy
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    built: list[dict] = []
+
+    class _FakeRealRecorder:
+        def __init__(self, **kwargs):
+            built.append(kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Audio.recording_service.AudioRecordingService", _FakeRealRecorder
+    )
 
     service = LazyLiveDictationService(enable_commands=False)
     assert service._recorder_factory is None
+    assert isinstance(service.audio_service, _FakeRealRecorder)
+    assert built and built[0]["use_vad"] is True

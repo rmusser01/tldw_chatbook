@@ -480,7 +480,11 @@ class TestAudioRecordingIntegration:
 
     @pytest.mark.real_audio_device
     def test_sounddevice_recording_flow(self):
-        """Test complete recording flow with sounddevice backend."""
+        """Test complete recording flow with sounddevice backend.
+
+        Exercises the sounddevice loop with `sd.InputStream` patched, so no
+        real device is opened (qualifies for the opt-out marker).
+        """
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", False):
             with patch(
                 "tldw_chatbook.Audio.recording_service.SOUNDDEVICE_AVAILABLE", True
