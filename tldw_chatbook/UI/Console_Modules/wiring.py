@@ -68,6 +68,7 @@ from tldw_chatbook.Constants import (
     TAB_PERSONAS,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -88,6 +89,7 @@ from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .settings_durability import ConsoleSettingsDurabilityController
 from .settings_navigation import ConsoleSettingsNavigationController
 from .provider_selection import ConsoleProviderSelectionController
+from .commands import ConsoleCommandsController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -604,6 +606,107 @@ class _DeferredConsoleTerminalController:
         return bool(await self._resolve().request_resize(columns, rows))
 
 
+def build_console_commands_controller(screen: Any) -> None:
+    """Wire command policy to named runtime and composer services."""
+    screen._commands = ConsoleCommandsController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _academic_research_enabled=lambda: getattr(
+            screen.app, "research_window_academic_enabled", False
+        ),
+        _active_session_settings=lambda: (
+            screen._session._ensure_active_console_session_settings()
+        ),
+        _append_native_console_system_message=lambda *args, **kwargs: (
+            screen._append_native_console_system_message(*args, **kwargs)
+        ),
+        _apply_rewind_choice=lambda *args, **kwargs: (
+            screen._apply_console_rewind_choice(*args, **kwargs)
+        ),
+        _apply_rewind_position=lambda *args: screen._message.apply_rewind_position(
+            *args
+        ),
+        _clear_composer=lambda: screen._clear_console_composer_draft(),
+        _console_active_session_is_ephemeral=lambda *args, **kwargs: (
+            screen._console_active_session_is_ephemeral(*args, **kwargs)
+        ),
+        _console_command_apply_system=lambda *args, **kwargs: (
+            screen._console_command_apply_system(*args, **kwargs)
+        ),
+        _console_command_generate_image=lambda *args, **kwargs: (
+            screen._console_command_generate_image(*args, **kwargs)
+        ),
+        _console_command_generate_video=lambda *args, **kwargs: (
+            screen._console_command_generate_video(*args, **kwargs)
+        ),
+        _console_command_insert_prompt=lambda *args, **kwargs: (
+            screen._console_command_insert_prompt(*args, **kwargs)
+        ),
+        _console_command_skills=lambda *args, **kwargs: screen._console_command_skills(
+            *args, **kwargs
+        ),
+        _console_command_stream_video=lambda *args, **kwargs: (
+            screen._console_command_stream_video(*args, **kwargs)
+        ),
+        _console_composer_or_none=lambda *args, **kwargs: (
+            screen._console_composer_or_none(*args, **kwargs)
+        ),
+        _console_rewind_summary_disabled_reason=lambda *args, **kwargs: (
+            screen._console_rewind_summary_disabled_reason(*args, **kwargs)
+        ),
+        _current_console_conversation_id=lambda *args, **kwargs: (
+            screen._current_console_conversation_id(*args, **kwargs)
+        ),
+        _default_session_settings=lambda: (
+            screen._session._default_console_session_settings()
+        ),
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _focus_console_composer_if_needed=lambda *args, **kwargs: (
+            screen._focus_console_composer_if_needed(*args, **kwargs)
+        ),
+        _insert_prompt_text=lambda *args, **kwargs: (
+            screen._insert_prompt_text_into_composer(*args, **kwargs)
+        ),
+        _local_research_service=lambda: getattr(
+            screen.app, "local_research_service", None
+        ),
+        _query_composer=lambda: screen.query_one(
+            "#console-native-composer", ConsoleComposerBar
+        ),
+        _request_rewind=lambda parse: screen._console_command_rewind(parse),
+        _research_database=lambda: getattr(screen.app, "chachanotes_db", None),
+        _resolve_action=lambda name: getattr(screen, name, None),
+        _summarize_console_from=lambda *args, **kwargs: screen._summarize_console_from(
+            *args, **kwargs
+        ),
+        _summarize_console_up_to=lambda *args, **kwargs: (
+            screen._summarize_console_up_to(*args, **kwargs)
+        ),
+        _sync_console_chat_core_state=lambda *args, **kwargs: (
+            screen._sync_console_chat_core_state(*args, **kwargs)
+        ),
+        _sync_console_command_popup=lambda *args, **kwargs: (
+            screen._sync_console_command_popup(*args, **kwargs)
+        ),
+        _sync_console_settings_summary=lambda *args, **kwargs: (
+            screen._sync_console_settings_summary(*args, **kwargs)
+        ),
+        _sync_native_console_chat_ui=lambda *args, **kwargs: (
+            screen._sync_native_console_chat_ui(*args, **kwargs)
+        ),
+        push_screen=lambda *args, **kwargs: screen.app.push_screen(*args, **kwargs),
+        run_worker=lambda worker, *, exclusive, group, description=None: (
+            screen.run_worker(
+                worker, exclusive=exclusive, group=group, description=description
+            )
+        ),
+    )
+
+
 def build_console_provider_selection_controller(screen: Any) -> None:
     """Wire provider policy with current app, session and presentation services."""
     screen._provider_selection = ConsoleProviderSelectionController(
@@ -657,15 +760,12 @@ def build_console_provider_selection_controller(screen: Any) -> None:
     )
 
 
-
 def build_console_settings_controllers(screen: Any) -> None:
     """Wire the settings workflow and its app-lifetime durability services."""
     screen._settings_navigation = ConsoleSettingsNavigationController(
         app_instance_accessor=lambda: screen.app_instance,
         _build_console_provider_selection_for_settings=lambda *args, **kwargs: (
-            screen._build_console_provider_selection_for_settings(
-                *args, **kwargs
-            )
+            screen._build_console_provider_selection_for_settings(*args, **kwargs)
         ),
         _commit_console_settings_submission_live=lambda submission: (
             screen._settings_durability._commit_console_settings_submission_live(
@@ -718,9 +818,7 @@ def build_console_settings_controllers(screen: Any) -> None:
             screen._provider_readiness_app_config(*args, **kwargs)
         ),
         _providers_models_for_console_settings=lambda *args, **kwargs: (
-            screen._providers_models_for_console_settings(
-                *args, **kwargs
-            )
+            screen._providers_models_for_console_settings(*args, **kwargs)
         ),
         _sync_native_console_chat_ui=lambda *args, **kwargs: (
             screen._sync_native_console_chat_ui(*args, **kwargs)
@@ -807,6 +905,8 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    build_console_commands_controller(screen)
+
     build_console_provider_selection_controller(screen)
 
     build_console_settings_controllers(screen)

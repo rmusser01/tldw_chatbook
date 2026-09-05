@@ -965,7 +965,16 @@ async def test_summarize_choice_guards_against_changed_active_session():
         store.switch_session(other_session.id)
 
         spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        real_run_worker = console.run_worker
+
+        def capture_summary_worker(work, **kwargs):
+            # Workspace alias refreshes may still be queued after the session
+            # switch. Only the guarded summary dispatch is under test here.
+            if kwargs.get("group", "").startswith("console-run-"):
+                return spy_worker(work, **kwargs)
+            return real_run_worker(work, **kwargs)
+
+        console.run_worker = capture_summary_worker
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
