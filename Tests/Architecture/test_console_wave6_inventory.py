@@ -1099,6 +1099,15 @@ def _has_real_delegate_binding(
     if binding == "@on":
         return _has_on_binding(screen_methods[method_name])
     caller = screen_methods.get(binding)
+    if binding == "_dispatch_console_command" and caller is not None:
+        commands_path = _REPO_ROOT / "tldw_chatbook/UI/Console_Modules/commands.py"
+        wiring_path = commands_path.with_name("wiring.py")
+        return _has_command_callback_binding(
+            caller,
+            method_name,
+            _methods(commands_path, "ConsoleCommandsController"),
+            ast.parse(wiring_path.read_text(encoding="utf-8")),
+        )
     return caller is not None and any(
         isinstance(node, ast.Attribute)
         and isinstance(node.value, ast.Name)
@@ -1107,6 +1116,86 @@ def _has_real_delegate_binding(
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(caller)
     )
+
+
+def _has_command_callback_binding(
+    caller: ast.AST,
+    method_name: str,
+    commands: dict[str, ast.AST],
+    wiring: ast.AST,
+) -> bool:
+    """Follow only the explicit screen → command owner → injected callback route."""
+
+    def contains(tree: ast.AST, expression: str) -> bool:
+        expected = ast.dump(ast.parse(expression, mode="eval").body)
+        return any(ast.dump(node) == expected for node in ast.walk(tree))
+
+    if not contains(caller, "self._commands._dispatch_console_command"):
+        return False
+    dispatch = commands.get("_dispatch_console_command")
+    constructor = commands.get("__init__")
+    if dispatch is None or constructor is None:
+        return False
+    if not contains(dispatch, f"self.{method_name}"):
+        return False
+    expected_assignment = ast.dump(
+        ast.parse(f"self.{method_name} = {method_name}").body[0]
+    )
+    if not any(ast.dump(node) == expected_assignment for node in ast.walk(constructor)):
+        return False
+    for node in ast.walk(wiring):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if not any(
+            ast.dump(target)
+            == ast.dump(ast.parse("screen._commands = None").body[0].targets[0])
+            for target in node.targets
+        ):
+            continue
+        call = node.value
+        if (
+            not isinstance(call.func, ast.Name)
+            or call.func.id != "ConsoleCommandsController"
+        ):
+            continue
+        for keyword in call.keywords:
+            if keyword.arg == method_name and isinstance(keyword.value, ast.Lambda):
+                body = keyword.value.body
+                if isinstance(body, ast.Call) and contains(
+                    body.func, f"screen.{method_name}"
+                ):
+                    return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "broken", [None, "screen", "dispatch", "constructor", "owner", "callback"]
+)
+def test_command_callback_binding_rejects_disconnected_routes(broken):
+    caller = ast.parse(
+        "async def caller(self, parse):\n    await self._commands._dispatch_console_command(parse)"
+    )
+    source = """class Commands:
+    def __init__(self, *, delegate):
+        self.delegate = delegate
+    def _dispatch_console_command(self):
+        return self.delegate
+"""
+    wiring = "screen._commands = ConsoleCommandsController(delegate=lambda *args: screen.delegate(*args))"
+    if broken == "screen":
+        caller = ast.parse("self._unrelated._dispatch_console_command(parse)")
+    if broken == "dispatch":
+        source = source.replace("return self.delegate", "return self.unrelated")
+    if broken == "constructor":
+        source = source.replace("self.delegate = delegate", "self.delegate = unrelated")
+    if broken == "owner":
+        wiring = wiring.replace("screen._commands", "screen._unrelated")
+    if broken == "callback":
+        wiring = wiring.replace("screen.delegate", "unrelated.delegate")
+    commands = _methods_from_class(ast.parse(source).body[0])
+    assert _has_command_callback_binding(
+        caller, "delegate", commands, ast.parse(wiring)
+    ) is (broken is None)
 
 
 def _assert_no_dom_access(methods: object) -> None:
