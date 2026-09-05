@@ -630,3 +630,83 @@ def test_a_deferred_local_landing_for_a_dropped_root_stays_dropped(monkeypatch):
 
     fx.run_job(0)  # the in-flight gather for the old root finally lands
     assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+# ---------------------------------------------------------------------------
+# TASK-31660 round 1 (review): "cannot tell" is NOT "answered: nothing bound".
+#
+# The root accessor chain returns `()` for a genuinely unbound workspace but
+# `None` for an undetermined one (a swallowed exception; a chat controller
+# not built yet or with no active session). Landing UNBOUND on the latter
+# would assert "No folder is bound…" on the strength of a failure -- and
+# would reset the local tier's 3-strike backoff while doing it.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_root_lands_nothing_and_leaves_the_previous_paint(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    good = fx.controller.snapshot
+    assert good.git.availability is EnvSourceAvailability.OK
+    landings_before = len(fx.snapshots)
+    dispatches_before = len(fx.dispatched)
+
+    fx.root = env_mod.UNKNOWN_ROOT  # the accessor could not tell
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    fx.controller.notify_rail_opened()
+
+    assert len(fx.snapshots) == landings_before  # nothing landed at all
+    assert len(fx.dispatched) == dispatches_before  # and nothing dispatched
+    assert fx.controller.snapshot is good  # the previous paint stands
+    assert fx.controller._landed_root == "/w/repo"  # scope bookkeeping untouched
+
+
+def test_unknown_root_does_not_reset_the_backoff_counters(monkeypatch):
+    """The counter that stops a 10s flap loop must survive an unknown root."""
+    fx = Fixture(monkeypatch)
+    _fail_git(fx, monkeypatch)
+    for _ in range(3):
+        fx.controller.poll_tick()
+    assert fx.controller._failures["local"] == 3  # paused
+
+    fx.root = env_mod.UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._failures["local"] == 3  # still paused, not revived
+    assert fx.git_calls == 3
+
+
+def test_unknown_root_is_not_mistaken_for_a_root_change(monkeypatch):
+    """A transient unknown must not wipe the net TTL and re-fetch `gh`."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    assert fx.pr_calls == 1
+    fetched_at = fx.controller._net_fetched_at
+    assert fetched_at is not None
+
+    fx.root = env_mod.UNKNOWN_ROOT
+    for _ in range(5):
+        fx.controller.poll_tick()
+    assert fx.controller._net_fetched_at == fetched_at
+    assert fx.pr_calls == 1
+
+    fx.root = "/w/repo"  # recovers into an ordinary poll, no root change
+    fx.controller.poll_tick()
+    assert fx.git_calls == 2
+    assert fx.pr_calls == 1  # same root, TTL still holds
+
+
+def test_unknown_and_unbound_are_different_answers(monkeypatch):
+    """The negative control that makes the two tests above mean something."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+
+    fx.root = env_mod.UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+    fx.root = None  # asked, and the answer is "nothing is bound"
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND

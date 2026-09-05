@@ -33,4 +33,5 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [ ] #7 Change Review's transient "No file changes recorded" flash (≤0.5s) on entry is eliminated or replaced with a loading state
 - [ ] #8 One canonical Change Review opener decided and documented (four exist today)
 - [ ] #9 Row secondary text meets 4.5:1 on every background it actually renders over (after #1 lands)
+- [ ] #10 A bound→bound workspace switch must not transiently render the new root's branch/counts beside the OLD root's PR/checks while the deferred gh fetch is in flight (per-field replace in the non-UNBOUND landing branch; review finding, TASK-31660 round 1)
 <!-- AC:END -->

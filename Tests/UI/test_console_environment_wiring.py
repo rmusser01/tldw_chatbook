@@ -34,6 +34,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Console_Modules.environment import UNKNOWN_ROOT
 from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS_FIX,
@@ -425,9 +426,16 @@ async def test_refresh_view_all_forces_net_tier():
 
 @pytest.mark.asyncio
 async def test_landing_for_stale_root_does_not_touch_sections():
-    """No root and no mounted Environment section: land quietly, change nothing."""
+    """No root and no mounted Environment section: land quietly, change nothing.
+
+    Updated pin (TASK-31660 round 1): stubs the DEFINITIVE empty answer
+    ``()`` rather than ``None``. ``None`` from this accessor now means "could
+    not determine" and maps to ``UNKNOWN_ROOT``, which is a different case
+    (covered by its own tests below); this test is about a real no-root
+    landing, so it must ask for the real no-root answer.
+    """
     async with _console_screen() as (pilot, screen):
-        screen._review_selection._console_change_review_workspace_roots = lambda: None
+        screen._review_selection._console_change_review_workspace_roots = lambda: ()
         assert screen._console_environment_root() is None
 
         tasks_section = screen.query_one(
@@ -546,6 +554,70 @@ async def test_refresh_while_unbound_re_lands_through_the_real_controller():
             snap.git.availability is EnvSourceAvailability.UNBOUND for snap in landed
         )
         assert _row_ids(section) == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_root_reads_as_unknown_not_as_unbound():
+    """TASK-31660 round 1: a swallowed exception must not assert "not bound".
+
+    `_console_change_review_workspace_roots` returns ``None`` on ANY
+    exception, and the layer under it returns ``None`` when the chat
+    controller is absent or has no active session. Those are "cannot tell";
+    only ``()`` -- what `resolve_turn_execution_context` returns for a
+    workspace that binds no folder -- is "answered: nothing bound".
+    """
+    async with _console_screen() as (pilot, screen):
+        def _boom():
+            raise RuntimeError("roots accessor exploded")
+
+        # Drive the REAL degradation path (the try/except in
+        # `_console_change_review_workspace_roots`), not a stub of its result.
+        screen._review_selection._workspace_roots_accessor = _boom
+        assert screen._review_selection._console_change_review_workspace_roots() is None
+        assert screen._console_environment_root() is UNKNOWN_ROOT
+
+        # ...and the definitive empty answer is still plain None.
+        screen._review_selection._workspace_roots_accessor = lambda: ()
+        assert screen._console_environment_root() is None
+        screen._review_selection._workspace_roots_accessor = lambda: ("/w/one",)
+        assert screen._console_environment_root() == "/w/one"
+
+
+@pytest.mark.asyncio
+async def test_unknown_root_never_paints_the_unbound_copy():
+    """The on-screen half of the same finding, through the real controller."""
+    async with _console_screen() as (pilot, screen):
+        bound = _snapshot(
+            files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),),
+            branch="feat/still-here",
+        )
+        screen._console_environment.snapshot = bound
+        screen._land_console_environment(bound)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert ENV_ROW_COMMIT_PUSH in _row_ids(section)
+
+        def _boom():
+            raise RuntimeError("roots accessor exploded")
+
+        screen._review_selection._workspace_roots_accessor = _boom
+        await screen.action_toggle_console_inspector_rail()  # opens -> refresh
+        await pilot.pause()
+        screen._console_environment.poll_tick()
+        await pilot.pause()
+
+        # Previous paint stands; no negative was asserted on a failure.
+        assert ENV_ROW_COMMIT_PUSH in _row_ids(section)
+        assert ENV_ROW_UNBOUND not in _row_ids(section)
+        painted = " ".join(
+            str(static.renderable)
+            for static in section.query(".console-inspector-section-row-primary")
+        )
+        assert "No folder is bound" not in painted
+        assert "feat/still-here" in painted
+        assert screen._console_environment.snapshot is bound
 
 
 @pytest.mark.asyncio

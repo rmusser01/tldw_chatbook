@@ -132,7 +132,11 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
-from ..Console_Modules.environment import ConsoleEnvironmentController
+from ..Console_Modules.environment import (
+    UNKNOWN_ROOT,
+    ConsoleEnvironmentController,
+    UnknownRoot,
+)
 from ..Console_Modules.capture_policy_bindings import (
     build_inspector_capture_policy_wiring,
 )
@@ -8035,19 +8039,35 @@ class ChatScreen(BaseAppScreen):
             frozenset(self._console_environment_expanded),
         )
 
-    def _console_environment_root(self) -> str | None:
+    def _console_environment_root(self) -> str | None | UnknownRoot:
         """Return the workspace root the Environment panel reports on.
 
         The conversation's own change-review roots (first = primary), so the
         panel and Change Review can never disagree about which tree is being
-        described. ``None`` when there is no root -- which the controller
-        treats as the ANSWER "no folder is bound" (TASK-31660): it dispatches
-        no gather, but it does land an explicit UNBOUND snapshot, so the
-        previous root's counts/branch/"Commit or push" cannot survive the
-        switch. It used to dispatch nothing AND land nothing, leaving the
-        last paint standing forever.
+        described.
+
+        THREE-VALUED, deliberately (TASK-31660 round 1 review):
+
+        - a root string -- gather against it;
+        - ``None`` -- the workspace was ASKED and binds no folder
+          (``resolve_turn_execution_context(...).workspace_roots`` returned
+          the empty tuple). The controller lands an explicit UNBOUND
+          snapshot for this, so the previous root's counts/branch/"Commit or
+          push" cannot survive a switch;
+        - ``UNKNOWN_ROOT`` -- the root could not be DETERMINED. The layers
+          below return ``None`` for that too (an exception swallowed in
+          ``_console_change_review_workspace_roots``; a chat controller not
+          built yet, or with no active session, in
+          ``_review_selection_workspace_roots``), and a plain ``if not
+          roots`` threw the distinction away. That was survivable while
+          ``None`` merely skipped, but it must never reach the UNBOUND
+          landing: a transient failure would assert "No folder is bound…"
+          on screen and reset the local tier's 3-strike backoff. The
+          controller skips silently on this, exactly as it did before.
         """
         roots = self._review_selection._console_change_review_workspace_roots()
+        if roots is None:
+            return UNKNOWN_ROOT
         if not roots:
             return None
         return roots[0]

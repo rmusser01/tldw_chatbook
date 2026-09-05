@@ -98,6 +98,37 @@ _LOCAL_TIER = "local"
 _NET_TIER = "net"
 
 
+class UnknownRoot:
+    """Type of the :data:`UNKNOWN_ROOT` sentinel."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNKNOWN_ROOT"
+
+
+#: The workspace root could not be DETERMINED -- distinct from ``None``,
+#: which means it was determined to be "no folder is bound".
+#:
+#: TASK-31660 round 1 (review): the root accessor chain already draws this
+#: line and the screen seam was throwing it away. `resolve_turn_execution_
+#: context(...).workspace_roots` returns ``()`` for a genuinely unbound
+#: workspace, but the two layers above it return ``None`` for "I cannot
+#: tell" -- an exception inside the roots accessor
+#: (`review_selection.py`), or the chat controller not being built yet /
+#: having no active session (`wiring.py`). Collapsing both into ``None``
+#: was survivable while ``None`` merely SKIPPED; once ``None`` started
+#: landing an emphatic on-screen "No folder is bound to this
+#: conversation's workspace", a transient failure or a pre-mount
+#: not-ready state would assert something nothing had established -- and
+#: would additionally zero the local tier's 3-strike backoff via
+#: ``_record_outcome``, which is the counter that stops a 10s flap loop.
+#:
+#: An accessor returning this keeps the OLD behaviour exactly: no
+#: dispatch, no landing, no counter touched, previous paint stands.
+UNKNOWN_ROOT = UnknownRoot()
+
+
 class ConsoleEnvironmentController:
     """Cadence/TTL/backoff orchestrator for the Environment panel's data."""
 
@@ -112,7 +143,7 @@ class ConsoleEnvironmentController:
         *,
         run_worker: Callable[..., Any],
         marshal_to_ui: Callable[..., None],
-        workspace_root_accessor: Callable[[], str | None],
+        workspace_root_accessor: Callable[[], "str | None | UnknownRoot"],
         rail_open_accessor: Callable[[], bool],
         on_snapshot: Callable[[EnvironmentSnapshot], None],
         now: Callable[[], datetime] | None = None,
@@ -188,6 +219,13 @@ class ConsoleEnvironmentController:
         root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
             return
+        if root is UNKNOWN_ROOT:
+            # "Cannot tell" is not an answer: skip silently, exactly as this
+            # method did for every falsy root before TASK-31660. Landing
+            # UNBOUND here would assert "no folder is bound" on the strength
+            # of a swallowed exception or a not-yet-built chat controller,
+            # AND would reset the local tier's failure counter.
+            return
         if root is None:
             if force_net:
                 self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
@@ -222,6 +260,12 @@ class ConsoleEnvironmentController:
         """
         root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
+            return
+        if root is UNKNOWN_ROOT:
+            # See `request_refresh`: an undetermined root must not be
+            # mistaken for a root CHANGE either, or a transient accessor
+            # failure would wipe the net TTL and re-fetch `gh` on every
+            # 10s tick for as long as it lasts.
             return
         if self._has_landed and root != self._landed_root:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
@@ -371,7 +415,7 @@ class ConsoleEnvironmentController:
 
         self._on_snapshot(self.snapshot)
 
-    def _branch_change_needs_net(self, scope_root: str) -> bool:
+    def _branch_change_needs_net(self, scope_root: str | None) -> bool:
         """Whether a just-landed local branch invalidates the fetched PR state.
 
         C (task-13): the net TTL is keyed ``(root, branch)``, so a branch
@@ -388,11 +432,22 @@ class ConsoleEnvironmentController:
         apply here exactly as they do on the request path.
 
         Args:
-            scope_root: The workspace root this landing belongs to.
+            scope_root: The workspace root this landing belongs to, or
+                ``None`` for the UNBOUND landing.
 
         Returns:
             ``True`` when a net refresh should be dispatched now.
         """
+        if scope_root is None:
+            # The UNBOUND landing reaches here through `_land`'s `elif`.
+            # There is no root, so there is no branch that could have
+            # changed and no `gh` fetch that could describe one. Stated
+            # explicitly rather than left to the `_net_fetched_at is None`
+            # check below: that only holds because `_land` nulls
+            # `_net_fetched_at` two lines earlier, which makes this
+            # function's safety a property of its CALLER's statement order
+            # (review finding, TASK-31660 round 1).
+            return False
         if self._net_fetched_at is None:
             return False
         if self.snapshot.git.availability is not EnvSourceAvailability.OK:
