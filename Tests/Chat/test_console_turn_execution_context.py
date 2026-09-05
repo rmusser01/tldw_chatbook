@@ -926,13 +926,15 @@ def test_screen_selection_builder_targets_session_without_switching_view():
         ),
         _normalize_llamacpp_base_url=lambda value: value,
     )
-    # task-15452 split the builder into a memo wrapper plus
-    # `_build_console_provider_selection_uncached`; the wrapper under test
-    # delegates to the latter through `self`, so the double borrows the real
-    # uncached half exactly as the memo-less path binds it in production.
-    fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
-        ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_provider_selection_controller,
     )
+
+    fake_screen.app_instance = SimpleNamespace(
+        app_config=fake_screen._provider_readiness_app_config()
+    )
+    fake_screen._console_config_snapshot_is_disk_loaded = lambda _config: False
+    build_console_provider_selection_controller(fake_screen)
 
     selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
 

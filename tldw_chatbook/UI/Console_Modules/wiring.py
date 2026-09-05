@@ -87,6 +87,7 @@ from ..Navigation.main_navigation import NavigateToScreen
 from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .settings_durability import ConsoleSettingsDurabilityController
 from .settings_navigation import ConsoleSettingsNavigationController
+from .provider_selection import ConsoleProviderSelectionController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -603,12 +604,68 @@ class _DeferredConsoleTerminalController:
         return bool(await self._resolve().request_resize(columns, rows))
 
 
+def build_console_provider_selection_controller(screen: Any) -> None:
+    """Wire provider policy with current app, session and presentation services."""
+    screen._provider_selection = ConsoleProviderSelectionController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _active_session_settings=lambda: (
+            screen._session._ensure_active_console_session_settings()
+        ),
+        _apply_console_settings_summary_state=lambda *args, **kwargs: (
+            screen._apply_console_settings_summary_state(*args, **kwargs)
+        ),
+        _build_console_settings_summary_state=lambda *args, **kwargs: (
+            screen._build_console_settings_summary_state(*args, **kwargs)
+        ),
+        _config_section=lambda *args, **kwargs: screen._config_section(*args, **kwargs),
+        _console_config_snapshot_is_disk_loaded=lambda *args, **kwargs: (
+            screen._console_config_snapshot_is_disk_loaded(*args, **kwargs)
+        ),
+        _console_run_active=lambda *args, **kwargs: screen._console_run_active(
+            *args, **kwargs
+        ),
+        _current_session_settings=lambda: (
+            screen._session._active_console_session_settings()
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _normalize_llamacpp_base_url=lambda *args, **kwargs: (
+            screen._normalize_llamacpp_base_url(*args, **kwargs)
+        ),
+        _runtime_app_config=lambda: screen.app.app_config,
+        _set_control_selection=lambda provider, model: (
+            _apply_first_chat_control_selection(screen, provider, model)
+        ),
+        _sync_console_chat_core_state=lambda *args, **kwargs: (
+            screen._sync_console_chat_core_state(*args, **kwargs)
+        ),
+        _sync_console_control_bar=lambda *args, **kwargs: (
+            screen._sync_console_control_bar(*args, **kwargs)
+        ),
+        _sync_console_settings_summary=lambda *args, **kwargs: (
+            screen._sync_console_settings_summary(*args, **kwargs)
+        ),
+        _workspace_context=lambda: (
+            screen._workspace._current_console_workspace_context()
+        ),
+        _console_control_provider_accessor=lambda: screen._console_control_provider,
+        _console_control_model_accessor=lambda: screen._console_control_model,
+        _console_chat_controller_accessor=lambda: screen._console_chat_controller,
+        _console_derivation_memo_accessor=lambda: screen._console_derivation_memo,
+        is_attached_accessor=lambda: screen.is_attached,
+    )
+
+
+
 def build_console_settings_controllers(screen: Any) -> None:
     """Wire the settings workflow and its app-lifetime durability services."""
     screen._settings_navigation = ConsoleSettingsNavigationController(
         app_instance_accessor=lambda: screen.app_instance,
         _build_console_provider_selection_for_settings=lambda *args, **kwargs: (
-            screen._build_console_provider_selection_for_settings(*args, **kwargs)
+            screen._build_console_provider_selection_for_settings(
+                *args, **kwargs
+            )
         ),
         _commit_console_settings_submission_live=lambda submission: (
             screen._settings_durability._commit_console_settings_submission_live(
@@ -661,7 +718,9 @@ def build_console_settings_controllers(screen: Any) -> None:
             screen._provider_readiness_app_config(*args, **kwargs)
         ),
         _providers_models_for_console_settings=lambda *args, **kwargs: (
-            screen._providers_models_for_console_settings(*args, **kwargs)
+            screen._providers_models_for_console_settings(
+                *args, **kwargs
+            )
         ),
         _sync_native_console_chat_ui=lambda *args, **kwargs: (
             screen._sync_native_console_chat_ui(*args, **kwargs)
@@ -748,6 +807,8 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    build_console_provider_selection_controller(screen)
+
     build_console_settings_controllers(screen)
 
     screen._change_review_projection = ConsoleChangeReviewProjection(
@@ -1412,7 +1473,7 @@ def build_console_controllers(
             )
         ),
         effective_console_provider_model=(
-            lambda: screen._effective_console_provider_model()
+            lambda: screen._provider_selection._effective_console_provider_model()
         ),
         provider_readiness_app_config=(lambda: screen._provider_readiness_app_config()),
         build_provider_selection=(

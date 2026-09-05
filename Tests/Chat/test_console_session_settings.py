@@ -3039,16 +3039,13 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 token_limit=100_000,
                 label="24,000 / 100,000 tokens",
             )
-            session = ConsoleChatSession(
-                id="session-1",
-                settings=settings,
+            from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+            from tldw_chatbook.UI.Console_Modules.wiring import (
+                build_console_settings_controllers,
             )
-            store = SimpleNamespace(
-                active_session_id=session.id,
-                ensure_session=lambda: session,
-                session_settings_revision=lambda _session_id: 0,
-                switch_session=lambda _session_id: session,
-            )
+
+            store = ConsoleChatStore()
+            session = store.create_session(settings=settings)
 
             async def providers_models(
                 _provider: str,
@@ -3062,6 +3059,8 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 
             controller = SimpleNamespace(
                 run_state=SimpleNamespace(is_send_allowed=True),
+                run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
+                rebase_console_settings_draft=lambda draft, **_kwargs: draft,
                 effective_thinking_history_policy_for_session=(
                     lambda _session_id: _resolved_thinking_policy()
                 ),
@@ -3076,6 +3075,7 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 
             production_opener = SimpleNamespace(
                 app=app,
+                app_instance=app,
                 _session=SimpleNamespace(
                     _ensure_active_console_session_settings=lambda: settings
                 ),
@@ -3085,6 +3085,19 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 _test_console_connection=lambda _request: None,
                 _test_console_generation=lambda _session_id, _request: None,
                 _active_console_settings_context_estimate=lambda: estimate,
+                _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
+                _console_settings_context_estimate_for_session=(
+                    lambda *_args, **_kwargs: estimate
+                ),
+                _console_context_control_state_for_session=(
+                    lambda _session_id, *, estimate, **_kwargs: (
+                        build_console_context_control_state(
+                            settings=settings,
+                            estimate=estimate,
+                            active_memory=fresh_memory,
+                        )
+                    )
+                ),
                 _active_console_context_control_state=lambda *, estimate, **_kwargs: (
                     build_console_context_control_state(
                         settings=settings,
@@ -3099,6 +3112,7 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 _providers_models_for_console_settings=providers_models,
                 _apply_console_settings_result=lambda *_args, **_kwargs: None,
             )
+            build_console_settings_controllers(production_opener)
             await ChatScreen._open_console_settings(  # type: ignore[arg-type]
                 production_opener,
                 focus_context=True,

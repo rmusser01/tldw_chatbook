@@ -5564,6 +5564,9 @@ async def test_console_generation_test_failure_is_bounded_and_sanitized() -> Non
             raise RuntimeError(secret)
 
     screen = ChatScreen.__new__(ChatScreen)
+    from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
+
+    build_console_settings_controllers(screen)
     screen._ensure_console_provider_gateway = lambda: FailingGateway()
     screen._build_console_provider_selection_for_settings = lambda *_args: object()
     draft = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
@@ -5627,6 +5630,9 @@ async def test_console_generation_test_preserves_bounded_transport_category(
             )
 
     screen = ChatScreen.__new__(ChatScreen)
+    from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
+
+    build_console_settings_controllers(screen)
     screen._ensure_console_provider_gateway = lambda: FailingGateway()
     screen._build_console_provider_selection_for_settings = lambda *_args: object()
     draft = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
