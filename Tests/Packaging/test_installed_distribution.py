@@ -1170,7 +1170,7 @@ def _copy_build_inputs(destination: Path) -> None:
         "dist",
         "*.egg-info",
     )
-    for name in ("tldw_chatbook", "Packaging"):
+    for name in ("tldw_chatbook", "Packaging", "packages"):
         shutil.copytree(REPO_ROOT / name, destination / name, ignore=ignored)
 
     seen_test_trees: set[tuple[int, int]] = set()

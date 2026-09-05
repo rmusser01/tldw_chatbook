@@ -11541,3 +11541,16 @@ call ownership. A failing same-surface/new-run test led to an atomic ordered
 call-boundary event and latest-call check. Use durable call order for supersession,
 not surface identity or timestamps, and exercise deferred settlement in the real
 agent path rather than forcing it synchronous in the test.
+
+
+## Built-in asset cleanup must distinguish failed return from failed commit (pixel-migu, 2026-09-05)
+
+During pixel-migu first-install review, a coordinator wrapper that committed the
+Persona and SQLite graph and then raised `RuntimeError` exposed a cleanup bug:
+the caller deleted the graph's newly published PNGs even though restart treated
+the Persona as already installed. The focused regression also exercises
+`KeyboardInterrupt` and `SystemExit`. Cleanup now checks durable graph ownership
+and retains assets when that ownership cannot be determined. A separate
+interleaved-service regression found that a losing caller needed to refresh its
+Persona JSON cache before the winning installation became selectable. A green
+rollback-only test did not cover either postcommit behavior.
