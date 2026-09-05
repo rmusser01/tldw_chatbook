@@ -2125,3 +2125,16 @@ check the initialisation artifact on disk (here: does the shadow repo have a
 `HEAD`?) before filing a defect against the surface that is merely reporting it.
 An empty state that cannot distinguish "nothing to show" from "the thing that
 would show it is broken" is itself worth recording as a product concern.
+
+## Capture native-run revision and exit identity together (PR #2418, 2026-09-05)
+
+**Incident.** Migu move/resize/restart receipts captured geometry and PIDs but omitted
+the Git revision and dirty state. The separate exit file reported a null app exception
+without a PID, timestamp, or return code. Qodo review exposed that these artifacts
+could not establish the claimed exact tested revision or the preceding process's
+graceful exit; the published claims were narrowed rather than backfilled.
+
+**What to do.** At launch, capture the resolved source revision and dirty state with
+a run ID/PID. Bind the final exception and process-exit result to that same identity.
+Keep source-checkout paths distinct from runtime/evidence directories. When historical
+receipts omit these fields, preserve the originals and state the evidence limits.
