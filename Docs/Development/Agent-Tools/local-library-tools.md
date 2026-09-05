@@ -9,14 +9,15 @@ re-chunk one item; save a note).
 
 - Task: `backlog/tasks/task-1337 - Add-direct-local-Library-tools-for-Console-agents-and-MCP.md`
 - Design: `Docs/superpowers/specs/2026-08-02-local-library-agent-tools-design.md`
-  (the 18 read tools); `Docs/superpowers/specs/2026-08-22-chunking-agent-tools-design.md`
+  (the original 18 read tools; the Collections trio was later retired);
+  `Docs/superpowers/specs/2026-08-22-chunking-agent-tools-design.md`
   (the four chunk tools)
 - ADR: `backlog/decisions/030-local-library-agent-tool-boundary.md`
 - Contract source of truth: `tldw_chatbook/Library/library_tool_contract.py`
 
-## The 18 read tools
+## The 15 read tools
 
-Each of the six Library types has exactly three tools. All names are
+Each of the five current Library types has exactly three tools. All names are
 descriptor-backed and identical on the Console and MCP surfaces.
 
 | Library type | List | Get | Search |
@@ -26,9 +27,8 @@ descriptor-backed and identical on the Console and MCP surfaces.
 | Prompts | `library_list_prompts` | `library_get_prompt` | `library_search_prompts` |
 | Skills | `library_list_skills` | `library_get_skill` | `library_search_skills` |
 | Conversations | `library_list_conversations` | `library_get_conversation` | `library_search_conversations` |
-| Collections | `library_list_collections` | `library_get_collection` | `library_search_collections` |
 
-All 18 are strictly read-only. Creating, updating, deleting, importing,
+All 15 are strictly read-only. Creating, updating, deleting, importing,
 exporting, or executing Library items is out of scope by design — the chunk
 tools below are the one deliberate extension of that boundary, and only for
 media chunking state.
@@ -55,7 +55,7 @@ media chunking state.
   (plus FTS where the backing store already has it). Wildcards and FTS
   operators in the query match literally. Search hits report
   `matched_fields` and `matched_keywords` as evidence. There is **no
-  semantic, embedding, vector, or similarity search** in these 18 tools, and
+  semantic, embedding, vector, or similarity search** in these 15 tools, and
   they never call the embedding pipeline; semantic retrieval remains the job
   of the separate Library RAG path.
 
@@ -85,15 +85,13 @@ media chunking state.
   - *Conversations*: get returns a page of messages (`message_limit`, default
     20, maximum 50) with `message_total`, plus per-message continuation for
     long bodies. `include_rag_context` is always `false`.
-  - *Collections*: get returns the collection's direct members with
-    `member_total`; member content is not recursively included.
 
 ## The four media chunk tools
 
 Four contracts over five tool names (the spec pair
 `library_list_chunk_specs`/`library_save_chunk_spec` shares one contract),
-all descriptor-backed media operations like the 18 above — Console and MCP
-advertise identical schemas from the same contract table, 24 Library tools
+all descriptor-backed media operations like the 15 above — Console and MCP
+advertise identical schemas from the same contract table, 21 Library tools
 in all counting the note write below.
 
 The motivating story: a student ingests a book and wants per-chapter notes.
@@ -211,7 +209,7 @@ deliberately not the RAG-admin verb), denied before any backend call.
 
 - The three read tools (`structure`, `chunk`, `spec_list`) ride the existing
   Library read path — the same `[console].direct_library_tools` catalog and
-  the same MCP manifest/dispatch as the 18; no new policy verbs.
+  the same MCP manifest/dispatch as the 15; no new policy verbs.
 - The two chunk-tool writes (`spec_save`, `rechunk`) are policy-gated
   (above), disclose in their descriptions that they write local Library
   data, and MCP's control-plane mapping resolves them to their write
@@ -413,7 +411,7 @@ The active conversation's independent Assistant policy is the authority:
 Blocked advertises and dispatches no built-in Library tool; Allowed selects
 one mutually exclusive provider surface for the next agent generation.
 
-- **Direct** exposes the **18 direct Library tools** for bounded list, count,
+- **Direct** exposes the **15 direct Library tools** for bounded list, count,
   get, and lexical-search operations.
 - **RAG** exposes exactly one tool, **`search_library_rag`**, scoped to Notes,
   Media, and Conversations and dependent on an available populated index.
@@ -430,7 +428,7 @@ modal discloses whether that destination is local or external.
 The local MCP surface is **FastMCP-free** (FastMCP is deprecated in this
 repository; see the spec's implementation-deviation note):
 
-- The 24 Library tools (the 18 reads, the five chunk-tool descriptors, and
+- The 21 Library tools (the 15 reads, the five chunk-tool descriptors, and
   the note-save descriptor) are appended to the local capability manifest
   from the same descriptor table
   (`describe_local_mcp_capabilities()` in `MCP/server.py`), so manifest
@@ -487,6 +485,10 @@ denial-first), and against the story test
 read → save → re-read → search-based re-run → flashcard loop against real
 databases. The fan-out pattern itself is documented in the Console guide
 ([Agent runs & tools](../../User_Guide/console/agent-runs-and-tools.md)).*
+
+*The generic Collections list/get/search trio was retired from current
+surfaces on 2026-08-31. The active descriptor-backed inventory is therefore
+15 read tools plus five chunk-tool descriptors and one note-write descriptor.*
 
 *Portable Notes organization filters, additive organization saves, concurrency
 tokens, durable pending/review states, and v58 Notes publication lineage added
