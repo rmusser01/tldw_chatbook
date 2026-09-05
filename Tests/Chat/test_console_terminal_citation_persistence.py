@@ -100,6 +100,11 @@ class _PersistenceBase:
     def create_conversation(self, **kwargs: Any) -> str:
         return "conv-1"
 
+    def read_canonical_generation_projection(self, message_id: str) -> None:
+        # This create-only call recorder has no persisted canonical rows.
+        # Existing-row projection access must still fail closed in the store.
+        return None
+
     def update_message_content(self, **kwargs: Any) -> bool:
         self.update_calls.append(kwargs)
         return True
