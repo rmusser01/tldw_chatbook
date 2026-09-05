@@ -1197,6 +1197,12 @@ def build_console_controllers(
         sync_control_bar=lambda: screen._sync_console_control_bar(),
         request_control_bar_sync=(lambda: screen._request_console_control_bar_sync()),
         dictionary_scope_service=lambda: screen._dictionary_scope_service(),
+        finish_dictionary_dialog=(
+            lambda: setattr(screen, "_console_dictionary_dialog_active", False)
+        ),
+        finish_worldbook_dialog=(
+            lambda: setattr(screen, "_console_worldbook_dialog_active", False)
+        ),
         set_library_rag_source_scope=(
             lambda source_types: screen._set_console_library_rag_source_scope(
                 source_types

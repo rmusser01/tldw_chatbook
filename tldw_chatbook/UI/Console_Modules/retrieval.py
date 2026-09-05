@@ -10,6 +10,15 @@ from typing import Any
 
 from loguru import logger
 
+from ...config import get_cli_setting
+from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
+    console_attachable_dictionaries,
+    console_attached_dictionaries,
+    handle_console_dictionary_attach,
+    handle_console_dictionary_detach,
+)
+from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_display_state import (
     ConsoleDisplayRow,
@@ -56,6 +65,11 @@ from ..Views.RAGSearch.search_handoff import (
 )
 
 logger = logger.bind(module="ConsoleRetrievalController")
+
+# Roleplay P1h: bounds passed to `Chat_Dictionary_Lib.apply_active_chatdicts_to_text`
+# for the native Console send-path applier (`_console_chat_dictionary_applier`).
+_CHATDICT_MAX_TOKENS = 500
+_CHATDICT_STRATEGY = "sorted_evenly"
 
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
@@ -111,6 +125,8 @@ class ConsoleRetrievalController:
         sync_control_bar: Callable[[], None],
         request_control_bar_sync: Callable[[], None],
         dictionary_scope_service: Callable[[], Any],
+        finish_dictionary_dialog: Callable[[], None],
+        finish_worldbook_dialog: Callable[[], None],
         set_library_rag_source_scope: Callable[[Any], None],
         set_library_rag_query: Callable[[str], None],
         run_library_rag_action: Callable[[], None],
@@ -140,6 +156,8 @@ class ConsoleRetrievalController:
         self._sync_control_bar = sync_control_bar
         self._request_control_bar_sync = request_control_bar_sync
         self._dictionary_scope_service = dictionary_scope_service
+        self._finish_dictionary_dialog = finish_dictionary_dialog
+        self._finish_worldbook_dialog = finish_worldbook_dialog
         self._set_library_rag_source_scope = set_library_rag_source_scope
         self._set_library_rag_query = set_library_rag_query
         self._run_library_rag_action = run_library_rag_action
@@ -710,3 +728,293 @@ class ConsoleRetrievalController:
                 action_label="Resolve Library search setup",
             )
         )
+
+    def _console_chat_dictionary_applier(
+        self, conversation_id: str | None, text: str
+    ) -> str:
+        """Bound applier handed to the native Console controller: apply the
+        active CONVERSATION chat dictionaries to a send's text (never raises).
+
+        Resolves the db lazily (at call time), so a controller built before the
+        db is ready still works. Conversation-only: ``char_data`` is ``None``
+        (native sessions carry no character card yet).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None or not conversation_id or not isinstance(text, str):
+            return text
+        from ...Character_Chat import Chat_Dictionary_Lib as cdl
+
+        return cdl.apply_active_chatdicts_to_text(
+            db,
+            conversation_id,
+            None,
+            text,
+            max_tokens=_CHATDICT_MAX_TOKENS,
+            strategy=_CHATDICT_STRATEGY,
+        )
+
+    def _console_world_info_applier(
+        self, conversation_id: str | None, message_text: str, history: list
+    ) -> str:
+        """Bound applier handed to the native Console controller: inject the
+        active CONVERSATION world-info into a send's text (never raises).
+
+        Resolves the db lazily. Conversation-only: ``char_data`` is ``None``
+        (native sessions carry no character card). Honors the same
+        ``[character_chat] enable_world_info`` gate as the legacy send path
+        (`Event_Handlers/Chat_Events/chat_events.py`).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if (
+            db is None
+            or not conversation_id
+            or not isinstance(message_text, str)
+            or not get_cli_setting("character_chat", "enable_world_info", True)
+        ):
+            return message_text
+        from ...Character_Chat.world_info_resolver import apply_world_info_to_message
+
+        return apply_world_info_to_message(
+            db, conversation_id, None, message_text, history or []
+        )
+
+    async def _console_dictionary_attach_worker(self) -> None:
+        """Pick and attach a chat dictionary to the active Console conversation.
+
+        Mirrors P1f's ``_character_dictionary_attach_worker``
+        (``UI/Screens/personas_screen.py``) structurally: every await is
+        individually guarded so no exception escapes the worker boundary --
+        an uncaught worker exception kills the whole app under
+        ``run_worker(exit_on_error=True)``.
+        """
+        try:
+            conversation_id = self._current_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            try:
+                rows = await asyncio.to_thread(
+                    console_attachable_dictionaries, db, conversation_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the Console attach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No more dictionaries to attach.", severity="information"
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(
+                    DictionaryPicker(rows)
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console dictionary picker."
+                )
+                return
+            if not picked:
+                return
+            await handle_console_dictionary_attach(
+                self.app_instance, conversation_id, picked
+            )
+            # Always resync after an attempted attach (spec AC5: ConflictError
+            # -> notify + refresh): on success the summary gains the dict; on a
+            # ConflictError the DB changed under us and the cache must re-read
+            # the current truth rather than stay stale until the next switch.
+            await self.refresh_active_dictionaries_summary()
+        finally:
+            self._finish_dictionary_dialog()
+
+    async def _console_worldbook_attach_worker(self) -> None:
+        """Pick and attach a world book to the active Console conversation.
+
+        Mirrors :meth:`_console_dictionary_attach_worker`: every await is
+        individually guarded so no exception escapes the worker boundary --
+        an uncaught worker exception kills the whole app under
+        ``run_worker(exit_on_error=True)``.
+        """
+        try:
+            conversation_id = self._current_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            from ...Character_Chat.world_book_manager import WorldBookManager
+            from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+
+            def _attachable() -> list[dict]:
+                mgr = WorldBookManager(db)
+                attached_ids = {
+                    b.get("id")
+                    for b in mgr.get_world_books_for_conversation(
+                        str(conversation_id), enabled_only=False
+                    )
+                }
+                return [
+                    {"world_book_id": int(b.get("id")), "name": str(b.get("name"))}
+                    for b in (mgr.list_world_books(include_disabled=False) or [])
+                    if b.get("id") not in attached_ids
+                ]
+
+            try:
+                rows = await asyncio.to_thread(_attachable)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the Console attach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No more world books to attach.", severity="information"
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(WorldBookPicker(rows))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console world-book picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    WorldBookManager(db).associate_world_book_with_conversation,
+                    str(conversation_id),
+                    int(picked),
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not attach the world book.")
+                self.app_instance.notify(f"Attach failed: {exc}", severity="error")
+                return
+            await self.refresh_active_world_books_summary()
+        finally:
+            self._finish_worldbook_dialog()
+
+    async def _console_worldbook_detach_worker(self) -> None:
+        """Pick and detach a world book from the active Console conversation.
+
+        Analogous to :meth:`_console_worldbook_attach_worker`.
+        """
+        try:
+            conversation_id = self._current_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            from ...Character_Chat.world_book_manager import WorldBookManager
+            from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+
+            def _attached() -> list[dict]:
+                mgr = WorldBookManager(db)
+                return [
+                    {"world_book_id": int(b.get("id")), "name": str(b.get("name"))}
+                    for b in mgr.get_world_books_for_conversation(
+                        str(conversation_id), enabled_only=False
+                    )
+                ]
+
+            try:
+                rows = await asyncio.to_thread(_attached)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the Console detach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No world books attached to this conversation.",
+                    severity="information",
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(
+                    WorldBookPicker(
+                        rows, title="Detach world book", confirm_label="Detach"
+                    )
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console world-book picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    WorldBookManager(db).disassociate_world_book_from_conversation,
+                    str(conversation_id),
+                    int(picked),
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not detach the world book.")
+                self.app_instance.notify(f"Detach failed: {exc}", severity="error")
+                return
+            await self.refresh_active_world_books_summary()
+        finally:
+            self._finish_worldbook_dialog()
+
+    async def _console_dictionary_detach_worker(self) -> None:
+        """Pick and detach a chat dictionary from the active Console conversation.
+
+        Analogous to :meth:`_console_dictionary_attach_worker`, over
+        ``console_attached_dictionaries``/``handle_console_dictionary_detach``.
+        """
+        try:
+            conversation_id = self._current_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            try:
+                rows = await asyncio.to_thread(
+                    console_attached_dictionaries, db, conversation_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the Console detach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No dictionaries attached to this conversation.",
+                    severity="information",
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(
+                    DictionaryPicker(
+                        rows, title="Detach dictionary", confirm_label="Detach"
+                    )
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console dictionary picker."
+                )
+                return
+            if not picked:
+                return
+            await handle_console_dictionary_detach(
+                self.app_instance, conversation_id, picked
+            )
+            # Always resync after an attempted detach (spec AC5: ConflictError
+            # -> notify + refresh); see _console_dictionary_attach_worker.
+            await self.refresh_active_dictionaries_summary()
+        finally:
+            self._finish_dictionary_dialog()

@@ -487,6 +487,9 @@ def test_source_scope_survives_a_screen_state_round_trip():
         ConsoleChatStore,
     )
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
@@ -500,6 +503,7 @@ def test_source_scope_survives_a_screen_state_round_trip():
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._retrieval = Mock()
+        build_console_settings_controllers(screen)
         # Precede the `_console_chat_store` assignment: that setter reaches
         # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
         # which reads `self._fleet._console_wake_user_priority` (TASK-21381)

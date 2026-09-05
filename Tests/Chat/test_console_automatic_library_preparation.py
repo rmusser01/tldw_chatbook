@@ -478,6 +478,8 @@ def _real_retrieval_controller_for_launch(state: dict[str, object]):
         sync_control_bar=lambda: None,
         request_control_bar_sync=lambda: None,
         dictionary_scope_service=lambda: None,
+        finish_dictionary_dialog=lambda: None,
+        finish_worldbook_dialog=lambda: None,
         set_library_rag_source_scope=lambda _value: None,
         set_library_rag_query=lambda _value: None,
         run_library_rag_action=lambda: None,
