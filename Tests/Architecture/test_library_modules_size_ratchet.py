@@ -221,6 +221,23 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+    # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 139 moved methods (byte-for-byte; the
+    # largest single move of this program, past skills' own 86) plus the
+    # constructor/property scaffolding the canon requires, pinned at its
+    # exact measured line count. Constructor arity MEASURED with
+    # `inspect.signature(LibraryPromptsController.__init__)`, never
+    # hand-counted: 33 parameters including `self` -- 1 positional
+    # (`screen`) + 31 keyword-only named dependencies (1 state accessor +
+    # 12 shell helpers + 4 shared-shell-state accessors + 3 prompt-wiring-
+    # controller accessors + 1 merely-delegate-property accessor + 10
+    # late-binding callables for the exclusions). 85 class-level
+    # `property` objects: 42 hand-written bindings + the 43 generated
+    # flat-name state shims. See the module's own docstring for the full
+    # 161-candidate / 22-exclusion derivation and the single-controller
+    # decision (one connected component of 145 names, no seam to split on).
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4956,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

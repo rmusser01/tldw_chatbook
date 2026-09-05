@@ -494,7 +494,34 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # debounce_timer` silently no-ops on this branch -- that field lives in
     # `LibraryIngestState` now -- so the name leaves the tuple and the timer
     # gets an explicit state-object stop).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41359, 1321),
+    #
+    # 2026-09-05, wave-6 task 2 (prompts controller PR, prompts series 2/3):
+    # 139 prompt-cluster methods moved to `LibraryPromptsController`
+    # (`UI/Library_Modules/library_prompts_controller.py`, born governed by
+    # `test_library_modules_size_ratchet.py`'s glob), each replaced by a
+    # one-line screen delegator -- the largest single move of this program.
+    # Fresh `_measure()`: 41359/1321 -> 37718/1321. The METHOD count is
+    # unchanged, as every pure controller move's must be: 139 `FunctionDef`s
+    # left, 139 delegators arrived. Line delta -3637 reconciles EXACTLY, each
+    # term measured rather than estimated: -4061 moved lines (each mover's
+    # first decorator through its `end_lineno`, plus `_save_library_prompt`'s
+    # 6 trailing comment lines, which sit outside its own AST range and were
+    # moved with the body rather than orphaned behind a delegator), +333
+    # delegator lines (2-6 each: every `@on`/`@staticmethod` decorator line
+    # copied verbatim, one reconstructed signature, one forwarding `return`
+    # -- plus, for the cluster's single `@staticmethod`
+    # (`_restore_library_prompts_scope`), its own 4-line function-local
+    # import of the controller class, since a static delegator forwards to
+    # the CLASS and the class is deliberately NOT a module-level name here;
+    # the `_restore_library_skills_scope`/`_restore_library_collections_page`
+    # delegators immediately below it in the source have the identical
+    # shape), +3 for the born-lazy `LibraryPromptsController` import inside
+    # `__init__`'s existing lazy-import block (NEVER module level --
+    # `Tests/Packaging/test_library_preimport_closure.py` and the `_ui_ready`
+    # module census both enforce this), and +88 for the construction site
+    # (`self._prompts_controller = LibraryPromptsController(...)`, 31 named
+    # dependencies). -4061 + 333 + 3 + 88 = -3637.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37722, 1321),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
