@@ -1,18 +1,25 @@
 ---
 id: TASK-31231
 title: Round-trip Canvas history through Chatbook archives
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, chatbooks, export, import]
-dependencies: [TASK-31227]
+updated_date: '2026-09-05 01:05'
+labels:
+  - canvas
+  - chatbooks
+  - export
+  - import
+dependencies:
+  - TASK-31227
 priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Make durable Canvas documents and immutable revision graphs portable through local conversation/Chatbook export and import while keeping source inert and preserving older archive compatibility.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -27,8 +34,15 @@ Make durable Canvas documents and immutable revision graphs portable through loc
 - [ ] #9 Focused unit, property, decompression-bomb, transaction, backward-compatibility, and whole-graph round-trip tests pass
 <!-- AC:END -->
 
-## Related Design
+## Implementation Plan
 
-- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: yes
+ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: archive schema/versioning, graph identity remapping, atomic restore behavior, inert-source handling, and the local-only synchronization boundary are architectural decisions already accepted by ADR-115; this delivery implements and records the concrete format without creating a duplicate ADR.
+
+1. Characterize the current Chatbook V1/V2 models, creator/importer transaction boundaries, limits, and compatibility fixtures before defining format 3.0.
+2. Add typed Canvas archive records and inert deterministic paths, select V3 only when Canvas content is present, and document every field, limit, remapping rule, and unsupported-runtime behavior.
+3. Export the complete bounded Canvas/revision/hint graph without compiling or rendering source, recomputing source byte counts and digests while streaming.
+4. Validate the entire compressed archive and remapped graph before mutation, then implement digest-idempotent same-identity restore and import-as-new in one transaction.
+5. Add failure-injection, decompression-bomb, property, graph, backward-compatibility, and synchronization-exclusion tests; run only targeted archive/repository suites.
+6. Request independent code/security review, inspect a produced archive manually, update ADR-115 and this task with the final format/evidence, and mark Done only after every acceptance criterion passes.
