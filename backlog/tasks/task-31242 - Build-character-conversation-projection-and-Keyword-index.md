@@ -1,11 +1,11 @@
 ---
 id: TASK-31242
 title: Build character conversation projection and Keyword index
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:05'
-updated_date: '2026-09-05 22:16'
+updated_date: '2026-09-05 22:31'
 labels:
   - database
   - search
@@ -78,4 +78,7 @@ All Task2 ACs and scoped review/qualification gates are complete, so status is D
 
 PR2434 external Qodo round1 (FIX_BASE cb68308cf): reopened In Progress pending independent review. Moved unshipped v66 DDL to chachanotes_v65_to_v66_character_conversation_search.sql and existing file-backed dispatcher/package/guard discovery. Added capped repair_candidates(key, *, offset=0, limit=20) returning CharacterRepairPage(candidates,total,next_offset), limit1..50, deterministic SQLite NOCASE name then ID; callers must follow continuation and restart after mutations. Unavailable metadata query rejects nontext or >200 characters before stripping; empty date browsing preserved. Documented public navigation/repository contracts. Card INSERT now advances revision and enqueues exact-ID affected chats under activated ownership, preventing an incomplete in-flight READY promotion. Wrong-authority and name-only cases remain excluded. Retained-snapshot revision fence independently verified and unchanged.
 TDD raw logs: /private/tmp/character-keyword-qodo1.3RcKio/. Initial RED7 query cases and missing artifact; corrected fixtures reproduce unbounded tuple and both card-insert defects (three failures). Focused GREEN artifact8,paging/query12,insert2. Covering nine-file gate plus4 real wheel/sdist migration checks:151 passed,1 inherited warning in39.67s, final-gate.log. Owners88,handles drained63,remaining0; process FD delta+13 remains subset-only. Scoped Ruff/format and fatal legacy rules pass; legacy code/message Counters equal FIX_BASE588/6/1/1/0/0. Schema110,index275/275/62pins,task3330 and whitespace pass. ADR120 applies, no new ADR/schema version, no UI/native/Meaning/dependency changes or full suite. Task3 Library/Context callers must adopt explicit pages; no silent first-page slicing. Prior Done paragraphs are historical; controller gates independent review before completion and owns remote writes/rebase.
+
+PR2434 final approved refresh: scoped review pr-2434-qodo-rereview-1.md resolved all6 findings with0new/open. Preserved927b26df82cfbc9a8965bd072ce2c0504ddd2ca4 as codex/task-31242-pre-pr2434-final-927b26df8, fetched actualdev53194eee674865bd8b4aa6daac4b1e7d97160594 (schema65), then rebased8Task2 commits from4e904f54. All8range-diff entries equal; no conflicts. Upstream Console trace changes and lesson retained. Tested runtime tip a663ba73cec17337c8737de95bc1295122b248f1.
+Fresh exact151-test nine-file plus wheel/sdist migration gate:151passed,1inherited warning in50.17s, raw /private/tmp/character-keyword-pr2434-final.5d7h9u/final-gate.log. Resource88owners/63handles drained/0remaining, FDdelta+13 remains subset-only. Scoped Ruff/format/fatallegacy and fresh531-base diagnostic Counters588/6/1/1/0/0 equal. Schema110,index275/275/62pins,task3332,CSS,profile and persistentdiagnostic guards all pass; raw static.log,legacy-diagnostics.log,guards.log and rebase/range-diff logs in same directory. Full PR whitespace pass. No runtime edits after tests. All ACs and independent review/fresh local qualification complete; markingDone under final rebase brief. Earlier InProgress paragraphs historical. ADR120/unshipped66 remain; Task3 repair-page continuation and snapshot-label obligations, later UI/cancellation/DataProfile/live gates remain separately owned. No push/merge; controller owns remote review/CI and strictbase integration.
 <!-- SECTION:NOTES:END -->
