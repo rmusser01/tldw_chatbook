@@ -371,6 +371,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 # (app.py has no `from __future__ import annotations`, and PEP 526
 # annotations on attribute targets ARE evaluated at runtime).
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundlePortabilityService,
     )
@@ -1944,6 +1945,11 @@ class LibraryIngestProvider(Provider):
 
     COMMANDS = (
         (
+            "Library: Chunking Lab",
+            "open_chunking_lab",
+            "Compare local chunking recipes and save reusable templates",
+        ),
+        (
             "Library: Import…",
             "open_library_ingest",
             "Open Library and import content",
@@ -1979,6 +1985,14 @@ class LibraryIngestProvider(Provider):
     def handle_library_ingest_action(self, action_id: str) -> None:
         """Handle Library ingest actions."""
         try:
+            if action_id == "open_chunking_lab":
+                _navigate_via_screen(
+                    self.app,
+                    "chunking_lab",
+                    "Opened local Chunking Lab",
+                    {"return_route": getattr(self.screen, "screen_name", "library")},
+                )
+                return
             if action_id == "open_library_ingest":
                 _navigate_via_screen(
                     self.app,
@@ -17212,8 +17226,66 @@ class TldwCli(
             return
         await owner.close_and_drain()
 
+    def on_chunking_templates_changed(self, event) -> None:
+        """Refresh local ingest consumers without changing their selection/defaults."""
+        from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+            LibraryIngestCanvas,
+        )
+
+        event.stop()
+        for screen in self.screen_stack:
+            for canvas in screen.query(LibraryIngestCanvas):
+                canvas.invalidate_chunk_templates()
+
+    async def get_chunking_lab_coordinator(self) -> "LabCoordinator":
+        """Load one local profile owner; failed reads never grant write authority."""
+        from tldw_chatbook import config as lab_config
+        from tldw_chatbook.Chunking.lab_autosave import AutosaveWriter
+        from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
+        from tldw_chatbook.Chunking.lab_runner import LocalPreviewRunner, PreviewLimits
+        from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
+
+        lock = getattr(self, "_chunking_lab_owner_lock", None)
+        if lock is None:
+            lock = self._chunking_lab_owner_lock = asyncio.Lock()
+        async with lock:
+            directory = await asyncio.to_thread(lab_config.get_user_data_dir)
+            profile_key = str(directory)
+            owner = getattr(self, "_chunking_lab_coordinator", None)
+            if owner is not None and owner.session.profile_key == profile_key:
+                return owner
+            if owner is not None:
+                # Retain the owner if close fails, including its export/retry authority.
+                await owner.close()
+                self._chunking_lab_coordinator = None
+            writer = AutosaveWriter(
+                CheckpointStore(directory / "chunking_lab.sqlite3", profile_key)
+            )
+            runner = LocalPreviewRunner(PreviewLimits())
+            try:
+                owner = await LabCoordinator.load(profile_key, writer, runner)
+            except BaseException:
+                try:
+                    await writer.close()
+                except Exception as cleanup_error:  # noqa: BLE001 - retain the original load failure after releasing writer resources.
+                    logger.debug(
+                        "Chunking Lab writer cleanup failed: {}",
+                        type(cleanup_error).__name__,
+                    )
+                await runner.close()
+                raise
+            self._chunking_lab_coordinator = owner
+            return owner
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        lab_owner = getattr(self, "_chunking_lab_coordinator", None)
+        lab_error = None
+        if lab_owner is not None:
+            try:
+                await lab_owner.close()
+            except Exception as exc:  # noqa: BLE001 - complete unrelated lifecycle cleanup before re-raising.
+                lab_error = exc
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
@@ -17237,6 +17309,8 @@ class TldwCli(
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
+        if lab_error is not None:
+            raise lab_error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""

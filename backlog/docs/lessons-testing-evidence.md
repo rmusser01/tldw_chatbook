@@ -29,6 +29,44 @@ and persisted IDs, and verify both request-context and settled-spend ownership.
 
 ---
 
+## Measure child lifetime RSS after final serialization, not before it
+
+**TASK-31642, 2026-09-04.** The first Chunking Lab worker diagnostic sampled
+`getrusage(RUSAGE_SELF).ru_maxrss` immediately after the engine returned. Its
+repeated-format stress run still had to validate, copy, and serialize the complete
+RunResult afterward, so that diagnostic omitted the expensive publication path.
+On the macOS qualification host, collecting the reaped child's lifetime usage
+with `os.wait4` measured 480,313,344 bytes RSS for an admitted formatter whose
+conservative working-payload estimate was 32,468,700 bytes. A regression child
+allocated and freed 150 MB but reported an early peak of 1 byte; only the reaping
+owner's metric passed the check. CPU rlimit application succeeded on this host;
+address-space rlimit application did not.
+
+**What to do.** Include serialization and IPC in the lifetime being measured.
+Where a child-reaping usage API is available, collect its observation rather than
+treating an earlier self-report as the lifetime peak. State the tested OS and
+distinguish payload estimates, measured RSS, and successfully applied OS limits.
+
+---
+
+## Coalesced state equality does not prove that no content mutation occurred
+
+**TASK-31641, 2026-09-04.** Chunking Lab initially expired Undo restore by
+comparing the next durable content with the current checkpoint. A regression
+test edited a restored draft and immediately used application Undo before
+autosave ran. The resulting draft and undo tuple were byte-identical to the
+restored state, so the comparison incorrectly retained Undo restore despite
+the intervening content mutation. A persisted content-only revision counter,
+incremented by edits and Undo but preserved by view navigation, made the
+same real-store regression pass.
+
+**What to do.** When a policy depends on whether an event happened, preserve
+an event counter or explicit marker through coalescing. Test an edit followed
+by its inverse before the next save; testing only distinct final values cannot
+prove first-mutation expiration or equivalent event-sensitive behavior.
+
+---
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
@@ -11325,3 +11363,11 @@ Rules, each half of the incident:
   of the eight failures on the branch arm, five were pre-existing, three
   were real — and the real three were invisible without the pristine-base
   arm run in the same mode.
+
+Recurrence, PR2416 (2026-09-05): the rebased Chunking Lab route/ingest selection
+passed146 tests but failed both progress-detail color assertions. `_QueuePanelHost`
+still named only `tldw_cli_modular.tcss`, so Library-owned progress and row colors
+both resolved to white. Switching this local host to the existing
+`APP_STYLESHEETS` authority made the exact two compositor assertions pass in4.53s;
+the combined targeted gate then passed635. No production styling changed. Extending
+the shared authority does not repair local hosts that continue to bypass it.

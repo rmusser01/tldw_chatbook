@@ -71,6 +71,7 @@ Classifications have these meanings:
 | C51 | tldw_chatbook/Utils/db_upgrade_notice | print_db_upgrade_notice_if_pending | utils.db_upgrade_notice | read_only_uri | pre-boot schema-version probe | Migrated via `connect_private_sqlite`. The pre-boot "upgrading database..." notice (task-21100) reads exactly one `db_schema_version` row through a validated read-only URI before the app constructs; it cannot create, migrate, or write the database, and every failure is swallowed so the courtesy line can never become a boot failure of its own. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars. |
 | C52 | tldw_chatbook/Personal_Context/repository | PersonalContextRepository._connect | personal_context.repository | private_file | encrypted profile read/write | Migrated via `connect_private_sqlite`. The dedicated profile store contains encrypted canonical objects and peer-local encrypted policy, binding, and outbox bodies directly below the secured user data directory; it is excluded from centralized backup. |
 | C53 | tldw_chatbook/Personal_Context/interview_draft_repository | InterviewDraftRepository._connect | personal_context.interview_drafts | private_file | encrypted local interview draft read/write | Migrated via `connect_private_sqlite`. The dedicated draft store contains only short-lived encrypted interview state under per-session protector keys, is local-only, and is excluded from centralized backup. |
+| C54 | tldw_chatbook/DB/Chunking_Lab_DB | CheckpointStore._connection | db.chunking_lab | private_file | profile-local experiment recovery | Migrated via `connect_private_sqlite`. One lazily opened worker-owned connection publishes checkpoint/blob references with WAL and synchronous FULL, epoch/generation CAS, and current/previous/undo retention. Clear commits a content-free tombstone; private storage and deletion are not encryption or secure erasure. Excluded from centralized backup. |
 
 ## SQLite backup and restore inventory
 
@@ -151,7 +152,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 46 classified connection sites and fourteen
+The migrated boundary retains 53 classified connection sites and fourteen
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.
