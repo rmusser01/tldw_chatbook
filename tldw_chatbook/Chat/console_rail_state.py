@@ -27,9 +27,17 @@ CONSOLE_RAIL_SECTION_IDS = (
     "character",
 )
 CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID = "inspector_more"
+# TASK-8 (Console Inspector environment redesign): Environment and Tasks are
+# Inspector-rail disclosures, not left-rail sections, so their ids join the
+# preference-disclosure tuple directly rather than CONSOLE_RAIL_SECTION_IDS
+# (that tuple is left-rail sections and other code iterates it).
+CONSOLE_ENVIRONMENT_DISCLOSURE_ID = "environment"
+CONSOLE_TASKS_DISCLOSURE_ID = "tasks"
 CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS = (
     *CONSOLE_RAIL_SECTION_IDS,
     CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
+    CONSOLE_ENVIRONMENT_DISCLOSURE_ID,
+    CONSOLE_TASKS_DISCLOSURE_ID,
 )
 CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL = "global"
 CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE = "workspace"
@@ -136,6 +144,8 @@ class ConsoleRailPreferences:
     agent_open: bool = False
     character_open: bool = False
     inspector_more_open: bool = False
+    environment_open: bool = True
+    tasks_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -180,6 +190,8 @@ class ConsoleRailState:
     agent_open: bool = False
     character_open: bool = False
     inspector_more_open: bool = False
+    environment_open: bool = True
+    tasks_open: bool = True
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -388,6 +400,10 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         inspector_more_open=_coerce_bool(
             raw.get("inspector_more_open"), defaults.inspector_more_open
         ),
+        environment_open=_coerce_bool(
+            raw.get("environment_open"), defaults.environment_open
+        ),
+        tasks_open=_coerce_bool(raw.get("tasks_open"), defaults.tasks_open),
     )
 
 
@@ -417,6 +433,8 @@ def serialize_console_rail_preferences(
         "agent_open": bool(preferences.agent_open),
         "character_open": bool(preferences.character_open),
         "inspector_more_open": bool(preferences.inspector_more_open),
+        "environment_open": bool(preferences.environment_open),
+        "tasks_open": bool(preferences.tasks_open),
     }
 
 
@@ -880,4 +898,6 @@ def build_console_rail_state(
         agent_open=preferences.agent_open,
         character_open=preferences.character_open,
         inspector_more_open=preferences.inspector_more_open,
+        environment_open=preferences.environment_open,
+        tasks_open=preferences.tasks_open,
     )
