@@ -13191,6 +13191,7 @@ class LibraryScreen(BaseAppScreen):
                 scope_type="all",
                 limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
                 offset=0,
+                isolate_in_worker=True,
             ),
         ]
         # Optional decorative/exact counts are appended (and unpacked back)
