@@ -152,8 +152,8 @@ if not verdict["valid"]:
 **Interfaces**
 
 - Consumes `PreparedRecipe`, `RuntimeIdentity`, `ExecutionReport`, `prepare_recipe` from task 1.
-- Produces `DraftState(raw_json: str, parsed_json: str | None, pending_controls: dict[str, str], authority: str, record_fields: dict, expected_record: dict | None)`; authority is `json`, `controls`, or `synced` and invalid raw content stays opaque.
-- Produces `SampleSnapshot(sample_hash: str, text: str, source: dict)`, `RunRequest(run_id: str, batch_id: str, candidate_id: str, epoch: str, revision: int, sample: SampleSnapshot, recipe: PreparedRecipe)`.
+- Produces `DraftState(raw_json: str, parsed_json: str | None, parse_error: dict | None, pending_controls: dict[str, str], authority: str, record_fields: dict, expected_record: dict | None)`; authority is `json`, `controls`, or `synced`. `parsed_json` retains the last successfully parsed document separately from the current raw text. Invalid raw content stays opaque; a non-null `parse_error` blocks Run/Pin/Save even when a last-valid document exists. Explicit discard restores that last-valid document.
+- Produces `SampleSnapshot(sample_hash: str, text: str, source: dict)`, `RunRequest(run_id: str, batch_id: str, candidate_id: str, epoch: str, revision: int, sample: SampleSnapshot, recipe: PreparedRecipe, template_record: dict | None = None)`. The optional detached `template_record` captures loaded ID/UUID/version plus authored name/description/tags; it describes provenance, not equality to the current catalog. Copy it into pinned A and each batch member, never reconstruct it from a later live draft.
 - Produces `RunResult(request: RunRequest, status: str, report: ExecutionReport | None, started_at: str, finished_at: str, elapsed_ms: float, error: dict | None)`; status is completed/failed/canceled/interrupted/limited. Only completed results contain comparison output.
 - Produces `LabSession(profile_key: str, epoch: str, revision: int, candidates: dict, samples: dict, results: dict, batch: dict | None, view: dict, undo: tuple[dict, ...])`. Candidate entries have stable IDs, role A/B, draft or pinned recipe, and current/previous run IDs. Validate max two candidates, reference integrity, and one editable B.
 - Produces pure `new_session(profile_key: str) -> LabSession`, `edit_json(session, candidate_id: str, raw: str) -> LabSession`, `edit_control(session, candidate_id: str, path: str, raw: str) -> LabSession`, `can_execute(session, candidate_id: str) -> bool`, `replace_sample(session, text: str, source: dict) -> LabSession`, `pin_baseline(session, *, replace: bool = False) -> LabSession`, and `undo_edit(session) -> LabSession`; all session parameters/returns are `LabSession`.
@@ -177,14 +177,18 @@ def test_invalid_json_is_the_current_draft():
 - [ ] Implement pure copy-on-edit transitions and JSON-path patching. Control text remains raw until parsed; pending invalid controls make JSON read-only and block Run/Pin/Save. Explicit discard returns to the base document. Metadata/classifier/unknown fields survive. Never silently remove incompatible options on method change.
 
 ```python
-# Raw input is authoritative; a parse error does not roll it back.
+# Raw input is authoritative; a parse error neither rolls it back nor
+# destroys the separate last-valid base used by explicit discard.
+parsed_json = previous_draft.parsed_json
+parse_error = None
 try:
     parsed = json.loads(raw)
-except json.JSONDecodeError:
-    parsed_json = None
+except json.JSONDecodeError as exc:
+    parse_error = {"message": exc.msg, "line": exc.lineno, "column": exc.colno}
 else:
     parsed_json = json.dumps(parsed, ensure_ascii=False)
 draft = DraftState(raw_json=raw, parsed_json=parsed_json,
+                   parse_error=parse_error,
                    pending_controls={}, authority="json",
                    record_fields=record_fields, expected_record=expected_record)
 ```

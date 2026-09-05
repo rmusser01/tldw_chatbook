@@ -1,11 +1,11 @@
 ---
 id: TASK-31421
 title: Chunking Lab - faithful local preview preflight and reports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:10'
-updated_date: '2026-09-04 23:25'
+updated_date: '2026-09-05 00:00'
 labels:
   - chunking
   - chunking-lab
@@ -39,6 +39,7 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the named `prepare_recipe` admission seam for Run/Lab Save consumers,
 canonical immutable authored/effective recipes and runtime identity, and shared
 `execute_prepared`/legacy `apply_template` structured execution (ADR-118, preserving
@@ -101,3 +102,4 @@ ADR-118's verified-or-unavailable policy applies; vendor/parity code is unchange
 Ruff checks and modified-range formatting pass using the same documented
 baseline runtime lint exclusions. `git diff --check` passes. Still In Progress
 pending re-review; no unisolated application imports were used in this fix round.
+<!-- SECTION:NOTES:END -->
