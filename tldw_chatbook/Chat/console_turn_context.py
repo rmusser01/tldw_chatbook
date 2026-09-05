@@ -69,6 +69,10 @@ def _detached_selection(
     return ConsoleProviderSelection(
         provider=str(selection.provider),
         base_url=selection.base_url,
+        configured_endpoint_fallback_allowed=(
+            selection.configured_endpoint_fallback_allowed
+        ),
+        endpoint_provenance=selection.endpoint_provenance,
         explicit_model=selection.explicit_model,
         configured_model=selection.configured_model,
         temperature=selection.temperature,
@@ -266,6 +270,7 @@ def _detached_authority(
                 if authority.provider_intent.endpoint is not None
                 else None
             ),
+            endpoint_provenance=authority.provider_intent.endpoint_provenance,
         ),
         attempt_id=str(authority.attempt_id),
     )
@@ -280,6 +285,7 @@ def _detached_destination(
         model=str(destination.model) if destination.model is not None else None,
         endpoint_identity=str(destination.endpoint_identity),
         egress_class=destination.egress_class,
+        endpoint_provenance=destination.endpoint_provenance,
     )
 
 

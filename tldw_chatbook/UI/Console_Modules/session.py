@@ -3312,7 +3312,9 @@ class ConsoleSessionController:
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._console_session_settings(session_id)
+        settings = self._ensure_console_chat_store().effective_session_settings(
+            session_id
+        )
         model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}

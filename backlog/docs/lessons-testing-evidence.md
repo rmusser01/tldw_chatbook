@@ -11048,7 +11048,6 @@ the invariant. A newly red old test may be revealing missing state in its
 oracle, not a compatibility regression. Then run a cross-file gate that covers
 both the new invariant and the existing projection tests; the isolated new
 tests alone cannot expose disagreements with older test models.
-
 ---
 
 ## A bundle-only render harness misses the per-screen sheets since the agentic split
@@ -11081,7 +11080,6 @@ the primary, which is the assertion a palette generator needs.
 
 **What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
 generated palettes by hue distance for several primaries, not by eyeballing one.
-
 ## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
 
 **What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
@@ -11143,7 +11141,6 @@ contract, not a comparison against old ordinal data: recapture the structural
 baseline before reformatting. Fail closed for ambiguous exception headers, never
 discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
 or decorator boundary for every non-header directive.
-
 ---
 
 ## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
@@ -11217,3 +11214,43 @@ just watched the feature not work, and both passed on the broken build.
 - When a live run finds a feature dead that a green test covers, **read that test
   first**. It is more often a self-confirmer than a coverage gap, and fixing the
   feature without fixing the test leaves the next regression unguarded.
+
+---
+
+## Textual projection writes must suppress their own deferred change messages
+
+**TASK-31389, 2026-09-03.** The mounted vLLM generation-fencing test initially
+hung after one model edit and advanced the connection generation thousands of
+times. The view's `_rendering` flag covered the synchronous `Input.value` writes,
+but Textual delivered their `Input.Changed` messages after the flag had already
+been cleared. Because two source controls projected the same draft field, stale
+echoes alternated values and recursively triggered draft invalidation and another
+projection. A timeout traceback finally caught the loop applying state while the
+view was being torn down.
+
+**What to do.** Wrap imperative `Input.value` and `TextArea.text` projection
+writes in the widget's `prevent(...Changed)` context. A synchronous rendering
+flag alone does not suppress a message delivered later. Prove the boundary with
+a mounted test that applies state, performs one user edit, and asserts exactly one
+semantic generation advance.
+
+## Closing a thread-local database on the fixture thread does not close worker-owned handles
+
+**TASK-31392 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
+reported 237 additional file descriptors. File-level bisection isolated the
+growth to mounted Textual tests; `lsof`, GC inspection, and live connection
+registries then showed one `_QuiescentSQLiteConnection` per app instance. The
+real on-mount FTS backfill opened each handle on a worker thread, while fixture
+teardown invoked `close()` only from the main pytest thread. That closed the
+main thread-local handle but could not reach the worker thread's handle. Two
+mounted cases retained 2 SQLite/9 regular descriptors after teardown even
+after GC. Draining the database's process-local quiescence registry reduced
+that to 0 SQLite/3 regular descriptors, and repeated mounts stopped growing
+linearly.
+
+**What to do.** When a database owns thread-local connections and tests run
+real worker-backed startup work, teardown must use the database's all-handle
+quiescence/registry boundary rather than a single-thread `close()`. Diagnose a
+session FD warning by splitting test files, classifying descriptors with
+`lsof`, and inspecting live owners after finalizers; GC or a higher threshold
+cannot establish ownership or fix a registered worker handle.

@@ -551,6 +551,30 @@ async def test_successful_stop_closes_resource_once_after_process_death() -> Non
     assert resource.close_count == 1
 
 
+@pytest.mark.asyncio
+async def test_stop_failure_notification_is_actionable_without_process_id() -> None:
+    app = _App()
+    claim = server_lifecycle.reserve_server_launch(app, "llamacpp")
+    assert claim is not None
+    process = _Process(stubborn=True)
+    assert server_lifecycle.publish_server_process(
+        app,
+        "llamacpp",
+        claim,
+        process,
+    )
+
+    assert (
+        await server_lifecycle.stop_server_process(app, "llamacpp", "llama.cpp")
+        is False
+    )
+
+    assert app.notifications == [
+        ("llama.cpp did not stop; retry Stop.", "error"),
+    ]
+    assert str(process.pid) not in app.notifications[0][0]
+
+
 def test_stubborn_cancelled_process_retains_resource_until_proven_dead() -> None:
     app = _App()
     resource = _Resource()

@@ -10,6 +10,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -819,6 +823,14 @@ class ConsoleProviderSelection:
 
     provider: str
     base_url: str | None = None
+    #: False only for a live session policy that must never fall back to a
+    #: configured endpoint (notably a failed endpoint-adoption rollback).
+    configured_endpoint_fallback_allowed: bool = True
+    #: Explicit lifetime of the effective endpoint. Ephemeral session targets
+    #: may reach the live adapter but must be omitted by every durable sink.
+    endpoint_provenance: ConsoleEndpointProvenance = (
+        ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+    )
     explicit_model: str | None = None
     configured_model: str | None = None
     temperature: float | None = None

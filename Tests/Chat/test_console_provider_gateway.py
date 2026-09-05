@@ -380,6 +380,22 @@ def _prepared_request_with_continuation(
             execution_key="custom-openai-api",
             api_key="secret",
         ),
+        ConsoleProviderResolution(
+            provider="vllm",
+            base_url="http://127.0.0.1:9099/v1",
+            model="local-model",
+            ready=True,
+            execution_key="vllm",
+            api_key="secret",
+        ),
+        ConsoleProviderResolution(
+            provider="local_vllm",
+            base_url="http://127.0.0.1:9100/v1",
+            model="local-model",
+            ready=True,
+            execution_key="local_vllm",
+            api_key="secret",
+        ),
     ],
     ids=lambda resolution: resolution.execution_key,
 )
@@ -502,6 +518,64 @@ async def test_capture_on_sanitizes_verified_shadow_before_adapter_entry() -> No
     assert len(shadows) == 1 and shadows[0].available is True
     assert shadows[0].redacted is True
     assert shadows[0].endpoint_identity == "https://api.openai.com/v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_key", ["vllm", "local_vllm"])
+async def test_ephemeral_vllm_capture_on_keeps_live_target_out_of_durable_shadows(
+    execution_key: str,
+) -> None:
+    """Alignment sees the exact target, while every capture shape omits it."""
+
+    target = "http://127.0.0.1:9099/v1"
+    calls: list[dict] = []
+    shadows: list[ProviderRequestShadowBundle] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        base_url=target,
+        model="local-model",
+        ready=True,
+        execution_key=execution_key,
+        endpoint_provenance="ephemeral_session",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_shadow_sink=shadows.append,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == target
+    assert len(shadows) == 1 and shadows[0].available is True
+    assert shadows[0].endpoint_identity == "ephemeral_session_endpoint_omitted"
+    assert "api_base_url" not in shadows[0].boundary_kwargs
+    assert target not in json.dumps(shadows[0].boundary_kwargs)
+    assert target not in json.dumps(shadows[0].handler_kwargs)
+    assert ("ephemeral_endpoint", "session_policy") in {
+        (overlay.kind, overlay.source) for overlay in shadows[0].overlays
+    }
+    (capture,) = signals.exchange_captures()
+    assert capture.endpoint is None
+    assert "api_base_url" not in capture.request
+    assert {"api_base_url", "endpoint"}.issubset(capture.omitted_keys)
+    assert target not in json.dumps(capture.request)
 
 
 @pytest.mark.asyncio
@@ -2844,6 +2918,84 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
     assert "secret" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_vllm_live_policy_bypasses_saved_match_and_pins_adapter_endpoint() -> (
+    None
+):
+    """An explicit live owner may differ from config without adapter fallback."""
+
+    calls: list[dict[str, object]] = []
+
+    def adapter(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "live reply"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "vllm": {
+                    "api_url": "http://127.0.0.1:9098/v1",
+                    "model": "configured-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    selection = ConsoleProviderSelection(
+        provider="vllm",
+        explicit_model="live-model",
+        base_url="http://127.0.0.1:9188/v1",
+        configured_endpoint_fallback_allowed=False,
+        streaming=False,
+    )
+
+    resolution = await gateway.resolve_for_send(selection)
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "live request"}],
+        )
+    ]
+
+    assert resolution.ready is True
+    assert resolution.base_url == "http://127.0.0.1:9188/v1"
+    assert chunks == ["live reply"]
+    assert calls[0]["api_base_url"] == "http://127.0.0.1:9188/v1"
+
+
+@pytest.mark.asyncio
+async def test_blocked_live_policy_never_falls_back_to_configured_vllm_endpoint() -> (
+    None
+):
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "vllm": {
+                    "api_url": "http://127.0.0.1:9098/v1",
+                    "model": "configured-model",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="vllm",
+            explicit_model="live-model",
+            base_url=None,
+            configured_endpoint_fallback_allowed=False,
+        )
+    )
+
+    assert resolution.ready is False
+    assert not resolution.base_url
+    assert resolution.base_url != "http://127.0.0.1:9098/v1"
+    assert "could not be restored safely" in resolution.visible_copy
 
 
 @pytest.mark.asyncio

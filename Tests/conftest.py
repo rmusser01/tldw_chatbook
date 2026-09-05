@@ -957,7 +957,24 @@ def anyio_backend():
 
 
 def _close_database_instance(db_instance):
-    """Best-effort close for a database object cached by application config."""
+    """Close every registered handle for a database cached by test config.
+
+    ChaChaNotesDB owns thread-local connections created by Textual workers, so
+    closing only the fixture teardown thread's handle leaves those worker-owned
+    SQLite descriptors open. Its quiescence boundary drains and closes the full
+    same-file registry; simpler database doubles keep the legacy ``close`` path.
+    """
+    quiesce_connections = getattr(db_instance, "quiesce_connections", None)
+    if callable(quiesce_connections):
+        try:
+            with quiesce_connections(timeout_seconds=2.0):
+                pass
+            return
+        except (RuntimeError, TimeoutError) as exc:
+            logger.warning(
+                "Failed to quiesce cached test database: "
+                f"exception_type={type(exc).__name__}"
+            )
     close_db = getattr(db_instance, "close", None)
     if not callable(close_db):
         return

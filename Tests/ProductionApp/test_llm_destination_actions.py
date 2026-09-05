@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-import asyncio
 import ast
-import io
+import asyncio
 import inspect
+import io
 import logging
 import os
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
 import threading
 import time
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 from textual.widgets import Button, Input, RichLog, TextArea
 
 import tldw_chatbook.app as app_module
-from tldw_chatbook.Local_Inference import ollama_model_mgmt
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import TAB_LLM
 from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
@@ -32,8 +31,8 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
 )
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     clear_server_process,
-    current_server_claim,
     current_llm_destination,
+    current_server_claim,
     publish_server_process,
     release_server_claim,
     reserve_server_launch,
@@ -42,12 +41,13 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import 
     stop_server_process,
     terminate_process_bounded,
 )
-from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
-from tldw_chatbook.UI.Screens.llm_screen import LLMScreen, MODELS_RAIL_SECTIONS
 from tldw_chatbook.Event_Handlers.worker_handlers.misc_worker_handler import (
     MiscWorkerHandler,
 )
-
+from tldw_chatbook.Local_Inference import ollama_model_mgmt
+from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
+from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS, LLMScreen
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LLM_WINDOW_PATH = PROJECT_ROOT / "tldw_chatbook" / "UI" / "LLM_Management_Window.py"
@@ -100,10 +100,6 @@ EXPECTED_LLM_ACTION_IDS = {
     "onnx-stop-server-button",
     "transformers-browse-models-dir-button",
     "transformers-list-local-models-button",
-    "vllm-browse-model-button",
-    "vllm-browse-python-button",
-    "vllm-start-server-button",
-    "vllm-stop-server-button",
 }
 EXPECTED_DIRECT_COMPOSE_BUTTON_IDS = {
     "llamacpp-browse-exec-button",
@@ -124,10 +120,38 @@ EXPECTED_DIRECT_COMPOSE_BUTTON_IDS = {
     "onnx-stop-server-button",
     "transformers-browse-models-dir-button",
     "transformers-list-local-models-button",
-    "vllm-browse-model-button",
-    "vllm-browse-python-button",
+}
+VLLM_LIFECYCLE_ACTION_IDS = {
+    "vllm-check-setup",
+    "vllm-cancel-check",
+    "vllm-start",
+    "vllm-stop",
+    "vllm-recovery-primary",
+    "vllm-restart",
+    "vllm-use-console",
+    "vllm-make-default",
+}
+VLLM_BROWSE_ACTION_IDS = {
+    "vllm-browse-python-environment",
+    "vllm-browse-local-model-directory-button",
+}
+VLLM_SETUP_VIEW_ACTION_IDS = {
+    "vllm-start-local-button",
+    "vllm-connect-existing-button",
+    "vllm-profile-create-button",
+    "vllm-profile-save-button",
+    "vllm-profile-rename-button",
+    "vllm-profile-duplicate-button",
+    "vllm-profile-delete-button",
+    "vllm-hugging-face-source-button",
+    "vllm-local-model-source-button",
+    "vllm-trust-remote-code",
+}
+REMOVED_VLLM_LIFECYCLE_IDS = {
     "vllm-start-server-button",
     "vllm-stop-server-button",
+    "vllm-browse-model-button",
+    "vllm-browse-python-button",
 }
 ROOT_LOG_CALLBACKS = {
     "_update_llamacpp_log",
@@ -142,10 +166,6 @@ EXPECTED_BROWSE_TOOLTIPS = {
     "llamafile-browse-exec-button": "Choose the llamafile executable.",
     "llamafile-browse-model-button": (
         "Choose an optional external GGUF model for llamafile."
-    ),
-    "vllm-browse-python-button": ("Choose the Python interpreter used to launch vLLM."),
-    "vllm-browse-model-button": (
-        "Choose a local model directory for vLLM, or type a Hugging Face repo ID."
     ),
     "onnx-browse-python-button": (
         "Choose the Python interpreter used to launch the ONNX server."
@@ -386,10 +406,38 @@ def _direct_compose_button_ids() -> set[str]:
     compose = next(
         node
         for node in class_node.body
-        if isinstance(node, ast.FunctionDef) and node.name == "compose"
+        if isinstance(node, ast.FunctionDef) and node.name == "_compose_server_panes"
     )
     ids: set[str] = set()
     for node in ast.walk(compose):
+        if not isinstance(node, ast.Call):
+            continue
+        callable_name = (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            else getattr(node.func, "attr", "")
+        )
+        if callable_name != "Button":
+            continue
+        id_keyword = next(
+            (keyword for keyword in node.keywords if keyword.arg == "id"),
+            None,
+        )
+        if (
+            id_keyword is not None
+            and isinstance(id_keyword.value, ast.Constant)
+            and isinstance(id_keyword.value.value, str)
+        ):
+            ids.add(id_keyword.value.value)
+    return ids
+
+
+def _vllm_setup_button_ids() -> set[str]:
+    """Return stable action IDs composed by the dedicated vLLM owner view."""
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(VllmSetupView.compose)))
+    ids: set[str] = set()
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         callable_name = (
@@ -459,7 +507,6 @@ def test_server_lifecycle_is_app_owned_and_root_worker_handler_is_retired() -> N
     for button_id in (
         "llamacpp-stop-server-button",
         "llamafile-stop-server-button",
-        "vllm-stop-server-button",
         "onnx-stop-server-button",
         "mlx-stop-server-button",
         "ollama-stop-service-button",
@@ -749,6 +796,26 @@ def test_llm_destination_action_census_is_complete_and_removed_controls_are_abse
     assert REMOVED_TRANSFORMERS_ACTION_IDS.isdisjoint(action_ids)
     assert action_ids == EXPECTED_DIRECT_COMPOSE_BUTTON_IDS
     assert set(LLMManagementWindow.ACTION_HANDLERS) == EXPECTED_LLM_ACTION_IDS
+    assert _vllm_setup_button_ids() == (
+        VLLM_LIFECYCLE_ACTION_IDS | VLLM_BROWSE_ACTION_IDS | VLLM_SETUP_VIEW_ACTION_IDS
+    )
+    assert REMOVED_VLLM_LIFECYCLE_IDS.isdisjoint(_vllm_setup_button_ids())
+    assert REMOVED_VLLM_LIFECYCLE_IDS.isdisjoint(LLMManagementWindow.ACTION_HANDLERS)
+    assert vllm_events.VLLM_BUTTON_HANDLERS == {}
+    assert "vllm" not in LLMManagementWindow.SERVER_CONTROLS
+    for handler_name in (
+        "_on_vllm_check_requested",
+        "_on_vllm_cancel_check_requested",
+        "_on_vllm_start_requested",
+        "_on_vllm_stop_requested",
+        "_on_vllm_retry_requested",
+        "_on_vllm_restart_requested",
+        "_on_vllm_use_in_console_requested",
+        "_on_vllm_make_default_requested",
+    ):
+        assert callable(getattr(LLMScreen, handler_name))
+    assert callable(LLMManagementWindow._on_vllm_local_directory_browse_requested)
+    assert callable(LLMManagementWindow._on_vllm_python_environment_browse_requested)
 
 
 def test_llm_destination_action_contract_uses_window_for_ui_lookups() -> None:
@@ -882,6 +949,27 @@ async def _wait_for_llm_window(
     raise AssertionError("production Models body did not mount")
 
 
+async def _activate_llm_view(
+    window: LLMManagementWindow,
+    pilot,
+    view_name: str,
+) -> None:
+    """Select and await one lazy provider pane before querying its controls."""
+
+    window.active_view = view_name
+    for _ in range(200):
+        await pilot.pause(0.01)
+        if (
+            window.active_view == view_name
+            and view_name in window._populated_views
+            and view_name not in window._populating_views
+        ):
+            await pilot.pause()
+            await pilot.pause()
+            return
+    raise AssertionError(f"production Models pane did not mount: {view_name}")
+
+
 def _rich_log_text(log: RichLog) -> str:
     return "\n".join(line.text for line in log.lines)
 
@@ -907,11 +995,22 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
         async with app.run_test(size=(140, 48)) as pilot:
             screen = await _wait_for_llm_screen(app, pilot)
             old_window = screen.query_one(LLMManagementWindow)
-            for _provider, (_start_id, stop_id) in old_window.SERVER_CONTROLS.items():
+            for provider, (_start_id, stop_id) in old_window.SERVER_CONTROLS.items():
+                await _activate_llm_view(
+                    old_window,
+                    pilot,
+                    "mlx-lm" if provider == "mlx" else provider.replace("cpp", "-cpp"),
+                )
                 assert old_window.query_one(f"#{stop_id}", Button).disabled is True
+
+            await _activate_llm_view(old_window, pilot, "vllm")
+            vllm_view = old_window.query_one(VllmSetupView)
+            assert vllm_view.query_one("#vllm-stop", Button).disabled is True
+            assert len(vllm_view.query("#vllm-stop-server-button")) == 0
 
             first_claim = reserve_server_launch(app, "ollama")
             assert first_claim is not None
+            await _activate_llm_view(old_window, pilot, "ollama")
             old_window._sync_process_controls("ollama")
             assert (
                 old_window.query_one("#ollama-start-service-button", Button).disabled
@@ -925,6 +1024,7 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
                 previous=old_window,
             )
             assert new_window is not old_window
+            await _activate_llm_view(new_window, pilot, "ollama")
             assert current_server_claim(app, "ollama") is first_claim
             assert (
                 new_window.query_one("#ollama-start-service-button", Button).disabled
@@ -1068,6 +1168,15 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
 
             for mode in ("graceful", "kill", "persistent"):
                 for index, provider in enumerate(new_window.SERVER_CONTROLS):
+                    await _activate_llm_view(
+                        new_window,
+                        pilot,
+                        (
+                            "mlx-lm"
+                            if provider == "mlx"
+                            else provider.replace("cpp", "-cpp")
+                        ),
+                    )
                     claim = reserve_server_launch(app, provider)
                     assert claim is not None
                     process = _StopProcess(4000 + index, mode)
@@ -1149,6 +1258,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
         async with app.run_test(size=(140, 48)) as pilot:
             screen = await _wait_for_llm_screen(app, pilot)
             window = screen.query_one(LLMManagementWindow)
+            await _activate_llm_view(window, pilot, "ollama")
 
             from tldw_chatbook.Widgets.delete_confirmation_dialog import (
                 create_delete_confirmation,
@@ -1184,6 +1294,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
                 previous=window,
             )
             assert replacement is not window
+            await _activate_llm_view(replacement, pilot, "ollama")
             stale_stop_syncs: list[str] = []
             monkeypatch.setattr(
                 window,
@@ -1205,6 +1316,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
 
             models_dir = tmp_path / "models"
             models_dir.mkdir()
+            await _activate_llm_view(replacement, pilot, "transformers")
             replacement.query_one("#transformers-models-dir-path", Input).value = str(
                 models_dir
             )
@@ -1241,6 +1353,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
                 previous=replacement,
             )
             assert current_window is not replacement
+            await _activate_llm_view(current_window, pilot, "transformers")
             release_scan.set()
             await transformers_task
             await pilot.pause()
@@ -1249,6 +1362,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
                 current_window.query_one("#transformers-local-models-list", RichLog)
             )
 
+            await _activate_llm_view(current_window, pilot, "ollama")
             current_window.query_one(
                 "#ollama-server-url", Input
             ).value = "http://127.0.0.1:11434"
@@ -1401,10 +1515,10 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
                 if widget_id != "transformers-models-dir-path":
                     unrelated_inputs[widget_id] = widget
             assert {
-                "mlx-model-path",
-                "vllm-host",
-                "vllm-model-path",
+                "llamacpp-exec-path",
+                "llamacpp-model-path",
             } <= unrelated_inputs.keys()
+            assert {"vllm-host", "vllm-model-path"}.isdisjoint(unrelated_inputs)
             unrelated_values_before = {
                 widget_id: widget.value
                 for widget_id, widget in unrelated_inputs.items()
@@ -1482,19 +1596,24 @@ async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
         async with app.run_test(size=(140, 48)) as pilot:
             screen = await _wait_for_llm_screen(app, pilot)
             window = screen.query_one(LLMManagementWindow)
+            for view_name in (
+                "llama-cpp",
+                "llamafile",
+                "onnx",
+                "mlx-lm",
+                "ollama",
+            ):
+                await _activate_llm_view(window, pilot, view_name)
             window.query_one("#llamacpp-exec-path", Input).value = str(executable)
             window.query_one("#llamacpp-model-path", Input).value = str(model)
             window.query_one("#llamafile-exec-path", Input).value = str(executable)
             window.query_one("#llamafile-model-path", Input).value = str(model)
-            window.query_one("#vllm-python-path", Input).value = "python"
-            window.query_one("#vllm-model-path", Input).value = "org/model"
             window.query_one("#onnx-python-path", Input).value = "python"
             window.query_one("#onnx-script-path", Input).value = str(script)
             window.query_one("#mlx-model-path", Input).value = "org-model"
             window.query_one("#ollama-exec-path", Input).value = str(executable)
             for text_area_id in (
                 "llamafile-additional-args",
-                "vllm-additional-args",
                 "onnx-additional-args",
                 "mlx-additional-args",
             ):
@@ -1509,7 +1628,6 @@ async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
             starts = {
                 "llamacpp": "llamacpp-start-server-button",
                 "llamafile": "llamafile-start-server-button",
-                "vllm": "vllm-start-server-button",
                 "onnx": "onnx-start-server-button",
                 "mlx": "mlx-start-server-button",
                 "ollama": "ollama-start-service-button",
@@ -1529,6 +1647,11 @@ async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
             )
             assert remounted is not window
             for provider, (start_id, stop_id) in remounted.SERVER_CONTROLS.items():
+                await _activate_llm_view(
+                    remounted,
+                    pilot,
+                    "mlx-lm" if provider == "mlx" else provider.replace("cpp", "-cpp"),
+                )
                 assert remounted.query_one(f"#{start_id}", Button).disabled is True
                 assert remounted.query_one(f"#{stop_id}", Button).disabled is False
     finally:
@@ -1576,6 +1699,15 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
             assert not hasattr(app, "llm_active_view")
 
             for button_id, expected_tooltip in EXPECTED_BROWSE_TOOLTIPS.items():
+                prefix = button_id.split("-", 1)[0]
+                await _activate_llm_view(
+                    window,
+                    pilot,
+                    {
+                        "llamacpp": "llama-cpp",
+                        "mlx": "mlx-lm",
+                    }.get(prefix, prefix),
+                )
                 button = window.query_one(f"#{button_id}", Button)
                 if button_id == "ollama-browse-modelfile-button":
                     assert button.disabled is True
@@ -1637,6 +1769,7 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
                 previous=old_window,
             )
             assert window is not old_window
+            await _activate_llm_view(window, pilot, "ollama")
             ollama_start_button = window.query_one(
                 "#ollama-start-service-button", Button
             )
