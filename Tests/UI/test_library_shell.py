@@ -7544,7 +7544,7 @@ async def test_library_shell_repeated_supersession_serializes_underlying_retriev
 
 
 @pytest.mark.asyncio
-async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
+async def test_library_shell_reused_screen_reentry_serializes_draining_retrieval(
     monkeypatch,
 ):
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -7593,7 +7593,12 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
             await app.handle_screen_navigation(NavigateToScreen("library"))
             second = app.screen
             assert isinstance(second, LibraryScreen)
-            assert second is not first
+            # TASK-31521: the library route is reusable, so re-entry resumes
+            # the SAME instance. The serialization contract this test pins is
+            # instance-agnostic -- the admission lock is app-lifetime -- and
+            # is exactly as load-bearing for a resumed screen with a visit-1
+            # retrieval still draining.
+            assert second is first
             await _wait_for_library_shell(second, pilot)
             second.query_one("#library-row-browse-search", Button).press()
             await _wait_for_selector(second, pilot, "#library-rag-query-input")
@@ -7625,7 +7630,6 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
 
             assert service.snapshot() == (("B",), 1, 1)
             assert not service.entered["D"].is_set()
-            assert applied_queries == []
 
             service.release["B"].set()
             await _wait_for_condition(
@@ -7635,7 +7639,13 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
             )
             assert service.finished["B"].is_set()
             assert service.snapshot() == (("B", "D"), 1, 1)
-            assert applied_queries == []
+            # TASK-31521 contract change: under reuse the screen that issued
+            # B is alive when B settles, so B's outcome MAY legitimately
+            # apply to it (pre-reuse this test asserted zero applications
+            # because B's screen was gone). What still must hold: every
+            # application lands on the one live instance, and D -- the
+            # user's latest request -- is what wins below.
+            assert all(sid == id(second) for sid, _ in applied_queries)
 
             service.release["D"].set()
             await _wait_for_condition(
@@ -7657,6 +7667,9 @@ async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
             await _wait_for_selector(second, pilot, "#library-rag-result-0")
             assert second.query_one("#library-rag-query-input", Input).value == "D"
             assert second.query("#library-rag-result-0")
+            assert applied_queries and applied_queries[-1] == (id(second), "D"), (
+                "the user's latest query must be the final applied outcome"
+            )
         finally:
             service.release_all()
             for query in ("B", "C", "D"):
