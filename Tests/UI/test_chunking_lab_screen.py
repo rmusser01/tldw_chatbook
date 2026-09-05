@@ -549,10 +549,36 @@ async def test_sample_source_and_extent_are_visible_after_reopen(
 
 
 @pytest.mark.asyncio
+async def test_initial_load_survives_yielding_mount_handler(lab_app, monkeypatch):
+    """Mount-time scheduling must not silently abandon recovery initialization.
+
+    Args:
+        lab_app: Isolated application fixture for the mounted Lab screen.
+        monkeypatch: Pytest fixture for replacing the inherited mount handler.
+    """
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+
+    async def yielding_mount(self):
+        # A real Mount handler may yield before Textual sets is_mounted. This
+        # reproduces the live PTY ordering without modifying framework state.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(BaseAppScreen, "on_mount", yielding_mount)
+    async with lab_app.run_test(size=(120, 40)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await asyncio.wait_for(screen.wait_until_ready(), 3)
+        await settle_lab(lab_app, screen, pilot)
+        assert screen.coordinator is not None
+        assert not screen.query_one("#lab-sample").disabled
+
+
+@pytest.mark.asyncio
 async def test_lazy_screen_workers_abandon_work_after_teardown(lab_app, monkeypatch):
     import inspect
 
-    async with lab_app.run_test(size=(80, 24)):
+    async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         pending = []
         monkeypatch.setattr(
@@ -560,6 +586,7 @@ async def test_lazy_screen_workers_abandon_work_after_teardown(lab_app, monkeypa
         )
         try:
             await lab_app.push_screen(screen)
+            await pilot.pause()
             screen._coordinator_changed(None)
             assert len(pending) == 2
             assert all(inspect.iscoroutinefunction(work) for work in pending)

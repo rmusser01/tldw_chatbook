@@ -344,8 +344,14 @@ class ChunkingLabScreen(BaseAppScreen):
         for editor in self.query(TextArea):
             editor._bindings.key_to_bindings.pop("f6", None)
         self._layout()
-        self.run_worker(
-            self._load, group="lab-load", exclusive=True, exit_on_error=False
+        # Mount dispatch can yield before Textual marks this screen mounted.
+        # Starting earlier makes _load's teardown guard abandon initialization.
+        self.call_after_refresh(
+            self.run_worker,
+            self._load,
+            group="lab-load",
+            exclusive=True,
+            exit_on_error=False,
         )
 
     async def wait_until_ready(self) -> None:

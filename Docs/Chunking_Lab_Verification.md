@@ -1,5 +1,21 @@
 # Chunking Lab verification record
 
+## Post-merge live UAT correction (2026-09-05)
+
+Normal Library entry could remain in loading because the lazy worker ran before
+Textual finished mounting and exited through its teardown guard. The local
+follow-up defers dispatch until after refresh, retaining the existing guard and
+coordinator boundary (ADR-118). A yielding-Mount regression failed before the
+correction; final targeted UI/results/recovery tests passed66, scoped static
+checks passed, and independent review found no issues. Real A/B authoring,
+advanced configuration preservation, local template saving, reopening and
+forced-process-exit recovery passed the bounded acceptance run. Two non-blocking
+presentation findings and unexercised cases remain explicit in the
+[UAT report](Chunking_Lab_UAT_2026-09-05.md). The user subsequently authorized a
+separate follow-up PR against dev; earlier merge/CI evidence below does not cover
+this new change. Publication verification is recorded in the follow-up plan.
+
+
 Branch: `codex/chunking-lab`, originally based on `origin/dev` commit
 `1a82db60ce47890c6d2df9f918f80309c8608ea6`, rebased onto
 `93388ba69b7499c2bc3180fc26c82d7f341871a7` on 2026-09-05. Architecture:

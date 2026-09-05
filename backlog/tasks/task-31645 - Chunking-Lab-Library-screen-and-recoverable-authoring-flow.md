@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 16:11'
+updated_date: '2026-09-05 17:14'
 labels:
   - chunking
   - chunking-lab
@@ -47,12 +47,13 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
 - [x] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
 - [x] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
+- [x] #18 Normal live Library entry finishes initialization even when mount handling yields; targeted regression and real A/B, template-save, and reopen/crash-recovery UAT pass.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR; existing ADR-078 and ADR-118 apply. Follow the PR integration addendum in Docs/superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md. Preserve the original checkout, rebase onto current dev, retain additive documentation, review inventory, correct Qodo findings with targeted regressions and independent review, and publish with preflight and an exact lease. CI follow-up: UI latency run33974600652 and local replay measure276 broad-subject rules against274. Re-key the fixed EditorRegion and Library Lab-entry action groups to existing unique button IDs without changing declarations, DOM, limits or unrelated CSS. Regenerate widget bundles, rerun the exact failed ratchet and affected UI/performance tests, independently review, and run preflight before publication. Merge only the reviewed current head with latest dev ancestry and required CI passing.
+ADR required: no new ADR. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: lifecycle scheduling bug within the existing screen/coordinator contract. Follow Docs/superpowers/plans/2026-09-05-chunking-lab-live-initialization.md: trace the live mount boundary; prove a yielding-mount readiness regression fails; defer lazy initialization until refresh while retaining teardown guards; run targeted screen/recovery/results and static checks; repeat uninstrumented real-terminal A/B, template-save, reopen and crash-recovery UAT; record exact evidence and review before completion. No publication or unrelated startup changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -97,6 +98,8 @@ PR 2416 review corrections under existing ADR-078/ADR-118: bounded raw recovery 
 Qodo reviewed published4cf7869966 with zero remaining findings and resolved all5 threads; each has an evidence reply. Required CI33974600625 passed Fast Lane and Derived Artifacts. Perf Guard33974600652 separately failed276 broad-selector rules against274, reproduced locally. Narrowed only two fixed action selectors (EditorRegion and Library Lab-entry strip) to their existing IDs and regenerated widget_defaults_self.tcss; declarations and DOM unchanged. Exact RED276/GREEN274; combined full Perf Guard selection plus Lab screen/recovery modules passed75 with10 unsuppressed warnings in117.75s (pr-perf-correction.xml). Independent selector/declaration/composition/generation review found no issues; scoped lint/format/whitespace and all6 preflight checks pass. Verification docs retain warnings and zero headroom. Existing ADR078/118 apply; no new architectural decision. AC16 accepted on remote review/required-CI evidence; AC17 and task Done await current-head remote Perf Guard. No full sweep or merge yet.
 
 Final code acceptance at13441478984bf17cd28f62172bce4f59df0f85d9: Qodo reports zero remaining issues on that exact head and all five threads are resolved. Required workflow33975848478 passed PR Fast Lane and Derived Artifacts (completed2026-09-05T16:02:57Z); Perf Guard33975848601 passed; six GGUF jobs and CSS/Backlog guards passed. Fresh fetch confirms dev93388ba69b ancestry. AC1-17 complete after independent reviews,635 feature/compatibility tests and75 performance/UI follow-up tests, scoped static checks and preflight; exact evidence and warnings remain in Docs/Chunking_Lab_Verification.md. ADR078 and backlog/decisions/118-chunking-lab-local-execution-and-recovery.md apply. Final bookkeeping is docs/task only; its current-head CI/review still gates merge. No full-suite or cross-platform claim; historical qualifications retained.
+
+User-authorized post-merge UAT correction (2026-09-05): real PTY tracing proved the load worker could run during Mount with is_mounted=False and silently abandon initialization. Deferred only lazy worker dispatch with call_after_refresh, retaining teardown checks, exclusivity and error handling. Yielding-Mount regression RED readiness timeout; focused GREEN2; final screen/recovery/results GREEN66 in70.30s after the new test awaited its superseding render via existing settle helper. Scoped Ruff/format/whitespace pass. Independent read-only review: no findings, focused2 independently pass. Uninstrumented live UAT verifies provider-free Library entry, exact sample, advanced JSON/control preservation, six-versus-three chunk A/B with prefix execution and local backend metadata, Media DB template save, reopen, exact complete-state force-kill recovery, and invalid JSON recovery/discard. Docs/Chunking_Lab_UAT_2026-09-05.md records the precise coverage, historical failed run, warning and two unfixed non-blocking presentation findings (stale error strip and clipped Replace A). Added the measured Mount-order lesson. ADR required: no new ADR; backlog/decisions/118-chunking-lab-local-execution-and-recovery.md applies. No global startup/storage/runtime/dependency change, full sweep, existing user-data mutation, commit or publication. Plan: Docs/superpowers/plans/2026-09-05-chunking-lab-live-initialization.md.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
