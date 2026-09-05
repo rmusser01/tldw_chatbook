@@ -228,6 +228,8 @@ _BUDGETS: dict[str, int] = {
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
+    # 2026-09-05, task-31648: media analysis ownership extracted from Library.
+    "tldw_chatbook/UI/Library_Modules/library_media_analysis_controller.py": 868,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the

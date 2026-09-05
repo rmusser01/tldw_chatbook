@@ -149,6 +149,7 @@ from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
+from tldw_chatbook.UI.Library_Modules import library_media_analysis_controller as media_analysis_module
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Library_Modules.library_ingest_controller import (
@@ -10569,6 +10570,11 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
                 "resolve_ingest_analysis_provider",
                 lambda *a, **k: ready,
             )
+            mp.setattr(
+                media_analysis_module,
+                "resolve_ingest_analysis_provider",
+                lambda *a, **k: ready,
+            )
             mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
             # task-28007 AC#5: the action is composed disabled while no
             # provider resolves, so the patched-ready resolution has to
@@ -10637,6 +10643,11 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 library_screen_module,
+                "resolve_ingest_analysis_provider",
+                lambda *a, **k: not_ready,
+            )
+            mp.setattr(
+                media_analysis_module,
                 "resolve_ingest_analysis_provider",
                 lambda *a, **k: not_ready,
             )
