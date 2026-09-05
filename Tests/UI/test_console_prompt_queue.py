@@ -572,3 +572,62 @@ async def test_use_current_context_rejects_an_epoch_that_changed_after_review() 
 
     assert result.status is QueueMutationStatus.INVALID
     assert "changed since review" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_dirty_queue_edit_vetoes_navigation_and_preserves_text() -> None:
+    """TASK-31701: the one lossy Console navigation is guarded again.
+
+    A queue-manager edit whose text diverges from the queued entry vetoes
+    `flush_pending_work` (the seam app.py consults before dismissing
+    overlays), preserving the modal, the typed text, and focus. Saving
+    the edit clears the veto -- navigation is lossless again.
+    """
+    _app, host = _ready_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        snapshot = controller.prompt_queue_registry.begin_chain(
+            session_id,
+            context_epoch=controller.store.conversation_context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        ).snapshot
+        controller.prompt_queue_registry.admit(
+            session_id,
+            text="original queued text",
+            expected_revision=snapshot.revision,
+        )
+        controller.prompt_queue_coordinator.publish_registry_change(session_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        await pilot.click("#console-prompt-queue-manage")
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptQueueModal)
+
+        # No edit open: nothing to protect.
+        assert console.flush_pending_work() is True
+
+        await pilot.click("#console-prompt-queue-edit")
+        edit = modal.query_one("#console-prompt-queue-edit-input", TextArea)
+        # Edit open but text unchanged: still lossless, still allowed.
+        assert console.flush_pending_work() is True
+
+        edit.text = "edited but not yet saved"
+        assert console.flush_pending_work() is False, (
+            "a dirty edit must veto -- the navigation seam would dismiss "
+            "the modal and discard the typed text"
+        )
+        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal), (
+            "the veto must not disturb the open manager"
+        )
+        assert edit.text == "edited but not yet saved"
+
+        # Saving resolves the veto.
+        await pilot.click("#console-prompt-queue-save")
+        await pilot.pause()
+        assert console.flush_pending_work() is True, (
+            "a saved edit loses nothing; navigation must be allowed again"
+        )

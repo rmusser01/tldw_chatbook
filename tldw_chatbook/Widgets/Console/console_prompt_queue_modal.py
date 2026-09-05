@@ -481,6 +481,37 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 "Use current now adopts that reviewed version."
             )
 
+    def has_unsaved_edit(self) -> bool:
+        """Report whether the open edit view holds text the queue does not.
+
+        TASK-31701: consumed by ``ChatScreen.flush_pending_work`` to veto
+        navigation while a dirty edit is open -- the navigation seam
+        dismisses pushed screens before switching, which would silently
+        discard the typed text. Only a REAL divergence counts: an edit
+        view showing the entry's current text loses nothing when
+        dismissed, and an entry that changed or vanished under the edit
+        has nothing recoverable to protect (the modal's own save path
+        already refuses it with a feedback line).
+
+        Returns:
+            ``True`` when an edit is open and its text differs from the
+            queued entry's current text.
+        """
+        if self._editing_entry_id is None:
+            return False
+        try:
+            edit = self.query_one("#console-prompt-queue-edit-input", TextArea)
+        except NoMatches:
+            return False
+        result = self._queue_controller.read_waiting_text(
+            self.session_id,
+            self._editing_entry_id,
+            expected_revision=self._revision,
+        )
+        if result.status is not QueueMutationStatus.APPLIED or result.text is None:
+            return False
+        return edit.text != result.text
+
     def _begin_edit(self) -> None:
         entry_id = self._selected_entry_id
         if entry_id is None:
