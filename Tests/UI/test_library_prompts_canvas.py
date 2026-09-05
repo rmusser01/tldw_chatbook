@@ -33,11 +33,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from loguru import logger
-from textual.app import App
+from textual.app import App, active_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
@@ -362,7 +366,7 @@ class _CanvasHost(ConsolidatedCSSApp):
 class _StyledCanvasHost(_CanvasHost):
     """Canvas harness with the application's real layout rules loaded."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _FilterDispatchCanvasHost(_StyledCanvasHost):
@@ -3933,9 +3937,13 @@ async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp
         )
         assert screen._prompts_state.selection == captured
         assert screen._prompts_state.select_mode is True
-        app.notify.assert_not_called()
+        app.notify.assert_called_once_with(
+            "Unsaved Prompt changes — Save or Discard changes first.",
+            severity="warning",
+        )
 
         screen._prompts_state.dirty = False
+        app.notify.reset_mock()
         await screen._select_library_rail_row_after_source_admission(
             LIBRARY_ROW_BROWSE_NOTES
         )
@@ -4434,13 +4442,15 @@ async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutd
         request_token=token,
     )
 
+    active_app_token = active_app.set(app)
     unmount = asyncio.create_task(screen.on_unmount())
-    await asyncio.wait_for(started.wait(), timeout=1)
     try:
+        await asyncio.wait_for(started.wait(), timeout=1)
         late_applied = controller.apply(late_result, focus_identity=None)
     finally:
         release.set()
         await unmount
+        active_app.reset(active_app_token)
 
     assert late_applied is False
     assert controller.applied_result is None
