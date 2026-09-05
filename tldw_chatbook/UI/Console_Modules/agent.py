@@ -134,7 +134,7 @@ straight from `ConsoleAgentBridge.fleet_snapshot`/`historical_snapshot`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Any, Dict, Iterable, TYPE_CHECKING
@@ -252,10 +252,17 @@ CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
 CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
 #: Separator between the state and its elapsed segment.
 CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
+#: task-31386: a primary tool call that has run at least this long offers
+#: the "abandon call" affordance next to the activity line.
+CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS = 5.0
+#: The Textual action that affordance runs (a `ChatScreen` action).
+CONSOLE_TURN_ACTIVITY_ABANDON_ACTION = "screen.abandon_console_tool_call"
 
 __all__ = [
     "ConsoleAgentController",
     "CONSOLE_AGENT_FLEET_SECTION_ID",
+    "CONSOLE_TURN_ACTIVITY_ABANDON_ACTION",
+    "CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS",
     "CONSOLE_TURN_ACTIVITY_SEPARATOR",
     "CONSOLE_TURN_ACTIVITY_THINKING",
     "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
@@ -294,7 +301,77 @@ def _format_fleet_elapsed(seconds: float | None) -> str:
     return f"{minutes}m {secs}s"
 
 
-def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
+def _fleet_turn_activity(children: Sequence[Any], *, now: float) -> str:
+    """task-31386: the line for a primary that is waiting on its children.
+
+    Args:
+        children: The RUNNING sub-agents' own live snapshots (duck-typed:
+            a ``steps`` sequence), as the parent's ``subagents`` summary
+            lists them.
+        now: ``time.monotonic()`` reading for this poll tick.
+
+    Returns:
+        ``"N sub-agent(s) · ⚙ <tool> · <elapsed>"`` naming the child tool
+        that has run longest, ``"N sub-agent(s) working"`` when no child is
+        inside a tool call, or ``""`` when nothing is running.
+    """
+    running = [child for child in children if child is not None]
+    if not running:
+        return ""
+    count = len(running)
+    label = f"{count} sub-agent{'s' if count != 1 else ''}"
+    tool_steps = []
+    for child in running:
+        steps = tuple(getattr(child, "steps", ()) or ())
+        last = steps[-1] if steps else None
+        if last is not None and getattr(last, "kind", "") == STEP_TOOL_CALL:
+            tool_steps.append(last)
+    if not tool_steps:
+        return f"{label} working"
+    longest = min(
+        tool_steps,
+        key=lambda step: (
+            step.started_at if getattr(step, "started_at", None) is not None else now
+        ),
+    )
+    line = f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {longest.text}"
+    started_at = getattr(longest, "started_at", None)
+    elapsed = _format_fleet_elapsed(max(0.0, now - started_at)) if started_at is not None else ""
+    return f"{line}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else line
+
+
+def console_turn_activity_abandon_action(snapshot: Any, *, now: float) -> str:
+    """task-31386: the action to offer next to the line, or ``""``.
+
+    Only the PRIMARY's own in-flight tool call qualifies, and only once it
+    has run ``CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS``; a child's call
+    (its own run, its own budget) and the model's thinking never do.
+
+    Args:
+        snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed).
+        now: ``time.monotonic()`` reading for this poll tick.
+
+    Returns:
+        ``CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`` or ``""``.
+    """
+    if getattr(snapshot, "status", "idle") != "running":
+        return ""
+    steps = tuple(getattr(snapshot, "steps", ()) or ())
+    step = next(
+        (s for s in reversed(steps) if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY),
+        None,
+    )
+    if step is None or step.kind != STEP_TOOL_CALL:
+        return ""
+    started_at = getattr(step, "started_at", None)
+    if started_at is None or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS:
+        return ""
+    return CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
+
+
+def console_turn_activity_text(
+    snapshot: Any, *, now: float, children: Sequence[Any] = ()
+) -> str:
     """Return the live activity line for one in-flight Console turn.
 
     **Live-only, by construction.** There is no resumed counterpart and
@@ -333,11 +410,17 @@ def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
     text -- mid-turn that is the tool-call fence itself -- so the state, not
     the summary, is what the user sees.
 
+    task-31386: during a fleet turn the primary is between tools while its
+    children work, which used to read as ``Thinking…``; with ``children``
+    (the running sub-agents' own live snapshots) that state renders their
+    count and longest-running tool instead. A primary tool call still wins.
+
     Args:
         snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed:
             ``status`` plus a ``steps`` sequence).
         now: ``time.monotonic()`` reading for this poll tick, injected so
             the elapsed segment is testable without sleeping.
+        children: Live snapshots of the RUNNING sub-agents, if any.
 
     Returns:
         The line to render, or ``""`` when nothing is live.
@@ -352,6 +435,10 @@ def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
         ),
         None,
     )
+    if step is None or step.kind != STEP_TOOL_CALL:
+        fleet = _fleet_turn_activity(children, now=now)
+        if fleet:
+            return fleet
     if step is None:
         # Pre-first-token: the model has not come back once yet, so there is
         # no step to name and no honest base to time from.
@@ -758,7 +845,45 @@ class ConsoleAgentController:
         read_snapshot = getattr(bridge, "live_snapshot", None)
         if read_snapshot is None:
             return ""
-        return console_turn_activity_text(
+        snapshot = read_snapshot(conversation_id)
+        # task-31386: a running child's steps live in its OWN run feed
+        # (`live_run_snapshot`, the one live source of a working child's
+        # steps); `getattr` because bare bridge doubles lack it.
+        read_run = getattr(bridge, "live_run_snapshot", None)
+        children = (
+            [
+                read_run(conversation_id, summary.run_id)
+                for summary in (getattr(snapshot, "subagents", ()) or ())
+                if getattr(summary, "run_id", "")
+                and getattr(summary, "status", "") == "running"
+            ]
+            if read_run is not None
+            else []
+        )
+        return console_turn_activity_text(snapshot, now=time.monotonic(), children=children)
+
+    def console_turn_activity_abandon_action(self) -> str:
+        """task-31386: the "abandon call" action for the live line, or ``""``.
+
+        Same guards as ``console_turn_activity``: no active run, no bridge
+        or no snapshot reader means no affordance.
+
+        Returns:
+            ``CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`` while the primary's
+            tool call has run long enough, else ``""``.
+        """
+        from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller else None
+        if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            return ""
+        bridge = self._console_agent_bridge
+        read_snapshot = getattr(bridge, "live_snapshot", None) if bridge else None
+        if read_snapshot is None:
+            return ""
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        return console_turn_activity_abandon_action(
             read_snapshot(conversation_id), now=time.monotonic()
         )
 
