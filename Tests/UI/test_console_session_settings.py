@@ -7846,9 +7846,9 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
     """The pinned preamble precedes staged and readiness content.
 
     Project status and next-send authority form the pinned preamble above the
-    Inspector rail body. The staged-context tray follows the task-9
-    Environment/Tasks sections as the body's third child, ahead of the run
-    inspector and its source-readiness content.
+    Inspector rail body. The staged-context tray follows Environment, Tasks,
+    and Subagents as the body's fourth child, ahead of the run inspector and
+    its source-readiness content.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -7879,11 +7879,12 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert project_status not in tuple(rail_body.query("*"))
         assert authority not in tuple(rail_body.query("*"))
         children = list(rail_body.children)
-        # task-9: Environment and Tasks sections now precede the
-        # staged-context tray.
+        # Environment, Tasks, and the relocated Subagents section precede
+        # the staged-context tray.
         assert children[0].id == "console-environment-section"
         assert children[1].id == "console-tasks-section"
-        assert children[2] is staged_context
+        assert children[2].id == "console-agent-section-subagents"
+        assert children[3] is staged_context
         assert children.index(staged_context) < children.index(run_inspector)
         assert children.index(run_inspector) < children.index(live_work)
 
@@ -8657,6 +8658,10 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
     monkeypatch,
     failure_point: str,
 ) -> None:
+    from concurrent.futures import thread as thread_executor_module
+
+    real_thread = threading.Thread
+
     class Persistence:
         def create_message(self, **_kwargs):
             return "msg-1"
@@ -8708,7 +8713,16 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
         force_persistence=True,
     )
     assert plan is not None
-    monkeypatch.setattr(chat_screen_module.threading, "Thread", StartFailureThread)
+    monkeypatch.setattr(
+        thread_executor_module,
+        "threading",
+        SimpleNamespace(
+            Thread=StartFailureThread,
+            Lock=threading.Lock,
+            Semaphore=threading.Semaphore,
+        ),
+    )
+    assert threading.Thread is real_thread
 
     with pytest.raises(RuntimeError, match=f"thread {failure_point} failed"):
         await console._refresh_console_roleplay_projections(plan)
@@ -8716,6 +8730,7 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
     assert store._fork_source_transitions == {}
     assert store._roleplay_fork_transition_leases == {}
     assert store.fork_eligibility(greeting.id).eligible is True
+    assert threading.Thread is real_thread
 
 
 @pytest.mark.asyncio
