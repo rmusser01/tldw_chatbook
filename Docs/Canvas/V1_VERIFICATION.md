@@ -167,6 +167,17 @@ No budget/snapshot increase, scheduler safety change, PR, push or merge has
 occurred at this checkpoint. Latest fetched dev isd9d5763d6; its delta from7aa
 is AudioTap code/tests plus schedules and snapshot follow-up documentation.
 
+Final pre-PR rebase: **970c86da4d74fbccd17c9bf77eec625f5fceedd5** on
+devd9d5763d6. All116 feature commits replayed without conflict; range-diff marks
+every pair equal. Recovery branch`codex/canvas-v1-before-final-dev-20260905`
+retains48b69db58. The only tree delta from that recovery tip is dev's13-file
+AudioTap/documentation change (+403/-12), not a Canvas implementation change.
+On this exact candidate, preflight passes all categories (now3332 task paths)
+and the six startup files plus Canvas first-use tests pass **36 tests,
+6 warnings, 36.52s**, with the same638/660 and971/972 module measurements.
+The subsequent PR preparation edits are documentation/task bookkeeping only.
+Qodo feedback and protected CI are not yet received and remain merge gates.
+
 ## Earlier V1 checkpoints
 
 This is targeted evidence, **not full-suite, release, or integration approval**.

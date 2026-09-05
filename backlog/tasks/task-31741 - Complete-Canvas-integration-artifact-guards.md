@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 20:02'
-updated_date: '2026-09-05 21:20'
+updated_date: '2026-09-05 21:27'
 labels:
   - canvas
   - testing
@@ -21,10 +21,10 @@ Make the Canvas merge candidate satisfy repository artifact guards with reviewed
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every changed diagnostic inventory owner is reviewed for content or credential disclosure and the generated inventory reproduces.
-- [ ] #2 All six Canvas indexes are classified in the census with real no-statistics query-plan evidence for read indexes and explicit constraint rationale for uniqueness enforcers.
-- [ ] #3 Targeted checks and repository preflight pass on the latest-dev merge candidate; independent review and implementation notes document evidence.
-- [ ] #4 Canvas startup integration stays within existing app-import, first-paint module, CSS, and pre-import payload ratchets without raising thresholds or hiding new residents.
+- [x] #1 Every changed diagnostic inventory owner is reviewed for content or credential disclosure and the generated inventory reproduces.
+- [x] #2 All six Canvas indexes are classified in the census with real no-statistics query-plan evidence for read indexes and explicit constraint rationale for uniqueness enforcers.
+- [x] #3 Targeted checks and repository preflight pass on the latest-dev merge candidate; independent review and implementation notes document evidence.
+- [x] #4 Canvas startup integration stays within existing app-import, first-paint module, CSS, and pre-import payload ratchets without raising thresholds or hiding new residents.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,3 +42,9 @@ ADR required: no new ADR. ADR path: backlog/decisions/121-local-versioned-canvas
 9. Measured Group C first paint is975, with compiler/web_auth deferred and one safety first-tick resident absent only by timing. Under existing ADR-097, shed equivalent first-paint work by moving SideChat, ReviewNotes and PromptQueue dialog imports to their actual user-open handlers/callbacks, and ConflictResolution to local Chatbook import. Preserve concrete class/enum identity, callbacks, singleton/dirty-edit protections and import validation; do not defer into compose/mount or add timing workarounds. Record negative import closure and existing real first-open behavior tests before implementation, then measure actual census and rerun affected controls. Keep ScopePicker unchanged because alternate eager parents defeat a single-edge deferral.
 10. Group D positive-control reconciliation: untouched dev reproduces the same SideChat timeout and two ReviewNotes workspace-registry refusals (3 failures). Complete the offline gateway fake with the current route keyword contract and provide the existing real app workspace registry to the two isolated persistence fixtures. Preserve actual sends, real SQLite assertions and workspace validation; establish green positives plus the two expected closure failures before changing production imports. Local Fast Lane process-lease tests also reproduce all six SemLock errno28 failures on untouched dev; record this host verification limit, do not modify OS resources or test gates, and require protected CI success before merge.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented reviewed diagnostic metadata, six Canvas index classifications and real no-statistics query-plan coverage; corrected four new Canvas traceback disclosures with fixed diagnostics. Restored startup ratchets through first-use archive/browser/compiler/dialog imports and exact CSS subjects, preserving concrete ownership, first-create delivery, strict policy and compiler contracts. Reconciled current dev fixture contracts without weakening production gates. Existing ADR-121 and ADR-097 apply; no new architecture, thresholds or snapshots. Latest base d9d5763d6: all116 commits range-diff equal, recovery ref retained; exact candidate970c86da4 preflight passes, startup+first-use36passed, prior affected1517passed, browser89passed (optional Firefox/WebKit unavailable), compiler/service139passed, finaldialog32passed, latency9passed. New/tiny owned-file Ruff/format passes; legacy diagnostics unchanged or reduced. Local PR Fast Lane749passed/6SemLock errno28 failures reproduced on untouched dev; no OS changes, protected CI still required. Evidence and warning qualifications: Docs/Canvas/V1_VERIFICATION.md. All scoped changes independently reviewed with PASS. Remains In Progress until protected integration checks complete; no full-suite claim. Modified Canvas/Console/config/Chatbook tests and owners, CSS bundle, diagnostic/index inventories, evidence and task documentation. Lesson added for baseline-verified OS allocation failures.
+<!-- SECTION:NOTES:END -->

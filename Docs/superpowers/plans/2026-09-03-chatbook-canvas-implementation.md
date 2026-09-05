@@ -761,7 +761,7 @@ their own design and ADR check before implementation.
 
 - [x] Complete TASK-31732: reproduce/classify the FD-growth signal, correct a
   proven in-scope leak if present, verify and independently review the result.
-- [ ] Preserve a recoverable pre-rebase ref, fetch latest `origin/dev`, inspect
+- [x] Preserve a recoverable pre-rebase ref, fetch latest `origin/dev`, inspect
   exact feature ancestry, and rebase only the feature range. Resolve conflicts
   without losing either side's unrelated work; recheck schema/ADR/task-ID and
   derived-artifact collisions. Prefer rebasing before the first public push.
