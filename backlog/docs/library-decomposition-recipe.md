@@ -5342,3 +5342,18 @@ had cleared focus. It now gates that real recompose and waits for the current
 filter's loading-phase caret before editing. Final stale-request, caret, retry,
 collapse and no-change assertions remain unchanged. A conflict restore waits for
 detail adoption and notification, not merely the earlier SQLite version write.
+
+## 25. Source admission must not repaint the retained authority (task 31700)
+
+Files admission called Notes navigation invalidation with its default rendering
+enabled. That reached the shared canvas synchronizer and recomposed the outgoing
+Database Work pane before it was hidden, replacing the editor, its undo history
+and the remembered focus target. A refresh-stack probe located this exact call;
+the regression now counts outgoing Work-pane recompositions and checks original
+editor identity immediately after Files opens, before any return.
+
+The source handoff uses the existing `render=False` invalidation option. Pending
+navigation still becomes stale, while both retained authorities keep their own
+widgets. Eight identity, typing, focus and guarded-return cases pass. Responsive
+scroll receipts are independently verified; this change does not claim to fix
+their outstanding offset mismatches.

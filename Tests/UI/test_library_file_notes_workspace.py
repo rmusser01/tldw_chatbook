@@ -1019,6 +1019,7 @@ async def test_folder_files_forced_recompose_recovers_inflight_autosave_once(
 @pytest.mark.asyncio
 async def test_notes_authority_round_trip_retains_both_workspaces(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -1065,6 +1066,17 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         )
         database_id = screen._selected_note_id
         database_editor = screen.query_one("#library-note-body", TextArea)
+        work_recomposes = 0
+        work_pane = screen.query_one("#library-note-work-pane")
+        original_refresh = work_pane.refresh
+
+        def record_refresh(*args, **kwargs):
+            nonlocal work_recomposes
+            if kwargs.get("recompose"):
+                work_recomposes += 1
+            return original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(work_pane, "refresh", record_refresh)
         _replace_editor_text(
             database_editor,
             "database draft\n" + "database scroll line\n" * 80,
@@ -1087,6 +1099,8 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             "Folder Files did not mount",
         )
         assert await workspace.open_path("folder/file.md")
+        assert work_recomposes == 0
+        assert screen.query_one("#library-note-body", TextArea) is database_editor
         folder_editor = workspace.query_one("#file-notes-editor", TextArea)
         _replace_editor_text(folder_editor, "folder draft")
         await pilot.pause()
