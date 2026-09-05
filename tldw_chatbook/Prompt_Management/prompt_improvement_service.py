@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
     AuxiliaryCompletionResult,
 )
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     BlockArtifactDefinition,
     PromptBlock,
@@ -53,7 +54,10 @@ _ADDITIONAL_CONTEXT_PREFIX = "additional-context"
 
 class _AuxiliaryGateway(Protocol):
     async def complete_auxiliary(
-        self, request: AuxiliaryCompletionRequest
+        self,
+        request: AuxiliaryCompletionRequest,
+        *,
+        route: ConsoleRequestRoute | None = None,
     ) -> AuxiliaryCompletionResult: ...
 
 
