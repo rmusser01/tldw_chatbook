@@ -74,6 +74,39 @@ def _claim() -> ServerLaunchClaim:
     return ServerLaunchClaim(provider="llamacpp", authority="External GGUF")
 
 
+@pytest.mark.parametrize(
+    "arguments,expected",
+    [
+        (("--api-key", "--slots"), False),
+        (("--api-key=--slots",), False),
+        (("--reverse-prompt", "--slot-save-path=x"), False),
+        (("--reverse-prompt=--slots",), False),
+        (("--api-key", "--slots", "--no-slots"), True),
+        (("--ssl-key-file", "--slots"), False),
+        (("--ssl-key-file=--slots", "--slot-save-path=x"), True),
+        (("--ssl-key-file", "key", "--api-key", "--slots", "--slots"), True),
+        (("--flash-attn", "--slots"), True),
+        (("--fit", "off", "--no-slots"), True),
+        (("--control-vector-layer-range", "--slots", "--no-slots"), False),
+        (("--control-vector-layer-range", "1", "2", "--slots"), True),
+        (("--future-option", "--slots"), False),
+    ],
+)
+def test_owned_slot_scan_consumes_pinned_option_values(arguments, expected):
+    from tldw_chatbook.LLM_Management.snapshot_admission import has_owned_slot_options
+
+    assert has_owned_slot_options(("llama-server", *arguments), {}) is expected
+
+
+def test_owned_slot_environment_conflict_precedes_unknown_arity():
+    from tldw_chatbook.LLM_Management.snapshot_admission import has_owned_slot_options
+
+    assert has_owned_slot_options(
+        ("llama-server", "--future-option", "--slots"),
+        {"LLAMA_ARG_ENDPOINT_SLOTS": "0"},
+    )
+
+
 def _ready(model: Path, *runtime_values: tuple[str, str]) -> ReadinessObservation:
     return ReadinessObservation(
         slots=(

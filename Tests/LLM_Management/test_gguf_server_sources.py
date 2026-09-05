@@ -472,6 +472,88 @@ def test_snapshot_owned_options_fail_even_after_unsupported_transport(
     assert claim._snapshot_context is None
 
 
+@pytest.mark.parametrize("unsupported", [False, True])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("--api-key", "--slots"),
+        ("--api-key=--slots",),
+        ("--reverse-prompt", "--no-slots"),
+        ("--reverse-prompt=--no-slots",),
+        ("-r", "--slot-save-path=/private/value"),
+    ],
+)
+def test_snapshot_flag_looking_values_are_not_owned_options(
+    tmp_path, monkeypatch, arguments, unsupported
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+    from tldw_chatbook.LLM_Management.snapshot_store import SnapshotStore
+
+    model, runtime = tmp_path / "model.gguf", tmp_path / "llama-server"
+    model.write_bytes(b"model")
+    runtime.write_bytes(b"runtime")
+    store = SnapshotStore(tmp_path / "snapshots")
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=store)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    probes = []
+    monkeypatch.setattr(
+        events, "_snapshot_listener_exists", lambda url: probes.append(url) or False
+    )
+    prefix = ["--ssl-key-file", "/private/key"] if unsupported else []
+    command = [str(runtime), "--model", str(model), *prefix, *arguments]
+    claim = server_lifecycle.ServerLaunchClaim("llamacpp")
+    prepared, options = events._prepare_snapshot_launch(app, command, claim)
+    assert prepared[: len(command)] == command
+    if unsupported:
+        assert prepared == command and options == {}
+        assert probes == []
+        assert claim._snapshot_context.directory is None
+        assert "TLS" in claim._snapshot_context.descriptor.disabled_reason
+    else:
+        assert prepared[len(command) : 2 + len(command)] == [
+            "--slots",
+            "--slot-save-path",
+        ]
+        assert len(probes) == 1
+        assert claim._snapshot_context.directory.is_dir()
+
+
+def test_snapshot_unknown_arity_preserves_ordinary_command_without_guessing(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=None)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    monkeypatch.setattr(
+        events,
+        "_snapshot_listener_exists",
+        lambda url: pytest.fail("Unknown arity must disable management"),
+    )
+    command = ["llama-server", "--future-option", "--slots"]
+    claim = server_lifecycle.ServerLaunchClaim("llamacpp")
+    prepared, options = events._prepare_snapshot_launch(app, command, claim)
+    assert prepared == command and options == {}
+    assert claim._snapshot_context.directory is None
+    assert claim._snapshot_context.descriptor.disabled_reason is not None
+
+
 def test_snapshot_disabled_next_launch_omits_all_snapshot_setup(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
