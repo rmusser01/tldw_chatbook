@@ -620,6 +620,29 @@ request explicit authorization for another bounded pass rather than waive
 these required behaviors. See `Docs/Canvas/V1_VERIFICATION.md` for exact
 evidence, native-versus-served qualifications and independent baseline limits.
 
+### User-authorized additional focused pass
+
+The user explicitly approved one additional pass after the residual I1/I2/I4
+handoff. This supersedes the preceding pause, not the product contracts or
+the exclusion of unrelated baseline fixes/full-suite work.
+
+ADR required: no new ADR; existing ADR-115 applies.
+ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+Reason: enforce the existing temporary resource, virtual DOM and stale-effect
+contracts without changing storage, permissions or runtime boundaries.
+
+- [ ] Enforce exact default 8 MiB temporary admission, including confirmed
+  temporary history, concurrent stages, multiple turns, import/rename and abort
+  release, while preserving the separate durable ceiling.
+- [ ] Support detached text/attribute/property/style and subtree edits before
+  reinsertion with bounded transactional state; restore supported empty/false
+  form values after attributes. Verify through the actual browser renderer.
+- [ ] Suppress late compile-refusal repair effects after disable or changes to
+  the captured owner/session/source block; retain the valid repair control and
+  successful import fences with no retained source cache.
+- [ ] Record exact RED/GREEN, final affected tests/statics/asset integrity and
+  owned browser cleanup, then obtain one scoped author-independent rereview.
+
 ## Execution Handoff
 
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.

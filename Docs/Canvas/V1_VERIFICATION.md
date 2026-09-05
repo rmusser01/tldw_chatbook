@@ -84,7 +84,9 @@ and static served wiring support I5's closure without overstating browser eviden
 The single final correction wave and scoped rereview allowed by the selected
 workflow are exhausted. The residuals are required behavior, not waived or
 parked as harmless. TASK-31232 remains In Progress with AC3, AC9 and AC10 open.
-An additional focused correction pass requires explicit user direction. Keep
+The user subsequently approved one additional focused correction pass for
+I1/I2/I4. That pass is now authorized; the residual findings remain open until
+new evidence and scoped rereview close them. Keep
 the branch/worktree and this plan's review/recovery files intact; no merge,
 push, full sweep or unrelated baseline repair is authorized.
 
