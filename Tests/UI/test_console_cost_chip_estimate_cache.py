@@ -27,7 +27,9 @@ from Tests.UI.test_console_cost_chip_screen import (
     _AnthropicCostGateway,
     _configure_anthropic_ready_console,
     _mount_and_send_warm_reply,
+    _next_send_dollars,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -41,6 +43,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Console_Modules import context_cost as chat_screen_module
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 _TRANSCRIPT_ROWS = 12
 _ROW_TEXT = "the quick brown fox jumps over the lazy dog. " * 40
@@ -156,16 +159,22 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
-    """The staged-evidence pseudo-row is rebuilt as a NEW string on every
-    pass (``console_prompted_evidence_text`` joins the snippets each call),
-    so it only caches if identity is not the test for a hit."""
+    """Staged evidence belongs to Next Send, never current-spend tokenization."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("price this request")
+        console._sync_console_settings_summary()
+        before = console._build_console_cost_state()
+        assert before is not None
+        assert "Current $0.00" in before.label
 
         reference = EvidenceReference(
             evidence_id="S1",
@@ -183,8 +192,8 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
             source="Library Search/RAG",
             references=(reference,),
         )
-        # Spy BEFORE staging: staging itself drives a sync pass, so the
-        # pseudo-row's one legitimate estimate may be spent there.
+        # Staging itself drives a sync pass; it must not count unsent evidence
+        # as spend there or on any subsequent unchanged tick.
         spy = _spy_on_estimator(monkeypatch)
         console._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
@@ -198,13 +207,14 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
 
         first = console._build_console_cost_state()
         settled_calls = spy.call_count
-        assert settled_calls >= 1, "test setup: staged text must price as a row"
-        assert first is not None and first.label.startswith("~")
+        assert settled_calls == 0, "unsent evidence must not tokenize as current spend"
+        assert first is not None and "Current $0.00" in first.label
+        assert _next_send_dollars(first) > _next_send_dollars(before)
 
         second = console._build_console_cost_state()
 
         assert spy.call_count == settled_calls, (
-            "the staged-evidence pseudo-row was re-tokenized on the next tick"
+            "unsent evidence was tokenized as current spend on the next tick"
         )
         assert second == first
 
@@ -216,6 +226,7 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick():
     alerting session paid it 5x/s for the life of the alert."""
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
