@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, Sequence
@@ -40,6 +40,8 @@ class MeetingMeta:
     system_source: str
     provider: str
     model: str
+    speaker_names: dict = field(default_factory=dict)
+    format_version: int = 2
 
     def to_json(self) -> dict:
         """Return the JSON-safe payload (``folder`` stringified)."""
@@ -64,6 +66,11 @@ class MeetingSegment:
     t_wall_end: float
     label: str | None
     text: str
+    # Trails `text` (not `label`, despite the brief's prose) so the two
+    # existing positional `MeetingSegment(...)` call sites in the test suite
+    # -- 7 positional args ending at `text` -- keep working: a defaulted
+    # field can't sit before `text`, which has no default.
+    speaker_id: str | None = None
 
     def to_json(self) -> dict:
         """Return the JSONL row for this segment."""
@@ -153,7 +160,13 @@ def read_meeting_json(folder: Path) -> dict:
             (a crash mid-write); recovery reports this to the user.
     """
     path = Path(folder) / MEETING_JSON
-    return json.loads(path.read_text()) if path.exists() else {}
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text())
+    # Back-fill pre-task-2 (format_version 1 or absent) recordings so
+    # callers can always read `speaker_names` without a KeyError.
+    payload.setdefault("speaker_names", {})
+    return payload
 
 
 def update_meeting_json(folder: Path, **fields: Any) -> dict:
@@ -172,6 +185,22 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
     payload.update(fields)
     write_meeting_json(folder, payload)
     return payload
+
+
+def render_label(segment: MeetingSegment, names: dict[str, str], user_display_name: str) -> str | None:
+    """Display name for a segment: the user for the mic channel, else the
+    named or generic speaker; None when the segment has no label (room mode
+    pre-diarization) or is overlap-coarse."""
+    if segment.label == "you":
+        return user_display_name
+    if segment.speaker_id:
+        if segment.speaker_id in names:
+            return names[segment.speaker_id]
+        n = segment.speaker_id[1:] if segment.speaker_id.startswith("S") else segment.speaker_id
+        return f"Speaker {n}"
+    if segment.label in ("others", "both"):
+        return "Others"
+    return None
 
 
 def format_clock(seconds: float) -> str:
