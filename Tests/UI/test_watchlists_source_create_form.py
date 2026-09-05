@@ -95,7 +95,8 @@ SERVER_FIELD_ORDER = [
     "sources-create-url",
     "sources-create-type",
     "sources-create-active",
-    "sources-create-watchlist",
+    # Server sources cannot be assigned to a local Watchlist, so the visible
+    # explanatory selector is disabled and intentionally skipped by Tab.
     "sources-create-tags",
     "sources-create-submit",
     "sources-create-cancel",
@@ -245,8 +246,8 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             ("Forum", "forum"),
         ]
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert not pane.query("#sources-create-frequency")
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert not pane.query_one("#sources-create-frequency").display
+        assert not pane.query_one("#sources-create-ignore-selectors").display
         assert pane.query_one("#sources-create-name", Input).value == "Morning"
         assert (
             pane.query_one("#sources-create-url", Input).value
@@ -255,7 +256,7 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         assert pane.query_one("#sources-create-active", Switch).value is False
         assert (
             pane.query_one("#sources-create-watchlist", Select).value
-            == watchlist_id
+            == pane.UNASSIGNED_DESTINATION
         )
         assert pane.query_one("#sources-create-tags", Input).value == "news, daily"
 
@@ -271,6 +272,13 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         assert pane.query_one("#sources-create-type", Select).value == "rss"
         assert pane.query_one("#sources-create-frequency", Select).value == 86_400
         await _choose_source_type(pilot, pane, "url")
+        for _ in range(200):
+            if (
+                pane.query_one("#sources-create-watchlist", Select).value
+                == watchlist_id
+            ):
+                break
+            await pilot.pause(0.02)
         assert (
             pane.query_one("#sources-create-ignore-selectors", TextArea).text
             == ".ad\n.counter"
@@ -621,8 +629,8 @@ async def test_tab_walks_the_create_form_in_visual_order(
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert not pane.query_one("#sources-create-frequency").display
+            assert not pane.query_one("#sources-create-ignore-selectors").display
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
             pane.query_one("#sources-create-name", Input).focus()
@@ -714,8 +722,8 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert not pane.query_one("#sources-create-frequency").display
+            assert not pane.query_one("#sources-create-ignore-selectors").display
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
 
