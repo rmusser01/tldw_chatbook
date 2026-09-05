@@ -50,6 +50,27 @@
 #scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
 #scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
 
+/* UAT display blocker (finding 2): both detail panes are a plain
+ * `Vertical` (`overflow: hidden hidden` by default) taller than their
+ * own box at every measured width -- History and the lifecycle action
+ * row were clipped with no scrollbar, no wheel handling, no PageDown.
+ * `overflow-y: auto` alone is not enough: `#scheduling-task-detail-
+ * groups` is itself a plain `Vertical` (`height: 1fr` by default), which
+ * clips ITS OWN children a second time before `TaskDetail` ever gets a
+ * chance to scroll them -- `height: auto` lets it size to its real
+ * content instead. `DefinitionDetail` nests one level shallower (no
+ * separate groups wrapper -- its DetailGroups are direct children of
+ * `#scheduling-automation-detail-body`), so that container gets the
+ * same treatment. */
+TaskDetail, DefinitionDetail {
+    overflow-y: auto;
+}
+
+#scheduling-task-detail-groups,
+#scheduling-automation-detail-body {
+    height: auto;
+}
+
 /* The queue table must fill its pane, or empty queues collapse to a single
  * clipped row at short heights (80x24). */
 #scheduling-task-table {
