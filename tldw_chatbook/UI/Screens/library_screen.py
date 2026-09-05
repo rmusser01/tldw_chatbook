@@ -390,6 +390,7 @@ from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
     LibraryWorkspaceDepthState,
     build_library_workspace_depth_state,
+    library_workspace_handoff_action_state,
     library_item_context_handoff,
 )
 from ...Widgets.destination_rail import (
@@ -12053,6 +12054,9 @@ class LibraryScreen(BaseAppScreen):
                     query=self._rag_search_state.query,
                     lifecycle=self._library_lifecycle,
                     onboarding_all_empty=self._library_onboarding_all_empty,
+                    workspace_handoff_action=self._workspace_handoff_action_state(
+                        self._library_workspace_depth_state()
+                    ),
                 )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -12468,6 +12472,9 @@ class LibraryScreen(BaseAppScreen):
                 query=self._rag_search_state.query,
                 lifecycle=self._library_lifecycle,
                 onboarding_all_empty=self._library_onboarding_all_empty,
+                workspace_handoff_action=self._workspace_handoff_action_state(
+                    self._library_workspace_depth_state()
+                ),
             )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -14258,25 +14265,14 @@ class LibraryScreen(BaseAppScreen):
         workspace_depth_state: LibraryWorkspaceDepthState,
     ) -> tuple[bool, str]:
         """Return the Workspaces handoff button disabled flag and tooltip."""
-        handoff_disabled = True
-        handoff_tooltip = "Stage Library source context after Library finishes loading."
-        if self._library_lookup_error:
-            recovery_state = self._library_lookup_recovery_state
-            handoff_tooltip = (
-                recovery_state.disabled_tooltip
-                if recovery_state is not None
-                else "Library source services are unavailable; retry Library later."
-            )
-        elif not self._has_local_sources():
-            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
-        else:
-            handoff_disabled = not workspace_depth_state.context_handoff_enabled
-            handoff_tooltip = (
-                workspace_depth_state.context_handoff_tooltip
-                if handoff_disabled
-                else "Stage Library source context in Console."
-            )
-        return handoff_disabled, handoff_tooltip
+        return library_workspace_handoff_action_state(
+            workspace_depth_state,
+            lookup_error=bool(self._library_lookup_error),
+            recovery_tooltip=getattr(
+                self._library_lookup_recovery_state, "disabled_tooltip", None
+            ),
+            has_local_sources=self._has_local_sources(),
+        )
 
     def _workspace_action_widgets(
         self,
@@ -21492,6 +21488,9 @@ class LibraryScreen(BaseAppScreen):
             query=self._rag_search_state.query,
             lifecycle=self._library_lifecycle,
             onboarding_all_empty=self._library_onboarding_all_empty,
+            workspace_handoff_action=self._workspace_handoff_action_state(
+                self._library_workspace_depth_state()
+            ),
         )
         self._sync_library_landing_lifecycle_presentation()
         self._sync_library_lifecycle_status()

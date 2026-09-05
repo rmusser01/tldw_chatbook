@@ -298,6 +298,36 @@ class LibraryWorkspaceDepthState:
     recovery_copy: str = ""
 
 
+def library_workspace_handoff_action_state(
+    workspace_depth_state: LibraryWorkspaceDepthState,
+    *,
+    lookup_error: bool,
+    recovery_tooltip: str | None,
+    has_local_sources: bool,
+) -> tuple[bool, str]:
+    """Return the Library handoff blocked flag and its current policy tooltip."""
+    handoff_disabled = True
+    handoff_tooltip = "Stage Library source context after Library finishes loading."
+    if lookup_error:
+        handoff_tooltip = (
+            recovery_tooltip
+            if recovery_tooltip is not None
+            else "Library source services are unavailable; retry Library later."
+        )
+    elif not has_local_sources:
+        handoff_tooltip = (
+            "Stage Library source context after adding notes, media, or conversations."
+        )
+    else:
+        handoff_disabled = not workspace_depth_state.context_handoff_enabled
+        handoff_tooltip = (
+            workspace_depth_state.context_handoff_tooltip
+            if handoff_disabled
+            else "Stage Library source context in Console."
+        )
+    return handoff_disabled, handoff_tooltip
+
+
 def build_console_workspace_state(
     *,
     registry_service: Any,
@@ -305,9 +335,8 @@ def build_console_workspace_state(
     conversations: Iterable[ConsoleWorkspaceConversationRow] | None = None,
     server_adapter_state: ConsoleWorkspaceServerAdapterState | None = None,
     acp_handoff_state: ConsoleWorkspaceACPHandoffState | None = None,
-    runtime_bindings_by_workspace: Mapping[
-        str, Sequence[WorkspaceRuntimeBinding]
-    ] | None = None,
+    runtime_bindings_by_workspace: Mapping[str, Sequence[WorkspaceRuntimeBinding]]
+    | None = None,
 ) -> ConsoleWorkspaceContextState:
     """Build Console workspace display state from the local registry seam.
 

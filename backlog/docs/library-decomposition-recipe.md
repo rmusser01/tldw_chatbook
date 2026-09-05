@@ -5296,3 +5296,24 @@ constructs a real screen and checks exact controller and runtime identity.
 This applies existing ADR-097; global budget tightening and snapshot refresh
 must use the final combined census, because concurrent route changes affect
 the aggregate and marginal attribution is route-order dependent.
+
+## 22. Retained action policy and blocking snapshot adapters (tasks 31667, 31668)
+
+The destination tests exposed two runtime defects after minimal timeout fixtures
+were given their required `app_config`. Conversation snapshot listing lacked the
+worker-isolation option already used by Notes and Media: a blocking async adapter
+took 0.2075 seconds against the unchanged 0.05-second timeout check. Supplying that
+same option restored the deadline; a thread-identity regression also checks that
+all three source families preserve their result records and counts off the UI
+thread.
+
+Separately, retained rail synchronization updated error text but left the
+workspace handoff button's initial empty-source tooltip behind. The policy itself
+was already correct. Its pure derivation now lives in workspace display state,
+with the existing screen adapter used by both initial composition and the three
+retained rail-sync callsites. Only the derived blocked/tooltip value crosses into
+the rail; it patches the existing button without composing temporary widgets or
+replacing DOM. A regression checks available, failure, custom-policy and restored
+availability states while retaining exact button identity. The original failure
+and custom-tooltip assertions remain unchanged; the screen stays within its
+41,325-line / 1,301-method ceilings (measured 41,324 / 1,301 after both fixes).
