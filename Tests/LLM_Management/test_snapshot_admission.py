@@ -74,6 +74,41 @@ def _claim() -> ServerLaunchClaim:
     return ServerLaunchClaim(provider="llamacpp", authority="External GGUF")
 
 
+@pytest.mark.parametrize("option", ["--cache-ram", "-cram", "--cache-ram=0"])
+def test_ram_cache_budget_is_performance_only_and_preserves_option_scan(
+    tmp_path, option
+):
+    from tldw_chatbook.LLM_Management.snapshot_admission import has_owned_slot_options
+
+    runtime, model = _launch_files(tmp_path)
+    baseline = prepare_launch(
+        _explicit_command(runtime, model), {}, _claim(), "baseline"
+    )
+    extra = (option,) if "=" in option else (option, "0")
+    command = _explicit_command(runtime, model, *extra)
+    admitted = prepare_launch(command, {}, _claim(), "ram-disabled")
+    assert admitted.disabled_reason is None
+    expected = finalize_launch(baseline, _ready(model)).compatibility
+    assert expected is not None
+    assert finalize_launch(admitted, _ready(model)).compatibility == expected
+    assert has_owned_slot_options((*command, "--slots"), {})
+    if "=" not in option:
+        assert not has_owned_slot_options((str(runtime), option, "--slots"), {})
+
+
+def test_ram_cache_environment_does_not_change_compatibility(tmp_path):
+    runtime, model = _launch_files(tmp_path)
+    command = _explicit_command(runtime, model)
+    baseline = prepare_launch(command, {}, _claim(), "baseline")
+    admitted = prepare_launch(
+        command, {"LLAMA_ARG_CACHE_RAM": "0"}, _claim(), "ram-disabled"
+    )
+    assert admitted.disabled_reason is None
+    expected = finalize_launch(baseline, _ready(model)).compatibility
+    assert expected is not None
+    assert finalize_launch(admitted, _ready(model)).compatibility == expected
+
+
 @pytest.mark.parametrize(
     "arguments,expected",
     [

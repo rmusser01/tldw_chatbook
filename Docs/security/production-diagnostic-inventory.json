@@ -11168,6 +11168,23 @@
       ]
     },
     {
+      "path": "tldw_chatbook/LLM_Management/snapshot_store.py",
+      "sinks": [
+        {
+          "digest": "1772455e589d4302",
+          "kind": "open_private_text_append_stream",
+          "method": "open_private_text_append_stream",
+          "scope": "SnapshotStore._locked"
+        },
+        {
+          "digest": "267eb51c604b239d",
+          "kind": "open_private_text_append_stream",
+          "method": "open_private_text_append_stream",
+          "scope": "SnapshotStore.stage_restore"
+        }
+      ]
+    },
+    {
       "path": "tldw_chatbook/Library/collections_offline_store.py",
       "sinks": [
         {

@@ -12,7 +12,7 @@
 
 **Backlog:** [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
-**Status:** Implementation in progress. Units 1–4 are implemented and reviewed; UI and live verification remain. See TASK-31552 for feature completion status.
+**Status:** Implementation in progress. Units 1–5 are implemented and reviewed; Task6 adds the opt-in harness and [evidence closeout](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md). Live AC5 remains open because no eligible asset set or measured counters was supplied. See TASK-31552 for feature completion status.
 
 ADR required: yes
 
@@ -338,10 +338,10 @@ any stale-generation completion -> original bookkeeping only; no new-generation 
 
 **Explicit Details path:** To satisfy design section 3, add `ManagerView.storage_location: str | None = field(default=None, repr=False)`, derived from initialized `store.root` without additional I/O. This is a narrowly scoped exception to path-free display state: show the full read-only root only in user-expanded Details, never in default summary, notifications, logs, persisted snapshot metadata, or repr. Launch/model/credential paths remain excluded. Verify collapsed/expanded frame behavior; the widget never accesses the store.
 
-- [ ] Write production-shaped RED tests using `Tests/UI/app_factory.py::_build_test_app`, the real `LLMScreen` route, and `TldwCli.CSS_PATH`. Inject the real service with a recording transport/private store. Assert rendered frame text and action containment, not only `widget.render()` or computed styles.
-- [ ] Compose slots and snapshots as selectable tables with shared action rows. Use stable IDs: `snapshot-slots`, `snapshot-records`, `snapshot-save`, `snapshot-restore`, `snapshot-delete`, `snapshot-refresh`, `snapshot-retention`, `snapshot-operation-status`, `snapshot-disabled-reason`. Keep selected opaque IDs stable across refresh; do not select a different record silently when a confirmation is open.
-- [ ] Add compact controls for Enable snapshots and keep count in F9 Providers & Models and the launcher. Persist through the shared adapter; only update effective UI values after a successful config mutation. Label enable/disable changes as applying on next launch. Keep preferences editing out of legacy Tools Settings/sidebar files. If F9 has dirty snapshot preference fields when another surface updates the pair, detect the stale values before Save and ask the user to reload that draft rather than silently overwriting newer values.
-- [ ] Implement explicit actions and display stages:
+- [x] Write production-shaped RED tests using `Tests/UI/app_factory.py::_build_test_app`, the real `LLMScreen` route, and `TldwCli.CSS_PATH`. Inject the real service with a recording transport/private store. Assert rendered frame text and action containment, not only `widget.render()` or computed styles.
+- [x] Compose slots and snapshots as selectable tables with shared action rows. Use stable IDs: `snapshot-slots`, `snapshot-records`, `snapshot-save`, `snapshot-restore`, `snapshot-delete`, `snapshot-refresh`, `snapshot-retention`, `snapshot-operation-status`, `snapshot-disabled-reason`. Keep selected opaque IDs stable across refresh; do not select a different record silently when a confirmation is open.
+- [x] Add compact controls for Enable snapshots and keep count in F9 Providers & Models and the launcher. Persist through the shared adapter; only update effective UI values after a successful config mutation. Label enable/disable changes as applying on next launch. Keep preferences editing out of legacy Tools Settings/sidebar files. If F9 has dirty snapshot preference fields when another surface updates the pair, detect the stale values before Save and ask the user to reload that draft rather than silently overwriting newer values.
+- [x] Implement explicit actions and display stages:
 
 ```python
 def retention_copy(keep_count: int) -> str:
@@ -353,19 +353,21 @@ def token_copy(tokens: int | None) -> str:
 
 Save has no modal; Restore confirms the timestamp, selected destination, replacement and failure-clearing warning; Delete confirms permanent removal and size. Revalidate the selected IDs/claim after confirmation. Escape cancels the dialog only, never an already-submitted server operation. Prefer known-empty idle destinations; never automatically select a busy one.
 
-- [ ] Use widget-local single-letter shortcuts only while its non-text controls have focus; do not shadow global bindings or consume letters from launcher inputs. Tab/Shift-Tab, arrows and Enter must fully operate the manager even if no accelerator is available. Advertise only implemented actions. Use existing design tokens; keep secondary fields in details at 80x24.
-- [ ] Use a UI timer solely for elapsed-time rendering; never create a continuous server polling loop. Refresh on entry/re-entry, readiness, acknowledgement and explicit Refresh. Show observation time, partial cleanup warnings, unknown operation recovery, compatibility reasons and stored/residual bytes. Screen detach removes subscribers/timers, not app-owned file/HTTP tasks; old callbacks check current attachment before painting.
-- [ ] Run `python -m pytest Tests/UI/test_llamacpp_snapshot_manager.py Tests/UI/test_llamacpp_snapshot_settings.py Tests/UI/test_llm_deferred_views.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_llm_gguf_source_modes.py -q`. Exercise both 80x24 and 140x45; assert the cross-model count and primary actions actually paint. Commit: `feat: expose manual prompt-cache snapshots in Models and Settings`.
+- [x] Use widget-local single-letter shortcuts only while its non-text controls have focus; do not shadow global bindings or consume letters from launcher inputs. Tab/Shift-Tab, arrows and Enter must fully operate the manager even if no accelerator is available. Advertise only implemented actions. Use existing design tokens; keep secondary fields in details at 80x24.
+- [x] Use a UI timer solely for elapsed-time rendering; never create a continuous server polling loop. Refresh on entry/re-entry, readiness, acknowledgement and explicit Refresh. Show observation time, partial cleanup warnings, unknown operation recovery, compatibility reasons and stored/residual bytes. Screen detach removes subscribers/timers, not app-owned file/HTTP tasks; old callbacks check current attachment before painting.
+- [x] Run `python -m pytest Tests/UI/test_llamacpp_snapshot_manager.py Tests/UI/test_llamacpp_snapshot_settings.py Tests/UI/test_llm_deferred_views.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_llm_gguf_source_modes.py -q`. Exercise both 80x24 and 140x45; assert the cross-model count and primary actions actually paint. Commit: `feat: expose manual prompt-cache snapshots in Models and Settings`.
 
 ## Task 6: Real persistence/reuse evidence and feature closeout
 
-**Files:** Create `Tests/LLM_Management/test_snapshot_live.py`, `Docs/LLMs/llamacpp-snapshots.md`; update the task's final notes only after implementation and verification. Create `Docs/superpowers/reviews/2026-09-04-llamacpp-slot-snapshots-verification.md` for sanitized evidence and explicit remaining gaps.
+**Files:** Create `Tests/LLM_Management/test_snapshot_live.py`, `Docs/LLMs/llamacpp-snapshots.md`; update the task's final notes only after implementation and verification. Create `Docs/superpowers/reviews/2026-09-04-llamacpp-slot-snapshots-verification.md` for sanitized evidence and explicit remaining gaps. Replace stale pre-implementation status prose in this plan, the linked design, and the Backlog task with the verified implementation state; keep missing live evidence and the In Progress status explicit.
 
 **Interfaces:** Uses the real launcher/service/store/client/widget; no additional production API or cache-routing change. The live test accepts existing local model assets only and never downloads models or contacts a cloud provider.
 
+**Narrow admission completion:** Recognize pinned `--cache-ram` / `-cram` as one-value performance-only options and `LLAMA_ARG_CACHE_RAM` as the corresponding environment option in `snapshot_admission.py`, matching the existing ignored-performance option policy. This RAM prompt-cache budget is not serialized compatibility state. Add admission regressions proving these options no longer disable management, do not change compatibility identity, and preserve owned-slot conflict detection after their consumed value. The live harness explicitly selects zero; do not inject or change the ordinary launcher's default.
+
 **Guarded inventory:** Review and update only the new `snapshot_store.py` persistent-sink entry and corresponding count in `Docs/security/production-diagnostic-inventory.json`; run the inventory checker and a focused row comparison. Controller's read-only check found unchanged pre-existing owner drift in `DB/Client_Media_DB_v2.py` and `UI/Screens/library_screen.py`; preserve unrelated rows and report remaining baseline drift rather than bulk rewriting the inventory.
 
-- [ ] Add an exact opt-in gate, checked before any process/network action:
+- [x] Add an exact opt-in gate, checked before any process/network action:
 
 ```python
 import os
@@ -388,26 +390,28 @@ def live_inputs() -> dict[str, Path]:
 Keep the test inside `Tests/` so root conftest isolates config and installs the network guard. Use `loopback_network` and a justified per-test timeout, not the paid `live` marker or optional/slow gates that skip before this contract. Use a fresh owned port, `tmp_path` data/config, no user history, and fixed benign prompts. Stop/reap all owned children in `finally`; retain only sanitized evidence, not snapshot binaries or prompt/media content in the repo.
 
 - [ ] Prove text and image save/restart/restore with the same executable/model/projector/settings. Send matching OpenAI-compatible requests without `id_slot`, comparing `timings.cache_n` (or the pinned server's verified equivalent cache counter) against a cold control. Record actual reported field names; missing counters fail the evidence gate, not default to zero. A different-image control may reuse preceding text, but must not count the mismatched media prefix as reused. Test requests are ordinary HTTP clients, not production chat-routing modifications.
+
+Use a native in-memory A→B control to measure the different-media prefix boundary, not a guessed text-template token count. Pin one slot, disable the server's separate RAM prompt cache, and require distinct SHA-256 image byte digests. With identical ordinary requests, compare cold A, native A→B, restored A→A, and separately restored A→B. Restored same-A cache reuse must exceed both cold A and native A→B; restored different-B reuse must not exceed native A→B. Validate matching prompt totals and strict counters. This oracle is grounded in the pinned server's byte-hash media IDs and whole-chunk prefix comparison; unsupported counters/configuration or absent live assets leave the evidence gate open. Record the actual controls, not just a pass label.
 - [ ] Verify the production Models action path separately: launch through Chatbook, populate a slot, Save, stop/start, Restore, and return to the normal chat request path. This proves the service is reachable rather than only testing an alternate harness entry point. Add audio coverage only when claiming tested audio support. If the chosen model/build cannot demonstrate reuse, leave AC5 open and record the limitation.
-- [ ] Document prerequisites, enable-next-launch semantics, timestamp naming, global per-profile count, count-versus-bytes, confirmations, matching-config restrictions, required SWA configuration when applicable, and recovery after unknown outcome. Show this command with the five input variables pointing at user-selected existing files:
+- [x] Document prerequisites, enable-next-launch semantics, timestamp naming, global per-profile count, count-versus-bytes, confirmations, matching-config restrictions, required SWA configuration when applicable, and recovery after unknown outcome. Show this command with the five input variables pointing at user-selected existing files:
 
 ```bash
 TLDW_LLAMA_SNAPSHOT_LIVE=1 python -m pytest Tests/LLM_Management/test_snapshot_live.py -q
 ```
 
-- [ ] Run targeted automated tests across the exact new modules and the existing regression files listed in Tasks 1–5. Do not substitute a broad `-k snapshot` selection that misses launcher regressions. Run Python compilation, a scoped linter/formatter check using the execution environment's installed tools, and `git diff --check`. If lint tools are absent, report that missing verification rather than adding dependencies or claiming lint success. Do not reformat unrelated legacy modules.
-- [ ] Self-review the complete feature diff against all 11 ACs. Record the commands, exit codes, RED/GREEN evidence, platform coverage and actual live counters. Keep fixture-only tests explicitly separate from real-server evidence. Check each AC only when its evidence exists; if live/hardware/platform evidence is missing, report it and leave the task In Progress.
+- [x] Run targeted automated tests across the exact new modules and the existing regression files listed in Tasks 1–5. Do not substitute a broad `-k snapshot` selection that misses launcher regressions. Run Python compilation, a scoped linter/formatter check using the execution environment's installed tools, and `git diff --check`. If lint tools are absent, report that missing verification rather than adding dependencies or claiming lint success. Do not reformat unrelated legacy modules.
+- [x] Self-review the complete feature diff against all 11 ACs. Record the commands, exit codes, RED/GREEN evidence, platform coverage and actual live counters. Keep fixture-only tests explicitly separate from real-server evidence. Check each AC only when its evidence exists; if live/hardware/platform evidence is missing, report it and leave the task In Progress.
 - [ ] Commit docs/tests with `test: verify llama.cpp snapshot persistence and cache reuse`. After all DoD requirements are met, add concise Implementation Notes linking ADR-119 and the evidence report, then use `backlog task edit 31552 -s Done --plain` and inspect the resulting file. Recheck task/ADR allocation before integration. Do not merge or push as part of this plan without authorization.
 
 ## Coverage and review checkpoints
 
 | Contract | Implemented by | Evidence |
 | --- | --- | --- |
-| Manual save/restore + timestamp names (AC1) | Tasks 2, 4, 5 | Store, real-route Pilot, live restart |
+| Manual save/restore + timestamp names (AC1) | Tasks 2, 4, 5 | Store and real-route Pilot verified; real-model restart remains AC5 gate |
 | Profile-global newest-N retention (AC2) | Tasks 1, 2, 4 | Multi-model/clock/keep=1/failed-save tests |
 | Claim/readiness/privacy/compatibility (AC3) | Tasks 1–4 | Admission, process race, private-path and client tests |
 | Honest keyboard UI (AC4) | Task 5 | Production CSS at two sizes; confirmations/errors |
-| Real image reuse (AC5) | Task 6 | Cold/matching/different-image measured controls |
+| Real image reuse (AC5) | Task 6 | Harness implemented; measured live controls missing, AC5 open |
 | Unknown evidence cannot evict useful files (AC6) | Tasks 1, 2, 4 | Cross-layer invalidation before publication |
 | Integrity before Restore POST (AC7) | Tasks 2–4 | Same-length corruption, zero recorded POSTs |
 | Local-only management (AC8) | Tasks 1, 3 | Numeric addresses, decoy proxy, redirect recording |
@@ -422,7 +426,7 @@ Review after each unit before advancing. Task 1's effective-configuration table 
 - All nine spec sections and all 11 task criteria have implementation and verification owners above.
 - All new public type and method names are defined in the shared interface section; task boundaries do not introduce a second client, config writer, or process owner.
 - The six approved review amendments are included in code steps and regression oracles, not only documentation.
-- No application code has been written or tested during planning. Missing local models or live evidence are execution gates, not claimed successes.
+- Planning originally ended before implementation. Units 1–5 are now implemented and reviewed, and Task6 records targeted automated evidence separately from the still-missing real-server counters. Missing eligible local assets and live AC5 remain execution gates, not claimed successes.
 
 ## Source anchors
 

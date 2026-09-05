@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Reviewed design; approved review amendments integrated. Implementation not started.
+Status: Implemented through reviewed units 1–5; opt-in live harness and evidence closeout added. Feature remains In Progress because real-server persistence and same-image reuse evidence (AC5) is missing. See [verification evidence](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md).
 
 Task: [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
