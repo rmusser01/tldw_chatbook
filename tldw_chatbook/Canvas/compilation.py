@@ -43,4 +43,9 @@ class CanvasCompilation:
         except BaseException:
             self._slots.release()
             raise
+        # A cancelled shield waiter cannot retrieve a later worker failure.
+        # Consume it without logging; normal awaiters still receive the error.
+        future.add_done_callback(
+            lambda completed: None if completed.cancelled() else completed.exception()
+        )
         return await asyncio.shield(future)

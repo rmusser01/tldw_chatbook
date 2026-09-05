@@ -260,6 +260,55 @@ async def test_cancelled_waiters_keep_actual_worker_admission():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+async def test_worker_failure_is_consumed_and_restores_admission(cancel_waiter):
+    from tldw_chatbook.Canvas.compilation import CanvasCompilation
+
+    admission = CanvasCompilation()
+    started = threading.Event()
+    release = threading.Event()
+    settled = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled = []
+    loop.set_exception_handler(
+        lambda _loop, context: unhandled.append(context["message"])
+    )
+
+    def fail():
+        started.set()
+        try:
+            assert release.wait(2)
+            raise RuntimeError("synthetic_compilation_failure")
+        finally:
+            loop.call_soon_threadsafe(settled.set)
+
+    task = asyncio.create_task(admission.run_async(fail))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        if cancel_waiter:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        release.set()
+        if not cancel_waiter:
+            with pytest.raises(RuntimeError, match="synthetic_compilation_failure"):
+                await task
+        await asyncio.wait_for(settled.wait(), 1)
+        # Let the executor completion and shield callbacks drain before checking
+        # the loop's unretrieved-exception channel.
+        await asyncio.sleep(0.05)
+        assert admission.run(lambda: admission.run(lambda: "both slots free")) == (
+            "both slots free"
+        )
+        assert unhandled == []
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
 async def test_tool_update_rechecks_parent_after_unlocked_compile(monkeypatch):
     _authority, controller, live = setup_authority()
     controller.register_run(
