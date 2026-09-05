@@ -1,5 +1,46 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## PR integration verification
+
+The snapshot-only commits were replayed onto `origin/dev` at `93388ba69b`, on
+`codex/llamacpp-slot-snapshots-pr`. The original tested feature branch is preserved.
+Integration retains dev's lazy pane population, settings focus ownership and
+recovery fencing, and all app-owned shutdown lifecycles. Snapshot refresh now runs
+at completed pane activation. Generated CSS and diagnostic inventory were rebuilt;
+the inventory matches exactly with only the two snapshot-store sinks added.
+
+Fresh normal Models UAT on the integrated branch: **1 passed, 1 warning, 321.58s**.
+The same b10816/Gemma/projector assets and normal keyboard/confirmation path were
+used, without diagnostic plugins or modal-refresh suppression. All six cache
+counters exactly match the table below. Default retention, lowered retention,
+cancelled Delete, and selected-record Delete passed. The rendered final frame
+shows Idle, one matching snapshot, keep count 2, and the server still running
+before owned-child cleanup. Evidence: `pr-normal.xml`, `pr-normal.log`, stage SVGs
+under `pr-normal/`, and `pr-final.png` in the same scratch evidence directory.
+
+Snapshot modules, widget and test lint/format checks pass (16 files); the generated
+diagnostic inventory check reports no drift. The full repository suite was not run.
+
+The 13-file integration run finished **579 passed, 5 failed, 1 deselected** in
+484.04s (`pr-targeted.log`). Follow-up isolated and corrected two test assumptions:
+the snapshot shutdown double now includes dev's additional lifecycle methods;
+the Remote memory/recompose test waits for the actual mounted Models window,
+not merely its presence during composition. The multiprocessing test passed with
+`TMPDIR=/private/tmp` (the initial manager socket exceeded macOS AF_UNIX's path
+limit). The navigation timing assertion passed in isolation; its initial 0.520s
+gap during concurrent live UAT is retained, not treated as a proven root cause.
+Final combined recheck: **39 passed, 1 warning, 7.89s** (`pr-final-recheck.log`).
+
+The remaining Notes runtime-start test also fails on an untouched archive of
+`origin/dev` at `93388ba69b`: its Library screen has not mounted before the test's
+deadline. The initial integrated run instead observed extra refresh callbacks;
+that differing failure is retained in `pr-targeted.log`. Baseline comparison is
+recorded in `pr-dev-baseline.log`. This is not an all-green integration claim.
+The existing large Models adoption test file has the same nine Ruff findings on
+dev and this branch; these unrelated findings were not reformatted. The larger
+run also reported file-descriptor growth and splash SyntaxWarnings. No warning
+was suppressed. Final process inspection found no remaining llama-server children.
+
 ## Current verdict: PASS — normal Models live UAT after the race fix
 
 The final normal-UI run passed in **274.86 seconds**, with no diagnostic plugin

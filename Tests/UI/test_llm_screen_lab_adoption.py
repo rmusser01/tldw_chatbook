@@ -387,6 +387,9 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
         )
         await app.push_screen(screen)
         assert await _wait_for(lambda: bool(screen.query(LLMManagementWindow)), pilot)
+        assert await _wait_for(
+            lambda: screen.query_one(LLMManagementWindow).is_mounted, pilot
+        )
         screen.query_one(LLMManagementWindow).active_view = "remote"
         assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
         accepted = _machine_snapshot(total_gib=32)
@@ -415,7 +418,8 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
         await screen.recompose()
         assert await _wait_for(
             lambda: bool(screen.query(LLMManagementWindow))
-            and screen.query_one(LLMManagementWindow) is not old_window,
+            and screen.query_one(LLMManagementWindow) is not old_window
+            and screen.query_one(LLMManagementWindow).is_mounted,
             pilot,
             attempts=500,
         )
