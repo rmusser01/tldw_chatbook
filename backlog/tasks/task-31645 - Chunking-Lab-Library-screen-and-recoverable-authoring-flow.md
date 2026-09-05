@@ -1,11 +1,11 @@
 ---
 id: TASK-31645
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 17:14'
+updated_date: '2026-09-05 18:13'
 labels:
   - chunking
   - chunking-lab
@@ -48,12 +48,13 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
 - [x] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
 - [x] #18 Normal live Library entry finishes initialization even when mount handling yields; targeted regression and real A/B, template-save, and reopen/crash-recovery UAT pass.
+- [ ] #19 PR 2421 startup budget correction keeps UI-ready imports at or below 972 without raising guard limits, preserves Environment refresh and vLLM handoffs, and passes current-head review and CI before merge.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: lifecycle scheduling bug within the existing screen/coordinator contract. Follow Docs/superpowers/plans/2026-09-05-chunking-lab-live-initialization.md: trace the live mount boundary; prove a yielding-mount readiness regression fails; defer lazy initialization until refresh while retaining teardown guards; run targeted screen/recovery/results and static checks; repeat uninstrumented real-terminal A/B, template-save, reopen and crash-recovery UAT; record exact evidence and review before completion. No publication or unrelated startup changes.
+User-authorized PR 2421 follow-up: reproduce the inherited 976-module startup breach; add first-use import regressions; defer Environment gatherer construction until an admitted refresh and vLLM setup imports until target validation; run targeted feature, navigation, and full Perf Guard selections; inspect generated artifacts and current-head Qodo/CI before merging. ADR required: no new ADR. ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-118 continues to govern the Lab. Reason: first-use import correction preserving existing contracts; no raised budget or new runtime boundary. Detailed plan: Docs/superpowers/plans/2026-09-05-chunking-lab-startup-budget.md.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

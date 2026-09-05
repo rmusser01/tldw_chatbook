@@ -108,13 +108,16 @@ def owner_has_current_intent(
 ) -> bool:
     """Return whether ``intent`` still names the owner's exact ready target."""
 
-    from ..LLM_Management.vllm_setup import VllmConnectionTarget, VllmReadinessState
-
     snapshot_method = getattr(owner, "snapshot", None)
     if not callable(snapshot_method):
         return False
     if type(intent) not in {VllmConsoleIntent, VllmDefaultIntent}:
         return False
+    from ..LLM_Management.vllm_setup import (
+        VllmConnectionTarget,
+        VllmReadinessState,
+    )
+
     snapshot = snapshot_method()
     target = snapshot.target
     token = snapshot.current_token

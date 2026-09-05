@@ -179,6 +179,12 @@ ABSENT_AT_READY_MODULES = (
     # modal and descriptor-backed reader stay outside the first-paint graph.
     "tldw_chatbook.Widgets.Console.console_workspace_files_modal",
     "tldw_chatbook.Workspaces.file_inspector",
+    # PR #2421 / ADR-097: closed-rail gatherers and vLLM setup validation
+    # are interaction work, not dependencies of controller/intent creation.
+    "tldw_chatbook.Workspaces.environment_status",
+    "tldw_chatbook.Workspaces.git_workspace",
+    "tldw_chatbook.UI.LLM_Management",
+    "tldw_chatbook.UI.LLM_Management.vllm_setup",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

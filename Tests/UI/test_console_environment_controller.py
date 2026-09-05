@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import tldw_chatbook.UI.Console_Modules.environment as env_mod
+import tldw_chatbook.Workspaces.environment_status as env_mod
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot, EnvSourceAvailability, GitEnvState, PrEnvState, TasksEnvState,
 )
