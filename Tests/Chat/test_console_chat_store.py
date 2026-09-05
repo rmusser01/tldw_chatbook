@@ -2224,6 +2224,8 @@ class FakePersistence:
         contributions=(),
         trace_boundary=None,
     ):
+        if trace_boundary is not None:
+            raise RuntimeError("FakePersistence does not persist trace boundaries")
         if contributions:
             raise RuntimeError("FakePersistence does not execute contributions")
         self.promotion_trace_boundaries.append(trace_boundary)
@@ -7926,6 +7928,20 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
             "character_name_snapshot": "Brynn",
         }
     ]
+
+
+def test_fake_promotion_refuses_unimplemented_trace_boundaries():
+    persistence = FakePersistence()
+    with pytest.raises(RuntimeError, match="does not persist trace boundaries"):
+        persistence.promote_console_conversation_bundle(
+            conversation_id="conversation",
+            policy_candidate=None,
+            conversation_kwargs={},
+            messages=(),
+            active_leaf_message_id=None,
+            trace_boundary=object(),
+        )
+    assert persistence.created_conversations == []
 
 
 def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path():
