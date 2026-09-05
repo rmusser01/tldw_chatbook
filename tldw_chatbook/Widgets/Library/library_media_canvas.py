@@ -688,8 +688,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-30043 (critique P1): at the items pane's ~40-col real width
         # one Horizontal cannot render six labels (live capture: ``t so E Tr
         # R Se``), so the browse actions split into rows of readable labels.
-        # In select mode most of these hide (only type + Done remain), so
-        # its single row always fits and the vertical budget stays flat.
+        # In select mode most of these hide, so ``type:`` keeps that row to
+        # itself and Done moves out of the toolbar entirely (see the Done row
+        # at the end of the select-mode block below).
         if not select_mode:
             toolbar_rows: tuple[tuple[str, tuple[Button, ...]], ...] = (
                 ("library-media-toolbar-choosers", (type_filter, sort_btn)),
@@ -709,7 +710,6 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         export_btn,
                         trash_btn,
                         review_btn,
-                        select_btn,
                     ),
                 ),
             )
@@ -866,6 +866,27 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 danger_row.styles.height = "auto"
                 with danger_row:
                     yield self._delete_selected_button()
+            # task-31631 AC#3: Done closes the select-mode block on its own
+            # row. It used to ride the toolbar row directly after ``type:``,
+            # which is the exact cell range ``sort: Newest`` holds in browse
+            # mode (measured at 235x52: Done x=63..71 inside sort's
+            # x=63..79), so the habitual click on the sort chooser silently
+            # became "leave select mode and discard the selection".
+            #
+            # Every other slot in the pane's top three rows is likewise a
+            # browse control's (type:/sort:, Export…/Trash, Review these),
+            # and the "N selected / Select all N shown" summary row already
+            # measures 33 of the pane's 36 cells with a two-digit count and
+            # a "○ " disabled marker -- a trailing Done clips there. The row
+            # AFTER the select-mode block is the only slot that collides
+            # with nothing. Rendered outside the ``confirming_bulk_delete``
+            # branch above, because Done must stay pressable mid-confirm.
+            done_row = Horizontal(
+                id="library-media-select-done", classes="ds-toolbar"
+            )
+            done_row.styles.height = "auto"
+            with done_row:
+                yield select_btn
 
         # task-4022 AC2: a completed bulk delete's receipt, naming the
         # count with an Undo affordance right at the point of action --
@@ -1163,6 +1184,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_loading = row.loading
                         button._library_media_loaded = row.loaded
                         button.tooltip = escape_markup(row.title)
+                        # task-31631 AC#2: the whole row is the toggle
+                        # target. It already was one full-width Button
+                        # ("☐ <title>"), but Textual's ``Button._on_click``
+                        # DROPS any click landing while the previous press's
+                        # 0.2s ``-active`` flash is still on the widget --
+                        # so clicking ☐ and then the same row's title (what
+                        # critique #5 did) lost the second click, and the row
+                        # read as a one-cell target. A list row has no use
+                        # for a press flash; the marker flip is the feedback.
+                        # This applies in browse mode too (not just select
+                        # mode): dropping the flash there also stops a fast
+                        # double-click on a browse row from being swallowed,
+                        # and browse-mode feedback is the item loading into
+                        # the Reader, not the flash.
+                        button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",

@@ -575,3 +575,77 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     assert "outline-top: solid $ds-action-focus;" not in source
     assert "outline-bottom: solid $ds-action-focus;" not in source
     assert "#library-media-reader-shell > .library-media-pane-grip" not in source
+
+
+# ---------------------------------------------------------------------------
+# task-31567 AC#2: Space on a focused Items row never collapses a pane.
+#
+# The grips are the first focusable widgets in the shell, so before the
+# restore seam ANY media recompose handed them focus -- and in browse mode
+# Space then activated the grip (wave 4 PR B's symptom, from the other end).
+# The pin is the whole gesture, not the binding gate: stand on a row, leave
+# select mode (a real canvas recompose), press Space, and the shell's pane
+# allocation must be byte-identical.
+# ---------------------------------------------------------------------------
+
+from Tests.UI.test_library_media_side_by_side import (  # noqa: E402
+    _build_media_test_app,
+    _open_media_list,
+    _two_media_items,
+)
+from Tests.UI.test_library_shell import (  # noqa: E402
+    LibraryGlobalKeyProductionCSSHarness,
+    _seed_conversations,
+    _two_conversations,
+    _wait_for_condition,
+)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
+    """task-31567 AC#2/AC#3: a row keeps focus across a recompose, so Space
+    never reaches a pane grip."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+
+        await pilot.press("s")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_select_mode,
+            message="Select mode never engaged after 's'.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+        await pilot.press("s")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_select_mode,
+            message="Select mode never left after the second 's'.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, "the recompose left nothing focused"
+        assert not focused.has_class("library-adaptive-reader-pane-grip"), focused
+        assert focused.has_class("library-media-row"), focused
+
+        layout_before = screen._library_media_reader_layout
+        await pilot.press("space")
+        for _ in range(3):
+            await pilot.pause()
+
+        assert screen._library_media_reader_layout == layout_before, (
+            f"Space collapsed a pane: {layout_before} -> "
+            f"{screen._library_media_reader_layout}"
+        )
+        assert not screen.focused.has_class(
+            "library-adaptive-reader-pane-grip"
+        ), screen.focused

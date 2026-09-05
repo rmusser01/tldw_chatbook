@@ -10,6 +10,7 @@ from .library_collections_capture_reader import (
 from .library_conversations_canvas import LibraryConversationsCanvas
 from .library_conversation_reader import LibraryConversationReader
 from .library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderPaneGrip,
     LibraryAdaptiveReaderShell,
@@ -111,6 +112,7 @@ __all__ = [
     "PROMPT_DISCARD_TOOLTIP_DIRTY",
     "SKILL_DISCARD_TOOLTIP_CLEAN",
     "SKILL_DISCARD_TOOLTIP_DIRTY",
+    "LIBRARY_ADAPTIVE_READER_GRIP_CLASS",
     "AdaptiveReaderShellResized",
     "LibraryAdaptiveReaderPaneGrip",
     "LibraryAdaptiveReaderShell",
