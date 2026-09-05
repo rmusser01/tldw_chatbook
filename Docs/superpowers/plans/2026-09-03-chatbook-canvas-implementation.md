@@ -549,12 +549,12 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - Modify: TASK-31003 only if the implemented local archive boundary changes its assumptions
 
-- [ ] Document creation/update, multiple names, Temporary state, save/promotion, active branches, exact revisions, Undo/View previous, source copy/download, confirmed submit/download, compatibility errors, and scripts-disabled recovery.
-- [ ] Document strict zero egress accurately: generated code has no network/filesystem/cookies/Chatbook/parent DOM, while trusted user-confirmed host actions are outside that runtime. Do not market the system as a general browser sandbox.
-- [ ] Document remote token setup, TLS or trusted-proxy requirements, the insecure-development override, session revocation, and incident response.
-- [ ] Tell models when Canvas materially helps, how to call list/read/create/update, that updates are complete documents with expected parent IDs, and which V1 APIs are supported.
-- [ ] Keep V2 bundled libraries, V3 multi-file VFS, and server synchronization explicitly deferred; do not add speculative compatibility code.
-- [ ] Commit: `docs(canvas): explain the v1 workflow and security model`
+- [x] Document creation/update, multiple names, Temporary state, save/promotion, active branches, exact revisions, Undo/View previous, source copy/download, confirmed submit/download, compatibility errors, and scripts-disabled recovery.
+- [x] Document strict zero egress accurately: generated code has no network/filesystem/cookies/Chatbook/parent DOM, while trusted user-confirmed host actions are outside that runtime. Do not market the system as a general browser sandbox.
+- [x] Document remote token setup, TLS or trusted-proxy requirements, the insecure-development override, session revocation, and incident response.
+- [x] Tell models when Canvas materially helps, how to call list/read/create/update, that updates are complete documents with expected parent IDs, and which V1 APIs are supported.
+- [x] Keep V2 bundled libraries, V3 multi-file VFS, and server synchronization explicitly deferred; do not add speculative compatibility code.
+- [x] Commit: `docs(canvas): explain the v1 workflow and security model`
 
 ### Task 7.4: Run outermost-path verification and close the rollout
 
@@ -563,6 +563,8 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `Tests/Canvas/browser/test_canvas_native_flow.py`
 - Modify: `Tests/Canvas/browser/test_canvas_served_flow.py`
 - Modify: `Tests/Canvas/browser/test_canvas_zero_egress.py`
+- Create as needed: focused live-harness helpers/fixtures under `Tests/Canvas/browser/`
+- Modify as needed: `Tests/Chatbooks/test_chatbook_canvas_round_trip.py`
 - Modify: TASK-31232 with final evidence and notes
 - Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
 

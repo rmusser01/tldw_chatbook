@@ -527,6 +527,15 @@ and existing source reads/authority checks/mutations still use their existing
 owners. Task 7.2a fulfills the scheduling gate identified above; engine quotas
 and the stack-trap evidence limitation are unchanged.
 
+Current publication/import lock ordering relies on application-loop affinity:
+the background bridge finishes a stage but does not publish it; finalization
+and inline post-commit publication occur after returning to the Textual
+coroutine. Native navigation and import apply run synchronously on that same
+loop. The synchronous APIs do not enforce this affinity themselves. Any future
+off-thread settlement change must first address controller-to-authority listener
+locking versus authority-to-controller import locking, including the outer
+exact-settlement lock, without weakening owner or replay checks.
+
 ## Context
 
 Chatbook's Console already persists a branching message tree, records one
