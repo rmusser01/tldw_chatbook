@@ -191,7 +191,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats a failed page request. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
+| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
@@ -216,6 +216,12 @@ all stay gated with a reason — and added the failed-undo receipt
 and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
 above. Confirmed against the product code and its tests, not re-verified
 live for this doc-only pass.)*
+
+*Verified against fix/media-wave5-g @ de24c4bac — 2026-09-05 (task-31632:
+launched with a scratch profile whose media DB path is a directory; Library ▸
+Media painted one red-bordered callout reading "Couldn't load media ·
+ValueError" with "Retry" on the same row — the only Retry on screen — and
+pressing it repainted the callout and left focus on that button.)*
 
 *Verified against fix/media-wave5-f @ 1b1d8b8d84 — 2026-09-05 (tasks
 31631 / 31634 / 31567: select mode now focuses a row on entry so Down and
