@@ -10263,7 +10263,15 @@ class ChatScreen(BaseAppScreen):
                 pricing_as_of,
                 pricing is not None,
                 context_state,
+                # Configuration capture resolves RAG defaults; text-only
+                # display refreshes must not pull that work onto first paint.
                 any(
+                    message.role is ConsoleMessageRole.USER
+                    and message.attachments
+                    and message.id in history.request_ids
+                    for message in messages
+                )
+                and any(
                     row.attachments
                     for row in controller._lightweight_provider_message_rows(
                         [
