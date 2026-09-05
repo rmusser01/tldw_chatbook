@@ -325,32 +325,25 @@ class CanvasBridgeRequest:
     @classmethod
     def from_wire(cls, message: object, *, limits: CanvasLimits | None = None) -> CanvasBridgeRequest:
         """Decode exactly the Canvas V1 request fields and reject all extras."""
-        if not isinstance(message, Mapping):
-            raise ValueError("Canvas bridge request must be an object")
-        expected_fields = {"version", "request_id", "kind", "value"}
-        actual_fields = set(message.keys())
-        if actual_fields != expected_fields:
-            unknown = actual_fields - expected_fields
-            missing = expected_fields - actual_fields
-            if unknown:
-                raise ValueError("Canvas bridge request contains unknown fields")
-            raise ValueError(f"Canvas bridge request is missing fields: {', '.join(sorted(missing))}")
+        from tldw_chatbook.Utils.input_validation import validate_canvas_bridge_wire
+
+        wire = validate_canvas_bridge_wire(message)
 
         try:
             _validate_bridge_request(
-                version=message["version"],
-                request_id=message["request_id"],
-                kind=message["kind"],
-                value=message["value"],
+                version=wire.version,
+                request_id=wire.request_id,
+                kind=wire.kind,
+                value=wire.value,
                 limits=limits or CanvasLimits(),
             )
         except CanvasLimitError as exc:
             raise ValueError(str(exc)) from exc
         return cls(
-            version=message["version"],
-            request_id=message["request_id"],
-            kind=message["kind"],
-            value=message["value"],
+            version=wire.version,
+            request_id=wire.request_id,
+            kind=wire.kind,
+            value=wire.value,
         )
 
     def submit_text(self) -> str:

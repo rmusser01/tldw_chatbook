@@ -29,6 +29,7 @@ from tldw_chatbook.Canvas.models import (
     RenderAsset,
     RenderNode,
 )
+from tldw_chatbook.Utils import input_validation
 
 
 @pytest.mark.parametrize(
@@ -331,6 +332,32 @@ def test_canvas_contract_records_are_immutable_slotted_and_validate_wire_message
             request_id="request-1",
             kind="submit",
             value="ok",
+        )
+
+
+def test_bridge_from_wire_delegates_shape_rejection_to_shared_boundary(
+    monkeypatch,
+) -> None:
+    expected = "shared Canvas bridge shape rejection"
+
+    def reject_shape(_message):
+        raise ValueError(expected)
+
+    monkeypatch.setattr(
+        input_validation,
+        "validate_canvas_bridge_wire",
+        reject_shape,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match=expected):
+        CanvasBridgeRequest.from_wire(
+            {
+                "version": "canvas-v1",
+                "request_id": "request-shared-boundary",
+                "kind": "submit",
+                "value": "synthetic",
+            }
         )
 
 

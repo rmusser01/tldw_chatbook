@@ -159,6 +159,45 @@ def test_execution_only_config_read_does_not_import_web_auth(tmp_path: Path) -> 
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_canvas_models_load_shared_wire_validation_only_on_first_decode(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import sys
+
+                from tldw_chatbook.Canvas.models import CanvasBridgeRequest
+
+                module_name = "tldw_chatbook.Utils.input_validation"
+                assert module_name not in sys.modules
+                request = CanvasBridgeRequest.from_wire(
+                    {
+                        "version": "canvas-v1",
+                        "request_id": "request-first-use",
+                        "kind": "submit",
+                        "value": "synthetic",
+                    }
+                )
+                assert request.submit_text() == "synthetic"
+                assert module_name in sys.modules
+                """
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=_isolated_environment(tmp_path),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_console_owners_do_not_import_compiler_until_first_compile(
     tmp_path: Path,
 ) -> None:
