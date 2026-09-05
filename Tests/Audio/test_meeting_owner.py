@@ -247,3 +247,57 @@ def test_cleanup_raw_tracks_only_when_job_done(tmp_path, monkeypatch):
     assert owner.cleanup_raw_tracks_if_done() is True
     assert not (folder / "you.wav").exists() and not (folder / "others.wav").exists()
     assert (folder / "mixed.wav").exists()
+
+
+def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **callbacks: False)
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    with pytest.raises(RuntimeError):
+        owner.start()
+    assert owner.session is None
+    assert not owner.is_active
+    assert list((tmp_path / "meetings").glob("*")) == []
+
+
+def test_recover_folder_survives_missing_mixed_wav(tmp_path):
+    folder = tmp_path / "meetings" / "2026-09-04_1100"
+    folder.mkdir(parents=True)
+    writer = PlaceholderWavWriter(folder / "others.wav")
+    writer.write(b"\x00\x00" * 320 * 20)
+    writer._handle.flush()                  # crash: never closed, mixed.wav absent
+    (folder / "meeting.json").write_text(json.dumps({"schema": 1, "started_at": "2026-09-04T11:00:00", "ended_at": None, "mode": "call"}))
+    assert mo.scan_recoverable(tmp_path / "meetings") == [folder]
+    payload = mo.recover_folder(folder)
+    assert payload["recovered"] is True
+    assert payload["duration_s"] == 0.0
+    assert payload["ended_at"]
+    assert not wav_needs_patch(folder / "others.wav")
+
+
+def test_stop_does_not_hold_owner_lock_during_session_stop(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    owner.start()
+
+    real_stop = owner.session.stop
+    acquired: list[bool] = []
+
+    def wrapper(reason="user"):
+        def probe():
+            got = owner._lock.acquire(timeout=0.5)
+            acquired.append(got)
+            if got:
+                owner._lock.release()
+
+        thread = threading.Thread(target=probe)
+        thread.start()
+        thread.join()
+        return real_stop(reason=reason)
+
+    owner.session.stop = wrapper
+    owner.stop()
+    assert acquired == [True]
+    assert not owner.is_active

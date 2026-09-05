@@ -7,6 +7,7 @@ ingest submit callable; everything else is injectable for tests.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import threading
 import time
 from dataclasses import dataclass
@@ -114,7 +115,13 @@ def recover_folder(folder: Path) -> dict:
     duration_s = data_bytes / 32000.0
     payload = read_meeting_json(folder)
     if not payload.get("ended_at"):
-        payload["ended_at"] = datetime.fromtimestamp((folder / "mixed.wav").stat().st_mtime).isoformat(timespec="seconds")
+        mixed_path = folder / "mixed.wav"
+        ended_at = (
+            datetime.fromtimestamp(mixed_path.stat().st_mtime)
+            if mixed_path.exists()
+            else datetime.now()
+        )
+        payload["ended_at"] = ended_at.isoformat(timespec="seconds")
     payload.update(recovered=True, duration_s=duration_s, stop_reason=payload.get("stop_reason") or "crash")
     return update_meeting_json(folder, **payload)
 
@@ -186,6 +193,7 @@ class MeetingSessionOwner:
         self._watchdog: threading.Thread | None = None
         self._watchdog_stop = threading.Event()
         self._lock = threading.RLock()
+        self._stop_lock = threading.Lock()
 
     # ---- prepare ----------------------------------------------------------
     def prepare(self) -> PrepareResult:
@@ -254,7 +262,10 @@ class MeetingSessionOwner:
             )
             self.session = session
             if not session.start():
+                capture.stop_recording()  # closes the writers; tolerates a never-started mic
+                shutil.rmtree(folder, ignore_errors=True)
                 self.session = None
+                self.local_sink = None
                 raise RuntimeError("meeting failed to start (see log)")
             self._start_watchdog()
             return session
@@ -268,14 +279,20 @@ class MeetingSessionOwner:
             self.session.resume()
 
     def stop(self, reason: str = "user") -> MeetingResult | None:
+        # ponytail: claim under the owner RLock, then run the (possibly
+        # blocking, cross-thread) session.stop() outside it -- serialized by
+        # a separate plain lock so a UI-thread callback that needs
+        # self._lock during the ingest submit can never deadlock against it.
         with self._lock:
             session = self.session
             if session is None:
-                return None
+                return self.last_result
+        with self._stop_lock:
             self._watchdog_stop.set()
-            result = session.stop(reason=reason)
-            self.last_result = result
-            return result
+            result = session.stop(reason=reason)  # idempotent for sequential callers
+            if result is not None:
+                self.last_result = result
+            return result if result is not None else self.last_result
 
     def shutdown(self) -> None:
         """App quit: finalise files, skip the ingest submit (spec §3.4)."""
