@@ -70,3 +70,15 @@ unrelated queued workspace refreshes through the real scheduler.
 The coordinating repair owns the full suite, baseline style/cost-cache fixtures,
 shared architecture inventories and final task closure. TASK-31659 separately
 records first-use deferral of the command-only style and rewind modal imports.
+
+The integrated sweep also found detached native-state and generation fixtures
+that skipped constructor wiring. They now call the focused settings or commands
+builder before reaching that owner's state; both complete State/Chat files pass
+(83 tests). The native snapshot helper follows the same settings-owner contract.
+The global-name refresh test patches the context/cost estimator's defining owner
+and verifies its current provider-equivalent seeded-greeting projection. The full
+settings file initially passed 415 tests with one unchanged wall-clock teardown
+overrun, which passed isolated; a final full-file rerun remains in progress.
+The native flow file passed 345 tests with three timing-sensitive journey fixture
+failures, all passing isolated; TASK-31710 owns their explicit phase synchronization.
+These results do not claim that the full sweep is green.

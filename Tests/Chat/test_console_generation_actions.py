@@ -48,7 +48,6 @@ from tldw_chatbook.UI.Console_Modules import image as image_module
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from Tests.UI.console_controller_stubs import (
     NO_APP,
     stub_fleet_controller,
@@ -134,6 +133,11 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     silently-wrong no-op.
     """
     screen = ChatScreen.__new__(ChatScreen)
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_commands_controller,
+    )
+
+    build_console_commands_controller(screen)
     # Must precede the `_console_chat_store` assignment below: that is a
     # property whose setter reaches `ConsoleRuntime.attach_view` ->
     # `ChatScreen.console_view_hooks`, which reads

@@ -34,6 +34,7 @@ from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_contr
 import tldw_chatbook.UI.Console_Modules.settings_navigation as settings_navigation_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Console_Modules.provider_selection as provider_selection_module
+import tldw_chatbook.UI.Console_Modules.context_cost as context_cost_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
@@ -9158,7 +9159,7 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
             label="17 / 4096 tokens",
         )
 
-    monkeypatch.setattr(chat_screen_module, "build_console_context_estimate", estimate)
+    monkeypatch.setattr(context_cost_module, "build_console_context_estimate", estimate)
     monkeypatch.setattr(
         console,
         "run_worker",
@@ -9182,8 +9183,10 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert provider_system.endswith("Hello Captain Rowan.")
     estimate_result = console._active_console_settings_context_estimate()
     assert estimate_result.used_tokens == 17
-    assert estimate_calls[-1][0][-1]["content"] == "Hello Captain Rowan."
-    assert estimate_calls[-1][3] == "Protect Captain Rowan."
+    # The spend projection folds the seeded greeting into the same system
+    # message as the provider; it is not counted again as transcript history.
+    assert estimate_calls[-1][0] == []
+    assert estimate_calls[-1][3] == provider_system
     await queued.pop(0)()
 
     expected = (
