@@ -46,6 +46,7 @@ import tldw_chatbook.UI.Screens.library_screen as library_screen_module
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
     _row_identity,
+    _wait_for_detail_call,
 )
 from Tests.UI.test_library_media_reader_traversal_t22207 import (
     _load_row,
@@ -210,6 +211,7 @@ async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
         )
 
         # Settle the final row so teardown is clean before asserting.
+        await _wait_for_detail_call(service, final_backing_id)
         _release_everything(service)
         await _wait_for_condition(
             pilot,
@@ -350,7 +352,7 @@ async def test_image_item_traversal_wall_time_probe():
 
         screen.query_one("#library-media-row-0", Button).focus()
         await pilot.pause()
-        final_id, _, _ = _row_identity(
+        final_id, final_backing_id, _ = _row_identity(
             screen.query_one("#library-media-row-5", Button)
         )
         per_keystroke_ms: list[float] = []
@@ -370,6 +372,7 @@ async def test_image_item_traversal_wall_time_probe():
             + f" state_builds={pass_through_state_builds}"
         )
 
+        await _wait_for_detail_call(service, final_backing_id)
         _release_everything(service)
         await _wait_for_condition(
             pilot,
