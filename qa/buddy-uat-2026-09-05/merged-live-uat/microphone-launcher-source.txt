@@ -1,0 +1,70 @@
+"""Bind one disposable live UAT process to launch and exit evidence."""
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import uuid
+
+ROOT = Path('/private/tmp/chatbook-migu-dragging-20260905')
+PYTHON = '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python'
+HARNESS = Path('/private/tmp/migu-merged-live-runset/microphone.py')
+NORMAL = Path('/Users/macbook-dev/.config/tldw_cli/config.toml')
+mode = 'microphone'
+run_id = f'{mode}-20260905-{uuid.uuid4().hex[:10]}'
+runtime = Path('/private/tmp/migu-merged-live-runset') / run_id
+runtime.mkdir(mode=0o700)
+out = runtime / 'evidence'
+out.mkdir(mode=0o700)
+profile = runtime / 'profile'
+normal_before = hashlib.sha256(NORMAL.read_bytes()).digest()
+now = lambda: datetime.now(timezone.utc).isoformat()
+def git(*args):
+    return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
+record = {
+    'run_id': run_id, 'mode': mode, 'wrapper_pid': os.getpid(),
+    'source_root': str(ROOT), 'source_revision': git('rev-parse', 'HEAD'),
+    'source_branch': git('branch', '--show-current'),
+    'source_status_at_launch': git('status', '--porcelain=v1'),
+    'controller_sha256': hashlib.sha256((ROOT/'tldw_chatbook/Chat/console_chat_controller.py').read_bytes()).hexdigest(),
+    'runtime_root': str(runtime), 'profile_root': str(profile),
+    'harness_sha256': hashlib.sha256(HARNESS.read_bytes()).hexdigest(),
+    'launched_at': now(), 'microphone_authorized': True,
+    'normal_config_unchanged': None,
+}
+env = dict(os.environ, MIGU_UAT_ROOT=str(ROOT), MIGU_UAT_PROFILE=str(profile),
+           MIGU_UAT_OUT=str(out), MIGU_UAT_RUN_ID=run_id,
+           PYTHON_KEYRING_BACKEND='keyring.backends.null.Keyring')
+args = [PYTHON, str(HARNESS)] + (['--provider'] if mode == 'provider' else [])
+with (runtime / 'stdout.log').open('w') as stdout, (runtime / 'stderr.log').open('w') as stderr:
+    child = subprocess.Popen(args, cwd=ROOT, env=env, stdout=stdout, stderr=stderr)
+    record['child_pid'] = child.pid
+    (out / 'execution.json').write_text(json.dumps(record, indent=2)+'\n')
+    print(json.dumps({'run_id':run_id,'wrapper_pid':os.getpid(),'child_pid':child.pid,'runtime_root':str(runtime)}), flush=True)
+    try:
+        code = child.wait(timeout=240)
+    except subprocess.TimeoutExpired:
+        record['timed_out'] = True
+        child.terminate()
+        try:
+            code = child.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            code = child.wait()
+record.update(exited_at=now(), child_returncode=code,
+              normal_config_unchanged=hashlib.sha256(NORMAL.read_bytes()).digest()==normal_before,
+              source_revision_at_exit=git('rev-parse','HEAD'),
+              source_status_at_exit=git('status','--porcelain=v1'),
+              controller_sha256_at_exit=hashlib.sha256((ROOT/'tldw_chatbook/Chat/console_chat_controller.py').read_bytes()).hexdigest())
+result_path = out / 'microphone.json'
+if result_path.exists():
+    result = json.loads(result_path.read_text())
+    record['child_receipt_identity_matches'] = all(result.get(k)==record[k] for k in ('run_id','child_pid','wrapper_pid'))
+    record['app_exception'] = result.get('app_exception')
+else:
+    record['child_receipt_identity_matches'] = False
+(out / 'execution.json').write_text(json.dumps(record, indent=2)+'\n')
+print(json.dumps({'run_id':run_id,'child_returncode':code,'receipt':str(out/'execution.json')}), flush=True)
+sys.exit(code)

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-05 03:32
-updated_date: 2026-09-05 21:30
+updated_date: 2026-09-05 21:48
 labels: []
 dependencies: []
 priority: high
@@ -87,4 +87,5 @@ Comment3941785985: add seven database-independent task-ownership tests covering 
 
 Comment3941785984: frozen .txt source snapshots are historical non-executable Git100644 audit artifacts, with no application/script/test execution reference. Preserve their original bytes and all three recorded harness hashes; document that any future runnable harness must independently establish/validate authorized paths. Adding validation to the historical snapshots would invalidate evidence without protecting a shipped execution path. README distinguishes these deterministic review changes from the earlier real DeepSeek production hash. Evidence: qa/buddy-uat-2026-09-05/live-voice-followup/sync-stop-review-verification.json. No new provider/mic run, commit, push or review reply by this agent. Existing ADR-079 applies; no new architectural policy.
 Post-merge UAT on dev66a1cbf8f: real DeepSeek run provider-20260905-0d3335b27f completed the expected reply, stopped after one streamed character, then completed a new expected reply in the same session; Buddy returned idle after each terminal. Real Kokoro run kokoro-20260905-57a73fbbf4 drained128000 PCM bytes with idle/speaking/idle and accepted context-switch stop while preserving a separate synthetic voice owner. Both wrappers reaped children with exit0, no app exception, unchanged source hashes and normal config. Initial recovery probe incorrectly read prior terminal state; requiring a new assistant identity fixed the harness without application changes. Evidence qa/buddy-uat-2026-09-05/merged-live-uat/README.md. No physical Terminal/microphone or OpenAI realtime pass claimed; microphone participation and configured credential remain pending. Existing ADR-037/074 apply; no production changes, Bandit not applicable.
+Human microphone UAT 2026-09-05: after explicit authorization for 20-second local capture and transcript-to-DeepSeek, run microphone-20260905-7c50b8573a recognized blue/notebook/ready (38 transcript characters,97920 VAD-forwarded PCM bytes), completed DeepSeek, and Kokoro drained68608 bytes. User confirmed hearing the reply clearly. Capture stopped after20.01s, app returned idle and child99028 exited0 under wrapper99022; normal config/source hashes unchanged. No microphone audio was saved or sent externally; recognized text was sent with authorization. Migu remained idle while recording: separate local dictation-listening task filed. Initial harness accessor error and missed-window run are retained as non-passing attempts. AC9 remains open for physical native-dragging/OpenAI realtime; this is a local STT plus DeepSeek/Kokoro cycle, not OpenAI realtime.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

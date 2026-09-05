@@ -1,0 +1,149 @@
+"""Isolated synthetic live UAT of the rebased PR; never modifies normal settings."""
+import asyncio
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+import sys
+import time
+import tomllib
+
+ROOT = Path('/private/tmp/chatbook-migu-dragging-20260905')
+sys.path.insert(0, str(ROOT))
+from tldw_chatbook.Utils.path_validation import validate_path, validate_canonical_directory
+ROOT = validate_canonical_directory(ROOT)
+RUNSET = validate_canonical_directory('/private/tmp/migu-merged-live-runset')
+PROFILE = validate_path(os.environ['MIGU_UAT_PROFILE'], RUNSET)
+OUT = validate_path(os.environ['MIGU_UAT_OUT'], RUNSET)
+NORMAL = Path('/Users/macbook-dev/.config/tldw_cli/config.toml')
+normal_digest = hashlib.sha256(NORMAL.read_bytes()).hexdigest()
+IDENTITY = {'run_id':os.environ['MIGU_UAT_RUN_ID'], 'child_pid':os.getpid(), 'wrapper_pid':os.getppid()}
+os.environ['PYTHON_KEYRING_BACKEND'] = 'keyring.backends.null.Keyring'
+SOURCE = Path('/private/tmp/chatbook-migu-uat-20260904/data/default_user')
+OUT.mkdir(exist_ok=True)
+PROFILE.mkdir(parents=True, exist_ok=True, mode=0o700)
+for key, name in [('XDG_CONFIG_HOME','config'),('XDG_DATA_HOME','xdg-data'),('XDG_CACHE_HOME','cache')]:
+    p = PROFILE / name
+    p.mkdir(exist_ok=True, mode=0o700)
+    os.environ[key] = str(p)
+os.environ['TLDW_CONFIG_PATH'] = str(PROFILE / 'config/config.toml')
+os.environ['PROMETHEUS_ENABLED'] = 'false'
+sys.path.insert(0, '/private/tmp/chatbook-migu-tts-deps')
+sys.path.insert(0, str(ROOT))
+from loguru import logger
+logger.remove()
+import toml
+DATA = PROFILE / 'data'
+DATA.mkdir(exist_ok=True, mode=0o700)
+user_data = DATA / 'default_user'
+if not user_data.exists():
+    shutil.copytree(SOURCE, user_data, ignore=shutil.ignore_patterns('*.db','*.db-wal','*.db-shm','*.lock'))
+    for source in SOURCE.glob('*.db'):
+        with sqlite3.connect(f'file:{source}?mode=ro', uri=True) as src, sqlite3.connect(user_data/source.name) as dst:
+            src.backup(dst)
+            assert dst.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+prefs = json.loads((SOURCE/'persona_buddy.json').read_text())
+prefs.update(enabled=True, open=True, collapsed=False, x=90, y=5, width=28, height=19)
+config = {
+    'paths': {'data_dir':str(DATA)},
+    'first_run': {'setup_completed':True},
+    'splash_screen': {'enabled':False},
+    'model_catalog': {'auto_refresh_enabled':False,'refresh_consent_recorded':True},
+    'logging': {'log_level':'ERROR'},
+    'general': {'default_tab':'chat'},
+    'console': {'local_tools_enabled':False, 'exchange_capture':False},
+    'transcription': {'default_provider':'faster-whisper','default_language':'en'},
+    'dictation': {'model':'/private/tmp/chatbook-migu-provider-uat-20260904/whisper-models/models--Systran--faster-whisper-tiny.en/snapshots/0d3d19a32d3338f10357c0889762bd8d64bbdeba','privacy_mode':True},
+    'persona_buddy': prefs,
+    'chat_defaults': {'provider':'deepseek','model':'deepseek-chat'},
+    'api_settings': {'deepseek': {'api_key_env_var':'DEEPSEEK_API_KEY','model':'deepseek-chat','max_tokens':256,'timeout':30,'retries':0,'streaming':True}},
+    'app_tts': {'default_provider':'kokoro','default_model':'kokoro','default_voice':'af_heart','default_format':'wav','KOKORO_ONNX_MODEL_PATH_DEFAULT':'/private/tmp/chatbook-migu-kokoro-models/kokoro-v1.0.onnx','KOKORO_ONNX_VOICES_JSON_DEFAULT':'/private/tmp/chatbook-migu-kokoro-models/voices-v1.0.bin'},
+}
+if not (PROFILE/'config/config.toml').exists():
+    (PROFILE/'config/config.toml').write_text(toml.dumps(config))
+if True:
+    os.environ['DEEPSEEK_API_KEY'] = tomllib.loads(NORMAL.read_text())['api_settings']['deepseek']['api_key']
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Event_Handlers.TTS_Events import tts_events
+from tldw_chatbook.TTS.audio_player import get_audio_player
+
+async def main():
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+    from tldw_chatbook.Chat.console_project_instructions import ProjectInstructionControlState
+    result={**IDENTITY,'microphone_authorized':True,'transcript_to_deepseek_authorized':True,'audio_saved':False,'audio_sent_to_provider':False,'transcription_provider':'faster-whisper','source_root':str(ROOT)}
+    def stage(value):
+        (OUT/'stage.json').write_text(json.dumps({'stage':value})+'\n')
+    original=tts_events.pump
+    async def observe(sink,source,**kwargs):
+        outcome=await original(sink,source,**kwargs)
+        result['sink']={'outcome':outcome.outcome,'bytes_fed':outcome.bytes_fed,'terminal_reason':sink.terminal_reason}
+        return outcome
+    tts_events.pump=observe
+    app=TldwCli()
+    async with app.run_test(size=(140,45)) as pilot:
+        await pilot.pause(2)
+        screen=app.screen
+        screen.action_new_console_tab()
+        await pilot.pause(.5)
+        store=app.console_runtime.chat_store
+        sid=store.active_session_id
+        store.set_session_project_instruction_state(sid,ProjectInstructionControlState.legacy_disabled())
+        composer=screen.query_one('#console-native-composer',ConsoleComposerBar)
+        stage('ready')
+        deadline=time.monotonic()+100
+        while not (OUT/'start').exists() and time.monotonic()<deadline: await asyncio.sleep(.1)
+        if not (OUT/'start').exists(): raise RuntimeError('No start signal')
+        stage('countdown')
+        await asyncio.sleep(5)
+        screen._request_console_dictation_start()
+        deadline=time.monotonic()+40
+        while screen._console_dictation_state!='recording' and time.monotonic()<deadline: await asyncio.sleep(.05)
+        result['recording_started']=screen._console_dictation_state=='recording'
+        if not result['recording_started']: raise RuntimeError('Microphone failed to enter recording')
+        session=screen._dictation._console_dictation_session
+        service=session._controller._service
+        started=time.monotonic()
+        stage('recording')
+        states=[]
+        while time.monotonic()-started<20:
+            state=app.persona_buddy_controller.snapshot().state
+            if not states or states[-1]!=state:states.append(state)
+            await asyncio.sleep(.05)
+        screen._request_console_dictation_stop()
+        result['stop_requested_seconds']=round(time.monotonic()-started,2)
+        stage('transcribing')
+        deadline=time.monotonic()+45
+        while screen._console_dictation_state!='idle' and time.monotonic()<deadline: await asyncio.sleep(.1)
+        await pilot.pause(.2)
+        transcript=composer.draft_text()
+        result.update(captured_bytes=getattr(service,'captured_bytes',None),known_words_recognized={w:w in transcript.lower() for w in ('blue','notebook','ready')},transcript_characters=len(transcript),final_dictation_state=screen._console_dictation_state,dictation_session_released=screen._dictation._console_dictation_session is None,buddy_capture_states=states)
+        if all(result['known_words_recognized'].values()):
+            before={m.id for m in store.messages_for_session(sid)}
+            result['provider_send_accepted']=await screen._send_console_message_from_visible_action()
+            stage('provider')
+            deadline=time.monotonic()+40
+            replies=[]
+            while time.monotonic()<deadline:
+                run=app.console_runtime.chat_controller.run_state_for(sid)
+                replies=[m for m in store.messages_for_session(sid) if m.id not in before and m.role is ConsoleMessageRole.ASSISTANT]
+                if replies and run.status.value in {'completed','failed','stopped','blocked'}:break
+                await asyncio.sleep(.05)
+            result['provider_status']=run.status.value
+            result['provider_reply_nonempty']=any(m.content.strip() for m in replies)
+            await screen._sync_native_console_chat_ui()
+            if result['provider_status']=='completed':
+                stage('playback')
+                await screen._console_read_last_response_back()
+                deadline=time.monotonic()+40
+                while time.monotonic()<deadline:
+                    if result.get('sink',{}).get('outcome')=='drained' and app.persona_buddy_controller.snapshot().state=='idle':break
+                    await asyncio.sleep(.05)
+        result['final_buddy_state']=app.persona_buddy_controller.snapshot().state
+    result['app_exception']=type(app._exception).__name__ if app._exception else None
+    result['normal_config_unchanged']=hashlib.sha256(NORMAL.read_bytes()).hexdigest()==normal_digest
+    (OUT/'microphone.json').write_text(json.dumps(result,indent=2)+'\n')
+    stage('finished')
+asyncio.run(main())

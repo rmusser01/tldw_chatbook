@@ -19,3 +19,15 @@ The [initial recovery probe](provider-20260905-e36c7b3c4c/provider.json) read th
 Harness `.txt` files are frozen, non-executable audit snapshots. Their hashes match their launch receipts. The new harness validates environment-derived output/profile paths beneath its fixed scratch root before use. These snapshots are not supported portable launchers. No logs, keys, recordings, or normal-profile databases are included.
 
 Verification: receipt JSON, identity/hash invariants, exact result assertions and whitespace checks. No production code changed; no new automated test suite or Bandit run applies. Existing ADR037 trusted speech and ADR074 Buddy leases govern this evidence.
+
+## Intentional human microphone cycle
+
+The user explicitly authorized up to20 seconds of capture, local transcription, recognized test text sent to DeepSeek, and Kokoro playback. In [microphone-20260905-7c50b8573a](microphone-20260905-7c50b8573a/microphone.json), the user spoke the requested test phrase. Local faster-whisper recognized blue/notebook/ready (38 characters). DeepSeek completed a nonempty response; Kokoro drained68608 PCM bytes. The user [confirmed hearing the reply clearly](microphone-20260905-7c50b8573a/human-confirmation.json).
+
+Stop was requested after20.01s. The dictation state returned idle, then wrapper99022 reaped child99028 with exit0 and no app exception. The tested source is documentation commit969043daf on top of merged dev66a1cbf8f; production controller hashes match the earlier merged-code runs. Normal config was unchanged. No raw microphone audio or transcript content is included in the evidence; only the authorized transcript was sent to DeepSeek. This is local STT plus DeepSeek/Kokoro, not OpenAI realtime. OpenAI has no configured credential.
+
+`captured_bytes=97920` counts only VAD-forwarded speech chunks, not the entire20s microphone buffer. `dictation_session_released=false` reports the cached session wrapper, which the successful dictation path intentionally retains; it does not establish an open recorder. The controller claims/stops its active service, and final process exit closes any remaining device handles.
+
+Migu remained idle during actual capture (`buddy_capture_states=[idle]`). TASK31741 tracks connecting local dictation lifecycle to the existing request-owned Buddy listening state. The voice conversation works, but the listening visual is not accepted.
+
+Two earlier attempts are preserved: [first attempt](microphone-20260905-1b48acf67c/execution.json) exited1 because the harness read `draft_text` without calling it; [second attempt](microphone-20260905-84cb282039/microphone.json) returned no transcript and sent nothing externally because the user missed its recording window. The successful run added a five-second countdown. Neither earlier attempt is counted as a microphone-transcription pass.
