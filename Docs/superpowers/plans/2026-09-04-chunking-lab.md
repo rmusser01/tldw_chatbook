@@ -49,7 +49,7 @@ check ACs, and mark Done. Task files intentionally have no Implementation Plan o
 Implementation Notes at this planning stage. Re-sweep task/ADR IDs at integration.
 
 TASK-24404 on dev is an overlapping, unimplemented Settings form. Task 8 must amend
-its scope/status with a supersession note referencing ADR-118 and TASK-31428 before
+its scope/status with a supersession note referencing ADR-118 and the design before
 the Lab UI lands; use the CLI archive workflow for superseded work, not fake Done.
 Preserve its useful stored-invalid decoration and ingest-cache requirements here.
 Do not copy an obsolete task over a changed upstream version.
@@ -468,7 +468,7 @@ right = json.loads(b.request.recipe.authored_json if authored else b.request.rec
 - Add app `get_chunking_lab_coordinator() -> LabCoordinator` lazily for the active profile. On profile change close the old coordinator before opening the new profile store at `get_user_data_dir() / "chunking_lab.sqlite3"` through existing private-path helpers.
 - Successful template save emits a local `ChunkingTemplatesChanged` Textual message carrying record ID/version only; the ingest canvas invalidates `_chunk_template_names` and refreshes on next display/currently mounted use.
 
-- [ ] Re-read the current TASK-24404 and ADR-003/078/118. Archive its superseded Settings proposal with a CLI note linking this task (do not mark implementation Done). If someone has implemented it since planning, stop duplication, inspect the landed UI, and amend this integration task's AC/plan before moving it. Keep the newer work intact.
+- [ ] Re-read the current TASK-24404 and ADR-003/078/118. Archive its superseded Settings proposal with a CLI note linking ADR-118 and the design (do not mark implementation Done). Keep the reverse task reference in TASK-31428; do not add a higher-ID task reference to TASK-24404. If someone has implemented it since planning, stop duplication, inspect the landed UI, and amend this integration task's AC/plan before moving it. Keep the newer work intact.
 - [ ] Write the failing route/editor Pilot tests and recovery integration test. Use the normal test app fixture pattern and temp profile helpers; do not launch the user's real data.
 
 ```python
@@ -502,6 +502,7 @@ async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
 ```
 
 - [ ] Compose Sample/Configure/Results regions using theme tokens and focus conventions. At narrow widths show one region; wide results can show A/B equally. Add method-specific fields with correct units, full JSON, explicit pending/discard authority, searchable decorated saved templates, Pin/Replace A, Run/Run both/Cancel, result snapshot diff, and Save A/B. Wire each visible action before advertising it in the footer.
+- [ ] Save A starts from its captured authored body (retaining metadata/classifier), then replaces only preprocessing/chunking/postprocessing with its captured effective sections so pinned defaults are explicit. Use captured record fields, with explicit save-dialog edits allowed; never borrow current B or catalog values. Save B uses its current validated authored body. Method changes preserve incompatible options and explain the required explicit edit rather than silently deleting them.
 - [ ] Add paste/file/local-Library sample flows with exact copied text, UTF-8 validation, size refusal and explicit excerpt choice; read files off the UI loop through existing path validation. Add JSON template import/export and save conflict/error dialogs. Save refreshes the ingest canvas without source re-chunking or default changes.
 - [ ] Wire restore-on-open, Saving/Saved locally/Save failed/Unsaved result labels, Retry, recovery Export/Restore/Undo restore, confirmed Clear, and navigation cancellation. Explain that full sample/results are stored locally. Export/restore file I/O uses explicit user-selected paths and existing overwrite/private-path safeguards; no writes to paths carried in imported data.
 - [ ] Run the focused integration set:

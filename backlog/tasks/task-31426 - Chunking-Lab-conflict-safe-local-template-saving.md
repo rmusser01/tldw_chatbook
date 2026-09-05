@@ -1,11 +1,11 @@
 ---
 id: TASK-31426
 title: Chunking Lab - conflict-safe local template saving
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 02:29'
+updated_date: '2026-09-05 02:36'
 labels:
   - chunking
   - chunking-lab
@@ -43,4 +43,6 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the headless Lab save adapter over the canonical Media DB catalog and extended template updates with atomic ID/UUID/version/live/builtin predicates. Saves deep-detach authored bodies before canonical tag extraction, run the existing parity plus Lab capability gate, persist the authored body rather than normalized execution defaults, and return the refreshed record. Concurrent live-name collisions remain InputError, stale/deleted expected records become TemplateSaveConflict, and builtins remain BuiltinTemplateError. Added real SQLite coverage for stale updates, concurrent creates, stored-invalid repair, reserved auto variants, builtin copy/update behavior, resource ceilings, advanced metadata/tags, caller/default immutability, and refreshed identities. ADR required: yes; implemented ADR-118 and retained ADR-078's canonical store/flat body without schema changes. Targeted verification: 90 passed; scoped Ruff checks and formatting passed. One environment-level RequestsDependencyWarning remains unchanged.
+
+Independent Task6 review approved spec compliance and quality; no blocking findings. Final focused14 tests passed after a test-only addition to the earlier aggregate90 run; production unchanged. Existing Requests warning retained. Cross-task Save A/B dialogs, ingest refresh and import/export behavior remain explicit Task8 integration obligations, not headless service omissions. ADR-118 governs this implementation.
 <!-- SECTION:NOTES:END -->
