@@ -3,7 +3,7 @@
 Pure orchestration: no Textual imports here. Every I/O seam (worker
 dispatch, UI-thread marshalling, workspace-root/rail-open accessors, the
 snapshot callback, and the clock) is injected so this class can be
-exercised with synchronous fakes and no running app -- see
+exercised with fakes and no running app -- see
 ``Tests/UI/test_console_environment_controller.py``.
 
 Two worker tiers:
@@ -19,6 +19,33 @@ Two worker tiers:
 Each tier tracks consecutive failures and pauses itself after
 ``_MAX_FAILURES`` in a row, until a workspace-root change resets it (both
 tiers) or, for the net tier only, a ``force_net`` refresh.
+
+Correctness notes (hardened after a deferred-worker review found these
+only break under REAL async ordering, which the original inline-fake
+tests could not exercise since jobs ran synchronously at dispatch time):
+
+- The net tier's branch comes from the last *landed* local result
+  (``_landed_root`` matching the current scope), never from whatever
+  ``snapshot.git.branch`` happens to hold at dispatch time. On first rail
+  open the local job may not have landed yet, so a net dispatch made
+  before that is *deferred* and re-issued from ``_land`` once the local
+  tier lands for the same root -- otherwise the branch is silently ``None``
+  and the TTL key gets poisoned with a fetch that never ran ``gh``.
+- All root-change comparisons (in ``poll_tick``) use ``_landed_root`` --
+  the accessor's own raw string, recorded at dispatch time -- never
+  ``GitEnvState.root``, which is git's *resolved* toplevel path (can
+  differ in spelling from the accessor, e.g. ``/tmp`` vs ``/private/tmp``)
+  and is ``""`` on an ERROR result. Comparing against the resolved path
+  either loops the reset branch forever (spelling mismatch: backoff never
+  arms) or never fires it (an errored tier's blank root reads as "no
+  change": backoff never resumes).
+- Landings carry a per-tier monotonic dispatch token. ``exclusive=True``
+  on ``run_worker`` cancels the *awaiting* asyncio task when a newer
+  dispatch of the same tier supersedes it, but the underlying OS thread
+  keeps running and still calls back into ``_land`` -- so an older
+  dispatch's result can arrive after a newer one already landed. A
+  landing is honored only when its token still matches the tier's latest
+  issued token; otherwise it's a stale, superseded result and is dropped.
 
 The gatherers (``gather_git_env``, ``gather_pr_env``, ``BacklogTaskScanner``)
 are imported as module attributes -- not called through an indirection
@@ -73,9 +100,24 @@ class ConsoleEnvironmentController:
 
         self.snapshot = EnvironmentSnapshot()
         self._scanner = BacklogTaskScanner()
-        # (root, branch, fetched_at) for the last dispatched net fetch.
+        # (root, branch, fetched_at) for the last DISPATCHED net fetch.
         self._net_fetched_at: tuple[str, str | None, datetime] | None = None
         self._failures: dict[str, int] = {_LOCAL_TIER: 0, _NET_TIER: 0}
+
+        # The root of the most recently LANDED local result, recorded as
+        # the accessor's own raw string (never GitEnvState.root -- see
+        # module docstring). All root-change comparisons must use this.
+        self._landed_root: str | None = None
+
+        # A net refresh requested before the local tier has landed for the
+        # CURRENT root defers until `_land` supplies a known branch (C1).
+        self._net_pending = False
+        self._net_pending_force = False
+        self._net_pending_scope: str | None = None
+
+        # Per-tier monotonic dispatch counters (I4): a landing is honored
+        # only if its token still matches the tier's latest dispatch.
+        self._dispatch_tokens: dict[str, int] = {_LOCAL_TIER: 0, _NET_TIER: 0}
 
     # -- public API -------------------------------------------------------
 
@@ -95,14 +137,16 @@ class ConsoleEnvironmentController:
     def poll_tick(self) -> None:
         """Called every 10s by the screen timer: local tier only.
 
-        Detects a workspace-root change since the last landed snapshot and,
-        when one happened, resets backoff/TTL state and does a full
-        (both-tier) refresh instead of a local-only poll.
+        Detects a workspace-root change since the last LANDED local
+        result (comparing against ``_landed_root``, never the
+        git-resolved ``snapshot.git.root``) and, when one happened, resets
+        backoff/TTL state and does a full (both-tier) refresh instead of a
+        local-only poll.
         """
         root = self._workspace_root_accessor()
         if root is None or not self._rail_open_accessor():
             return
-        last_root = self.snapshot.git.root or None
+        last_root = self._landed_root
         if last_root is not None and root != last_root:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
             self._net_fetched_at = None
@@ -116,19 +160,36 @@ class ConsoleEnvironmentController:
 
     # -- dispatch -----------------------------------------------------------
 
+    def _next_token(self, tier: str) -> int:
+        self._dispatch_tokens[tier] += 1
+        return self._dispatch_tokens[tier]
+
     def _dispatch_local(self, scope_root: str) -> None:
         previous_git = self.snapshot.git
+        token = self._next_token(_LOCAL_TIER)
 
         def job() -> None:
             git_result = gather_git_env(Path(scope_root), previous=previous_git)
             tasks_result = self._scanner.scan(Path(scope_root), git_result.branch)
             self._marshal_to_ui(
-                self._land, scope_root, _LOCAL_TIER, (git_result, tasks_result)
+                self._land, scope_root, _LOCAL_TIER, (git_result, tasks_result), token
             )
 
         self._run_worker(job, thread=True, exclusive=True, group=self.LOCAL_WORKER_GROUP)
 
     def _dispatch_net(self, scope_root: str, *, force_net: bool) -> None:
+        if self._landed_root != scope_root:
+            # The local tier hasn't landed for this root yet, so the
+            # current branch is unknown (or stale from a different root).
+            # Defer: `_land` re-issues this once local lands for `scope_root`.
+            if self._net_pending_scope != scope_root:
+                self._net_pending_force = force_net
+            else:
+                self._net_pending_force = self._net_pending_force or force_net
+            self._net_pending = True
+            self._net_pending_scope = scope_root
+            return
+
         branch = self.snapshot.git.branch
         key = (scope_root, branch)
         if not force_net and self._net_fetched_at is not None:
@@ -137,23 +198,34 @@ class ConsoleEnvironmentController:
                 return  # TTL still holds
         previous_pr = self.snapshot.pr
         self._net_fetched_at = (scope_root, branch, self._now())
+        token = self._next_token(_NET_TIER)
 
         def job() -> None:
             pr_result = gather_pr_env(Path(scope_root), branch, previous=previous_pr)
-            self._marshal_to_ui(self._land, scope_root, _NET_TIER, pr_result)
+            self._marshal_to_ui(self._land, scope_root, _NET_TIER, pr_result, token)
 
         self._run_worker(job, thread=True, exclusive=True, group=self.NET_WORKER_GROUP)
 
     # -- landing (runs on the UI thread, via marshal_to_ui) ------------------
 
-    def _land(self, scope_root: str, tier: str, result: Any) -> None:
+    def _land(self, scope_root: str, tier: str, result: Any, token: int) -> None:
         if scope_root != self._workspace_root_accessor():
             return  # stale-scope guard: a newer refresh already superseded this one
+        if token != self._dispatch_tokens[tier]:
+            return  # stale-dispatch guard: a newer dispatch of this tier already landed/is in flight
 
         if tier == _LOCAL_TIER:
             git_result, tasks_result = result
             self._record_outcome(_LOCAL_TIER, git_result.availability)
             self.snapshot = dataclasses.replace(self.snapshot, git=git_result, tasks=tasks_result)
+            self._landed_root = scope_root
+            if self._net_pending and self._net_pending_scope == scope_root:
+                force = self._net_pending_force
+                self._net_pending = False
+                self._net_pending_force = False
+                self._net_pending_scope = None
+                if force or self._failures[_NET_TIER] < self._MAX_FAILURES:
+                    self._dispatch_net(scope_root, force_net=force)
         else:
             self._record_outcome(_NET_TIER, result.availability)
             self.snapshot = dataclasses.replace(self.snapshot, pr=result)
