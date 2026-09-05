@@ -16834,7 +16834,7 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
-        self._release_claimed_conversation_settings_return()
+        self._settings_navigation._release_claimed_conversation_settings_return()
         # The debounced sidebar write is async and its read-modify-write of
         # ui_state.toml is unlocked, so consecutive suspends must SERIALIZE
         # (Qodo #2420 finding 6: a rapid leave/return/leave could let the
