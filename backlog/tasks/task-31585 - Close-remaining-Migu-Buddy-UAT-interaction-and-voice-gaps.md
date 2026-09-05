@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:32'
-updated_date: '2026-09-05 16:06'
+updated_date: '2026-09-05 16:13'
 labels: []
 dependencies: []
 priority: high
@@ -60,4 +60,6 @@ Latest-dev CI exposed TASK-31585 collision with PR #2403 Console closeout. Appli
 2026-09-05 native follow-up on merged dev f8cb939e2b: foreground Terminal UAT delivered real mouse-down/move/up events. Migu moved from (41,31) to (69,25); physical lower-right resize changed rendered size from 28x15 to 40x21. Graceful exit had no app exception; fresh PID 46565 restored (69,25,40,21). All 22 PTY protocol checks passed separately, including release, viewport bounds, modal/navigation and geometry restore. Background per-PID drag delivered no app mouse events; foreground authorization resolved the native input limitation without another production fix. Evidence under /private/tmp/migu-dragging-uat-20260905 and native screenshots. AC9 remains open only for the separate application-configured OpenAI realtime check. The long-lived harness detected normal config changed since its prior-day baseline, so no normal-config-unchanged claim is made for that interval; fresh restart baseline remained unchanged. Existing ADR-074 applies; no new ADR.
 
 Publish native follow-up receipts and screenshots under qa/buddy-uat-2026-09-05/native-followup with exact tested-commit provenance. This PR adds evidence only; production fixes landed in PR2404. Native acceptance evidence is complete, but combined AC9 remains open for application-configured OpenAI realtime UAT. Existing ADR074 applies; no new ADR.
+
+Native evidence publication PR: https://github.com/rmusser01/tldw_chatbook/pull/2418 against dev93388ba69b. Evidence JSON, local links, all22 recorded terminal checks, backlog ID guard, and diff checks pass. Production fixes are already in PR2404; this follow-up remains evidence-only.
 <!-- SECTION:NOTES:END -->
