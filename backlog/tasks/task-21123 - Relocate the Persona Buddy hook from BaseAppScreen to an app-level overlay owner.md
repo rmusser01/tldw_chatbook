@@ -2,10 +2,11 @@
 id: TASK-21123
 title: >-
   Relocate the Persona Buddy hook from BaseAppScreen to an app-level overlay owner
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-22'
-updated_date: '2026-08-23'
+updated_date: '2026-09-04'
 labels:
   - performance
   - architecture
@@ -29,9 +30,23 @@ controller is app-owned, and the widget floats via overlay: screen.
 
 ## Acceptance Criteria
 
-- [ ] A single app-level overlay owner reacts to screen-change events and controller generation bumps; the per-screen recompose/mount/resume hooks and per-screen buddy state are removed
-- [x] Short-term (or as part of the move): no widget module imported when the feature is disabled (shipped separately, see Progress note below); the worker half is still open
-- [ ] Buddy behavior when enabled (placement, persistence, unavailable-fence) is unchanged - existing buddy tests green
+- [x] A single app-level overlay owner reacts to screen-change events and controller generation bumps; the per-screen recompose/mount/resume hooks and per-screen buddy state are removed
+- [x] No widget module imported or Buddy worker started when the feature is disabled (import half shipped separately; worker half completed in this move)
+- [x] Buddy behavior when enabled (placement, persistence, unavailable-fence) is unchanged - existing buddy tests green
+
+## Implementation Plan
+
+1. Preserve the accepted pet-only UI and existing modal, navigation, persistence, and unavailable behavior.
+2. Move disposable view ownership into one app-owned coordinator. Subscribe to Textual screen changes and a generic screen-rebuilt message so recomposition cannot silently lose the view.
+3. Deliver controller generation changes to the app through thread-safe, content-free messages; coalesce reconciliation and skip workers when disabled with no view to remove.
+4. Replace per-screen Buddy state and methods with app/owner authority checks; retain the Workbench affordance refresh.
+5. Run targeted Buddy lifecycle, widget, controller, Workbench, import-closure, and shutdown checks. No full test sweep.
+
+ADR required: yes (existing decision amendment)
+ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
+Reason: Clarify the app-owned presentation boundary and recompose-aware lifecycle without changing the controller/runtime or user experience.
+
+Design: Docs/superpowers/specs/2026-09-04-task-21123-buddy-overlay-owner.md
 
 ## Progress note (2026-08-23) - the import half shipped separately
 
@@ -61,7 +76,7 @@ already imported, then timing the buddy-widget import):
 the ~1.28 s an earlier task recorded for the cold chain -- that figure did not reproduce on a
 warm filesystem here.
 
-### What remains open, and why the relocation is deferred
+### Historical deferral (resolved by the 2026-09-04 implementation)
 
 Everything else: the app-level overlay owner, removing the per-screen recompose/mount/resume
 hooks, and removing the per-screen state. An independent review of the relocation found it
@@ -72,3 +87,42 @@ Any relocation therefore needs a recompose-aware re-mount signal designed in fir
 design is out of scope for a perf burn-down slice. Do not treat AC-2's import half being ticked
 as licence to ship the move without it.
 
+## Implementation Notes
+
+Relocated disposable Buddy presentation to one lazy `PersonaBuddyOverlay` owned by
+the app. Native screen-change signals, generic post-recompose messages, and
+thread-safe content-free controller notifications feed one coalescing worker.
+BaseAppScreen no longer owns Buddy fields, methods, or mount/resume workers.
+The widget keeps its rendering, controls, timers, and persistence behavior, with
+unavailable confirmation now injected from the app-owned boundary.
+
+ADR-074 was amended (no new dependency, schema, or preference format). The disabled
+path retains the fresh-process import guard and starts zero Buddy workers; removed
+the old worker from the real-app boot census allowlist. Geometry drains before
+controller shutdown. Review found and regression-tested two await-boundary races:
+shutdown during retirement now prevents late mounts, and canceled retirement cannot
+reuse a generation-invalidated view. Production-notification harness wiring and
+explicit race gates are documented in `backlog/docs/lessons-testing-evidence.md`.
+
+Verification includes the Buddy domain/widget/lifecycle suites, Workbench Buddy
+cases, architecture and fresh-process import guards, real-app boot census, and
+terminal-probe tests. The standalone POSIX PTY probe passed all 22 interactions,
+including pet-only normal display, alerts, fold, constrained controls, mouse and
+keyboard interactions, modal resume, navigation, and persisted geometry restore.
+No full repository test sweep was run.
+
+Final combined targeted run: **256 passed, 374 deselected**, 119.35 seconds,
+with one inherited RequestsDependencyWarning. Command: shared-venv Python
+`-m pytest -q Tests/Persona_Buddy Tests/UI/test_persona_buddy_widget.py Tests/UI/test_persona_buddy_app_mount.py Tests/UI/test_personas_workbench.py Tests/Utils/test_optional_import_deferral.py Tests/Architecture/test_persona_buddy_boundary.py Tests/Packaging/test_persona_buddy_import_closure.py Tests/Live/test_persona_buddy_terminal_probe.py Tests/Performance/test_boot_worker_census.py -k 'buddy or boot_worker' --basetemp=/private/tmp/task21123-verification-final`.
+Independent lifecycle review confirmed both regression fixes with 2 passing tests
+and reported no remaining blocking findings.
+
+Static checks: modified-code Ruff passes with the 133 pre-existing app.py E402
+findings excluded (the same 133 reproduce at HEAD); changed formatting, compilation,
+and diff whitespace checks pass. All derived-artifact preflight checks pass.
+The diagnostic inventory changed only for removal of the old screen-traversal
+fallback's fixed `persona_buddy_geometry_flush_failed` log; reviewed the statement
+delta before regenerating the pin, with no new diagnostics or persistent sinks.
+
+Task status and criteria use the documented direct-file workaround for the broken
+five-digit Backlog CLI, rather than generating a malformed TASK-TASK- record.
