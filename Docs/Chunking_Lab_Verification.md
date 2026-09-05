@@ -52,6 +52,37 @@ platform/startup qualification is claimed. Existing ADR-078/ADR-118 apply; no ne
 architecture decision is introduced. Current-head remote review and required CI
 remain merge gates, not implied by these local results.
 
+### Remote review and performance follow-up
+
+Qodo reviewed published correction head `4cf786996657bb187840863cca97d697979f7850`:
+[review summary](https://github.com/rmusser01/tldw_chatbook/pull/2416#issuecomment-5552646955)
+reports zero remaining bugs/rule violations and marks all five findings resolved.
+All five inline threads received fix/evidence replies and are resolved.
+[Required CI run 33974600625](https://github.com/rmusser01/tldw_chatbook/actions/runs/33974600625)
+passed both PR Fast Lane and Derived artifacts reproduce from their sources.
+The six GGUF platform jobs, CSS guard and Backlog guard also passed. CodeRabbit's
+success status denotes a skipped review on non-default dev, not a second approval.
+
+The separate [Perf Guard run 33974600652](https://github.com/rmusser01/tldw_chatbook/actions/runs/33974600652)
+failed one boot ratchet: 276 ancestor-scoped bare-type rules against a 274 ceiling
+(14 passed, 1 failed, 3 optional-dependency skips). Dev's exact base had a green
+Perf Guard run 33965632081. Local replay reproduced the feature's 276-rule failure;
+this is a branch-introduced integration issue, not waived because the job is optional.
+The fixed EditorRegion edit actions and Library Lab-entry actions now use their
+existing unique button IDs as selector subjects. Declarations and DOM are unchanged;
+the generated widget bundle was rebuilt. The unchanged exact guard then measured
+274 and passed. The ceiling was not raised; zero remaining headroom is explicit.
+This is a scoped selector-indexing correction, not broader startup qualification.
+
+The combined exact Perf Guard selection plus full Lab screen/recovery-flow modules
+passed **75 tests, zero failures/errors/skips, 10 warnings in 117.75s**. Genuine
+XML: `pr-perf-correction.xml` in the follow-up evidence directory. This includes
+the three viewport workflows and real computed-style equivalence guard. Warnings
+remain unsuppressed: Requests compatibility, existing datetime/escape warnings,
+boot-budget headroom/snapshot notices, joblib's semaphore-exhaustion serial fallback,
+and one unchanged RAG startup `call_from_thread` callback warning. No dependency,
+semaphore, startup or global styling repair is claimed by the selector correction.
+
 ## Historical pre-push bookkeeping correction (2026-09-05)
 
 The user selected push/create PR, then explicitly approved correcting task-ID

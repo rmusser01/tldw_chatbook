@@ -53,7 +53,7 @@
     EditorRegion Static { height: auto; }
     EditorRegion Input, EditorRegion Select { width: 100%; }
     EditorRegion TextArea { height: 12; min-height: 6; }
-    EditorRegion Button { min-width: 12; width: auto; }
+    EditorRegion #lab-discard, EditorRegion #lab-undo { min-width: 12; width: auto; }
 
 
 /* ===== WIDGET: ResultsRegion (UI/Chunking_Lab_Modules/results_region.py) ===== */
@@ -843,7 +843,7 @@
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
     LibraryScreen #library-chunking-tools { height: 1; }
-    LibraryScreen #library-chunking-tools Button { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
+    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli

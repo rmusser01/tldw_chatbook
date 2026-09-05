@@ -28,7 +28,14 @@ corrections without new runtime, storage, privacy, or route ownership.
 Local outcome: 635 targeted tests passed; independent review found no issues.
 The local ingest test host now loads the existing Library stylesheet collection;
 production styling is unchanged. Detailed evidence and historical qualifications
-remain in the verification record. Remote checks/review remain pending.
+remain in the verification record. Qodo resolved all five findings on published
+head4cf7869966 and required CI33974600625 passed. Perf Guard33974600652 exposed a
+branch-introduced broad-selector count276 against274; the exact local replay
+reproduced it. AC17 adds the narrow correction: re-key the fixed EditorRegion and
+Library Lab-entry buttons to their existing IDs, retain all declarations and DOM,
+rebuild widget CSS, run the exact guard and affected performance/UI selections,
+and independently review. No budget increase or new ADR is required. Final-head
+remote verification remains mandatory before merge.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 

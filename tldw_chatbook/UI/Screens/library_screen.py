@@ -1417,7 +1417,7 @@ class LibraryScreen(BaseAppScreen):
     # equal-specificity selectors and takes precedence when loaded.
     BUNDLED_CSS = """
     LibraryScreen #library-chunking-tools { height: 1; }
-    LibraryScreen #library-chunking-tools Button { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
+    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli

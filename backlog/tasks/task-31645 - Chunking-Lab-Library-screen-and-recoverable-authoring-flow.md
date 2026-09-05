@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 15:19'
+updated_date: '2026-09-05 15:45'
 labels:
   - chunking
   - chunking-lab
@@ -45,13 +45,14 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #13 Unfinished raw tag input survives ordinary renders and reopening, and deliberate save produces the intended separate tags.
 - [x] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
 - [x] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
-- [ ] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
+- [x] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
+- [ ] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR for direct review corrections; existing ADR-078 and ADR-118 apply. Follow the PR integration addendum in .superpowers/sdd/2026-09-04-chunking-lab-runtime-boundary-followup/pr-integration-plan.md. Rebase onto current dev and preserve both sides of additive docs; review/regenerate inventory; verify and address Qodo recovery-validation, FIFO import, documentation, typing, and shared-limit findings using targeted regressions; reconcile affected integration diagnostics; independently review combined fixes; run feature/compatibility and preflight gates; reply to comments and publish with explicit lease; merge only reviewed current head with required checks passing.
+ADR required: no new ADR; existing ADR-078 and ADR-118 apply. Follow the PR integration addendum in Docs/superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md. Preserve the original checkout, rebase onto current dev, retain additive documentation, review inventory, correct Qodo findings with targeted regressions and independent review, and publish with preflight and an exact lease. CI follow-up: UI latency run33974600652 and local replay measure276 broad-subject rules against274. Re-key the fixed EditorRegion and Library Lab-entry action groups to existing unique button IDs without changing declarations, DOM, limits or unrelated CSS. Regenerate widget bundles, rerun the exact failed ratchet and affected UI/performance tests, independently review, and run preflight before publication. Merge only the reviewed current head with latest dev ancestry and required CI passing.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -92,6 +93,8 @@ Final scoped re-review at 5d0df113ff accepted all seven Important and five Minor
 Final acceptance: runtime admission now calls narrow template_runtime preprocessing/sanitation adapters (9c3f69bd98) without vendor imports in the runner, widened guards, changed budgets or new policy. Independent Task1 review approved. The combined gate then exposed a separate local test-fixture startup-ownership race; measured enabled-splash Lab-to-Chat takeover was corrected only in the two manual-screen fixtures with real callback RED2/GREEN2 regressions (a89f14d6d3), independently reviewed. Final combined targeted feature/compatibility gate: 473 passed, zero failures/errors/skips, 2 known warnings in106.29s. Complete follow-up final review approved with no issues. Scoped lint/format/compile and whole-branch whitespace checks passed; legacy runtime lint debt and Requests/vendor warnings remain explicitly qualified. ADR078 and ADR118 apply; no new ADR for test-only setup. Docs/Chunking_Lab_Verification.md and follow-up plan record exact evidence/history/limits; lessons-live-verification.md records the measured manual-screen ownership incident. AC1-15 complete. No full sweep, production startup/shared factory change, vendor/dependency edit, merge or push. Historical pending notes above are superseded by this acceptance; earlier failures and privacy/platform/resource qualifications remain retained.
 
 PR 2416 review corrections under existing ADR-078/ADR-118: bounded raw recovery admission now precedes full nested validation and pruning; template import refuses FIFOs including replacement races without modifying source permissions; record-field docs, structured comparison types and shared preview ceilings address the other three Qodo findings. The local ingest host now loads existing Library stylesheets, fixing two real compositor assertions without production styling changes. Combined targeted gate: 635 passed, 5 known warnings in157.71s; independent correction review found no findings and independently passed82 recovery/comparison tests and3 import/export cases. Scoped lint/format/whitespace pass. Rebase onto dev93388ba69b is complete. Docs/Chunking_Lab_Verification.md and follow-up plan record evidence and the user-authorized merge gates. AC16/status remain pending current-head remote review and required CI.
+
+Qodo reviewed published4cf7869966 with zero remaining findings and resolved all5 threads; each has an evidence reply. Required CI33974600625 passed Fast Lane and Derived Artifacts. Perf Guard33974600652 separately failed276 broad-selector rules against274, reproduced locally. Narrowed only two fixed action selectors (EditorRegion and Library Lab-entry strip) to their existing IDs and regenerated widget_defaults_self.tcss; declarations and DOM unchanged. Exact RED276/GREEN274; combined full Perf Guard selection plus Lab screen/recovery modules passed75 with10 unsuppressed warnings in117.75s (pr-perf-correction.xml). Independent selector/declaration/composition/generation review found no issues; scoped lint/format/whitespace and all6 preflight checks pass. Verification docs retain warnings and zero headroom. Existing ADR078/118 apply; no new architectural decision. AC16 accepted on remote review/required-CI evidence; AC17 and task Done await current-head remote Perf Guard. No full sweep or merge yet.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

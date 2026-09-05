@@ -25,7 +25,7 @@ class EditorRegion(VerticalScroll):
     EditorRegion Static { height: auto; }
     EditorRegion Input, EditorRegion Select { width: 100%; }
     EditorRegion TextArea { height: 12; min-height: 6; }
-    EditorRegion Button { min-width: 12; width: auto; }
+    EditorRegion #lab-discard, EditorRegion #lab-undo { min-width: 12; width: auto; }
     """
 
     class Edited(Message):
