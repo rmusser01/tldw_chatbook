@@ -351,9 +351,14 @@ class DeviceTap:
                     # INPUT would silently record the room through the mic
                     # a second time and label it "others" -- worse than no
                     # system audio (final whole-branch review).
+                    # The device NAME stays out of the log: audio devices are
+                    # routinely named after their owner ("<Name>'s AirPods"),
+                    # this is a persistent sink, and nothing here logs device
+                    # names today. The user picked the device; the message is
+                    # actionable without repeating it back at them.
                     logger.warning(
-                        "system audio device {!r} not found; not falling back to the default input",
-                        self._device_name,
+                        "the configured system audio device was not found; "
+                        "not falling back to the default input"
                     )
                     self.state = "lost"
                     return False
