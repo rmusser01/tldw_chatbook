@@ -437,13 +437,13 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create/modify: focused Chatbook model tests
 - Modify: archive format documentation
 
-- [ ] Add failing serialization/validation tests for Canvas identity, revisions, parent graph, titles, runtime profile, digest, byte count, origin message/turn, deletion metadata, and reopen hints.
-- [ ] Add `ChatbookVersion.V3` and typed Canvas manifest records. Keep V1/V2 decoding unchanged.
-- [ ] Define inert archive paths such as `canvas/<canvas-id>/<revision-id>.html.txt`; never use runnable `.html` entries or render while inspecting/importing.
-- [ ] Make archives with Canvas select 3.0; archives without Canvas may remain 2.0 for compatibility.
-- [ ] Document every new field, limit, ID-remapping rule, and unsupported-runtime behavior.
-- [ ] Run focused Chatbook model tests.
-- [ ] Commit: `feat(chatbooks): define Canvas archive format 3`
+- [x] Add failing serialization/validation tests for Canvas identity, revisions, parent graph, titles, runtime profile, digest, byte count, origin message/turn, deletion metadata, and reopen hints.
+- [x] Add `ChatbookVersion.V3` and typed Canvas manifest records. Keep V1/V2 decoding unchanged.
+- [x] Define inert archive paths such as `canvas/<canvas-id>/<revision-id>.html.txt`; never use runnable `.html` entries or render while inspecting/importing.
+- [x] Make archives with Canvas select 3.0; archives without Canvas may remain 2.0 for compatibility.
+- [x] Document every new field, limit, ID-remapping rule, and unsupported-runtime behavior.
+- [x] Run focused Chatbook model tests.
+- [x] Commit: `feat(chatbooks): define Canvas archive format 3`
 
 ### Task 6.2: Export and import the complete graph atomically
 
@@ -453,23 +453,27 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Chatbooks/chatbook_importer.py`
 - Modify: `tldw_chatbook/Chatbooks/local_chatbook_service.py`
 - Modify: `tldw_chatbook/Canvas/archive.py`
+- Modify: `tldw_chatbook/Canvas/repository.py`
+- Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_runtime_profiles.sql`
 - Create/modify: focused Chatbook creator/importer tests
 
-- [ ] Add a whole-graph round-trip fixture with multiple Canvases, title changes, sibling branches, historical origins, deletions, and reopen hints. Assert exact source/digest/ancestry equality.
-- [ ] Export source from the repository in bounded chunks, recompute digest/size, and emit deterministic ordering and timestamps without executing or compiling source.
-- [ ] Before extraction/import, validate archive entry count, path containment, duplicate normalized paths, declared and streamed uncompressed sizes, compression ratio, aggregate limits, UTF-8, digests, duplicate IDs, graph cycles, parent ownership, origin-message existence, and runtime profile.
-- [ ] Implement digest-idempotent same-identity restore. Refuse same-ID/different-digest conflicts with no mutation.
-- [ ] Implement import-as-new by precomputing maps for conversation, messages, Canvas, revisions, parents, origins, and hints, validating the remapped graph, then committing all records in one transaction.
-- [ ] Inject failures at validation, file streaming, message import, Canvas import, and final commit; assert no partial imported graph remains.
-- [ ] Keep unsupported profiles inert and labeled; never compile them using the current profile.
-- [ ] Verify V1/V2 golden archives still behave identically and no Canvas data enters synchronization services.
-- [ ] Run focused Chatbook, repository, decompression-bomb, property, and transaction tests.
-- [ ] Commit: `feat(chatbooks): round-trip Canvas histories`
+- [x] Add a whole-graph round-trip fixture with multiple Canvases, title changes, sibling branches, historical origins, deletions, and reopen hints. Assert exact source/digest/ancestry equality.
+- [x] Export source from the repository in bounded chunks, recompute digest/size, and emit deterministic ordering and timestamps without executing or compiling source.
+- [x] Before extraction/import, validate archive entry count, path containment, duplicate normalized paths, declared and streamed uncompressed sizes, compression ratio, aggregate limits, UTF-8, digests, duplicate IDs, graph cycles, parent ownership, origin-message existence, and runtime profile.
+- [x] Implement digest-idempotent same-identity restore. Refuse same-ID/different-digest conflicts with no mutation.
+- [x] Implement import-as-new by precomputing maps for conversation, messages, Canvas, revisions, parents, origins, and hints, validating the remapped graph, then committing all records in one transaction.
+- [x] Inject failures at validation, file streaming, message import, Canvas import, and final commit; assert no partial imported graph remains.
+- [x] Keep unsupported profiles inert and labeled; never compile them using the current profile.
+- [x] Migrate schema 66 to 67 so well-formed bounded unknown runtime-profile identifiers can be stored inert, while execution remains restricted to explicitly supported profiles; prove genuine-v66 migration, rollback, and fresh-schema parity.
+- [x] Verify V1/V2 golden archives still behave identically and no Canvas data enters synchronization services.
+- [x] Run focused Chatbook, repository, decompression-bomb, property, and transaction tests.
+- [x] Commit: `feat(chatbooks): round-trip Canvas histories`
 
 ### Delivery 6 checkpoint
 
-- [ ] Update TASK-31231 with archive examples, limits, atomicity evidence, and compatibility results.
-- [ ] Inspect a produced archive manually to confirm source is inert and all manifest relationships are understandable without executing content.
+- [x] Update TASK-31231 with archive examples, limits, atomicity evidence, and compatibility results.
+- [x] Inspect a produced archive manually to confirm source is inert and all manifest relationships are understandable without executing content.
 
 ---
 

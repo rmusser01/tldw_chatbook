@@ -378,6 +378,59 @@ primary key and `uq_canvas_documents_id_conversation`. There are no table
 scans. SQLite uses a temporary B-tree only for the final bounded list ordering,
 whose input is capped at 100 revisions per Canvas.
 
+### Archive portability implementation record
+
+TASK-31231 defines Chatbook format 3.0 as a conditional Canvas extension.
+Exports containing no Canvas records keep the existing 2.0 format; an export
+with Canvas uses 3.0 and writes each immutable revision only as the inert entry
+`canvas/<canvas-id>/<revision-id>.html.txt`. The source-free manifest records
+document ownership and deletion, the complete revision graph and sequence,
+revisioned title/runtime profile, exact UTF-8 size and SHA-256 digest, actor,
+origin message/turn, timestamps, and non-authoritative reopen hints.
+
+Archive-model ceilings are 1,000 Canvas documents, 100 revisions per Canvas,
+100,000 revisions total, 10,000 reopen hints, 512 KiB source per revision,
+and 512 MiB Canvas source per archive. Existing durable per-conversation
+ceilings still apply. The container boundary separately caps 10,000 members,
+128 MiB per member, 512 MiB compressed and uncompressed totals, a 1,000:1
+compression ratio, 1,024-byte paths, 255-byte components, and 32 path
+components. Validation rejects duplicate raw or normalized paths,
+file/directory prefix collisions, special entries, traversal, ambiguous
+ownership, malformed UTF-8, count/size/digest mismatches, duplicate identities,
+cycles, invalid parents/sequences, foreign or absent origins, invalid hints,
+and malformed runtime-profile identifiers before extraction or mutation.
+Validation and extraction share one opened descriptor, and physical container
+size is checked on that descriptor to close replacement and metadata races.
+
+Export streams authoritative repository source and recomputes size/digest;
+the staged Canvas origins must exist in the exact conversation graph being
+written before the archive is finalized. Import-as-new precomputes maps for
+conversation, message, Canvas, revision, parent, origin, and hint identities,
+validates the remapped graph, then writes messages and Canvas rows under one
+`BEGIN IMMEDIATE` transaction. Same-identity restore revalidates the entire
+existing graph inside that transaction: exact identity and metadata are
+idempotent, while any content, order, ownership, or lineage conflict aborts
+without overwrite. Historical origin messages may be soft-deleted but must
+still exist in the owning conversation.
+
+Schema 67 replaces the original schema-66 `runtime_profile = 'canvas-v1'`
+storage check with a bounded safe-identifier check. This permits a well-formed
+future profile to round-trip as inert local data, while the compiler and
+renderer still execute only explicitly supported profiles and never guess or
+downgrade one. The v66→v67 migration rebuilds the immutable revision table,
+preserves all constraints/triggers/indexes, and has genuine-v66 rollback and
+fresh-schema parity coverage. Canvas rows remain excluded from synchronization
+logs and services.
+
+The checkpoint archive contained two documents, four revisions including a
+sibling branch and title change, one soft-deleted document, a deleted
+historical origin, a reopen hint, and an inert unknown runtime profile. Manual
+ZIP/manifest inspection confirmed deterministic 1980 timestamps and sorted
+entries, exact graph relationships and digests, four `.html.txt` sources, and
+no runnable `.html` entry. Whole-graph import-as-new and exact-identity restore
+both completed atomically; injected validation, streaming, message, Canvas,
+and commit failures left no partial graph.
+
 ## Context
 
 Chatbook's Console already persists a branching message tree, records one
