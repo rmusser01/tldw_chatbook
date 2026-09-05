@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Any
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
 
@@ -37,6 +38,13 @@ class _Snapshot(BaseModel):
     model_config = ConfigDict(
         frozen=True, extra="forbid", revalidate_instances="always"
     )
+
+    @model_serializer(mode="wrap")
+    def validate_snapshot_publication(self, handler: Any) -> Any:
+        """Revalidate nested mutable values before crossing a dump boundary."""
+        payload = handler(self)
+        type(self).model_validate(payload)
+        return payload
 
 
 class RuntimeIdentity(_Snapshot):
@@ -125,3 +133,200 @@ class ExecutionReport(_Snapshot):
                 ):
                     raise ValueError("Invalid verified chunk span")
         return value
+
+
+class DraftState(_Snapshot):
+    """Lossless authoring state with one explicit editing authority."""
+
+    raw_json: str
+    parsed_json: str | None
+    parse_error: dict | None
+    pending_controls: dict[str, str]
+    authority: str
+    record_fields: dict
+    expected_record: dict | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def copy_values(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = json.loads(canonical_json(value))
+            if value.get("authority") not in {"json", "controls", "synced"}:
+                raise ValueError("Draft authority must be json, controls, or synced")
+        return value
+
+    @model_validator(mode="after")
+    def validate_authority(self) -> Self:
+        if self.parse_error is not None:
+            if self.authority != "json" or self.pending_controls:
+                raise ValueError("Invalid JSON must have sole JSON authority")
+        elif self.pending_controls:
+            if self.authority != "controls":
+                raise ValueError("Pending control text must have controls authority")
+            if self.parsed_json is None:
+                raise ValueError("Pending controls require a last-valid document")
+        elif self.authority == "controls":
+            raise ValueError("Controls authority requires pending control text")
+        return self
+
+
+class SampleSnapshot(_Snapshot):
+    """Exact copied sample text and its non-authoritative source description."""
+
+    sample_hash: str
+    text: str
+    source: dict
+
+    @model_validator(mode="before")
+    @classmethod
+    def copy_source(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return json.loads(canonical_json(value))
+        return value
+
+    @model_validator(mode="after")
+    def validate_hash(self) -> Self:
+        expected = hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+        if self.sample_hash != expected:
+            raise ValueError("Sample hash does not match exact UTF-8 text")
+        return self
+
+
+class RunRequest(_Snapshot):
+    """Detached, immutable inputs captured for one batch member."""
+
+    run_id: str
+    batch_id: str
+    candidate_id: str
+    epoch: str
+    revision: int
+    sample: SampleSnapshot
+    recipe: PreparedRecipe
+    template_record: dict | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def copy_template_record(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("template_record") is not None:
+            value = dict(value)
+            value["template_record"] = json.loads(
+                canonical_json(value["template_record"])
+            )
+        return value
+
+
+class RunResult(_Snapshot):
+    """Terminal result for one exact request."""
+
+    request: RunRequest
+    status: Literal["completed", "failed", "canceled", "interrupted", "limited"]
+    report: ExecutionReport | None
+    started_at: str
+    finished_at: str
+    elapsed_ms: float
+    error: dict | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def copy_error(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("error") is not None:
+            value = dict(value)
+            value["error"] = json.loads(canonical_json(value["error"]))
+        return value
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if self.elapsed_ms < 0:
+            raise ValueError("Elapsed time must be nonnegative")
+        if self.status == "completed" and self.report is None:
+            raise ValueError("A completed result requires a report")
+        if self.status != "completed" and self.report is not None:
+            raise ValueError("Only completed results may contain comparison output")
+        return self
+
+
+class LabSession(_Snapshot):
+    """Detached active Lab state; transitions publish replacement instances."""
+
+    profile_key: str
+    epoch: str
+    revision: int
+    candidates: dict
+    samples: dict
+    results: dict
+    batch: dict | None
+    view: dict
+    undo: tuple[dict, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def copy_state(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return json.loads(canonical_json(value))
+        return value
+
+    @model_validator(mode="after")
+    def validate_references(self) -> Self:
+        if not self.profile_key or not self.epoch:
+            raise ValueError("Session profile and epoch must be nonempty")
+        if self.revision < 0:
+            raise ValueError("Session revision must be nonnegative")
+        if not 1 <= len(self.candidates) <= 2:
+            raise ValueError("Lab v1 supports at most two candidates")
+
+        editable_b = 0
+        for candidate_id, candidate in self.candidates.items():
+            if (
+                not isinstance(candidate, dict)
+                or candidate.get("candidate_id") != candidate_id
+            ):
+                raise ValueError("Candidate keys must match stable candidate IDs")
+            role = candidate.get("role")
+            if role == "B" and candidate.get("editable") is True:
+                editable_b += 1
+                DraftState.model_validate(candidate.get("draft"))
+            elif role == "A" and candidate.get("editable") is False:
+                PreparedRecipe.model_validate(candidate.get("pinned_recipe"))
+            else:
+                raise ValueError(
+                    "Candidates require one editable B and optional frozen A"
+                )
+        if editable_b != 1:
+            raise ValueError("Lab requires exactly one editable B candidate")
+
+        for sample_hash, sample in self.samples.items():
+            snapshot = SampleSnapshot.model_validate(sample)
+            if snapshot.sample_hash != sample_hash:
+                raise ValueError("Sample keys must match sample identities")
+        if self.view.get("sample_hash") not in self.samples:
+            raise ValueError("Active sample must reference a retained sample")
+
+        for run_id, result in self.results.items():
+            outcome = RunResult.model_validate(result)
+            if outcome.request.run_id != run_id:
+                raise ValueError("Result keys must match run identities")
+        for candidate in self.candidates.values():
+            for field in ("current_run_id", "previous_run_id"):
+                run_id = candidate.get(field)
+                if run_id is not None and run_id not in self.results:
+                    raise ValueError(
+                        f"Candidate {field} must reference a retained result"
+                    )
+
+        if self.batch is not None:
+            if self.batch.get("epoch") != self.epoch:
+                raise ValueError("Batch epoch must match the session")
+            requests = self.batch.get("requests")
+            if not isinstance(requests, dict) or not requests:
+                raise ValueError("Batch requires captured request membership")
+            batch_id = self.batch.get("batch_id")
+            for run_id, request in requests.items():
+                captured = RunRequest.model_validate(request)
+                if (
+                    captured.run_id != run_id
+                    or captured.batch_id != batch_id
+                    or captured.epoch != self.epoch
+                    or captured.candidate_id not in self.candidates
+                ):
+                    raise ValueError("Invalid captured batch request")
+        return self
