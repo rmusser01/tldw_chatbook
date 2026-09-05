@@ -753,10 +753,13 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   function ensureRendererSubtree(node) {
     if (node.__rendererPresent) return;
     const work = [{node, entered: false}];
+    const deferredOptionSelections = makeList();
+    const deferredSelectValues = makeList();
     while (work.length) {
       const item = work.pop();
       const current = item.node;
       if (!item.entered) {
+        if (current.__rendererPresent) continue;
         if (current.nodeType === 3) {
           emit({op: "create-text", node_id: current.__id, value: current.__text});
           current.__rendererPresent = true;
@@ -774,7 +777,13 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
         for (let index = 0; index < current.__propertyOverrides.length; index += 1) {
           const name = current.__propertyOverrides[index];
           if (rendererPropertySupported(current, name)) {
-            emit({op: "set-property", node_id: current.__id, name, value: current["__" + name]});
+            if (current.localName === "option" && name === "selected") {
+              push(deferredOptionSelections, current);
+            } else if (current.localName === "select" && name === "value") {
+              push(deferredSelectValues, current);
+            } else {
+              emit({op: "set-property", node_id: current.__id, name, value: current["__" + name]});
+            }
           }
         }
         work.push({node: current, entered: true});
@@ -786,6 +795,14 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
           emit({op: "append-child", node_id: current.__id, child_id: child.__id});
         }
       }
+    }
+    for (let index = 0; index < deferredOptionSelections.length; index += 1) {
+      const current = deferredOptionSelections[index];
+      emit({op: "set-property", node_id: current.__id, name: "selected", value: current.__selected});
+    }
+    for (let index = 0; index < deferredSelectValues.length; index += 1) {
+      const current = deferredSelectValues[index];
+      emit({op: "set-property", node_id: current.__id, name: "value", value: current.__value});
     }
   }
 

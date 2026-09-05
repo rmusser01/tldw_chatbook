@@ -975,6 +975,157 @@ document.getElementById("detached-quota").addEventListener("click", () => {
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize(
+    ("select_id", "expected_value", "option_ids", "expected_selected"),
+    [
+        (
+            "explicit-second",
+            "second",
+            ("second-first", "second-second"),
+            (False, True),
+        ),
+        (
+            "explicit-empty",
+            "",
+            ("empty-first", "empty-second"),
+            (False, False),
+        ),
+    ],
+)
+def test_detached_select_reconstruction_restores_explicit_and_default_state(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    select_id: str,
+    expected_value: str,
+    option_ids: tuple[str, str],
+    expected_selected: tuple[bool, bool],
+) -> None:
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        expect = importlib.import_module("playwright.sync_api").expect
+        source = """<!doctype html><html><body>
+<section id="form-host">
+<select id="explicit-second"><option id="second-first" value="first">first</option><option id="second-second" value="second">second</option></select>
+<select id="explicit-empty"><option id="empty-first" value="first">first</option><option id="empty-second" value="second">second</option></select>
+<select id="option-interaction"><option id="interaction-first" value="first" selected>first</option><option id="interaction-second" value="second">second</option></select>
+<select id="default-only"><option id="default-first" value="first">first</option><option id="default-second" value="second" selected>second</option></select>
+</section>
+<button id="detach-form">detach</button><button id="edit-form">edit</button><button id="reinsert-form">reinsert</button>
+<script>
+const formHost = document.getElementById("form-host");
+document.getElementById("detach-form").addEventListener("click", () => { formHost.parentNode.removeChild(formHost); });
+document.getElementById("edit-form").addEventListener("click", () => {
+  document.getElementById("explicit-second").value = "second";
+  document.getElementById("explicit-empty").value = "";
+  document.getElementById("interaction-first").selected = false;
+  document.getElementById("interaction-second").selected = true;
+  document.getElementById("option-interaction").value = "second";
+});
+document.getElementById("reinsert-form").addEventListener("click", () => { document.body.appendChild(formHost); });
+</script></body></html>"""
+        status = _load(page, _wire_plan(source), recorder)
+        assert status["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+
+        frame.locator("#detach-form").click()
+        frame.locator("#form-host").wait_for(state="detached")
+        frame.locator("#edit-form").click()
+        frame.locator("#reinsert-form").click()
+        expect(frame.locator("#form-host")).to_have_count(1)
+
+        assert frame.locator(f"#{select_id}").input_value() == expected_value
+        assert (
+            tuple(
+                frame.locator(f"#{option_id}").evaluate("node => node.selected")
+                for option_id in option_ids
+            )
+            == expected_selected
+        )
+        assert frame.locator("#option-interaction").input_value() == "second"
+        assert (
+            frame.locator("#interaction-first").evaluate("node => node.selected")
+            is False
+        )
+        assert (
+            frame.locator("#interaction-second").evaluate("node => node.selected")
+            is True
+        )
+        assert frame.locator("#default-only").input_value() == "second"
+        assert (
+            frame.locator("#default-first").evaluate("node => node.selected") is False
+        )
+        assert (
+            frame.locator("#default-second").evaluate("node => node.selected") is True
+        )
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("mixed_child", ["new", "existing"])
+def test_detached_subtree_reconstruction_reuses_present_descendants(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    mixed_child: str,
+) -> None:
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        expect = importlib.import_module("playwright.sync_api").expect
+        source = """<!doctype html><html><body>
+<div id="left"><section id="moving"><span id="retained">retained</span></section></div>
+<div id="live-parent"><button id="live-child">live</button></div>
+<button id="detach">detach</button><button id="mix-new">mix new</button><button id="mix-live">mix live</button>
+<script>
+const left = document.getElementById("left");
+const moving = document.getElementById("moving");
+document.getElementById("detach").addEventListener("click", () => { moving.parentNode.removeChild(moving); });
+document.getElementById("mix-new").addEventListener("click", () => {
+  const child = document.createElement("span");
+  child.id = "new-child"; child.textContent = "new";
+  moving.appendChild(child); left.appendChild(moving);
+});
+document.getElementById("mix-live").addEventListener("click", () => {
+  moving.appendChild(document.getElementById("live-child")); left.appendChild(moving);
+});
+</script></body></html>"""
+        status = _load(page, _wire_plan(source), recorder)
+        assert status["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        frame.evaluate(
+            "window.__ownedLiveChild = document.querySelector('#live-child')"
+        )
+
+        frame.locator("#detach").click()
+        frame.locator("#moving").wait_for(state="detached")
+        action_id = "mix-new" if mixed_child == "new" else "mix-live"
+        frame.locator(f"#{action_id}").click(no_wait_after=True)
+        expect(frame.locator("#left > #moving")).to_have_count(1)
+        child_id = "new-child" if mixed_child == "new" else "live-child"
+        expect(frame.locator(f"#moving > #{child_id}")).to_have_count(1)
+        expected_text = "new" if mixed_child == "new" else "live"
+        assert frame.locator(f"#{child_id}").text_content() == expected_text
+        assert frame.locator("#retained").text_content() == "retained"
+        if mixed_child == "existing":
+            assert frame.locator("#live-parent > #live-child").count() == 0
+            assert (
+                frame.evaluate(
+                    "window.__ownedLiveChild === document.querySelector('#live-child')"
+                )
+                is True
+            )
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     chromium_browser: Any,
     asset_server: _OwnedServer,
