@@ -711,21 +711,25 @@ class SchedulesWorkbench(BaseAppScreen):
                             id="scheduling-chip-all",
                             variant="primary",
                             classes="scheduling-queue-chip",
+                            tooltip="Show all scheduled tasks.",
                         )
                         yield Button(
                             "Active",
                             id="scheduling-chip-active",
                             classes="scheduling-queue-chip",
+                            tooltip="Show active scheduled tasks.",
                         )
                         yield Button(
                             "Paused",
                             id="scheduling-chip-paused",
                             classes="scheduling-queue-chip",
+                            tooltip="Show paused scheduled tasks.",
                         )
                         yield Button(
                             "Completed",
                             id="scheduling-chip-completed",
                             classes="scheduling-queue-chip",
+                            tooltip="Show completed scheduled tasks.",
                         )
                         # redesign PR-4, task 6 (spec §11): below the
                         # 84-column threshold the four chips above
