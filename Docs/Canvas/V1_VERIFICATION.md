@@ -196,6 +196,33 @@ tracked separately and remains open. No merge has occurred. An attempted
 unattended five-minute review/merge heartbeat was rejected by the safety check;
 no automation was created and work continues in the active session.
 
+The published b6224daf5 candidate subsequently passed GitHub run33993561982:
+PR Fast Lane succeeded, and the protected derived-artifact gate succeeded in
+6m15s. This closes TASK31741's integration check, not TASK31742's remaining
+Qodo corrections or permission to bypass current-head verification. The local
+SemLock limitation remains recorded; no host resource change was made.
+
+Qodo3942123883 is corrected locally in00c6e2fd0. Captured row ownership now
+survives delayed widget construction, card events carry that owner, and the
+screen rejects stale/missing owners. Initial RED4failed/1passed2.62s and a
+second valid delayed-row RED1failed/1passed1.40s established both races. A
+fixture-only StopIteration and missing mounted layout pause were corrected
+without weakening assertions. Final card/controller/Canvas startup/census
+selection: **50 passed, 2 warnings, 20.51s**, census969/972; focused three-file
+Ruff/format pass, legacy screen195/transcript23 lint statistics unchanged.
+Independent scoped spec and quality review passes. Remaining Qodo corrections,
+original-thread replies and current-head CI remain open under TASK31742.
+
+Qodo3942123873 path correction34c5667c7 routes both archive preview/import
+through shared lexical validation before suffix/open, consuming only its
+returned path. Rejected paths return fixed status before path-bearing logs;
+no new rejection log sink was added. User-selected outside-workspace sources
+remain valid; this is not a new containment or symlink policy. RED4failed/
+3passed0.50s, then complete importer/Canvas archive/lazy-import selection
+**56 passed, 1 existing Requests warning, 8.91s**. Both changed files pass
+formatter/diff checks; legacy Ruff statistics remain64/26. Independent scoped
+spec and quality review passes.
+
 ## Earlier V1 checkpoints
 
 This is targeted evidence, **not full-suite, release, or integration approval**.

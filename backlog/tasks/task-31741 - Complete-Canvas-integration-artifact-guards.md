@@ -1,11 +1,11 @@
 ---
 id: TASK-31741
 title: Complete Canvas integration artifact guards
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 20:02'
-updated_date: '2026-09-05 21:32'
+updated_date: '2026-09-05 21:55'
 labels:
   - canvas
   - testing
@@ -48,4 +48,6 @@ ADR required: no new ADR. ADR path: backlog/decisions/121-local-versioned-canvas
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented reviewed diagnostic metadata, six Canvas index classifications and real no-statistics query-plan coverage; corrected four new Canvas traceback disclosures with fixed diagnostics. Restored startup ratchets through first-use archive/browser/compiler/dialog imports and exact CSS subjects, preserving concrete ownership, first-create delivery, strict policy and compiler contracts. Reconciled current dev fixture contracts without weakening production gates. Existing ADR-121 and ADR-097 apply; no new architecture, thresholds or snapshots. Latest base d9d5763d6: all116 commits range-diff equal, recovery ref retained; exact candidate970c86da4 preflight passes, startup+first-use36passed, prior affected1517passed, browser89passed (optional Firefox/WebKit unavailable), compiler/service139passed, finaldialog32passed, latency9passed. New/tiny owned-file Ruff/format passes; legacy diagnostics unchanged or reduced. Local PR Fast Lane749passed/6SemLock errno28 failures reproduced on untouched dev; no OS changes, protected CI still required. Evidence and warning qualifications: Docs/Canvas/V1_VERIFICATION.md. All scoped changes independently reviewed with PASS. Remains In Progress until protected integration checks complete; no full-suite claim. Modified Canvas/Console/config/Chatbook tests and owners, CSS bundle, diagnostic/index inventories, evidence and task documentation. Lesson added for baseline-verified OS allocation failures.
+
+Protected integration gate completed on PR2432 head b6224daf5, base66a1cbf8f: GitHub run33993561982 PR Fast Lane success and Derived artifacts reproduce from their sources success. This supersedes the preceding pending-check note. Post-open rebase preserved117 commits with additive lesson conflict only; exact-message fixture authorization restores61 affected tests (2warnings18.95s), first-paint969/972. No bypass, full sweep or OS changes. Further Qodo corrections are separately tracked in TASK31742; PR merge remains pending that review task.
 <!-- SECTION:NOTES:END -->
