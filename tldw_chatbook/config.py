@@ -4428,6 +4428,10 @@ tail_max_chars = 4000
 # LLM Management settings
 model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
+[llamacpp_snapshots]
+enabled = false
+keep_count = 10
+
 [notes]
 # Device-private lasting-sync settings. Legacy sync keys are intentionally not
 # emitted for fresh profiles; already-present keys remain migration input only.

@@ -9,6 +9,30 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## CSS ratchet paydown must preserve inherited subjects and specificity
+
+**PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a
+277-versus-274 bare-type selector breach, but the first narrowed selectors
+regressed the 80-column Models and F9 paint checks. A plain button ID lost to
+the launcher disabled-border rule and clipped Restore. Checkbox and
+CollapsibleTitle both inherit Static; excluding them lost height/wrapping
+behavior and left the focused checkbox text outside the painted viewport.
+Preserving button ancestor specificity and explicitly targeting those inherited
+subjects restored the checks without raising the boot budget.
+
+**What to do.** Pair parsed-selector census checks with actual small-terminal
+paint checks. When replacing a type selector, inspect its subclasses and preserve
+the relevant cascade precedence, not just the obvious direct widget instances.
+
+The same PR then inherited TASK-31450's 976/972 startup breach. A controller's
+closed-rail dispatch guard did not prevent its constructor and module imports
+from loading four Environment modules. First-use owner/projection construction
+restored 972/972, but required explicit first-open painting for a workspace-less
+panel (there is no worker result to paint it). Measure imports as well as I/O,
+and pair lazy-owner guards with a no-result first-use UI test.
+
+---
+
 ## Spend forecasts must test admitted media and durable recovery IDs
 
 **PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
@@ -11441,3 +11465,12 @@ the shared authority does not repair local hosts that continue to bypass it.
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
 
 **What to do.** When a change flips what an existing pin asserts (a gate, a disabled state, a focus target), the gate for that change is the WHOLE files that pin the gate — here `test_library_shell.py` and `test_library_media_side_by_side.py` — compared as failing-name sets against the base, not a `-k` subset named after the action. The 80-minute whole-file shell run is the price; run it once per PR at the review boundary, not per task. `-k` stays fine for iterating, never for the parity claim.
+
+## Covered reusable screens can still report visible
+
+PR2419 reuse integration (2026-09-05): after Console became reusable, Environment
+collectors still dispatched while covered because Textual suspension preserves
+widget `display`. A mounted regression proved four unwanted dispatches. Its first
+attempt also exposed that `Screen.is_current` includes background screens. Use
+`app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
+exercise real cover/return and retained-owner refresh, not a visibility mock.
