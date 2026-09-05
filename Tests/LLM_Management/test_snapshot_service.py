@@ -817,7 +817,7 @@ async def test_initialize_is_offthread_once_and_shutdown_settles_cancelled_await
 
 
 @pytest.mark.asyncio
-async def test_snapshot_composition_is_light_and_shutdown_owner_is_called(monkeypatch):
+async def test_snapshot_composition_is_lazy_and_shutdown_owner_is_called(monkeypatch):
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.LLM_Management import snapshot_service
 
@@ -827,14 +827,30 @@ async def test_snapshot_composition_is_light_and_shutdown_owner_is_called(monkey
         def __init__(self, store, is_current):
             constructions.append(store)
             self.closed = 0
+            self.initialized = 0
+
+        async def initialize(self, root_factory):
+            self.initialized += 1
 
         async def shutdown(self):
             self.closed += 1
 
     monkeypatch.setattr(snapshot_service, "LlamaCppSnapshotService", Owner)
-    app = SimpleNamespace()
+    app = SimpleNamespace(is_running=True)
     TldwCli._wire_llamacpp_snapshot_service(app)
+    assert constructions == []
+    owner = TldwCli.llamacpp_snapshot_service.fget(app)
+    assert TldwCli.llamacpp_snapshot_service.fget(app) is owner
+    await app._llamacpp_snapshot_setup_task
     assert constructions == [None]
+    assert owner.initialized == 1
+
+    _stub_other_app_lifecycles(app)
+    await TldwCli._shutdown_app_owned_lifecycles(app)
+    assert owner.closed == 1
+
+
+def _stub_other_app_lifecycles(app):
 
     class Noop:
         async def shutdown(self):
@@ -855,8 +871,90 @@ async def test_snapshot_composition_is_light_and_shutdown_owner_is_called(monkey
     app._shutdown_terminal_session_manager = no_op
     app._shutdown_console_settings_durability = no_op
     app._shutdown_persona_buddy = no_op
+
+
+@pytest.mark.asyncio
+async def test_unused_snapshot_owner_is_not_created_during_shutdown(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.LLM_Management import snapshot_service
+
+    class App(SimpleNamespace):
+        llamacpp_snapshot_service = TldwCli.llamacpp_snapshot_service
+
+    app = App(is_running=True)
+    TldwCli._wire_llamacpp_snapshot_service(app)
+    monkeypatch.setattr(
+        snapshot_service,
+        "LlamaCppSnapshotService",
+        lambda *args: pytest.fail("unused snapshot owner was created at shutdown"),
+    )
+    _stub_other_app_lifecycles(app)
     await TldwCli._shutdown_app_owned_lifecycles(app)
-    assert app.llamacpp_snapshot_service.closed == 1
+    assert app._llamacpp_snapshot_service is None
+    assert app._llamacpp_snapshot_setup_task is None
+
+
+@pytest.mark.parametrize("is_running", [False, True])
+def test_snapshot_getter_without_running_loop_and_public_injection(is_running):
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.LLM_Management.snapshot_service import LlamaCppSnapshotService
+
+    app = SimpleNamespace(is_running=is_running)
+    TldwCli._wire_llamacpp_snapshot_service(app)
+    owner = TldwCli.llamacpp_snapshot_service.fget(app)
+    assert isinstance(owner, LlamaCppSnapshotService)
+    assert owner.store is None
+    assert app._llamacpp_snapshot_setup_task is None
+    injected = LlamaCppSnapshotService(None, lambda claim: False)
+    TldwCli.llamacpp_snapshot_service.fset(app, injected)
+    assert TldwCli.llamacpp_snapshot_service.fget(app) is injected
+
+
+@pytest.mark.asyncio
+async def test_snapshot_pre_run_explicit_root_survives_first_running_access(tmp_path):
+    from tldw_chatbook.app import TldwCli
+
+    app = SimpleNamespace(is_running=False)
+    TldwCli._wire_llamacpp_snapshot_service(app)
+    owner = TldwCli.llamacpp_snapshot_service.fget(app)
+    assert app._llamacpp_snapshot_setup_task is None
+    root = tmp_path / "explicit-profile"
+    await owner.initialize(lambda: root)
+    app.is_running = True
+    assert TldwCli.llamacpp_snapshot_service.fget(app) is owner
+    await app._llamacpp_snapshot_setup_task
+    assert owner.store.root == root
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_settles_lazy_snapshot_initialization(tmp_path, monkeypatch):
+    from tldw_chatbook import app as app_module
+
+    entered, release = threading.Event(), threading.Event()
+
+    def root():
+        entered.set()
+        assert release.wait(5)
+        return tmp_path
+
+    monkeypatch.setattr(app_module, "get_user_data_dir", root)
+    app = SimpleNamespace(is_running=True)
+    app_module.TldwCli._wire_llamacpp_snapshot_service(app)
+    owner = app_module.TldwCli.llamacpp_snapshot_service.fget(app)
+    _stub_other_app_lifecycles(app)
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        shutdown = asyncio.create_task(
+            app_module.TldwCli._shutdown_app_owned_lifecycles(app)
+        )
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(shutdown, 5)
+    assert app._llamacpp_snapshot_setup_task.done()
+    assert owner.store.root == tmp_path / "llamacpp_snapshots"
 
 
 @pytest.mark.asyncio

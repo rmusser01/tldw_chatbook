@@ -14484,18 +14484,45 @@ class TldwCli(
         return self.scheduler_loop.request_reload()
 
     def _wire_llamacpp_snapshot_service(self) -> None:
-        """Compose the snapshot owner without resolving profile paths or opening files."""
-        from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
-            snapshot_claim_is_live,
-        )
-        from tldw_chatbook.LLM_Management.snapshot_service import (
-            LlamaCppSnapshotService,
-        )
-
-        self.llamacpp_snapshot_service = LlamaCppSnapshotService(
-            None, lambda claim: snapshot_claim_is_live(self, claim)
-        )
+        """Reserve lazy owner slots without importing the snapshot stack at boot."""
+        self._llamacpp_snapshot_service = None
         self._llamacpp_snapshot_setup_task = None
+
+    @property
+    def llamacpp_snapshot_service(self) -> Any:
+        """Compose snapshots on first Models/launch use (ADR-097, ADR-119)."""
+        owner = self._llamacpp_snapshot_service
+        if owner is None:
+            from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+                snapshot_claim_is_live,
+            )
+            from tldw_chatbook.LLM_Management.snapshot_service import (
+                LlamaCppSnapshotService,
+            )
+
+            owner = LlamaCppSnapshotService(
+                None, lambda claim: snapshot_claim_is_live(self, claim)
+            )
+            self._llamacpp_snapshot_service = owner
+        if self.is_running and self._llamacpp_snapshot_setup_task is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Pre-run callers and launch workers can inspect the owner safely.
+                pass
+            else:
+                self._llamacpp_snapshot_setup_task = loop.create_task(
+                    owner.initialize(
+                        lambda: get_user_data_dir() / "llamacpp_snapshots"
+                    ),
+                    name="initialize_llamacpp_snapshots",
+                )
+        return owner
+
+    @llamacpp_snapshot_service.setter
+    def llamacpp_snapshot_service(self, service: Any) -> None:
+        """Preserve the public injection seam used by screens and tests."""
+        self._llamacpp_snapshot_service = service
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
@@ -14513,12 +14540,6 @@ class TldwCli(
         )
         self._notes_sync_runtime_start_task.add_done_callback(
             self._observe_notes_sync_runtime_start
-        )
-        self._llamacpp_snapshot_setup_task = asyncio.create_task(
-            self.llamacpp_snapshot_service.initialize(
-                lambda: get_user_data_dir() / "llamacpp_snapshots"
-            ),
-            name="initialize_llamacpp_snapshots",
         )
         mount_start = time.perf_counter()
 
@@ -17406,9 +17427,12 @@ class TldwCli(
         if change_review is not None:
             await asyncio.to_thread(change_review.shutdown, timeout=1.0)
         await self._shutdown_persona_buddy()
-        snapshot_owner = getattr(self, "llamacpp_snapshot_service", None)
+        snapshot_owner = getattr(self, "_llamacpp_snapshot_service", None)
         if snapshot_owner is not None:
             await snapshot_owner.shutdown()
+            snapshot_setup = getattr(self, "_llamacpp_snapshot_setup_task", None)
+            if snapshot_setup is not None:
+                await asyncio.shield(snapshot_setup)
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()

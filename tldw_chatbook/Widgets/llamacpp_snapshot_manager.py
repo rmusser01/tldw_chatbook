@@ -28,6 +28,14 @@ PREFERENCES_UNAVAILABLE = (
 
 
 def retention_copy(keep_count: int) -> str:
+    """Describe the effective snapshot retention limit.
+
+    Args:
+        keep_count: Maximum retained snapshots in the current profile.
+
+    Returns:
+        Save-area wording explaining that retention spans all models.
+    """
     return f"Keeps the newest {keep_count} across all models"
 
 
@@ -537,9 +545,17 @@ class LlamaCppSnapshotManager(Vertical):
             else:
                 if self._preferences is None:
                     return
+                from tldw_chatbook.Utils.input_validation import (
+                    validate_bounded_integer,
+                )
+
                 value = preferences.SnapshotPreferences(
                     enabled=self.query_one("#snapshot-enabled", Checkbox).value,
-                    keep_count=int(self.query_one("#snapshot-keep", Input).value),
+                    keep_count=validate_bounded_integer(
+                        self.query_one("#snapshot-keep", Input).value,
+                        minimum=1,
+                        maximum=1000,
+                    ),
                 )
                 if not await asyncio.to_thread(
                     preferences.save_snapshot_preferences,

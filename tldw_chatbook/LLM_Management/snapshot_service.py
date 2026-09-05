@@ -15,10 +15,13 @@ from uuid import uuid4
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
 )
-
-from .snapshot_admission import compatibility_matches, finalize_launch, revalidate_files
-from .snapshot_client import SnapshotClient
-from .snapshot_models import (
+from tldw_chatbook.LLM_Management.snapshot_admission import (
+    compatibility_matches,
+    finalize_launch,
+    revalidate_files,
+)
+from tldw_chatbook.LLM_Management.snapshot_client import SnapshotClient
+from tldw_chatbook.LLM_Management.snapshot_models import (
     CatalogPage,
     LaunchDescriptor,
     ManagerView,
@@ -27,8 +30,8 @@ from .snapshot_models import (
     WorkingFile,
     replace_descriptor,
 )
-from .snapshot_settings import load_snapshot_preferences
-from .snapshot_store import SnapshotStore
+from tldw_chatbook.LLM_Management.snapshot_settings import load_snapshot_preferences
+from tldw_chatbook.LLM_Management.snapshot_store import SnapshotStore
 
 
 def _error(code: str) -> SnapshotError:

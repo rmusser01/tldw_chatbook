@@ -647,6 +647,86 @@ def test_snapshot_preflight_refuses_existing_listener_before_directory_or_spawn(
     assert server_lifecycle.current_server_claim(app, "llamacpp") is None
 
 
+@pytest.mark.parametrize(
+    ("connection_error", "should_launch"),
+    [
+        pytest.param(TimeoutError("probe timed out"), False, id="timeout"),
+        pytest.param(OSError("network unavailable"), False, id="ambiguous-os-error"),
+        pytest.param(
+            ConnectionRefusedError("no listener"), True, id="connection-refused"
+        ),
+    ],
+)
+def test_snapshot_socket_preflight_gates_directory_and_spawn(
+    tmp_path, monkeypatch, connection_error, should_launch
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Management import snapshot_settings
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+    from tldw_chatbook.LLM_Management.snapshot_store import SnapshotStore
+
+    model = tmp_path / "model.gguf"
+    _write_sparse_gguf(model)
+    runtime = tmp_path / "llama-server"
+    runtime.write_bytes(b"runtime")
+    store = SnapshotStore(tmp_path / "snapshots")
+    app = _App()
+    app.llamacpp_snapshot_service = SimpleNamespace(store=store)
+    selection = _selection(GGUFSourceMode.EXTERNAL, external_path=model)
+    claim = _reserve(app, "llamacpp", selection)
+    monkeypatch.setattr(
+        snapshot_settings,
+        "load_snapshot_preferences",
+        lambda: SnapshotPreferences(enabled=True),
+    )
+    observed = []
+
+    def connect(address, *, timeout):
+        observed.append((address, timeout))
+        raise connection_error
+
+    monkeypatch.setattr(events.socket, "create_connection", connect)
+    prepare = store.prepare_launch_directory
+    directories = []
+
+    def prepare_directory(launch_id):
+        directory = prepare(launch_id)
+        directories.append(directory)
+        return directory
+
+    monkeypatch.setattr(store, "prepare_launch_directory", prepare_directory)
+    spawned = []
+
+    def run(*args, **kwargs):
+        spawned.append((args, kwargs))
+        assert len(directories) == 1
+        assert directories[0].is_dir()
+        assert args[2][-3:] == [
+            "--slots",
+            "--slot-save-path",
+            str(directories[0]) + os.sep,
+        ]
+        return "started"
+
+    monkeypatch.setattr(events, "run_server_subprocess", run)
+    result = events._run_gguf_server_worker(
+        app, "llamacpp", str(runtime), "127.0.0.1", "8080", (), selection, claim
+    )
+
+    assert observed == [(("127.0.0.1", 8080), 5)]
+    if should_launch:
+        assert result == "started"
+        assert len(spawned) == 1
+        assert claim._snapshot_context.directory == directories[0]
+    else:
+        assert result == "llamacpp source preparation failed"
+        assert directories == []
+        assert spawned == []
+        assert claim._snapshot_context is None
+        assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+
+
 _SOURCE_OVERRIDE_ARGUMENTS = (
     ("-m", "/private/other.gguf"),
     ("--model=/private/other.gguf",),

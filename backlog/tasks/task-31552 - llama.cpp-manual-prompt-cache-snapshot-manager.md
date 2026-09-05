@@ -1,11 +1,11 @@
 ---
 id: TASK-31552
 title: llama.cpp manual prompt-cache snapshot manager
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 01:43'
+updated_date: '2026-09-05 16:40'
 labels: []
 dependencies: []
 references:
@@ -31,7 +31,8 @@ The existing b10816/Gemma 4/vision-projector assets were used in live UAT on
 2026-09-05. The confirmed-Restore readiness race was fixed and independently
 reviewed. Final normal-UI UAT passes without diagnostic suppression, including
 measured text/image reuse and real retention/Delete. AC1/AC5 now have live evidence.
-Status remains In Progress for branch integration/remaining repository gates. See the
+PR review remediation and scoped local verification are complete; GitHub merge
+remains gated on current-head checks. See the
 [UAT record](../../Docs/superpowers/reviews/2026-09-05-llamacpp-slot-snapshots-uat.md).
 
 The user approved integration of the follow-up review: compatibility-gated save
@@ -73,16 +74,9 @@ Recheck allocation before integration.
 ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md. Reason: accepted snapshot ownership and retention contract; ADR-029 and ADR-036 also apply. Execute Docs/superpowers/plans/2026-09-04-llamacpp-slot-snapshots.md in six reviewed units: (1) strict settings and effective launch admission; (2) private transactional storage and integrity; (3) bounded loopback-only management HTTP; (4) app-owned operation and subprocess lifecycle; (5) manual Models widget and canonical F9 settings; (6) isolated real-server reuse evidence and closeout. Units 1–5 are implemented and reviewed. Task6 supplies safeguards, an opt-in production-path harness, and honest evidence documentation; its required real-server execution remains pending. Use targeted RED/GREEN tests and check criteria only when their evidence exists.
 <!-- SECTION:PLAN:END -->
 
-UAT remediation plan (2026-09-05): reproduce overlapping background readiness and
-Save/Restore staging with deterministic barriers; distinguish a pending refresh
-from failed/invalidated readiness without removing each operation's fresh probe;
-run service/UI regressions and the complete real b10816/Gemma 4 vision/retention
-UAT with no diagnostic callback suppression; update evidence from observed results.
-ADR required: no new ADR. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md.
-Reason: routine concurrency fix within the accepted ownership/readiness contract.
-
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented app-owned manual snapshots with private atomic publication and
 commit-before-prune retention, strict launch compatibility and bounded loopback
 HTTP, retained file workers and exact-claim Stop barriers, and Models/F9 controls
@@ -136,3 +130,36 @@ keyboard-press harness issue was corrected without changing production UI behavi
 Targeted checks: 95 passed; final affected service/live-helper repeat: 64 passed;
 scoped lint/format/whitespace pass. AC1 and AC5 are checked from this evidence.
 No full repository sweep, merge or push; the worktree is retained for integration.
+
+PR #2419 remediation: addressed six Qodo validation/documentation/style findings
+and proved the reported endpoint fall-through does not occur with three real-worker
+regressions and a failing unsafe mutation. Strict launch validation preserves
+Mapping inputs; both UI keep-count forms use the shared integer validator. Fixed
+CI's 981-module startup breach by composing snapshots on first use, preserving
+one owner, explicit roots and shutdown settlement. ADR-119 and ADR-097 apply;
+no budget was raised. Final evidence: 460 combined tests passed, 3 mounted Models
+checks passed, startup census passed twice at 972/972, and fresh normal b10816/
+Gemma vision UAT passed in 258.67s. Scoped lint/format, CSS reproduction, inventory
+and whitespace checks pass; unchanged broad-file lint and dependency warnings
+remain documented. The current UAT report supersedes historical pending statements.
+<!-- SECTION:NOTES:END -->
+
+UAT remediation plan (2026-09-05): reproduce overlapping background readiness and
+Save/Restore staging with deterministic barriers; distinguish a pending refresh
+from failed/invalidated readiness without removing each operation's fresh probe;
+run service/UI regressions and the complete real b10816/Gemma 4 vision/retention
+UAT with no diagnostic callback suppression; update evidence from observed results.
+ADR required: no new ADR. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md.
+Reason: routine concurrency fix within the accepted ownership/readiness contract.
+
+PR #2419 remediation plan (2026-09-05): validate Qodo's seven findings against
+the current code; add shared key-path and UI-integer boundaries, strict Pydantic
+launch-input validation, named credential limits and missing API documentation;
+prove ambiguous endpoint probes fail closed, then run focused regression and
+required CI checks before replying to reviews and merging the current head.
+The CI startup-census breach (981 > 972 modules) requires deferring snapshot
+composition off the unused startup path, with owner initialization/shutdown and
+real Models UAT reverified. Preserve the ADR-097 ratchet without raising its limit.
+ADR required: no new ADR. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md.
+Also applies: backlog/decisions/097-boot-budget-ratchets.md.
+Reason: boundary hardening and lazy composition implement the accepted contracts.
