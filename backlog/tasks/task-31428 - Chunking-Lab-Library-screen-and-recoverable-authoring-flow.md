@@ -1,11 +1,11 @@
 ---
 id: TASK-31428
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 04:35'
+updated_date: '2026-09-05 04:56'
 labels:
   - chunking
   - chunking-lab
@@ -30,14 +30,14 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Library, palette, and eligible local extracted-text actions open a lazy dedicated Chunking Lab route and return to the opener; direct entry bypasses starter filtering and never creates a Settings or global destination.
-- [ ] #2 Users can paste, load UTF-8 text, or copy local extracted Library text; edit method controls or JSON; preview B, pin A, compare, and save either locally with no source mutation.
-- [ ] #3 Reopen, autosave failures, conflict, cancellation, template import/export, recovery export/restore/Undo restore, and confirmed Clear have working visible actions and truthful status; profile switching never mixes sessions.
-- [ ] #4 Keyboard-only flows work at 80x24, 120x40, and 160x50; typing r/p/s is safe in editors, F6/F1 follow global conventions, and the footer advertises only working actions.
-- [ ] #5 Saved templates immediately refresh the ingest picker; TASK-24404 is reconciled without a duplicate editor, v2/v3 actions are absent, and real isolated-profile live verification plus targeted regression evidence is recorded.
-- [ ] #6 Pure record-field edits and saved-record association preserve invalid JSON, pending controls, undo semantics and captured provenance; unsaved pinned records retain authored fields without fabricated catalog identity, and late saves cannot attach to an unrelated draft.
-- [ ] #7 Fallback to a previous valid recovery checkpoint is visibly explained through a read-only coordinator warning without exposing private sample/path details.
-- [ ] #8 Exclusive result preparation/inspection workers can be canceled before starting without leaking an unawaited coroutine.
+- [x] #1 Library, palette, and eligible local extracted-text actions open a lazy dedicated Chunking Lab route and return to the opener; direct entry bypasses starter filtering and never creates a Settings or global destination.
+- [x] #2 Users can paste, load UTF-8 text, or copy local extracted Library text; edit method controls or JSON; preview B, pin A, compare, and save either locally with no source mutation.
+- [x] #3 Reopen, autosave failures, conflict, cancellation, template import/export, recovery export/restore/Undo restore, and confirmed Clear have working visible actions and truthful status; profile switching never mixes sessions.
+- [x] #4 Keyboard-only flows work at 80x24, 120x40, and 160x50; typing r/p/s is safe in editors, F6/F1 follow global conventions, and the footer advertises only working actions.
+- [x] #5 Saved templates immediately refresh the ingest picker; TASK-24404 is reconciled without a duplicate editor, v2/v3 actions are absent, and real isolated-profile live verification plus targeted regression evidence is recorded.
+- [x] #6 Pure record-field edits and saved-record association preserve invalid JSON, pending controls, undo semantics and captured provenance; unsaved pinned records retain authored fields without fabricated catalog identity, and late saves cannot attach to an unrelated draft.
+- [x] #7 Fallback to a previous valid recovery checkpoint is visibly explained through a read-only coordinator warning without exposing private sample/path details.
+- [x] #8 Exclusive result preparation/inspection workers can be canceled before starting without leaking an unawaited coroutine.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +50,6 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the Library-owned local recoverable authoring screen under ADR-118 (backlog/decisions/118-chunking-lab-local-execution-and-recovery.md), with async single-flight profile ownership, exact local text handoff, serialized lossless edits, captured A/current B saves, canonical ingest refresh preserving selection, explicit recovery transfer and guarded navigation/quit. Approved narrow extensions add pure record-field/save-lineage transitions, read-only fallback warning and lazy/teardown-fenced ResultsRegion workers. TASK24404 was re-read unimplemented and archived with ADR/design note, not marked Done. User workflow/privacy/runtime limits are in Docs/Chunking_Lab.md. Final affected UI gate:36 passed45.17s; prior release selection103 passed with the subsequently fixed result teardown failure. Full requested integration:294 passed33 failed; exact BASE replay reproduced30, while3 startup/navigation differentials remain unqualified review concerns (not baseline-proven). Exact commands, RED/GREEN chronology, real SQLite/child/crash/failed-write/fresh-profile evidence, two accepted three-size viewport rounds, static audits and AC mapping: .superpowers/sdd/2026-09-04-chunking-lab/task-8-report.md. Scoped Ruff/format/compile/whitespace checks passed; no full sweep or unrelated repair. Status and AC acceptance remain In Progress pending independent review.
+
+Task-level independent review complete after fix cd3e13926a: final-render edit ownership now rechecks the queue, with deterministic RED3/GREEN3 and final screen/recovery27 passing. Re-review found no new blocking issues. Controller explained the three startup differentials through active7-second splash versus readiness polling; exact3 no-splash intervention passes, untouched BASE reproduces same active-splash boundary. Original integration remains non-green; no blanket cold-start qualification. Durable qualifications and verification chronology: Docs/Chunking_Lab_Verification.md. Deferred Minor tag-entry normalization/eager screen workers go to the pending whole-branch review. All Task8 ACs accepted with documented existing-environment/platform limits; ADR118 unchanged.
 <!-- SECTION:NOTES:END -->

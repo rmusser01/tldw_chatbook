@@ -1,0 +1,89 @@
+# Chunking Lab verification record
+
+Branch: `codex/chunking-lab`, based on `origin/dev` commit
+`1a82db60ce47890c6d2df9f918f80309c8608ea6`. Architecture:
+[ADR-118](../backlog/decisions/118-chunking-lab-local-execution-and-recovery.md).
+[Workflow and limits](Chunking_Lab.md),
+[implementation plan](superpowers/plans/2026-09-04-chunking-lab.md).
+
+## Review and targeted evidence
+
+All eight tasks received independent specification and quality reviews. Task8
+screen integration is `c1b320d11b`; its reviewed edit-drain correction is
+`cd3e13926a`. Whole-branch review is pending at this checkpoint. No merge or push
+has been performed. The original working checkout was not used for implementation.
+
+Verification used the existing Python3.12.11 virtual environment with Textual8.2.8
+and Pydantic2.12.5. Only targeted selections were run, not the repository-wide
+suite. Exact commands, outputs, intermediate failures and per-task review reports
+are retained under the ignored, plan-owned directory
+`.superpowers/sdd/2026-09-04-chunking-lab/` in this worktree.
+
+- Headless tests cover faithful whole-pipeline execution, lossless drafts,
+  immutable request/result capture, real SQLite checkpoints, bounded recovery
+  transfer, write/CAS failures, subprocess admission/cancellation and canonical
+  conflict-safe template saving. Each task's final amended-code selection is
+  recorded separately; counts are not summed into a fictitious full-suite result.
+- Task8 final affected UI gate:36 passed in45.17s. After the edit-drain review
+  correction, the affected screen/recovery modules passed27 tests in40.21s.
+  Deterministic RED3/GREEN3 proves an edit arriving during the consumer's final
+  render reaches autonomous state, recovery export and the navigation checkpoint.
+- Real isolated-profile scenarios include SIGKILL after a committed invalid draft
+  and completed result, fresh recovery without rerunning, failed-write export and
+  restore into another profile, and Cancel-button reaping of a child ignoring
+  SIGTERM. Replacement rollback was tested using a real SQLite abort trigger;
+  do not confuse that with a replacement-specific SIGKILL test.
+- Two bounded visual rounds covered80×24,120×40,160×50. The narrow correction
+  made paging/full-text inspection keyboard-reachable; a150-chunk regression
+  selects the last chunk. Accepted screenshots predate later logic-only
+  status/lineage/worker/drain fixes, which have amended-code tests.
+- Scoped new-code Ruff, formatting, compilation and whitespace checks passed.
+  Existing large-module diagnostics were compared separately, not bulk-repaired.
+
+## Non-green checks and startup qualification
+
+The required seven-module integration selection produced294 passes and33 failures.
+An exact failed-node replay on Task8 BASE reproduced30 failures: two incumbent
+ingest progress-color assertions,27 existing navigation/probe/focus/startup
+failures, and one missing `research_workspace` migration owner. The original run
+did not request JUnit; its retained failure extract is explicitly labeled as a
+transcript extract. BASE and later runs have genuine XML artifacts.
+
+Three navigation tests passed that first BASE replay but failed the amended
+selection: overlapping FIFO navigation, search→Library RAG, and Study Escape.
+A controller-only, isolated instrumentation probe subsequently explained the
+boundary: a seven-second enabled splash remained active when the tests exhausted
+their150×20ms readiness polling, before any initial-screen push. With the sole
+test-time intervention of disabling splash, the exact three current-code tests
+passed in9.45s. On untouched BASE with enabled splash, Search and Study also
+failed with the splash still active after6.84/6.51s; FIFO passed in a slower9.69s
+run. Iteration-count polling is not a guarantee the splash has closed.
+
+This is a bounded causal explanation, not a claim the original integration gate
+was green or general cold-start performance is qualified. No production startup
+or unrelated harness changes were made. Full probe commands, observations and
+limits are in `task8-startup-diagnosis.md`, with
+`task8-startup-no-splash.xml` and `task8-startup-base-instrumented.xml`.
+
+Earlier selections also reproduced three pre-existing private-SQLite census
+failures and two pre-existing CSS guards on their exact task BASE revisions.
+Those unrelated owners/classes were left unchanged. Known Requests dependency
+compatibility and vendored datetime deprecation warnings remain. This is not an
+all-checks-green or cross-platform qualification.
+
+## Platform, resource and privacy limits
+
+Actual execution evidence is macOS/arm64 Python3.12. Windows preview is explicitly
+refused; Linux has not been qualified here. macOS applied a61-second CPU limit but
+rejected the attempted1GiB address-space limit. The32MiB working-payload admission
+estimate is **not an RSS cap**: an admitted formatter fixture reached480,313,344
+bytes peak RSS (about458MiB). Fixtures are not universal memory guarantees, and
+OS reaping latency is not a portable hard deadline.
+
+Full samples/results are local recovery data and are included in exports. Private
+permissions are not encryption; Clear is not secure erasure. One early Task1
+review probe imported the app without temporary-profile isolation and read normal
+configuration/ensured an existing `chat_dicts` directory. No prior fingerprint
+exists, so non-mutation cannot be proven; no content write was observed. Later
+probes used config, data and HOME isolation before app imports. The incident is
+retained rather than claiming every probe was isolated.
