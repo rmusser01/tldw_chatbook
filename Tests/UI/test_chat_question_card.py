@@ -323,3 +323,38 @@ async def test_deadline_counts_down_from_the_absolute_deadline_and_stops_when_cl
         app.query_one(ChatTaskCards).sync_state(TaskResumeState())
         await pilot.pause()
         assert card._deadline_timer is None
+
+
+# --- task-31382: the title names the asking sub-agent --------------------------
+
+
+@pytest.mark.asyncio
+async def test_title_names_the_sub_agent_label_and_falls_back_without_one():
+    app = _Harness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        payload = _payload(1)
+        payload["asked_by"] = "sub-agent"
+        payload["asker_label"] = "researcher"
+        card = await _mount(app, pilot, payload)
+        assert str(card.query_one("#question-title", Static).render()) == (
+            "Sub-agent 'researcher' has 1 question for you:"
+        )
+        unnamed = _payload(2, request_id="round-2")
+        unnamed["asked_by"] = "sub-agent"
+        unnamed["asker_label"] = None
+        app.query_one(ChatTaskCards).sync_state(TaskResumeState(pending_question=unnamed))
+        await pilot.pause()
+        assert str(card.query_one("#question-title", Static).render()) == (
+            "A sub-agent has 2 questions for you:"
+        )
+        # A label with newlines / control characters is flattened to one
+        # line and cut, the same way the transcript marker renders it.
+        messy = _payload(1, request_id="round-3")
+        messy["asked_by"] = "sub-agent"
+        messy["asker_label"] = " re\nsearcher\x07 " + "z" * 60
+        app.query_one(ChatTaskCards).sync_state(TaskResumeState(pending_question=messy))
+        await pilot.pause()
+        title = str(card.query_one("#question-title", Static).render())
+        assert title.startswith("Sub-agent 're searcher z") and title.endswith("…' has 1 question for you:")
+        assert "\n" not in title and "\x07" not in title

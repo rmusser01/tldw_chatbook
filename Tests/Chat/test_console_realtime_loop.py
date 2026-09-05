@@ -192,9 +192,7 @@ def test_idle_ceiling_fires_only_in_live_and_resets_on_activity():
     ev.clear()
     c.tick(now=18.0)  # elapsed since 8.0 == 10 >= 10
     assert c.state == "idle"
-    assert any(
-        isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev
-    )
+    assert any(isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev)
 
 
 def test_idle_ceiling_never_fires_mid_reply_even_past_deadline():
@@ -337,9 +335,7 @@ def test_reconnect_then_second_close_still_exits_even_after_reaching_live_again(
     ev.clear()
     c.on_transport_closed(error=True)  # 2nd within the SAME loop entry
     assert c.state == "idle"
-    assert any(
-        isinstance(e, ExitLoop) and e.reason == "connection-lost" for e in ev
-    )
+    assert any(isinstance(e, ExitLoop) and e.reason == "connection-lost" for e in ev)
 
 
 def test_fresh_enter_after_exit_resets_reconnect_once_flag():
@@ -471,7 +467,12 @@ def test_mode_changed_full_cycle_payloads():
     c.on_exit_request()
     modes = [e.state for e in ev if isinstance(e, ModeChanged)]
     assert modes == [
-        "connecting", "live", "thinking", "speaking", "live", "idle",
+        "connecting",
+        "live",
+        "thinking",
+        "speaking",
+        "live",
+        "idle",
     ]
 
 
@@ -561,9 +562,7 @@ def test_barge_in_mid_reply_refreshes_activity_so_idle_ceiling_does_not_fire_imm
     ev.clear()
     c.tick(now=361.5 + 10.0)
     assert c.state == "idle"
-    assert any(
-        isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev
-    )
+    assert any(isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev)
 
 
 def test_connect_failed_while_reconnecting_exits_with_connection_lost():
@@ -685,9 +684,7 @@ def test_genuinely_silent_session_still_exits_at_idle_ceiling():
     ev.clear()
     c.tick(now=10.0)  # elapsed 10 >= 10, no activity of any kind in between
     assert c.state == "idle"
-    assert any(
-        isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev
-    )
+    assert any(isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev)
 
 
 def test_speech_started_does_not_refresh_anchor_outside_live():

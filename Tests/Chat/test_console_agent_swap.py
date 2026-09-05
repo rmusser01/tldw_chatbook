@@ -58,12 +58,13 @@ def _assert_durable_row(store, message_id: str) -> None:
         store: The Console store whose persistence owns the durable rows.
         message_id: Durable id a run recorded.
     """
-    row = store.persistence.db.get_connection().execute(
-        "SELECT id, deleted FROM messages WHERE id = ?", (message_id,)
-    ).fetchone()
+    row = (
+        store.persistence.db.get_connection()
+        .execute("SELECT id, deleted FROM messages WHERE id = ?", (message_id,))
+        .fetchone()
+    )
     assert row is not None, f"run points at {message_id!r}, absent from messages"
     assert not row["deleted"], f"run points at soft-deleted row {message_id!r}"
-
 
 
 def _first(matches, *, what: str):
@@ -78,7 +79,6 @@ def _first(matches, *, what: str):
     value = next(iter(matches), None)
     assert value is not None, f"no {what} was produced by the turn under test"
     return value
-
 
 
 def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
@@ -151,15 +151,17 @@ class _Gateway:
         self.child_calls = 0
 
     async def resolve_for_send(self, selection):
-        return with_destination(ConsoleProviderResolution(
-            provider="llama_cpp",
-            base_url="",
-            model="test-model",
-            ready=True,
-            readiness_key="llama_cpp",
-            execution_key="llama_cpp",
-            max_tokens=128,
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url="",
+                model="test-model",
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+                max_tokens=128,
+            )
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         system = str(messages[0].get("content", "")) if messages else ""
@@ -200,29 +202,31 @@ class _SignalGateway:
         self.calls = []
         self.parent_calls = 0
         self.child_calls = 0
-        self.resolution = with_destination(ConsoleProviderResolution(
-            provider="openai",
-            base_url="https://provider.invalid/v1",
-            model="repair-model",
-            ready=True,
-            readiness_key="openai",
-            execution_key="openai",
-            api_key="secret",
-            temperature=None,
-            top_p=None,
-            min_p=None,
-            top_k=None,
-            max_tokens=128,
-            seed=None,
-            presence_penalty=None,
-            frequency_penalty=None,
-            reasoning_effort=None,
-            reasoning_summary=None,
-            verbosity=None,
-            thinking_effort=None,
-            thinking_budget_tokens=None,
-            streaming=True,
-        ))
+        self.resolution = with_destination(
+            ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://provider.invalid/v1",
+                model="repair-model",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                api_key="secret",
+                temperature=None,
+                top_p=None,
+                min_p=None,
+                top_k=None,
+                max_tokens=128,
+                seed=None,
+                presence_penalty=None,
+                frequency_penalty=None,
+                reasoning_effort=None,
+                reasoning_summary=None,
+                verbosity=None,
+                thinking_effort=None,
+                thinking_budget_tokens=None,
+                streaming=True,
+            )
+        )
 
     async def resolve_for_send(self, _selection):
         return self.resolution
@@ -389,7 +393,6 @@ def _persistence_free_controller(tmp_path, scripts):
     return controller, store, db
 
 
-
 @pytest.mark.parametrize(
     ("scripts", "child_scripts", "fallback_call", "expected_calls"),
     (
@@ -453,11 +456,14 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
         mark_fallback_calls=frozenset({fallback_call}),
     )
 
-    assistant = _first((
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            message
+            for message in store.messages_for_session(store.active_session_id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert result.visible_copy == assistant.content == "Primary final answer"
     # The repair turn (the last parent script) is bypassed, which is the
     # whole point -- so the run stops one parent turn short.
@@ -478,11 +484,14 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
         [[NO_PROVIDER_CONTENT_COPY], [repaired]],
     )
 
-    assistant = _first((
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            message
+            for message in store.messages_for_session(store.active_session_id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert result.visible_copy == assistant.content == repaired
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
@@ -569,15 +578,21 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "complete"
     assert assistant.persisted_message_id is not None
 
-    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
+    primary = _first(
+        (r for r in _all_runs(db) if r["agent_kind"] == "primary"),
+        what="primary agent run",
+    )
     assert primary["assistant_message_id"] == assistant.persisted_message_id
     # The run must point at a row that DURABLY EXISTS -- the property the old
     # `!= assistant.id` assertion was standing in for. `a26cdafd8`'s durable
@@ -642,15 +657,21 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 
-    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
+    primary = _first(
+        (r for r in _all_runs(db) if r["agent_kind"] == "primary"),
+        what="primary agent run",
+    )
     assert primary["assistant_message_id"] == assistant.persisted_message_id
     # See the note above: a checkpointed turn's durable id IS its native id.
     _assert_durable_row(store, primary["assistant_message_id"])
@@ -697,15 +718,21 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "failed"
     assert assistant.persisted_message_id is not None
 
-    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
+    primary = _first(
+        (r for r in _all_runs(db) if r["agent_kind"] == "primary"),
+        what="primary agent run",
+    )
     assert primary["assistant_message_id"] == assistant.persisted_message_id
 
 
@@ -731,15 +758,21 @@ async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is None
 
-    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
+    primary = _first(
+        (r for r in _all_runs(db) if r["agent_kind"] == "primary"),
+        what="primary agent run",
+    )
     assert primary["assistant_message_id"] is None
 
 
@@ -794,13 +827,15 @@ class _ParkingGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return with_destination(ConsoleProviderResolution(
-            provider="llama_cpp",
-            base_url="",
-            model="test-model",
-            ready=True,
-            execution_key="llama_cpp",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url="",
+                model="test-model",
+                ready=True,
+                execution_key="llama_cpp",
+            )
+        )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
@@ -870,11 +905,14 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "stopped"
     assert assistant.content == ""
     # The controller-side bookkeeping has already been reset by
@@ -928,11 +966,14 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "stopped"
     assert assistant.content == ""
     assert "late done text" not in assistant.content
@@ -961,11 +1002,14 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "complete"
     assert assistant.content == "original answer."
     assert assistant.variants is None
@@ -1015,11 +1059,14 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "complete"
 
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
@@ -1089,11 +1136,14 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # a chunk into the store -- simulating Stop landing while the
         # (slow) provider is still silent.
         session_id = store.active_session_id
-        assistant_message_id = _first((
-            m.id
-            for m in reversed(store.messages_for_session(session_id))
-            if m.role is ConsoleMessageRole.ASSISTANT
-        ), what="ASSISTANT message")
+        assistant_message_id = _first(
+            (
+                m.id
+                for m in reversed(store.messages_for_session(session_id))
+                if m.role is ConsoleMessageRole.ASSISTANT
+            ),
+            what="ASSISTANT message",
+        )
         store.mark_message_stopped(assistant_message_id)
         # Fix round 1 (Critical 1): should_cancel now reads only its own
         # run's per-session cancel_event, never the shared `_stop_requested`
@@ -1108,7 +1158,10 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     # The late "late answer." chunks were dropped, not leaked into content.
     assert assistant.status == "stopped"
     assert assistant.content == ""
@@ -1154,7 +1207,10 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
     first_session_id = store.active_session_id
     messages = store.messages_for_session(first_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "failed"
     assert any(m.role is ConsoleMessageRole.SYSTEM for m in messages)
     assert controller.run_state.status is ConsoleRunStatus.FAILED
@@ -1193,11 +1249,14 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "failed"
     assert assistant.content == "partial answer before erroring"
     assert "[agent error]" not in assistant.content
@@ -1239,7 +1298,10 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "failed"
     assert assistant.content == "still thinking about it"
     system_rows = [m for m in messages if m.role is ConsoleMessageRole.SYSTEM]
@@ -1263,11 +1325,14 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "good original answer."
     assert assistant.status == "complete"
 
@@ -1313,11 +1378,14 @@ async def test_retry_through_agent_path_uses_bridge_and_completes(tmp_path):
     first = await controller.submit_draft("please answer")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "failed"
 
     calls = {"n": 0}
@@ -1344,11 +1412,14 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
     )
     await controller.submit_draft("tell me about France")
     session_id = store.active_session_id
-    first_assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    first_assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert first_assistant.content == "Paris is the capital."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1382,11 +1453,14 @@ async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
     )
     await controller.submit_draft("hi")
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "first answer."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1460,7 +1534,9 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     class _FakeGateway:
         async def resolve_for_send(self, _selection):
-            return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
+            return provider_resolution(
+                ready=True, provider="llama_cpp", visible_copy=""
+            )
 
         async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
@@ -1736,7 +1812,10 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "done with mcp."
     assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "allowed")]
 
@@ -1780,7 +1859,10 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "approved and done."
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved")
@@ -1874,7 +1956,10 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "it was refused."
     tool_rows = [m for m in messages if m.role is ConsoleMessageRole.TOOL]
     assert any(
@@ -2003,9 +2088,7 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
         ["child refused."],  # child: final answer
     ]
-    controller, store, db = _controller(
-        tmp_path, scripts, child_scripts=child_scripts
-    )
+    controller, store, db = _controller(tmp_path, scripts, child_scripts=child_scripts)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -2033,7 +2116,10 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     )
 
     messages = store.messages_for_session(store.active_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "primary done."
 
 
@@ -2066,7 +2152,10 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
+    assistant = _first(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT),
+        what="ASSISTANT message",
+    )
     assert assistant.content == "it was refused too."
     assert (
         service.execute_calls == []
@@ -2084,6 +2173,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     ``run_reply``, which made this gap invisible. RED pre-fix: the run row
     stays NULL and falls to the ordinal fallback on resume.
     """
+
     class _YieldThenParkGateway(_ParkingGateway):
         """Streams ONE chunk before parking: a zero-chunk stop never persists
         (empty rows defer -- the AC#3 NULL case, covered separately below), so
@@ -2128,11 +2218,14 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = _first((
-        m
-        for m in store.messages_for_session(session_id)
-        if m.role is ConsoleMessageRole.ASSISTANT
-    ), what="ASSISTANT message")
+    assistant = _first(
+        (
+            m
+            for m in store.messages_for_session(session_id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ),
+        what="ASSISTANT message",
+    )
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 

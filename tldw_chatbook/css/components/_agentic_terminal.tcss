@@ -4156,6 +4156,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
 }
 
+/* TASK-31429 (rail colour grammar): the line that NAMES the active chat
+   takes the active hue; the same Static's "No active …" placeholder keeps
+   the muted id rule above. id+class so it outranks that id rule. */
+#console-workspace-selected-conversation.console-workspace-selected-conversation-active {
+    color: $ds-active-fg;
+}
+
 /* The row is 3 rows tall so the bordered Input inside it can show its value:
    a `tall` border spends one row above and one below the text, so a 1-row
    input paints its top edge and nothing else. */
@@ -4208,10 +4215,37 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+/* TASK-31429 (rail colour grammar): a row's fleet run-marker state colours
+   its text with the same status tokens the Inspector rows use. Ordered
+   BEFORE `-selected` (equal specificity, last wins) so the selected row
+   keeps the active hue whatever its marker. */
+.console-workspace-conversation-row-running {
+    color: $ds-status-running;
+}
+
+.console-workspace-conversation-row-needs-approval {
+    color: $ds-status-approval-required;
+}
+
+.console-workspace-conversation-row-finished-ok {
+    color: $ds-status-ready;
+}
+
+.console-workspace-conversation-row-finished-failed {
+    color: $ds-status-error-readable;
+}
+
+.console-workspace-conversation-row-subagent-unseen {
+    color: $ds-status-info;
+}
+
+/* TASK-31429: selection is a foreground hue (primary = what you are in),
+   no longer the focus tint -- so "which chat am I in" and "where is
+   keyboard focus" read as two different signals. Focus rules below still
+   paint the focus tint on top when the selected row is focused. */
 .console-workspace-conversation-row-selected {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+    color: $ds-active-fg;
+    text-style: bold;
 }
 
 .console-conversation-browser-section-header {
@@ -4607,7 +4641,12 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: bold underline;
 }
 
-.console-workspace-conversation-row Button:focus {
+/* TASK-31429 (Qodo review on PR #2393): the conversation row IS the Button
+   (`_conversation_button`), so the former descendant form
+   `.console-workspace-conversation-row Button:focus` matched nothing. Target
+   the row itself; class+pseudo specificity outranks the `-selected` and
+   run-marker hue rules, so focus stays its own visible signal on top. */
+.console-workspace-conversation-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -4853,7 +4892,7 @@ ConsoleBoundedSection {
 .console-model-section-value {
     width: 1fr;
     min-width: 10;
-    color: $ds-text-primary;
+    color: $ds-value-fg;
 }
 
 #console-model-section-provider .console-model-section-value,
@@ -4869,12 +4908,34 @@ ConsoleBoundedSection {
 }
 
 #console-model-section-recovery {
-    color: $ds-status-blocked;
+    /* TASK-31429: this line is READ, not glanced -- readable error variant
+       (design-language rule: readable beats decorative). */
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-line {
     height: 1;
     color: $ds-text-primary;
+}
+
+/* TASK-31429 (rail colour grammar): the Agent status line's run status
+   (`apply_console_agent_status_state`) maps to the same status tokens the
+   Inspector's fleet rows already use; idle/unavailable carry no class. */
+.console-agent-section-status-running {
+    color: $ds-status-running;
+}
+
+.console-agent-section-status-done {
+    color: $ds-status-ready;
+}
+
+.console-agent-section-status-stuck {
+    color: $ds-status-warning;
+}
+
+.console-agent-section-status-error,
+.console-agent-section-status-cancelled {
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-steps {
@@ -6635,13 +6696,19 @@ ConsoleCitationSourcesModal {
     margin: 0;
 }
 
+/* TASK-31429 (rail colour grammar): quiet key, coloured value -- the label
+   drops its bold so it no longer competes with the value it introduces. */
 .console-workspace-status-label {
     color: $ds-text-muted;
-    text-style: bold;
 }
 
 .console-workspace-status-value {
-    color: $ds-text-primary;
+    color: $ds-value-fg;
+}
+
+/* The workspace you are IN is identity, not a setting: active hue. */
+#console-active-workspace-value {
+    color: $ds-active-fg;
 }
 
 .console-workspace-empty-copy {

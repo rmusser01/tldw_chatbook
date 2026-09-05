@@ -118,9 +118,7 @@ def test_a_retired_preparation_reports_retirement_not_a_changed_fingerprint(
     store.close_session("session-1")
 
     with pytest.raises(ConsoleDurableAcceptanceRetired):
-        store.complete_durable_postcommit_effect(
-            prep, EFFECT, fingerprint=fingerprint
-        )
+        store.complete_durable_postcommit_effect(prep, EFFECT, fingerprint=fingerprint)
 
 
 class _Gateway:

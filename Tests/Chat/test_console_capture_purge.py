@@ -40,9 +40,7 @@ class PurgePersistence(RecordingPersistence):
         self.deleted_conversations: list[str] = []
         self.raise_delete = False
         self.exchange_appends: list[list[dict]] = []
-        self.full_keys_by_conversation: dict[
-            str, set[tuple[str, str, int]]
-        ] = {}
+        self.full_keys_by_conversation: dict[str, set[tuple[str, str, int]]] = {}
         self.delete_hook = None
         self.delete_threads: list[int] = []
 
@@ -85,9 +83,9 @@ def _store_with_captures(*, ephemeral: bool = False):
         persist=False,
     )
     message.persisted_message_id = None if ephemeral else "message-1"
-    store._nodes_by_session[session.id][message.id].persisted_message_id = (
-        message.persisted_message_id
-    )
+    store._nodes_by_session[session.id][
+        message.id
+    ].persisted_message_id = message.persisted_message_id
     store.attach_message_exchanges(
         message.id,
         [
@@ -131,9 +129,7 @@ def test_store_commit_swaps_only_full_capture_state_and_advances_revision():
     assert [capture.run_tag for capture in store.get_message(message.id).exchanges] == [
         "safe"
     ]
-    assert store._exchange_blob_cache[message.id] == {
-        ("safe", 0, "complete"): b"safe"
-    }
+    assert store._exchange_blob_cache[message.id] == {("safe", 0, "complete"): b"safe"}
     assert store._abandoned_exchange_run_tags[message.id] == {"safe"}
     assert store.capture_revision(session.id) == 1
     assert persistence.deleted_conversations == ["conversation-1"]
@@ -163,7 +159,9 @@ def test_capture_quiescence_waits_for_inflight_exchange_write():
 
     persistence.append_message_exchanges = blocking_append
     persistence.exchange_appends.clear()
-    writer = threading.Thread(target=store._persist_exchanges_only, args=(stored_message,))
+    writer = threading.Thread(
+        target=store._persist_exchanges_only, args=(stored_message,)
+    )
     writer.start()
     assert writer_started.wait(1)
 
@@ -200,12 +198,15 @@ def test_store_purge_preserves_unrelated_session_owners_and_exact_safe_keys():
         persist=False,
     )
     message_b.persisted_message_id = "message-2"
-    store._nodes_by_session[session_b.id][message_b.id].persisted_message_id = (
-        "message-2"
-    )
+    store._nodes_by_session[session_b.id][
+        message_b.id
+    ].persisted_message_id = "message-2"
     store.attach_message_exchanges(
         message_b.id,
-        [_capture("safe-b", CaptureDetail.SAFE), _capture("full-b", CaptureDetail.FULL)],
+        [
+            _capture("safe-b", CaptureDetail.SAFE),
+            _capture("full-b", CaptureDetail.FULL),
+        ],
     )
     store._exchange_blob_cache[message_b.id] = {
         ("safe-b", 0, "complete"): b"safe-b",
@@ -227,7 +228,9 @@ def test_store_purge_preserves_unrelated_session_owners_and_exact_safe_keys():
         ("full-b", 0, "complete"): b"full-b",
     }
     assert store._abandoned_exchange_run_tags[message_b.id] == {"safe-b", "full-b"}
-    assert {capture.run_tag for capture in store.get_message(message_b.id).exchanges} == {
+    assert {
+        capture.run_tag for capture in store.get_message(message_b.id).exchanges
+    } == {
         "safe-b",
         "full-b",
     }
@@ -244,15 +247,13 @@ def test_overlapping_session_stages_publish_only_monotonic_target_revision():
         persist=False,
     )
     message_b.persisted_message_id = "message-2"
-    store._nodes_by_session[session_b.id][message_b.id].persisted_message_id = (
-        "message-2"
-    )
+    store._nodes_by_session[session_b.id][
+        message_b.id
+    ].persisted_message_id = "message-2"
     store.attach_message_exchanges(
         message_b.id, [_capture("full-b", CaptureDetail.FULL)]
     )
-    store._exchange_blob_cache[message_b.id] = {
-        ("full-b", 0, "complete"): b"full-b"
-    }
+    store._exchange_blob_cache[message_b.id] = {("full-b", 0, "complete"): b"full-b"}
     persistence.full_keys_by_conversation["conversation-2"] = {
         ("message-2", "full-b", 0)
     }
@@ -264,9 +265,9 @@ def test_overlapping_session_stages_publish_only_monotonic_target_revision():
 
     assert store.capture_revision(session_a.id) == 1
     assert store.capture_revision(session_b.id) == 1
-    assert [capture.run_tag for capture in store.get_message(message_a.id).exchanges] == [
-        "safe"
-    ]
+    assert [
+        capture.run_tag for capture in store.get_message(message_a.id).exchanges
+    ] == ["safe"]
     assert store._exchange_blob_cache[message_a.id] == {
         ("safe", 0, "complete"): b"safe"
     }
@@ -295,7 +296,9 @@ def test_store_reports_union_of_durable_and_live_full_capture_identities():
         ("durable-only-message", "durable-only", 0)
     )
 
-    removed = store.commit_full_capture_purge(store.stage_full_capture_purge(session.id))
+    removed = store.commit_full_capture_purge(
+        store.stage_full_capture_purge(session.id)
+    )
 
     assert removed == 3
     assert [capture.run_tag for capture in store.get_message(message.id).exchanges] == [
@@ -384,9 +387,10 @@ async def test_controller_purge_rejects_stale_revision_without_mutation():
     )
 
     assert result.status is CapturePurgeStatus.STALE
-    assert {
-        capture.run_tag for capture in store.get_message(message.id).exchanges
-    } == {"safe", "full"}
+    assert {capture.run_tag for capture in store.get_message(message.id).exchanges} == {
+        "safe",
+        "full",
+    }
     assert persistence.deleted_conversations == []
 
 
@@ -403,9 +407,10 @@ async def test_controller_failed_delete_releases_lease_without_live_mutation():
     assert result.reason_code == "persistence_unavailable"
     assert store.capture_revision(session.id) == 0
     assert store.capture_quiescent(session.id) is False
-    assert {
-        capture.run_tag for capture in store.get_message(message.id).exchanges
-    } == {"safe", "full"}
+    assert {capture.run_tag for capture in store.get_message(message.id).exchanges} == {
+        "safe",
+        "full",
+    }
 
 
 @pytest.mark.asyncio
@@ -421,7 +426,10 @@ async def test_controller_commit_is_one_owner_loop_section_while_lease_is_held()
                 threading.get_ident(),
                 store.capture_quiescent(session.id),
                 store.capture_revision(session.id),
-                tuple(capture.run_tag for capture in store.get_message(message.id).exchanges),
+                tuple(
+                    capture.run_tag
+                    for capture in store.get_message(message.id).exchanges
+                ),
             )
         )
         store.attach_message_exchanges(

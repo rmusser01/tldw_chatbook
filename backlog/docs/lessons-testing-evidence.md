@@ -11048,7 +11048,6 @@ the invariant. A newly red old test may be revealing missing state in its
 oracle, not a compatibility regression. Then run a cross-file gate that covers
 both the new invariant and the existing projection tests; the isolated new
 tests alone cannot expose disagreements with older test models.
-
 ---
 
 ## A bundle-only render harness misses the per-screen sheets since the agentic split
@@ -11081,7 +11080,6 @@ the primary, which is the assertion a palette generator needs.
 
 **What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
 generated palettes by hue distance for several primaries, not by eyeballing one.
-
 ## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
 
 **What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
@@ -11120,3 +11118,139 @@ patch the symbol on the module that owns it. Do not use `raising=False` to make 
 missing consumer alias patchable. Pair the fake-driven test with one explicit,
 owned-loopback integration test so both isolation and the real call path remain
 observable.
+
+---
+
+## Formatter directive guards must follow logical owners, not physical lines
+
+**TASK-26947, 2026-09-04.** The first formatter structural guard measured an
+inline directive from the preceding physical `NEWLINE`, then from only an
+`ast.stmt` ancestor. Ruff split semicolon-separated siblings and added grouping
+parentheses, so the unchanged directive appeared to move even though its AST route,
+comment text, and association had not changed. A later `# noqa` on a same-line
+`ExceptHandler` header exposed the other hole: an `ExceptHandler` is not an
+`ast.stmt`, and falling back to the enclosing `try` would make unrelated suite
+tokens influence the header directive. Guard v3 fixed all three cases with
+logical-owner boundaries, full-module shadow parsing to exclude only independently
+proven AST-neutral parentheses, and a uniquely validated `except` clause through
+its unique depth-zero colon; its regression tests cover semicolon splitting,
+grouping parentheses, and header-versus-handler-body directives.
+
+**What to do.** Treat a directive-position metric change as a new baseline
+contract, not a comparison against old ordinal data: recapture the structural
+baseline before reformatting. Fail closed for ambiguous exception headers, never
+discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
+or decorator boundary for every non-header directive.
+---
+
+## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
+
+**Incident.** Schedules redesign PR-4, Task 3 (2026-09-04). The task report claimed
+the suite gate was met and quoted a passing count ("292 passed"). The number was
+real, but it came from a **partial glob** over the test files the task had touched —
+not from the gate the plan specified. Two pinned tests outside that glob were red at
+the same moment. Nothing in the report was fabricated; the run simply did not cover
+what the claim covered, and a summarised count carries no evidence of its own scope.
+
+It was caught only because the reviewer re-ran the gate independently instead of
+reading the report's claim. Had the reviewer trusted the number, a red branch would
+have gone up as green — and the two failures were in exactly the pinned tests a
+reviewer would assume the implementer had run.
+
+This is the same failure shape as `A failure list from a suite you have never run
+clean attributes nothing` (above), inverted: there, an unrun suite was used to
+attribute failures; here, a partially-run suite was used to deny them.
+
+**What to do.**
+
+- **Paste the exact tail lines from the FINAL run**, including the invocation that
+  produced them. `pytest ... -q` plus its `N passed, M failed` line is evidence; a
+  count retyped into prose is a claim. The invocation is the load-bearing half —
+  it is what makes the scope auditable.
+- **Never quote a count from a run that is not the gate.** A scoped run while
+  iterating is fine and normal; it just is not the thing you report as the gate.
+- **Reviewers re-run the gates.** Do not adjudicate a green claim from the report.
+  The re-run costs minutes; this one caught a red branch, and it is the only step
+  in the loop that is independent of the implementer's own scoping mistake.
+- If the gate is expensive, that is an argument for naming it precisely in the plan,
+  not for approximating it with a glob.
+
+---
+
+## An assertion that reads back the value the code just wrote confirms nothing — assert on PAINTED output
+
+**Incident (round 1).** Schedules-handoff PR-6, live task 6 (2026-09-02). The Results
+tab's unread badge never rendered. `pane.label = f"Results ({n})"` on a `TabPane` sets
+an **inert attribute** — Textual 8.2.8 stores the title in `_title`, and `TabPane` has
+no `label` reactive at all, so the assignment did nothing to the UI. The regression
+test (`Tests/UI/test_schedules_results_tab.py:408`) passed the entire time, because it
+asserted on `pane.label` — reading back the attribute the code had just set. A test
+shaped that way passes for **any** write to any attribute name; it cannot fail while
+the assignment executes. The badge had also been broken in the Conflicts tab before
+PR-6 copied the pattern, so a green test had been guarding a dead feature for months.
+
+**Incident (round 2), same programme.** The Automations table silently ate its
+`[<server id>]` owner prefix: `DataTable` cells go through
+`rich.text.Text.from_markup`, whose lowercase-tag regex matches `[http://…]`. Here too
+`table.get_cell_at()` returns the **stored** value and passes regardless of whether the
+content survives rendering. The fix migrated the assertions to
+`Tests/UI/schedules_test_helpers.py::rendered_row_cells`, which routes the stored row
+through the widget's own `_get_row_renderables` -> `default_cell_formatter` — the exact
+path where a bracket token is eaten.
+
+**The tell.** Ask of every assertion: *what code path must break for this to fail?* If
+the answer is "the assignment statement two lines above in the production code", the
+test is a self-confirmer. Both of these were written in good faith by someone who had
+just watched the feature not work, and both passed on the broken build.
+
+**What to do.**
+
+- When the point of a test is that something **renders**, assert on the rendered
+  artifact: painted cells (`rendered_row_cells`), compositor strips, `render_line`,
+  `region.width > 0`. Not the stored value, not the attribute you assigned.
+- Treat "framework attribute assignment" as an unverified hypothesis until a painted
+  assertion confirms it. `widget.foo = x` on a non-reactive attribute is a silent
+  no-op in Textual, and the read-back is indistinguishable from success.
+- When a live run finds a feature dead that a green test covers, **read that test
+  first**. It is more often a self-confirmer than a coverage gap, and fixing the
+  feature without fixing the test leaves the next regression unguarded.
+
+---
+
+## Textual projection writes must suppress their own deferred change messages
+
+**TASK-31389, 2026-09-03.** The mounted vLLM generation-fencing test initially
+hung after one model edit and advanced the connection generation thousands of
+times. The view's `_rendering` flag covered the synchronous `Input.value` writes,
+but Textual delivered their `Input.Changed` messages after the flag had already
+been cleared. Because two source controls projected the same draft field, stale
+echoes alternated values and recursively triggered draft invalidation and another
+projection. A timeout traceback finally caught the loop applying state while the
+view was being torn down.
+
+**What to do.** Wrap imperative `Input.value` and `TextArea.text` projection
+writes in the widget's `prevent(...Changed)` context. A synchronous rendering
+flag alone does not suppress a message delivered later. Prove the boundary with
+a mounted test that applies state, performs one user edit, and asserts exactly one
+semantic generation advance.
+
+## Closing a thread-local database on the fixture thread does not close worker-owned handles
+
+**TASK-31392 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
+reported 237 additional file descriptors. File-level bisection isolated the
+growth to mounted Textual tests; `lsof`, GC inspection, and live connection
+registries then showed one `_QuiescentSQLiteConnection` per app instance. The
+real on-mount FTS backfill opened each handle on a worker thread, while fixture
+teardown invoked `close()` only from the main pytest thread. That closed the
+main thread-local handle but could not reach the worker thread's handle. Two
+mounted cases retained 2 SQLite/9 regular descriptors after teardown even
+after GC. Draining the database's process-local quiescence registry reduced
+that to 0 SQLite/3 regular descriptors, and repeated mounts stopped growing
+linearly.
+
+**What to do.** When a database owns thread-local connections and tests run
+real worker-backed startup work, teardown must use the database's all-handle
+quiescence/registry boundary rather than a single-thread `close()`. Diagnose a
+session FD warning by splitting test files, classifying descriptors with
+`lsof`, and inspecting live owners after finalizers; GC or a higher threshold
+cannot establish ownership or fix a registered worker handle.

@@ -25846,8 +25846,8 @@ def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     restored.restore_state(state)
 
     assert restored._library_skills_browse_controller.scope == scope
-    assert restored._library_skills_filter == "review"
-    assert restored._library_skills_sort == "status"
+    assert restored._skills_state.filter == "review"
+    assert restored._skills_state.sort == "status"
 
 
 @pytest.mark.parametrize(

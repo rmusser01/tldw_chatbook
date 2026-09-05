@@ -53,7 +53,9 @@ def test_linear_persist_sets_parent_chain():
     s = store.create_session(title="t")
     store.active_session_id = s.id
     store.append_message(s.id, role=ConsoleMessageRole.USER, content="hi", persist=True)
-    store.append_message(s.id, role=ConsoleMessageRole.ASSISTANT, content="yo", persist=True)
+    store.append_message(
+        s.id, role=ConsoleMessageRole.ASSISTANT, content="yo", persist=True
+    )
     # First message (user echo) persists as the root: no parent yet.
     assert p.created[0]["parent_message_id"] is None
     # Second message (assistant) is parented at the first message's
@@ -82,6 +84,5 @@ def test_transient_child_resolves_nearest_persisted_parent_for_durable_commit():
 
     assert assistant.persisted_message_id is not None
     assert (
-        store.durable_parent_for_message(transient.id)
-        == assistant.persisted_message_id
+        store.durable_parent_for_message(transient.id) == assistant.persisted_message_id
     )

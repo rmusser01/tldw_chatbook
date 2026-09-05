@@ -166,9 +166,9 @@ async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen._selected_skill_name = "release-notes"
-        screen._library_skills_view = "editor"
-        screen._library_skill_reader_mode = "overview"
+        screen._skills_state.selected_skill_name = "release-notes"
+        screen._skills_state.view = "editor"
+        screen._skills_state.reader_mode = "overview"
         app.skills_scope_service = SimpleNamespace(get_skill=lambda *_: None)
         first_started = asyncio.Event()
         release_first = asyncio.Event()
@@ -205,8 +205,8 @@ async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
         release_first.set()
         await older
 
-        assert screen._library_skill_editor_state is not None
-        assert screen._library_skill_editor_state.version == 2
+        assert screen._skills_state.editor_state is not None
+        assert screen._skills_state.editor_state.version == 2
 
 
 @pytest.mark.asyncio
@@ -220,10 +220,10 @@ async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen._selected_skill_name = "release-notes"
-        screen._library_skills_view = "editor"
-        screen._library_skill_detail_generation = 3
-        screen._library_skill_editor_state = build_skill_editor_state(
+        screen._skills_state.selected_skill_name = "release-notes"
+        screen._skills_state.view = "editor"
+        screen._skills_state.detail_generation = 3
+        screen._skills_state.editor_state = build_skill_editor_state(
             {
                 "name": "release-notes",
                 "description": "Release notes",
@@ -244,12 +244,12 @@ async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
             screen._delete_library_skill("release-notes", request_generation=3)
         )
         await delete_started.wait()
-        screen._library_skill_detail_generation = 4
+        screen._skills_state.detail_generation = 4
         release_delete.set()
         await older
 
-        assert screen._selected_skill_name == "release-notes"
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.selected_skill_name == "release-notes"
+        assert screen._skills_state.view == "editor"
 
 
 @pytest.mark.asyncio
@@ -286,11 +286,11 @@ async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
         screen._call_library_skill_trust_service = delayed_review
         older = asyncio.create_task(screen._review_library_skill_trust())
         await review_started.wait()
-        screen._library_skill_detail_generation += 1
+        screen._skills_state.detail_generation += 1
         release_review.set()
         await older
 
-        assert screen._library_skill_active_review is None
+        assert screen._skills_state.active_review is None
 
 
 @pytest.mark.asyncio
@@ -347,8 +347,8 @@ async def test_skill_detail_failure_stays_scoped_and_retries_in_work_pane(
         await _wait_for_selector(screen, pilot, "#library-skill-mode-overview")
 
         assert attempts == 2
-        assert screen._library_skill_editor_state is not None
-        assert screen._library_skill_editor_state.version == 2
+        assert screen._skills_state.editor_state is not None
+        assert screen._skills_state.editor_state.version == 2
 
 
 @pytest.mark.asyncio
@@ -439,8 +439,8 @@ async def test_skills_files_mode_is_read_only_and_labels_binary_files(
         await _open_skills_reader(screen, pilot)
         screen.query_one("#library-skill-row-release-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-skill-mode-files")
-        screen._library_skill_editor_state = dataclasses.replace(
-            screen._library_skill_editor_state,
+        screen._skills_state.editor_state = dataclasses.replace(
+            screen._skills_state.editor_state,
             supporting_files=(
                 SkillEditorSupportingFile(
                     name="references/guide.md", size=16, is_text=True
@@ -488,7 +488,7 @@ async def test_skills_trust_mode_identifies_exact_review_snapshot(tmp_path) -> N
         await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
 
         digest = "a" * 64
-        screen._library_skill_active_review = {
+        screen._skills_state.active_review = {
             "review_id": "review-7",
             "manifest_generation": 7,
             "current_digest": digest,
@@ -522,7 +522,7 @@ async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) ->
         await _open_skills_reader(screen, pilot)
         screen.query_one("#library-skill-row-release-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-skill-mode-trust")
-        screen._library_skill_active_review = {
+        screen._skills_state.active_review = {
             "review_id": "review-7",
             "manifest_generation": 7,
             "current_digest": "a" * 64,
@@ -539,7 +539,7 @@ async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) ->
         )
         await pilot.pause()
 
-        assert screen._library_skill_active_review is None
+        assert screen._skills_state.active_review is None
 
 
 @pytest.mark.asyncio
@@ -553,15 +553,15 @@ async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> 
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_reader(screen, pilot)
         screen._enter_library_skill_create_editor()
-        screen._library_skill_scroll_pending = True
+        screen._skills_state.scroll_pending = True
 
         items_kwargs = screen._library_skills_list_canvas_kwargs()
         assert items_kwargs["scroll_to_actions"] is False
-        assert screen._library_skill_scroll_pending is True
+        assert screen._skills_state.scroll_pending is True
 
         work_kwargs = screen._library_skill_work_pane_kwargs()
         assert work_kwargs["scroll_to_actions"] is True
-        assert screen._library_skill_scroll_pending is False
+        assert screen._skills_state.scroll_pending is False
 
 
 @pytest.mark.asyncio
@@ -614,7 +614,7 @@ async def test_skills_trust_posture_sync_keeps_interactive_rows_mounted(
         canvas = screen.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         row = screen.query_one("#library-skill-row-release-notes", Button)
 
-        screen._library_skills_trust_posture = "needs_setup"
+        screen._skills_state.trust_posture = "needs_setup"
         canvas.sync_state(**screen._library_skills_list_canvas_kwargs())
         await pilot.pause()
 

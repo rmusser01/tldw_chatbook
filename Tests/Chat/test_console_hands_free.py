@@ -56,16 +56,21 @@ def mk(**kw):
 
 
 def test_voice_final_arms_countdown_and_expiry_sends():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); assert c.state == "countdown"  # noqa: E702
-    c.tick(now=0.0); c.tick(now=1.6)  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    assert c.state == "countdown"  # noqa: E702
+    c.tick(now=0.0)
+    c.tick(now=1.6)  # noqa: E702
     assert any(isinstance(e, RequestStopAndSend) for e in ev)
     assert c.state == "awaiting_reply"
 
 
 def test_speech_resumed_cancels_countdown():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); c.tick(now=0.0)  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    c.tick(now=0.0)  # noqa: E702
     c.on_speech_resumed()
     assert c.state == "listening"
     c.tick(now=5.0)
@@ -73,16 +78,24 @@ def test_speech_resumed_cancels_countdown():
 
 
 def test_resume_vs_expiry_race_arrival_order_wins():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); c.tick(now=0.0); c.tick(now=1.6)   # expiry first  # noqa: E702
-    c.on_speech_resumed()                                   # late resume: rides next turn
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)  # expiry first  # noqa: E702
+    c.on_speech_resumed()  # late resume: rides next turn
     assert c.state == "awaiting_reply"
 
 
 def test_keypress_in_speaking_barges_in():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); c.tick(0.0); c.tick(1.6)  # noqa: E702
-    c.on_reply_started(); c.on_first_utterance(); assert c.state == "speaking"  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    c.tick(0.0)
+    c.tick(1.6)  # noqa: E702
+    c.on_reply_started()
+    c.on_first_utterance()
+    assert c.state == "speaking"  # noqa: E702
     c.on_composer_key()
     assert any(isinstance(e, SilenceSpeech) for e in ev)
     assert any(isinstance(e, OpenCapture) for e in ev)
@@ -90,8 +103,11 @@ def test_keypress_in_speaking_barges_in():
 
 
 def test_keypress_in_awaiting_suppresses_speech():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); c.tick(0.0); c.tick(1.6)  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    c.tick(0.0)
+    c.tick(1.6)  # noqa: E702
     c.on_composer_key()
     assert any(isinstance(e, SuppressReplySpeech) for e in ev)
     assert c.state == "listening"
@@ -103,10 +119,12 @@ def test_keypress_in_awaiting_suppresses_speech():
 
 
 def test_limit_hit_with_segments_sends_without_segments_reopens_once_then_exits():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
     c.on_capture_ended(had_segments=True, limit_hit=True)
     assert any(isinstance(e, RequestStopAndSend) for e in ev)
-    c2, ev2 = mk(); c2.enter(capture_live=True)  # noqa: E702
+    c2, ev2 = mk()
+    c2.enter(capture_live=True)  # noqa: E702
     c2.on_capture_ended(had_segments=False, limit_hit=True)
     assert any(isinstance(e, OpenCapture) for e in ev2)
     c2.on_capture_ended(had_segments=False, limit_hit=True)
@@ -114,10 +132,15 @@ def test_limit_hit_with_segments_sends_without_segments_reopens_once_then_exits(
 
 
 def test_reply_drained_reopens_capture():
-    c, ev = mk(); c.enter(capture_live=True)  # noqa: E702
-    c.on_voice_final(); c.tick(0.0); c.tick(1.6)  # noqa: E702
-    c.on_reply_started(); c.on_first_utterance()  # noqa: E702
-    c.on_reply_finished(); c.on_sequencer_drained()  # noqa: E702
+    c, ev = mk()
+    c.enter(capture_live=True)  # noqa: E702
+    c.on_voice_final()
+    c.tick(0.0)
+    c.tick(1.6)  # noqa: E702
+    c.on_reply_started()
+    c.on_first_utterance()  # noqa: E702
+    c.on_reply_finished()
+    c.on_sequencer_drained()  # noqa: E702
     assert c.state == "listening"
     assert any(isinstance(e, OpenCapture) for e in ev)
 
@@ -165,8 +188,13 @@ def build_speaking():
 
 
 def test_exit_reachable_from_every_state():
-    for build in (build_idle, build_listening, build_countdown,
-                  build_awaiting, build_speaking):
+    for build in (
+        build_idle,
+        build_listening,
+        build_countdown,
+        build_awaiting,
+        build_speaking,
+    ):
         c, ev = build()
         c.on_exit_request()
         assert any(isinstance(e, ExitLoop) for e in ev), c.state
@@ -302,7 +330,7 @@ def test_resume_latched_in_listening_cancels_the_immediately_following_voice_fin
     while the user is already mid-sentence again."""
     c, ev = mk()
     c.enter(capture_live=True)
-    c.on_speech_resumed()   # arrives before the VoiceFinal it must cancel
+    c.on_speech_resumed()  # arrives before the VoiceFinal it must cancel
     c.on_voice_final()
     assert c.state == "listening"
     c.tick(now=0.0)
@@ -315,9 +343,9 @@ def test_resume_latch_is_consumed_only_once():
     c, ev = mk()
     c.enter(capture_live=True)
     c.on_speech_resumed()
-    c.on_voice_final()   # consumes the latch, stays listening
+    c.on_voice_final()  # consumes the latch, stays listening
     assert c.state == "listening"
-    c.on_voice_final()   # a genuine final this time: latch already spent
+    c.on_voice_final()  # a genuine final this time: latch already spent
     assert c.state == "countdown"
 
 
@@ -336,9 +364,9 @@ def test_segment_no_final_consumes_a_latch_so_the_next_real_final_arms_countdown
     final never arms a countdown at all."""
     c, ev = mk()
     c.enter(capture_live=True)
-    c.on_speech_resumed()    # latches, before the blank segment's own final
+    c.on_speech_resumed()  # latches, before the blank segment's own final
     c.on_segment_no_final()  # THIS segment transcribed to nothing
-    c.on_voice_final()       # a genuine final, for the NEXT segment
+    c.on_voice_final()  # a genuine final, for the NEXT segment
     assert c.state == "countdown"
 
 
@@ -389,7 +417,7 @@ def test_sequencer_drained_arriving_in_listening_is_a_noop():
     assert c.state == "listening"
 
     ev.clear()
-    c.on_reply_finished()     # the reply's text stream still completes later
+    c.on_reply_finished()  # the reply's text stream still completes later
     c.on_sequencer_drained()  # ...and the sequencer's own reply_completed()
     assert c.state == "listening"
     assert ev == []
@@ -535,20 +563,23 @@ def test_acoustic_mode_resume_in_speaking_works_across_multiple_turns():
         c.tick(now=base)
         c.tick(now=base + 1.6)
         assert c.state == "awaiting_reply", f"turn {turn}"
-        assert any(isinstance(e, CloseCapture) for e in ev), \
+        assert any(isinstance(e, CloseCapture) for e in ev), (
             f"turn {turn}: send did not close the mic in the model"
+        )
         assert c.capture_open is False, f"turn {turn}: model out of sync with reality"
         ev.clear()
         c.on_reply_started()
-        assert any(isinstance(e, OpenCapture) for e in ev), \
+        assert any(isinstance(e, OpenCapture) for e in ev), (
             f"turn {turn}: mic did not reopen for the reply"
+        )
         assert c.capture_open is True, f"turn {turn}: mic did not reopen for the reply"
         c.on_first_utterance()
         assert c.state == "speaking", f"turn {turn}"
         ev.clear()
         c.on_speech_resumed()
-        assert any(isinstance(e, SilenceSpeech) for e in ev), \
+        assert any(isinstance(e, SilenceSpeech) for e in ev), (
             f"turn {turn}: acoustic resume did not silence -- loop went deaf"
+        )
         assert c.state == "listening", f"turn {turn}"
 
 
@@ -656,7 +687,9 @@ def test_capture_ended_in_speaking_acoustic_with_segments_resets_the_ceiling():
     c.on_capture_ended(had_segments=False, limit_hit=True)  # 1st empty: reopen
     c.on_capture_ended(had_segments=True, limit_hit=True)  # a real capture: resets
     ev.clear()
-    c.on_capture_ended(had_segments=False, limit_hit=True)  # fresh 1st again: reopen, not exit
+    c.on_capture_ended(
+        had_segments=False, limit_hit=True
+    )  # fresh 1st again: reopen, not exit
     assert any(isinstance(e, OpenCapture) for e in ev)
     assert not any(isinstance(e, ExitLoop) for e in ev)
     assert c.state == "speaking"
@@ -955,7 +988,12 @@ def test_mode_changed_full_cycle_all_five_payloads():
     c.on_exit_request()
     modes = [e.state for e in ev if isinstance(e, ModeChanged)]
     assert modes == [
-        "listening", "countdown", "awaiting_reply", "speaking", "listening", "idle",
+        "listening",
+        "countdown",
+        "awaiting_reply",
+        "speaking",
+        "listening",
+        "idle",
     ]
 
 

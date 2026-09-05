@@ -73,3 +73,18 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # Task 4/Task 7 closing commits above -- every per-line change is a
 # mechanical receiver swap or a removal, not new logic.
 5bea63cdced8d3ff933087e26c2d087685f9b22c
+
+# Wave-4 task 2: skills controller move (skills series 2/3). 86 method
+# bodies moved byte-for-byte to library_skills_controller.py, each
+# replaced by a one-line delegator (or, for the one staticmethod, a
+# class-forwarding delegator).
+60857a2be7165a890c7294f1f318d8601c28b5e6
+
+# Wave-4 task 3: skills cleanup (skills series 3/3). Screen-side shim
+# block deleted; every remaining flat _library_skill(s)_<field> reference
+# retargeted to self._skills_state.<field> (a mechanical receiver swap);
+# 16 dead screen delegators and 28 dead imports removed, same shape as
+# the export/collections/search+RAG series' own closing commits above --
+# every per-line change is a mechanical receiver swap or a removal, not
+# new logic.
+ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83

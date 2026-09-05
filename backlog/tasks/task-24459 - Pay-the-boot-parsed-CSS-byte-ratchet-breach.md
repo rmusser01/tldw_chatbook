@@ -52,4 +52,44 @@ Most tractable route is the `ConsoleForkChatModal` segments plus the `_agentic_t
 growth; it overlaps task-24451. A mechanical dead-selector sweep was attempted and abandoned --
 the detection used `\w` in a POSIX ERE and reported every one of 609 ids as dead, which is
 exactly the kind of false positive that would have deleted live CSS.
+
+### Re-measured 2026-09-04 at dev tip `b7f8efde73` (schedules programs close-out)
+
+The pinned snapshot (`boot_budget_snapshots/boot_css_bytes.json`, total 780,368 B) was
+last written on 2026-08-31 by `b62407e258` and PREDATES both schedules programs, so the
+per-source attribution in the Notes above is now stale. Current measurement:
+
+```
+boot-parsed CSS grew to 818,874 B (ratchet limit 806,000 B)   # 12,874 B over
+```
+
+Largest changed segments vs the snapshot:
+
+| segment | snapshot | now | delta |
+|---|---|---|---|
+| `tldw_cli_modular.tcss::features/_scheduling.tcss` | 5,994 | 16,165 | **+10,171** |
+| `tldw_cli_modular.tcss::components/_agentic_terminal.tcss` | 85,753 | 91,392 | +5,639 |
+| `screen_agentic_console.tcss::(whole file)` | 95,707 | 97,577 | +1,870 |
+| `tldw_cli_modular.tcss::components/_settings_splash_theme.tcss` | 2,574 | 3,825 | +1,251 |
+| `tldw_cli_modular.tcss::core/_variables.tcss` | 5,408 | 6,450 | +1,042 |
+
+Plus new scoped segments, of which the schedules programs contribute `ResultsTab` (531 B)
+and `DefinitionAuditView` (181 B), against `TaskDetail` shrinking 746 -> 623 (-123 B).
+
+**Attribution.** The schedules share is ~**+10.8 KB**, essentially all of it the
+`features/_scheduling.tcss` growth. Cross-checked against the raw source file across the
+redesign program: 6,848 B at `81509271a3^` (before redesign PR-1) -> 16,112 B at
+`b7f8efde73` (after redesign PR-4), i.e. **+9,264 B**; handoff PR-6 (`c07a2edbbe`) added
+nothing to that file. The remainder of the breach is other programs'.
+
+Two consequences for whoever picks this up:
+
+1. The redesign is the single largest contributor to the current breach, so the cheapest
+   route is now a `_scheduling.tcss` pass (the file more than doubled while the screen
+   collapsed from four tab surfaces to one — the retired-surface rules are worth checking
+   for deletion, and `b7f8efde73` already removed the `TabbedContent` block) rather than
+   the `ConsoleForkChatModal`/`_agentic_terminal` route the original Notes recommend.
+2. Do not re-pin the snapshot as the fix. AC #2 and #3 still stand: the constant does not
+   rise and the measurement does not move. The snapshot is refreshed only by
+   `scripts/update_boot_budget_snapshots.py` AFTER the bytes are genuinely shed.
 <!-- SECTION:NOTES:END -->

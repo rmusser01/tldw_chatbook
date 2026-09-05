@@ -15,6 +15,7 @@ from textual.message import Message
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_GLYPHS,
     CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH,
 )
 from tldw_chatbook.Chat.console_glyphs import (
@@ -259,6 +260,27 @@ def wrap_console_plain_text_uncapped(text: str, budget: int) -> tuple[str, ...]:
             lines.append(head)
             remaining = remaining[len(head) :].lstrip()
     return tuple(lines)
+
+
+#: TASK-31429: resolved fleet glyph -> the row colour class for that run
+#: state (`.console-workspace-conversation-row-<ConsoleRunMarker.value>`).
+#: The browser pipeline threads glyph strings, not the enum, so this is the
+#: same glyph-keyed shape as `CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH`.
+_ROW_STATE_CLASS_BY_GLYPH: dict[str, str] = {
+    glyph: f"console-workspace-conversation-row-{marker.value}"
+    for marker, glyph in CONSOLE_RUN_MARKER_GLYPHS.items()
+    if glyph
+}
+
+
+def _selected_conversation_active_class(selected_summary: str | None) -> str:
+    """Class suffix that paints the active-chat line in the active hue.
+
+    TASK-31429: the same Static also carries the "No active …" placeholder,
+    which must stay muted -- so the hue rides a class that is present only
+    when a real summary is being named.
+    """
+    return " console-workspace-selected-conversation-active" if selected_summary else ""
 
 
 def _row_marker(run_marker: str, starred: bool) -> str:
@@ -1158,6 +1180,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             run_marker,
         )
         button.set_class(selected, "console-workspace-conversation-row-selected")
+        # TASK-31429: the fleet glyph's state also colours the row text; the
+        # `-selected` rule is ordered after these in the stylesheet so a
+        # selected row keeps the active hue.
+        state_class = _ROW_STATE_CLASS_BY_GLYPH.get(str(run_marker or "").strip())
+        if state_class:
+            button.add_class(state_class)
         row_height = _conversation_row_render_height(name_line_count, subagent_count)
         button.styles.height = row_height
         button.styles.min_height = row_height
@@ -1572,6 +1600,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes=(
                     "console-workspace-selected-conversation "
                     "console-session-selected-conversation"
+                    + _selected_conversation_active_class(selected_summary)
                 ),
             )
             if self.state.scope_detail:
@@ -1605,7 +1634,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             yield self._static(
                 browser.selected_summary or "No active conversation.",
                 id="console-workspace-selected-conversation",
-                classes="console-workspace-selected-conversation",
+                classes="console-workspace-selected-conversation"
+                + _selected_conversation_active_class(browser.selected_summary),
             )
         with Horizontal(
             id="console-workspace-conversation-search-row",

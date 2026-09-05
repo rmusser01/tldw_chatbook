@@ -10,7 +10,7 @@ import pytest
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until
 from Tests.console_provider_doubles import persisted_console_store
 from tldw_chatbook.Agents.ask_user_questions import AskUserBusyRefusal
-from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor, use_run_id
 from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
@@ -333,3 +333,47 @@ def test_malformed_answers_are_dropped_and_the_round_stays_armed(make_controller
     )
     thread.join(timeout=5)
     assert box["result"]["answers"][0]["other_text"] == "fine"
+
+
+# --- task-31382: name the asking sub-agent -----------------------------------
+
+
+def test_marker_names_the_sub_agent_label_when_present():
+    result = {"answered": False, "reason": "timeout"}
+    text = format_question_marker("sub-agent", _questions(), result, asker_label="researcher")
+    assert text.splitlines()[0] == "? Questions from sub-agent 'researcher' (2):"
+    text = format_question_marker("sub-agent", _questions(), result, asker_label="  bad\nlabel\x07 ")
+    assert text.splitlines()[0] == "? Questions from sub-agent 'bad label' (2):"
+    assert format_question_marker("sub-agent", _questions(), result).splitlines()[0] == "? Questions from a sub-agent (2):"
+    assert format_question_marker("agent", _questions(), result, asker_label="ignored").splitlines()[0] == "? Questions from the agent (2):"
+
+
+def test_payload_carries_the_sub_agents_label_from_the_run_actor(make_controller):
+    controller = make_controller()
+    markers = []
+    controller._agent_bridge = SimpleNamespace(
+        append_question_marker=lambda sid, text: markers.append(text)
+    )
+    box = {}
+
+    def worker():
+        with use_run_actor(CurrentRunActor("subagent", "run-c", "run-p", label="researcher")):
+            box["result"] = controller.request_user_questions(_questions())
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    _wait_until(lambda: bool(controller.pending_question_payloads))
+    payload = controller.pending_question_payloads[0]
+    assert payload["asked_by"] == "sub-agent" and payload["asker_label"] == "researcher"
+    controller.resolve_pending_question([], request_id=payload["request_id"])
+    thread.join(timeout=5)
+    assert markers and markers[0].startswith("? Questions from sub-agent 'researcher'")
+
+
+def test_primary_agent_payload_has_no_label(make_controller):
+    controller = make_controller()
+    thread, box = _start(controller, _questions())
+    _wait_until(lambda: bool(controller.pending_question_payloads))
+    assert controller.pending_question_payloads[0]["asker_label"] is None
+    controller.resolve_pending_question([], request_id=controller.pending_question_ids()[0])
+    thread.join(timeout=5)

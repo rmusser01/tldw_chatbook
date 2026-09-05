@@ -106,8 +106,15 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-skills",
         "#library-skills-reader-shell",
         "#library-skill-row-review-skill",
-        "_library_skills_reader_preferences",
-        "_library_skills_reader_layout",
+        # Wave-4 task 3: skills' own reader_preferences/reader_layout
+        # fields moved to ``screen._skills_state.<field>`` -- same extra
+        # hop as collections'/conversations' own entries above. Every call
+        # site reads these two contract entries through
+        # ``operator.attrgetter`` instead of plain ``getattr``, so it stays
+        # a passthrough for the other three, not-yet-extracted,
+        # destinations' flat attribute names.
+        "_skills_state.reader_preferences",
+        "_skills_state.reader_layout",
     ),
 }
 
@@ -437,8 +444,8 @@ async def _open_destination(screen, pilot, destination: str):
         "notes": lambda: str(screen._selected_note_id or "") == str(second.note_id),
         "prompts": lambda: str(screen._selected_prompt_id) == expected,
         "skills": lambda: (
-            screen._library_skill_editor_state is not None
-            and screen._library_skill_editor_state.name == str(second.skill_name)
+            screen._skills_state.editor_state is not None
+            and screen._skills_state.editor_state.name == str(second.skill_name)
         ),
     }[destination]
     if not already_selected():
@@ -514,10 +521,10 @@ async def _open_destination(screen, pilot, destination: str):
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._selected_skill_name == expected
-                and screen._library_skill_editor_state is not None
-                and screen._library_skill_editor_state.name == expected
-                and not screen._library_skill_detail_loading
+                screen._skills_state.selected_skill_name == expected
+                and screen._skills_state.editor_state is not None
+                and screen._skills_state.editor_state.name == expected
+                and not screen._skills_state.detail_loading
             ),
             message="Skill second selection did not settle",
         )
@@ -590,8 +597,8 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         semantic = (screen._selected_prompt_id, screen._library_prompt_editor_mode)
     else:
         semantic = (
-            screen._library_skill_editor_state.name,
-            screen._library_skill_reader_mode,
+            screen._skills_state.editor_state.name,
+            screen._skills_state.reader_mode,
         )
     return (
         id(shell),
@@ -680,16 +687,16 @@ def _durable_live_oracle(
             "mode": screen._library_prompt_editor_mode,
         }
     else:
-        state = screen._library_skill_editor_state
+        state = screen._skills_state.editor_state
         record = {
-            "selected": screen._selected_skill_name,
+            "selected": screen._skills_state.selected_skill_name,
             "pending": (
-                screen._selected_skill_name
-                if screen._library_skill_detail_loading
+                screen._skills_state.selected_skill_name
+                if screen._skills_state.detail_loading
                 else None
             ),
             "loaded": state.name if state is not None else None,
-            "mode": screen._library_skill_reader_mode,
+            "mode": screen._skills_state.reader_mode,
         }
     regions = {
         name: {
@@ -1129,7 +1136,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     screen.query_one("#library-skill-mode-edit", Button).press()
                     await _wait_for_condition(
                         pilot,
-                        lambda: screen._library_skill_reader_mode == "edit",
+                        lambda: screen._skills_state.reader_mode == "edit",
                         message="Skills Edit mode did not settle",
                     )
                 if destination == "notes":

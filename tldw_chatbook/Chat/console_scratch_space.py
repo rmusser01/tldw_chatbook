@@ -82,7 +82,9 @@ class ConsoleScratchSpaceManager:
             try:
                 raw_root = tempfile.mkdtemp(
                     prefix="tldw-console-",
-                    dir=str(self._temp_parent) if self._temp_parent is not None else None,
+                    dir=str(self._temp_parent)
+                    if self._temp_parent is not None
+                    else None,
                 )
                 root = Path(raw_root).resolve()
                 os.chmod(root, 0o700)

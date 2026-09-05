@@ -526,7 +526,7 @@ async def test_skills_sort_strip_opens_and_applies():
         screen.query_one("#library-row-browse-skills").press()
         await _wait_for_selector(screen, pilot, "#library-skills-sort")
 
-        assert screen._library_skills_sort == "name"
+        assert screen._skills_state.sort == "name"
         opener = screen.query_one("#library-skills-sort", Button)
         assert str(opener.label) == "sort: Name"
 
@@ -542,7 +542,7 @@ async def test_skills_sort_strip_opens_and_applies():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skills_sort == "status"
+        assert screen._skills_state.sort == "status"
         assert not screen.query("#library-skills-sort-choices")
         assert (
             str(screen.query_one("#library-skills-sort", Button).label)

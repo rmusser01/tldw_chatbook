@@ -659,7 +659,9 @@ def test_durable_fork_commits_ancestry_lineage_policy_and_context(tmp_path) -> N
     )
 
 
-def test_durable_fork_commits_shared_trace_prefix_without_payload_copy(tmp_path) -> None:
+def test_durable_fork_commits_shared_trace_prefix_without_payload_copy(
+    tmp_path,
+) -> None:
     db = CharactersRAGDB(tmp_path / "fork-trace.db", client_id="fork-test")
     service = ChatPersistenceService(db)
     snapshot = _snapshot(db)

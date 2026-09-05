@@ -1,4 +1,22 @@
 # themes.py
+#
+# How theme variables reach the app's CSS (task-31264/task-31282):
+#
+# - A `variables` dict entry ONLY has runtime effect for names that no loaded
+#   tcss source defines: a `$name: value;` line in any stylesheet shadows the
+#   app-supplied table for that source (file tokens are appended after the
+#   app's and last-token-wins). Every `ds-*` token is defined in
+#   `css/core/_variables.tcss`, so per-theme `ds-*` dict entries are INERT --
+#   do not add them. `agentic_terminal` keeps its set only as the design
+#   system's documented reference values (pinned by
+#   test_master_shell_design_system_contract.py).
+# - ds-* tokens are themed through the polarity-aware references in
+#   `_variables.tcss` ($text-error, $text-muted,
+#   $block-cursor-blurred-background, ...), which Textual generates per theme.
+# - Entries for GENERATED names the tcss never defines (text-muted,
+#   text-error, block-cursor-blurred-background, input-selection-background,
+#   footer-key-foreground, ...) DO override, and are gated for readability by
+#   Tests/UI/test_theme_contrast.py.
 from pathlib import Path
 
 from textual.theme import Theme
@@ -35,7 +53,77 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
                 # For example, Color.parse("red") or continue
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
-    return Theme(**theme_args)
+    return ensure_readable_text_hues(Theme(**theme_args))
+
+
+#: Generated text tints the Console rail paints ordinary text with
+#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
+_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+_AA_RATIO = 4.5
+
+
+def _relative_luminance(color: Color) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.r)
+        + 0.7152 * channel(color.g)
+        + 0.0722 * channel(color.b)
+    )
+
+
+def _contrast_ratio(a: Color, b: Color) -> float:
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    lo, hi = min(la, lb), max(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure_readable_text_hues(theme: Theme) -> Theme:
+    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+
+    Textual derives both as a 66% tint of the theme's contrast text toward
+    the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
+    pastel a user saves from Settings ▸ Theme) that lands below 4.5:1 on the
+    theme's own surfaces. Where it does, blend further toward the text pole
+    (white on dark surfaces, black on light) until both ``surface`` and
+    ``panel`` clear AA. These are GENERATED names no tcss defines, so the
+    ``variables`` entry is honoured (mechanism note atop this module); an
+    explicit per-theme entry is left alone. Themes whose colours cannot be
+    resolved (ANSI palettes) are returned untouched.
+
+    Args:
+        theme: The theme to adjust; mutated and returned for chaining.
+
+    Returns:
+        The same theme, with readable entries added to ``variables`` as needed.
+    """
+    try:
+        generated = theme.to_color_system().generate()
+        surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
+    except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
+        return theme
+    if any(surface.a < 1 for surface in surfaces):
+        return theme
+    dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
+    pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
+    variables = dict(theme.variables or {})
+    for token in _READABLE_TEXT_HUES:
+        if token in variables:
+            continue
+        color = Color.parse(generated[token])
+        if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
+            continue
+        for step in range(1, 21):
+            candidate = color.blend(pole, step / 20)
+            if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
+                variables[token] = candidate.hex
+                break
+        else:
+            variables[token] = pole.hex
+    theme.variables = variables
+    return theme
 
 
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
@@ -1523,40 +1611,6 @@ apricot_theme = Theme(
     error="#c2503f",  # --red
     dark=False,
     variables={
-        "ds-surface-panel": "#f3e8d9",
-        "ds-surface-raised": "#fdf7ed",
-        "ds-surface-inspector": "#f3e8d9",
-        "ds-grid-line": "#b09876",
-        "ds-text-primary": "#2f2620",
-        "ds-text-muted": "#796453",
-        "ds-text-placeholder": "#796453",
-        "ds-text-disabled-readable": "#796453",
-        "ds-action-focus": "#4f8039",
-        "ds-focus-fg": "#2f2620",
-        "ds-focus-bg": "#eddcc6",
-        "ds-focus-accent": "#4f8039",
-        "ds-input-focus-border": "#4f8039",
-        "ds-input-focus-bg": "#fdf7ed",
-        "ds-input-focus-accent": "#4f8039",
-        "ds-status-ready": "#4f8039",
-        "ds-status-running": "#bd6b32",
-        "ds-status-info": "#3b6ea8",
-        "ds-status-warning": "#b8860b",
-        "ds-status-approval-required": "#a9701a",
-        "ds-status-blocked": "#c2503f",
-        "ds-status-error": "#c2503f",
-        "ds-status-error-readable": "#b04738",
-        "ds-status-paused": "#8c3552",
-        "ds-status-unsaved": "#b8860b",
-        "ds-status-recovered": "#4f8039",
-        "ds-authority-local": "#4f8039",
-        "ds-authority-server": "#bd6b32",
-        "ds-authority-workspace": "#8c3552",
-        "ds-authority-remote-only": "#b8860b",
-        "ds-source-role-context": "#796453",
-        "ds-source-role-evidence": "#3b6ea8",
-        "ds-source-role-editable-target": "#b8860b",
-        "ds-source-role-output-seed": "#8c3552",
         "footer-key-foreground": "#bd6b32",
         "input-selection-background": "#bd6b32 35%",
         "text-muted": "#796453",
@@ -1578,37 +1632,6 @@ camono_theme = Theme(
     error="#e67e80",
     dark=True,
     variables={
-        "ds-surface-panel": "#272e33",
-        "ds-surface-raised": "#374145",
-        "ds-surface-inspector": "#2e383c",
-        "ds-grid-line": "#4f5b58",
-        "ds-text-primary": "#d3c6aa",
-        "ds-text-muted": "#a7ada5",
-        "ds-action-focus": "#a7c080",
-        "ds-focus-fg": "#d3c6aa",
-        "ds-focus-bg": "#414b50",
-        "ds-focus-accent": "#a7c080",
-        "ds-input-focus-border": "#a7c080",
-        "ds-input-focus-bg": "#374145",
-        "ds-input-focus-accent": "#a7c080",
-        "ds-status-ready": "#a7c080",
-        "ds-status-running": "#7fbbb3",
-        "ds-status-info": "#7fbbb3",
-        "ds-status-warning": "#dbbc7f",
-        "ds-status-approval-required": "#e69875",
-        "ds-status-blocked": "#e67e80",
-        "ds-status-error": "#e67e80",
-        "ds-status-paused": "#d699b6",
-        "ds-status-unsaved": "#dbbc7f",
-        "ds-status-recovered": "#a7c080",
-        "ds-authority-local": "#a7c080",
-        "ds-authority-server": "#7fbbb3",
-        "ds-authority-workspace": "#d699b6",
-        "ds-authority-remote-only": "#dbbc7f",
-        "ds-source-role-context": "#a7ada5",
-        "ds-source-role-evidence": "#7fbbb3",
-        "ds-source-role-editable-target": "#dbbc7f",
-        "ds-source-role-output-seed": "#d699b6",
         "footer-key-foreground": "#a7c080",
         "input-selection-background": "#a7c080 35%",
         "text-muted": "#a7ada5",
@@ -1630,40 +1653,6 @@ christmas_theme = Theme(
     error="#c8243c",
     dark=False,
     variables={
-        "ds-surface-panel": "#f5f8fb",
-        "ds-surface-raised": "#e8eff6",
-        "ds-surface-inspector": "#f5f8fb",
-        "ds-grid-line": "#b8cce0",
-        "ds-text-primary": "#1a2b3c",
-        "ds-text-muted": "#4e7354",
-        "ds-text-placeholder": "#4e7354",
-        "ds-text-disabled-readable": "#4e7354",
-        "ds-action-focus": "#c8243c",
-        "ds-focus-fg": "#1a2b3c",
-        "ds-focus-bg": "#dce6f0",
-        "ds-focus-accent": "#c8243c",
-        "ds-input-focus-border": "#c8243c",
-        "ds-input-focus-bg": "#e8eff6",
-        "ds-input-focus-accent": "#c8243c",
-        "ds-status-ready": "#3a7a48",
-        "ds-status-running": "#c8243c",
-        "ds-status-info": "#3b6ea8",
-        "ds-status-warning": "#b8860b",
-        "ds-status-approval-required": "#a9701a",
-        "ds-status-blocked": "#c8243c",
-        "ds-status-error": "#9a1828",
-        "ds-status-error-readable": "#c8243c",
-        "ds-status-paused": "#7a5aa0",
-        "ds-status-unsaved": "#b8860b",
-        "ds-status-recovered": "#3a7a48",
-        "ds-authority-local": "#3a7a48",
-        "ds-authority-server": "#c8243c",
-        "ds-authority-workspace": "#7a5aa0",
-        "ds-authority-remote-only": "#b8860b",
-        "ds-source-role-context": "#4e7354",
-        "ds-source-role-evidence": "#3b6ea8",
-        "ds-source-role-editable-target": "#b8860b",
-        "ds-source-role-output-seed": "#7a5aa0",
         "footer-key-foreground": "#c8243c",
         "input-selection-background": "#c8243c 35%",
         "text-muted": "#4e7354",
@@ -1685,40 +1674,6 @@ frutiger_aero_theme = Theme(
     error="#e0573f",
     dark=False,
     variables={
-        "ds-surface-panel": "#e8f8fd",
-        "ds-surface-raised": "#ffffff",
-        "ds-surface-inspector": "#e8f8fd",
-        "ds-grid-line": "#83bfdf",
-        "ds-text-primary": "#123c55",
-        "ds-text-muted": "#48758f",
-        "ds-text-placeholder": "#48758f",
-        "ds-text-disabled-readable": "#48758f",
-        "ds-action-focus": "#1a9bd7",
-        "ds-focus-fg": "#123c55",
-        "ds-focus-bg": "#d8f3ff",
-        "ds-focus-accent": "#1a9bd7",
-        "ds-input-focus-border": "#1a9bd7",
-        "ds-input-focus-bg": "#ffffff",
-        "ds-input-focus-accent": "#1a9bd7",
-        "ds-status-ready": "#3a9a5c",
-        "ds-status-running": "#1a9bd7",
-        "ds-status-info": "#326d8c",
-        "ds-status-warning": "#c08a2a",
-        "ds-status-approval-required": "#a9701a",
-        "ds-status-blocked": "#e0573f",
-        "ds-status-error": "#e0573f",
-        "ds-status-error-readable": "#cb3a21",
-        "ds-status-paused": "#7a6fb0",
-        "ds-status-unsaved": "#c08a2a",
-        "ds-status-recovered": "#3a9a5c",
-        "ds-authority-local": "#3a9a5c",
-        "ds-authority-server": "#1a9bd7",
-        "ds-authority-workspace": "#7a6fb0",
-        "ds-authority-remote-only": "#c08a2a",
-        "ds-source-role-context": "#48758f",
-        "ds-source-role-evidence": "#326d8c",
-        "ds-source-role-editable-target": "#c08a2a",
-        "ds-source-role-output-seed": "#7a6fb0",
         "footer-key-foreground": "#1a9bd7",
         "input-selection-background": "#1a9bd7 35%",
         "text-muted": "#48758f",
@@ -1740,37 +1695,6 @@ halloween_theme = Theme(
     error="#c45d5d",
     dark=True,
     variables={
-        "ds-surface-panel": "#140a0e",
-        "ds-surface-raised": "#291620",
-        "ds-surface-inspector": "#1e1018",
-        "ds-grid-line": "#602538",
-        "ds-text-primary": "#f0cfa0",
-        "ds-text-muted": "#b6755d",
-        "ds-action-focus": "#e8711a",
-        "ds-focus-fg": "#f0cfa0",
-        "ds-focus-bg": "#361c2a",
-        "ds-focus-accent": "#e8711a",
-        "ds-input-focus-border": "#e8711a",
-        "ds-input-focus-bg": "#291620",
-        "ds-input-focus-accent": "#e8711a",
-        "ds-status-ready": "#8a9a3a",
-        "ds-status-running": "#e8711a",
-        "ds-status-info": "#4e8fa8",
-        "ds-status-warning": "#e8a83a",
-        "ds-status-approval-required": "#c08a2a",
-        "ds-status-blocked": "#c45d5d",
-        "ds-status-error": "#c45d5d",
-        "ds-status-paused": "#7d5fa0",
-        "ds-status-unsaved": "#e8a83a",
-        "ds-status-recovered": "#8a9a3a",
-        "ds-authority-local": "#8a9a3a",
-        "ds-authority-server": "#e8711a",
-        "ds-authority-workspace": "#7d5fa0",
-        "ds-authority-remote-only": "#e8a83a",
-        "ds-source-role-context": "#b07858",
-        "ds-source-role-evidence": "#4e8fa8",
-        "ds-source-role-editable-target": "#e8a83a",
-        "ds-source-role-output-seed": "#7d5fa0",
         "footer-key-foreground": "#e8711a",
         "input-selection-background": "#e8711a 35%",
         "text-muted": "#b6755d",
@@ -1792,40 +1716,6 @@ litestep_theme = Theme(
     error="#c03020",
     dark=False,
     variables={
-        "ds-surface-panel": "#d4d0c8",
-        "ds-surface-raised": "#e4e0d8",
-        "ds-surface-inspector": "#d4d0c8",
-        "ds-grid-line": "#808080",
-        "ds-text-primary": "#1a1a1a",
-        "ds-text-muted": "#515a65",
-        "ds-text-placeholder": "#515a65",
-        "ds-text-disabled-readable": "#515a65",
-        "ds-action-focus": "#c46418",
-        "ds-focus-fg": "#1a1a1a",
-        "ds-focus-bg": "#c8ccd4",
-        "ds-focus-accent": "#c46418",
-        "ds-input-focus-border": "#c46418",
-        "ds-input-focus-bg": "#e4e0d8",
-        "ds-input-focus-accent": "#c46418",
-        "ds-status-ready": "#4a7a3a",
-        "ds-status-running": "#c46418",
-        "ds-status-info": "#3c4a5c",
-        "ds-status-warning": "#b8860b",
-        "ds-status-approval-required": "#a9701a",
-        "ds-status-blocked": "#c03020",
-        "ds-status-error": "#c03020",
-        "ds-status-error-readable": "#a6291c",
-        "ds-status-paused": "#6a5a8a",
-        "ds-status-unsaved": "#b8860b",
-        "ds-status-recovered": "#4a7a3a",
-        "ds-authority-local": "#4a7a3a",
-        "ds-authority-server": "#c46418",
-        "ds-authority-workspace": "#6a5a8a",
-        "ds-authority-remote-only": "#b8860b",
-        "ds-source-role-context": "#515a65",
-        "ds-source-role-evidence": "#3c4a5c",
-        "ds-source-role-editable-target": "#b8860b",
-        "ds-source-role-output-seed": "#6a5a8a",
         "footer-key-foreground": "#c46418",
         "input-selection-background": "#c46418 35%",
         "text-muted": "#515a65",
@@ -1847,37 +1737,6 @@ litestep_dark_theme = Theme(
     error="#e26655",
     dark=True,
     variables={
-        "ds-surface-panel": "#3a3a38",
-        "ds-surface-raised": "#4a4a46",
-        "ds-surface-inspector": "#42423f",
-        "ds-grid-line": "#5a5a56",
-        "ds-text-primary": "#e4e2dc",
-        "ds-text-muted": "#b4bcc4",
-        "ds-action-focus": "#f0922e",
-        "ds-focus-fg": "#e4e2dc",
-        "ds-focus-bg": "#48505a",
-        "ds-focus-accent": "#f0922e",
-        "ds-input-focus-border": "#f0922e",
-        "ds-input-focus-bg": "#4a4a46",
-        "ds-input-focus-accent": "#f0922e",
-        "ds-status-ready": "#8aa860",
-        "ds-status-running": "#f0922e",
-        "ds-status-info": "#a8b4c4",
-        "ds-status-warning": "#e0b040",
-        "ds-status-approval-required": "#c08a2a",
-        "ds-status-blocked": "#e26655",
-        "ds-status-error": "#e26655",
-        "ds-status-paused": "#9a86b8",
-        "ds-status-unsaved": "#e0b040",
-        "ds-status-recovered": "#8aa860",
-        "ds-authority-local": "#8aa860",
-        "ds-authority-server": "#f0922e",
-        "ds-authority-workspace": "#9a86b8",
-        "ds-authority-remote-only": "#e0b040",
-        "ds-source-role-context": "#b4bcc4",
-        "ds-source-role-evidence": "#a8b4c4",
-        "ds-source-role-editable-target": "#e0b040",
-        "ds-source-role-output-seed": "#9a86b8",
         "footer-key-foreground": "#f0922e",
         "input-selection-background": "#f0922e 35%",
         "text-muted": "#b4bcc4",
@@ -1899,37 +1758,6 @@ night_city_theme = Theme(
     error="#ff1a5e",
     dark=True,
     variables={
-        "ds-surface-panel": "#080a16",
-        "ds-surface-raised": "#11142a",
-        "ds-surface-inspector": "#0c0f1e",
-        "ds-grid-line": "#242856",
-        "ds-text-primary": "#dce4f0",
-        "ds-text-muted": "#6f7eae",
-        "ds-action-focus": "#00d4ee",
-        "ds-focus-fg": "#dce4f0",
-        "ds-focus-bg": "#181c36",
-        "ds-focus-accent": "#00d4ee",
-        "ds-input-focus-border": "#00d4ee",
-        "ds-input-focus-bg": "#11142a",
-        "ds-input-focus-accent": "#00d4ee",
-        "ds-status-ready": "#39d98a",
-        "ds-status-running": "#00d4ee",
-        "ds-status-info": "#7888b8",
-        "ds-status-warning": "#f0d048",
-        "ds-status-approval-required": "#d9a05a",
-        "ds-status-blocked": "#ff1a5e",
-        "ds-status-error": "#ff1a5e",
-        "ds-status-paused": "#b44ee0",
-        "ds-status-unsaved": "#f0d048",
-        "ds-status-recovered": "#39d98a",
-        "ds-authority-local": "#39d98a",
-        "ds-authority-server": "#00d4ee",
-        "ds-authority-workspace": "#b44ee0",
-        "ds-authority-remote-only": "#f0d048",
-        "ds-source-role-context": "#7888b8",
-        "ds-source-role-evidence": "#00d4ee",
-        "ds-source-role-editable-target": "#f0d048",
-        "ds-source-role-output-seed": "#b44ee0",
         "footer-key-foreground": "#00d4ee",
         "input-selection-background": "#00d4ee 35%",
         "text-muted": "#6f7eae",
@@ -1952,37 +1780,6 @@ orb_dark_theme = Theme(
     error="#c45d5d",
     dark=True,
     variables={
-        "ds-surface-panel": "#111115",
-        "ds-surface-raised": "#1f1f28",
-        "ds-surface-inspector": "#18181e",
-        "ds-grid-line": "#333342",
-        "ds-text-primary": "#edeae5",
-        "ds-text-muted": "#8a877f",
-        "ds-action-focus": "#cdb06e",
-        "ds-focus-fg": "#edeae5",
-        "ds-focus-bg": "#262630",
-        "ds-focus-accent": "#cdb06e",
-        "ds-input-focus-border": "#cdb06e",
-        "ds-input-focus-bg": "#1f1f28",
-        "ds-input-focus-accent": "#cdb06e",
-        "ds-status-ready": "#8aa870",
-        "ds-status-running": "#cdb06e",
-        "ds-status-info": "#8ea3c8",
-        "ds-status-warning": "#d9a05a",
-        "ds-status-approval-required": "#c08a2a",
-        "ds-status-blocked": "#c45d5d",
-        "ds-status-error": "#c45d5d",
-        "ds-status-paused": "#a08cc0",
-        "ds-status-unsaved": "#d9a05a",
-        "ds-status-recovered": "#8aa870",
-        "ds-authority-local": "#8aa870",
-        "ds-authority-server": "#cdb06e",
-        "ds-authority-workspace": "#a08cc0",
-        "ds-authority-remote-only": "#d9a05a",
-        "ds-source-role-context": "#8a877f",
-        "ds-source-role-evidence": "#8ea3c8",
-        "ds-source-role-editable-target": "#d9a05a",
-        "ds-source-role-output-seed": "#a08cc0",
         "footer-key-foreground": "#cdb06e",
         "input-selection-background": "#cdb06e 35%",
         "text-muted": "#8a877f",
@@ -2005,37 +1802,6 @@ orb_ocean_theme = Theme(
     error="#f4574d",
     dark=True,
     variables={
-        "ds-surface-panel": "#052430",
-        "ds-surface-raised": "#0a3f52",
-        "ds-surface-inspector": "#07303f",
-        "ds-grid-line": "#1a5f75",
-        "ds-text-primary": "#d8f2f4",
-        "ds-text-muted": "#76acbe",
-        "ds-action-focus": "#3ddc84",
-        "ds-focus-fg": "#d8f2f4",
-        "ds-focus-bg": "#0e4d63",
-        "ds-focus-accent": "#3ddc84",
-        "ds-input-focus-border": "#3ddc84",
-        "ds-input-focus-bg": "#0a3f52",
-        "ds-input-focus-accent": "#3ddc84",
-        "ds-status-ready": "#3ddc84",
-        "ds-status-running": "#4aa8d8",
-        "ds-status-info": "#6fa8b8",
-        "ds-status-warning": "#e8c05a",
-        "ds-status-approval-required": "#d9a05a",
-        "ds-status-blocked": "#f4574d",
-        "ds-status-error": "#f4574d",
-        "ds-status-paused": "#b48ead",
-        "ds-status-unsaved": "#e8c05a",
-        "ds-status-recovered": "#3ddc84",
-        "ds-authority-local": "#3ddc84",
-        "ds-authority-server": "#4aa8d8",
-        "ds-authority-workspace": "#b48ead",
-        "ds-authority-remote-only": "#e8c05a",
-        "ds-source-role-context": "#76acbe",
-        "ds-source-role-evidence": "#6fa8b8",
-        "ds-source-role-editable-target": "#e8c05a",
-        "ds-source-role-output-seed": "#b48ead",
         "footer-key-foreground": "#3ddc84",
         "input-selection-background": "#3ddc84 35%",
         "text-muted": "#76acbe",
@@ -2057,40 +1823,6 @@ parchment_theme = Theme(
     error="#8b1515",
     dark=False,
     variables={
-        "ds-surface-panel": "#f0e8d8",
-        "ds-surface-raised": "#ede5d5",
-        "ds-surface-inspector": "#f0e8d8",
-        "ds-grid-line": "#b8a888",
-        "ds-text-primary": "#1e1208",
-        "ds-text-muted": "#786153",
-        "ds-text-placeholder": "#786153",
-        "ds-text-disabled-readable": "#786153",
-        "ds-action-focus": "#8b1515",
-        "ds-focus-fg": "#1e1208",
-        "ds-focus-bg": "#e4d9c8",
-        "ds-focus-accent": "#8b1515",
-        "ds-input-focus-border": "#8b1515",
-        "ds-input-focus-bg": "#ede5d5",
-        "ds-input-focus-accent": "#8b1515",
-        "ds-status-ready": "#5a7a3a",
-        "ds-status-running": "#8b1515",
-        "ds-status-info": "#3b5a78",
-        "ds-status-warning": "#a9701a",
-        "ds-status-approval-required": "#8c5a12",
-        "ds-status-blocked": "#8b1515",
-        "ds-status-error": "#5c0e0e",
-        "ds-status-error-readable": "#8b1515",
-        "ds-status-paused": "#6a4a7a",
-        "ds-status-unsaved": "#a9701a",
-        "ds-status-recovered": "#5a7a3a",
-        "ds-authority-local": "#5a7a3a",
-        "ds-authority-server": "#8b1515",
-        "ds-authority-workspace": "#6a4a7a",
-        "ds-authority-remote-only": "#a9701a",
-        "ds-source-role-context": "#786153",
-        "ds-source-role-evidence": "#3b5a78",
-        "ds-source-role-editable-target": "#a9701a",
-        "ds-source-role-output-seed": "#6a4a7a",
         "footer-key-foreground": "#8b1515",
         "input-selection-background": "#8b1515 35%",
         "text-muted": "#786153",
@@ -2112,37 +1844,6 @@ vintage_wood_theme = Theme(
     error="#9e4642",
     dark=True,
     variables={
-        "ds-surface-panel": "#1f1815",
-        "ds-surface-raised": "#382c26",
-        "ds-surface-inspector": "#2b211d",
-        "ds-grid-line": "#6e594d",
-        "ds-text-primary": "#e6d8ce",
-        "ds-text-muted": "#a2948c",
-        "ds-action-focus": "#c47647",
-        "ds-focus-fg": "#e6d8ce",
-        "ds-focus-bg": "#473831",
-        "ds-focus-accent": "#c47647",
-        "ds-input-focus-border": "#c47647",
-        "ds-input-focus-bg": "#382c26",
-        "ds-input-focus-accent": "#c47647",
-        "ds-status-ready": "#8a9a5a",
-        "ds-status-running": "#c47647",
-        "ds-status-info": "#7d97ad",
-        "ds-status-warning": "#d9a05a",
-        "ds-status-approval-required": "#c08a2a",
-        "ds-status-blocked": "#9e4642",
-        "ds-status-error": "#9e4642",
-        "ds-status-paused": "#9a7ba8",
-        "ds-status-unsaved": "#d9a05a",
-        "ds-status-recovered": "#8a9a5a",
-        "ds-authority-local": "#8a9a5a",
-        "ds-authority-server": "#c47647",
-        "ds-authority-workspace": "#9a7ba8",
-        "ds-authority-remote-only": "#d9a05a",
-        "ds-source-role-context": "#a2948c",
-        "ds-source-role-evidence": "#7d97ad",
-        "ds-source-role-editable-target": "#d9a05a",
-        "ds-source-role-output-seed": "#9a7ba8",
         "footer-key-foreground": "#c47647",
         "input-selection-background": "#c47647 35%",
         "text-muted": "#a2948c",
@@ -2222,6 +1923,12 @@ ALL_THEMES = [
     sakura_viewing_picnic_theme,
     eighties_anime_ova_sunset_theme,
 ]
+
+# TASK-31429: the shipped catalog gets the same readability pin user themes
+# receive via create_theme_from_dict (gated by test_theme_contrast.py).
+for _shipped_theme in ALL_THEMES:
+    ensure_readable_text_hues(_shipped_theme)
+del _shipped_theme
 
 # Example of a theme with the 'variables' attribute as shown in Textual docs:
 # MY_THEMES["arctic_example"] = Theme(

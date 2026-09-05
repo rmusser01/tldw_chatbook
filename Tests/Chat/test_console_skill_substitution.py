@@ -12,7 +12,6 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from Tests.console_provider_doubles import persisted_console_store
 from Tests.console_provider_doubles import provider_resolution
@@ -423,7 +422,7 @@ async def test_embedded_fork_mention_left_literal():
     out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
         messages
     )
-    assert out == messages          # untouched
+    assert out == messages  # untouched
     assert refuse is None and notes == ()
 
 
@@ -435,8 +434,8 @@ async def test_embedded_untrusted_left_literal_with_note():
     out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
         messages
     )
-    assert out == messages          # prose never lost
-    assert refuse is None           # embedded never aborts
+    assert out == messages  # prose never lost
+    assert refuse is None  # embedded never aborts
     assert len(notes) == 1 and "code-review" in notes[0]
 
 
@@ -487,9 +486,7 @@ async def test_plain_text_send_never_touches_skills_service():
 async def test_same_skill_mentioned_twice_embedded_splices_both():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
-    messages = [
-        {"role": "user", "content": "start $code-review mid $code-review end"}
-    ]
+    messages = [{"role": "user", "content": "start $code-review mid $code-review end"}]
     out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
         messages
     )
@@ -660,8 +657,7 @@ async def test_leading_fork_mention_also_binds_and_blocks():
     assert refuse is None
     assert bindings == ("code-review",)
     assert block == (
-        "Bundled files (readable via skill_file): "
-        "assets/logo.png (2048 bytes, binary)"
+        "Bundled files (readable via skill_file): assets/logo.png (2048 bytes, binary)"
     )
     assert all("Bundled files" not in m.get("content", "") for m in out)
 
