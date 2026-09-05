@@ -11291,3 +11291,37 @@ canceled retirement. Both received failing-then-passing regression tests.
 Gate the specific await boundary a race test intends to exercise; a persistence
 writer starting does not prove the originating view is still current. Check
 shutdown and generation authority again after teardown awaits, before reuse/mount.
+
+## `Screen.CSS_PATH` loads under EVERY app — including the unstyled-tier harnesses (TASK-24459, 2026-09-04)
+
+Splitting `features/_scheduling.tcss` off the boot bundle, the first wiring
+put the generated sheet on `SchedulesWorkbench.CSS_PATH` — the same pattern
+TASK-25812 used for the library/settings agentic sheets. The paired
+evals/schedules arm then flipped three destination-shell geometry tests
+that were green on the pristine base. The probe showed the mechanism:
+Textual's `_load_screen_css` fires when ANY app pushes the screen, and the
+`ConsolidatedCSSApp` harnesses deliberately load no app bundle — so a
+harness-mounted workbench now rendered with ONLY the moved half of the
+module, a hybrid of the styled and unstyled tiers that no user ever sees
+(the automation-detail overlay covered `#schedules-follow-in-console`; the
+click landed on the overlay and the mock never fired). The inverse bite
+followed an hour later: harnesses that model the PRODUCTION stylesheet via
+a hard-coded sheet list (`ProductionCSSDestinationHarness`, and
+`test_schedules_responsive_floor`'s `CSS_PATH = BUNDLED_STYLESHEET`) lost
+the moved rules and failed four MORE geometry tests — that list had
+already gone stale once when 25812 landed, and went stale again the day a
+new split shipped.
+
+Rules, each half of the incident:
+- A split-off feature sheet must load from an APP-owned seam
+  (`TldwCli._SCREEN_OWNED_ROUTE_CSS` → `_ensure_screen_owned_css`), never
+  `Screen.CSS_PATH`, unless every harness that mounts the screen has been
+  audited for the hybrid. Guards now pin both directions (map
+  completeness + a CSS_PATH ban on the owning screens).
+- A harness that claims "the production stylesheet set" must DERIVE it
+  from the build authority (`consolidated_css.APP_STYLESHEETS`), not name
+  sheets by hand.
+- The failure set of a paired arm settles attribution only test-by-test:
+  of the eight failures on the branch arm, five were pre-existing, three
+  were real — and the real three were invisible without the pristine-base
+  arm run in the same mode.

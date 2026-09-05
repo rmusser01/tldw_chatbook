@@ -81,7 +81,17 @@ from tldw_chatbook.css import build_css
 #: measured + the guard's standard 25,000 B slack per ADR-097's tightening
 #: convention -- still banking ~54 KB against the pre-split 860,000.
 #: Lowering needs no ledger row -- only raises do.
-MAX_BOOT_PARSED_CSS_BYTES = 806_000
+#:
+#: TIGHTENED 2026-09-04 (TASK-24459): dev re-breached the 806,000 pin at
+#: 826,956 B four days after the last paydown. The split machinery was
+#: generalized to two more screen-owned modules -- `features/_evals.tcss`
+#: (39,695 B moved to `screen_feature_evals.tcss`, EvalsScreen) and
+#: `features/_scheduling.tcss` (7,936 B moved to
+#: `screen_feature_scheduling.tcss`, SchedulesWorkbench) -- landing at a
+#: measured 779,320 B. Pinned at measured + the standard 25,000 B slack,
+#: rounded down. This guard now also runs in `perf-guard.yml` (task-24461's
+#: join step), so the NEXT breach fails the PR that causes it, in minutes.
+MAX_BOOT_PARSED_CSS_BYTES = 804_000
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
 #: census that comes in under this did not measure the real boot-parsed set

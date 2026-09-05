@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +11,7 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.widgets import Button
 from textual.widgets import Checkbox
@@ -77,21 +76,11 @@ class ProductionCSSDestinationHarness(DestinationHarness):
     # TASK-25812: the console/library/settings rules were split out of the
     # bundle into per-screen sheets the real app loads lazily; a
     # production-CSS harness must load the same set or Settings/Library
-    # geometry silently loses its rules.
-    CSS_PATH = [
-        str(
-            Path(__file__).resolve().parents[2]
-            / "tldw_chatbook"
-            / "css"
-            / name
-        )
-        for name in (
-            "tldw_cli_modular.tcss",
-            "screen_agentic_console.tcss",
-            "screen_agentic_library.tcss",
-            "screen_agentic_settings.tcss",
-        )
-    ]
+    # geometry silently loses its rules. TASK-24459 repeated the lesson
+    # with the evals/scheduling feature sheets -- this hard-coded name list
+    # went stale the day a new split landed, so it now derives from the
+    # same `APP_STYLESHEETS` the build authority maintains.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _ProductionDestinationHarness(DestinationHarness):

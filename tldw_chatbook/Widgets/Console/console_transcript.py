@@ -145,6 +145,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # fixed 200-dash string stopped short on very wide terminals.
 CONSOLE_TRANSCRIPT_RULE = ""
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: task-31386: the click affordance next to a long-running tool call's
+#: activity line (the action it runs is `CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`).
+CONSOLE_TURN_ACTIVITY_ABANDON_COPY = "✕ abandon call"
 #: Console selection phase 3: run statuses during which review feedback
 #: (Request changes / LGTM) can be queued behind the active run via the
 #: prompt-queue seam. Anything else (or a screen without the run-status
@@ -1320,6 +1323,20 @@ def _assistant_markdown_header(
             )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
+    if suffix and message.live_activity_action and suffix.endswith(message.live_activity):
+        # task-31386: a click on the affordance runs the screen action that
+        # abandons the primary's current tool call; the turn continues.
+        # A Style carries the action (not markup), so the line's text --
+        # including a bracketed tool name -- still renders literally.
+        return Content.assemble(
+            role_label,
+            (suffix, "dim"),
+            (
+                f"  {CONSOLE_TURN_ACTIVITY_ABANDON_COPY}",
+                Style(dim=True, underline=True)
+                + Style.from_meta({"@click": message.live_activity_action}),
+            ),
+        )
     return Content.assemble(role_label, (suffix, "dim"))
 
 
@@ -3037,6 +3054,9 @@ class ConsoleTranscript(VerticalScroll):
         #: never derived here and never stored on the message the store
         #: owns (see `_with_turn_activity`).
         self._turn_activity: str = ""
+        #: task-31386: the click action offered next to the line ("abandon
+        #: call"), or "" -- same lifetime as `_turn_activity`.
+        self._turn_activity_action: str = ""
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -7519,7 +7539,7 @@ class ConsoleTranscript(VerticalScroll):
                 return message.id if not content.strip() else None
         return None
 
-    def apply_turn_activity(self, activity: str) -> str:
+    def apply_turn_activity(self, activity: str, *, action: str = "") -> str:
         """Store this poll tick's live activity line; return what will show.
 
         Returns the EFFECTIVE value -- ``""`` whenever no row is eligible --
@@ -7533,6 +7553,9 @@ class ConsoleTranscript(VerticalScroll):
         Args:
             activity: The derived line (``console_turn_activity_text``), or
                 ``""`` when nothing is live.
+            action: task-31386: the Textual action the row's "abandon
+                call" affordance runs, or ``""`` for no affordance. Kept
+                only while ``activity`` is live.
 
         Returns:
             The line that will actually render, or ``""``.
@@ -7543,6 +7566,8 @@ class ConsoleTranscript(VerticalScroll):
         # exactly where a retained line would sit forever, frozen at its
         # last elapsed -- the frozen look this feature exists to remove.
         self._turn_activity = effective
+        # task-31386: the affordance only ever rides a live line.
+        self._turn_activity_action = action if effective else ""
         return effective
 
     def _with_turn_activity(
@@ -7578,7 +7603,11 @@ class ConsoleTranscript(VerticalScroll):
         """
         if target_id is None or message.id != target_id:
             return message
-        return replace(message, live_activity=self._turn_activity)
+        return replace(
+            message,
+            live_activity=self._turn_activity,
+            live_activity_action=self._turn_activity_action,
+        )
 
     def _with_expanded_tool_output(
         self, message: ConsoleChatMessage

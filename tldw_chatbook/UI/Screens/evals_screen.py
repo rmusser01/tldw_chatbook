@@ -208,6 +208,13 @@ def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> Chat
 class EvalsScreen(LabScreen):
     """Evals mode: library rail, detail body, readiness inspector -- on the Lab frame."""
 
+    # TASK-24459: this screen's `evals-*` rules live in the generated
+    # ``css/screen_feature_evals.tcss``, loaded by the APP on first
+    # navigation to the route (``TldwCli._ensure_screen_owned_css``) --
+    # deliberately NOT via ``CSS_PATH``, which every UI-test harness would
+    # also load, styling harness-mounted screens with only the moved half
+    # of the module (see SchedulesWorkbench's docstring for the incident).
+
     #: Both rails open on a first run. Unlike Models' server list or Speech's
     #: dependency detail, the Evals inspector is where target readiness is
     #: reported -- the reason to look at a bench before running it. Behind a

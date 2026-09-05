@@ -14024,6 +14024,39 @@ class ConsoleChatController:
             return "no active run to redirect — plain messages queue for the next turn"
         return redirect(text)
 
+    def abandon_active_tool_call(self) -> str | None:
+        """task-31386: abandon the active run's in-flight tool call; keep the turn.
+
+        UI THREAD. Resolves the viewed session's durable conversation to its
+        newest unanchored primary run (the run in flight, the same lookup
+        the stop path uses) and asks ``agent_service`` to abandon that run's
+        current tool call. The call's ``_call_with_timeout`` wrapper honours
+        the request on its next poll slice and returns the existing
+        "tool call cancelled" result; the run's own cancel probe stays
+        False, so the loop hands that result to the model and continues.
+
+        Returns:
+            The abandoned tool's name, or None when no tool call is in
+            flight for the viewed session (nothing is queued).
+        """
+        session_id = self.store.active_session_id or ""
+        conversation_id = ""
+        for session in self.store.sessions():
+            if session.id == session_id:
+                conversation_id = str(getattr(session, "persisted_conversation_id", "") or "")
+                break
+        if not conversation_id:
+            return None
+        find_run = getattr(self._agent_bridge, "live_primary_run_id", None)
+        run_id = find_run(conversation_id) if callable(find_run) else None
+        if not run_id:
+            run_id = self._latest_unanchored_primary_run_id(conversation_id)
+        if not run_id:
+            return None
+        from tldw_chatbook.Agents.agent_service import request_tool_call_abandon
+
+        return request_tool_call_abandon(run_id)
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.

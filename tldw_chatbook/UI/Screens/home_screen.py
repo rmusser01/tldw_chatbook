@@ -357,9 +357,22 @@ class HomeScreen(BaseAppScreen):
         # the real seams.
         self._home_content_snapshot: HomeContentSnapshot | None = None
 
-    def on_mount(self) -> None:
-        # No super().on_mount(): the dispatcher already invokes
-        # BaseAppScreen.on_mount separately for this Mount event.
+    def on_screen_resume(self) -> None:
+        """Refresh the dashboard for this visit (initial and repeat alike).
+
+        TASK-24452: Home is a reusable route (`ScreenRoute.reusable`), so
+        `on_mount` fires once per app run and THIS hook is the per-visit
+        seam -- without it, revisits would show the previous visit's
+        dashboard. It is also the ONLY dispatch seam: Textual posts
+        ``ScreenResume`` on the initial push too, so dispatching from
+        ``on_mount`` as well double-ran the refreshers on every first
+        visit -- worker exclusivity cancels the superseded handle but
+        cannot undo synchronous provider calls already executing on its
+        thread (Qodo #2402 finding 4).
+
+        No super() call -- Textual's dispatcher invokes BaseAppScreen's
+        own handler separately for this event (the on_mount MRO contract).
+        """
         self._refresh_home_chatbook_artifact_snapshot()
         self._refresh_home_content_snapshot()
         self._refresh_home_active_work_cache()

@@ -1116,6 +1116,11 @@ class ConsoleChatMessage:
     #: 0.2s Console poll re-derives every tick. It is therefore always
     #: ``""`` on every message the rest of the app ever sees.
     live_activity: str = ""
+    #: task-31386: render-only companion to ``live_activity`` -- the Textual
+    #: action a click on the row's "abandon call" affordance runs, set only
+    #: while the primary's tool call has run long enough to offer it. Same
+    #: ownership and lifetime rules as ``live_activity``.
+    live_activity_action: str = ""
 
 
 @dataclass(frozen=True)

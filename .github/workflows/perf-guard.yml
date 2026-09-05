@@ -73,14 +73,19 @@ jobs:
       # already print the culprit modules, so the breaching PR now gets that
       # list here, in minutes.
       #
-      # test_boot_css_byte_budget.py is deliberately NOT in this list yet: it
-      # is red on dev (862,184 B against an 860,000 B ratchet) and adding it
-      # would block every unrelated PR. It joins this step when task-24459
-      # lands.
+      # test_boot_css_byte_budget.py joined this list with task-24459
+      # (2026-09-04), once its ratchet was paid back to green (779,320 B
+      # against a tightened 804,000 B pin). Before that it was deliberately
+      # excluded -- it was red on dev, and a red guard here blocks every
+      # unrelated PR. If it ever reds on dev again, fix dev (defer the CSS
+      # or shed equivalent bytes -- ADR-097), do NOT remove it from this
+      # list: four review cycles of silent re-breaches are exactly what its
+      # absence cost.
       - name: Run boot budget ratchets
         run: |
           pytest Tests/Performance/test_app_import_weight.py \
             Tests/Performance/test_ui_ready_module_census.py \
             Tests/Performance/test_boot_worker_census.py \
             Tests/Performance/test_textual_css_fastpath.py \
+            Tests/Performance/test_boot_css_byte_budget.py \
             -v --timeout=300

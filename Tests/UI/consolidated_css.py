@@ -41,20 +41,27 @@ CSS_DIR = Path(build_css.__file__).parent
 #: The app bundle, for harnesses that want the app-CSS tier as well.
 BUNDLED_STYLESHEET = CSS_DIR / "tldw_cli_modular.tcss"
 
-#: TASK-25812: the per-screen sheets split out of the agentic-terminal
-#: module. The REAL app parses these lazily, on first visit to the owning
-#: screen (`App._load_screen_css` via each screen's `CSS_PATH`), so at
-#: steady state they are part of the app's styling exactly as the bundle
-#: is. A harness that pins `CSS_PATH` to the bundle alone silently loses
-#: every moved rule; harnesses and contracts that mean "the app's styling"
+#: TASK-25812/TASK-24459: the per-screen sheets split out of the
+#: screen-owned modules (agentic terminal, evals, scheduling). The REAL app
+#: parses these lazily, on first visit to the owning screen
+#: (`App._load_screen_css` via each screen's `CSS_PATH`), so at steady
+#: state they are part of the app's styling exactly as the bundle is. A
+#: harness that pins `CSS_PATH` to the bundle alone silently loses every
+#: moved rule; harnesses and contracts that mean "the app's styling"
 #: should use `APP_STYLESHEETS` / `app_css_text()` instead.
 AGENTIC_SPLIT_STYLESHEETS = tuple(
     CSS_DIR / name for name in build_css.AGENTIC_SPLIT_SHEETS.values()
 )
 
+SCREEN_OWNED_SPLIT_STYLESHEETS = tuple(
+    CSS_DIR / filename
+    for split in build_css.SCREEN_OWNED_SPLITS
+    for filename in split.sheets.values()
+)
+
 #: Every app-tier stylesheet the running app ends up with: the boot bundle
 #: plus the lazily-loaded split sheets.
-APP_STYLESHEETS = (BUNDLED_STYLESHEET, *AGENTIC_SPLIT_STYLESHEETS)
+APP_STYLESHEETS = (BUNDLED_STYLESHEET, *SCREEN_OWNED_SPLIT_STYLESHEETS)
 
 
 def app_css_text() -> str:

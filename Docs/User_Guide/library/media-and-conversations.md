@@ -128,10 +128,19 @@ another delete. The viewer's single-item "Delete" leaves the same receipt
 and bulk delete share one undo story. "Undo" restores every item the
 receipt names (or just the ones still outstanding, if a prior undo
 partially failed); "Dismiss" clears the receipt without restoring anything.
-"Undo" is the at-point convenience; the durable way back is the **Trash
-view** the receipt points at (see "Media Trash" below), which lists every
-deleted item — including ones from earlier sessions — and restores them
-per item. (Re-importing the same file from
+Focus moves straight to "Undo" the moment the receipt appears, so pressing
+**Enter** undoes immediately — the confirmation's "You can undo right
+away" is literally true at that instant. "Undo" stays live even if the
+list behind the receipt goes stale in the meantime (a later page change,
+say): it restores exactly the ids the receipt already names, not whatever
+the list happens to show now, so a stale page can never be the reason
+Undo is unavailable. If a restore itself fails, the receipt becomes
+"✗ undo failed · n of m · \<reason\>" and "Undo" becomes "Retry undo",
+retrying only the items still outstanding; a later full success clears
+the receipt as normal. "Undo" is the at-point convenience; the durable way
+back is the **Trash view** the receipt points at (see "Media Trash"
+below), which lists every deleted item — including ones from earlier
+sessions — and restores them per item. (Re-importing the same file from
 [Import & export](import-and-export.md) also still restores a trashed
 match instead of refusing.)
 
@@ -177,7 +186,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
+| "Retry" | Repeats a failed page request. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
@@ -192,6 +201,16 @@ of type 'pdf'."; with a filter query that matches nothing, "No media matched
 articles tagged `day2` — a keyword in no title and no body — filtered live in
 tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
 \"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
+
+*Verified against fix/media-wave5-e @ d5355a37ca — 2026-09-05
+(task-31220 final review, doc-only round: corrected the "Retry" row above —
+rows open read-only under a stale page, only Select/Export/Delete/sort/Select
+all stay gated with a reason — and added the failed-undo receipt
+("✗ undo failed · n of m · \<reason\>" / "Retry undo"), the
+"Couldn't retry · \<reason\>" copy a failed page-request Retry now shows,
+and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
+above. Confirmed against the product code and its tests, not re-verified
+live for this doc-only pass.)*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."

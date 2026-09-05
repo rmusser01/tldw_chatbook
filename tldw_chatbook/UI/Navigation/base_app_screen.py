@@ -372,6 +372,19 @@ class BaseAppScreen(Screen):
         """
         logger.info(f"Screen {self.screen_name} mounted")
 
+    # TASK-24452 note: an `on_screen_suspend` override briefly lived here
+    # releasing a screen-owned Buddy view's mouse capture (Qodo #2402
+    # finding 3 -- reusable screens suspend instead of unmounting, so an
+    # unmount-time release stops covering them). PR #2407 then moved the
+    # Buddy overlay's lifetime to an app-level owner
+    # (`UI/Navigation/persona_buddy_overlay.py`): screens no longer hold a
+    # `_persona_buddy_view` at all, the owner's `is_current` fence rejects
+    # interaction the moment `app.screen` changes, its retire/invalid paths
+    # release capture per view, and Textual's own `switch_screen` calls
+    # `capture_mouse(None)` before every swap. The concern is covered at
+    # the owner; a screen-level hook would read an attribute that no
+    # longer exists.
+
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         logger.info(f"Screen {self.screen_name} unmounted")

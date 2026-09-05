@@ -17,15 +17,19 @@ _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
-# TASK-25812: the build now emits the bundle PLUS three per-screen sheets
-# split from the agentic-terminal module. "Reaches the generated output"
-# means the union -- a rule in a split sheet is exactly as live as one in
-# the bundle (the app loads it via the owning screen's CSS_PATH).
+# TASK-25812/TASK-24459: the build now emits the bundle PLUS per-screen
+# sheets split from the screen-owned modules (agentic terminal, evals,
+# scheduling). "Reaches the generated output" means the union -- a rule in
+# a split sheet is exactly as live as one in the bundle (agentic sheets
+# load via the owning screens' CSS_PATH / the boot path; the feature
+# sheets load via TldwCli._SCREEN_OWNED_ROUTE_CSS on first navigation).
 _GENERATED_SHEETS = (
     _BUNDLED_STYLESHEET,
     _CSS_ROOT / "screen_agentic_console.tcss",
     _CSS_ROOT / "screen_agentic_library.tcss",
     _CSS_ROOT / "screen_agentic_settings.tcss",
+    _CSS_ROOT / "screen_feature_evals.tcss",
+    _CSS_ROOT / "screen_feature_scheduling.tcss",
 )
 
 
@@ -803,3 +807,330 @@ def test_split_sheets_carry_only_their_own_owners_rules() -> None:
                     f"{filename}: token .{token} belongs to the {other} "
                     f"surface but was generated into the {owner} sheet"
                 )
+
+
+# --- TASK-24459: screen-owned split contracts (evals + scheduling) ----------
+
+
+def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
+    return css_builder._SPLITS_BY_MODULE[module]
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["features/_evals.tcss", "features/_scheduling.tcss"],
+)
+def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
+    """Every byte of a screen-owned module reaches exactly one output.
+
+    The same contract the agentic module carries: the bundle's module
+    section must equal the splitter's remainder, and each committed sheet
+    must EXACTLY equal a fresh rebuild (suffix checks accept stale CSS
+    ahead of the expected tail -- Qodo #2281).
+    """
+    spec = _split_spec(module)
+    source = (_CSS_ROOT / module).read_text(encoding="utf-8")
+    remainder, _ = css_builder.split_owned_module(source, spec, css_dir=_CSS_ROOT)
+
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert _bundled_module(bundle, module) == remainder.strip()
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_screen_owned_sheets(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in spec.sheets.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_screen_owned_sheets "
+                "-- regenerate with build_css.py and commit the result"
+            )
+
+
+def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
+    """The scheduling spec's two prefixes are ONE owner; helpers stay.
+
+    `scheduling-*` and `schedules-*` tokens both belong to the single
+    scheduling sheet, so a selector mixing them still moves. A helper
+    class with no owner prefix (`pane-hidden` -- composed only by
+    scheduling screens today, but unprefixed) pins its block to the
+    bundle, conservatively.
+    """
+    spec = _split_spec("features/_scheduling.tcss")
+    css = (
+        "#scheduling-list-pane { padding: 1; }\n"
+        "#schedules-shell .scheduling-inspector-label { color: red; }\n"
+        "#scheduling-detail-pane.pane-hidden { display: none; }\n"
+        ".pane-hidden { display: none; }\n"
+    )
+    remainder, moved = css_builder.split_owned_module(css, spec)
+    sheet = moved["scheduling"]
+    assert "#scheduling-list-pane" in sheet
+    assert "#schedules-shell .scheduling-inspector-label" in sheet, (
+        "both prefixes belong to the one scheduling owner -- a mixed "
+        "selector must still move"
+    )
+    assert "#scheduling-detail-pane.pane-hidden" in remainder, (
+        "an unprefixed helper token anywhere in the selector pins the "
+        "block to the bundle"
+    )
+    assert ".pane-hidden { display: none; }" in remainder
+
+
+def test_cross_split_selector_overlap_refuses_to_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two lazy sheets carrying the same selector must fail the build.
+
+    Their cascade order depends on which screen the user visits first --
+    an ordering no audit can pin -- so `build_screen_owned_sheets` refuses.
+
+    Today the demotion pass makes this state unreachable through the
+    natural path: a moved unit colliding with ANY selector of a later
+    split's module is demoted to the bundle first (verified by writing this
+    test the natural way -- it did not raise). The guard is the backstop
+    for when that analysis rots (a future intra-module-only demotion, a
+    builder calling the splitter without `css_dir`), so it is exercised at
+    its own level: `_build_one_split` stubbed to report overlapping moved
+    selectors.
+    """
+    specs = (
+        css_builder.ScreenOwnedSplit(
+            module="features/_alpha.tcss",
+            sheets={"alpha": "screen_feature_alpha.tcss"},
+            prefixes={"alpha": ("alpha",)},
+            pinned=frozenset(),
+        ),
+        css_builder.ScreenOwnedSplit(
+            module="features/_beta.tcss",
+            sheets={"beta": "screen_feature_beta.tcss"},
+            prefixes={"beta": ("beta",)},
+            pinned=frozenset(),
+        ),
+    )
+    reported = {
+        "features/_alpha.tcss": {"screen_feature_alpha.tcss": {".shared-x"}},
+        "features/_beta.tcss": {"screen_feature_beta.tcss": {".shared-x"}},
+    }
+    monkeypatch.setattr(css_builder, "SCREEN_OWNED_SPLITS", specs)
+    monkeypatch.setattr(
+        css_builder,
+        "_build_one_split",
+        lambda css_dir, output_dir, split: reported[split.module],
+    )
+    with pytest.raises(AssertionError, match="cross-split selector overlap"):
+        css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+    # Mutation check the other direction: disjoint moved sets pass.
+    reported["features/_beta.tcss"] = {
+        "screen_feature_beta.tcss": {".beta-only"}
+    }
+    css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+
+def test_screen_owned_sheets_are_wired_to_app_routes() -> None:
+    """Every non-agentic split sheet is app-loaded by some route.
+
+    A split whose sheet no route loads is dead CSS from the user's point
+    of view: the bundle no longer carries the rules and nothing ever
+    parses the sheet. Deliberately the APP's route map, not the screens'
+    ``CSS_PATH``: Textual loads ``CSS_PATH`` under any app, including the
+    UI-test harnesses that model the unstyled tier, and shipping the moved
+    half of a module into those harnesses flipped three destination-shell
+    geometry tests (2026-09-04). See ``TldwCli._ensure_screen_owned_css``.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    app_loaded = {
+        name
+        for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values()
+        for name in names
+    }
+    for split in css_builder.SCREEN_OWNED_SPLITS:
+        if split.module == css_builder.AGENTIC_SPLIT_MODULE:
+            continue  # TASK-25812 wiring predates the app seam
+        for sheet_name in split.sheets.values():
+            assert (_CSS_ROOT / sheet_name).is_file(), (
+                f"{sheet_name} missing from css/"
+            )
+            assert sheet_name in app_loaded, (
+                f"{sheet_name} is split off the bundle but no route in "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS loads it -- the moved "
+                "rules would never parse. Screens must NOT take it onto "
+                "CSS_PATH instead (harness-tier contract; see this test's "
+                "docstring)."
+            )
+    # And the inverse: the map names only sheets the build actually emits.
+    emitted = {
+        filename
+        for split in css_builder.SCREEN_OWNED_SPLITS
+        for filename in split.sheets.values()
+    }
+    for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values():
+        for name in names:
+            assert name in emitted, (
+                f"_SCREEN_OWNED_ROUTE_CSS names {name}, which no split emits"
+            )
+
+
+def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
+    """The harness-tier regression cannot quietly come back via CSS_PATH."""
+    import importlib
+
+    for screen_module, screen_name in [
+        ("tldw_chatbook.UI.Screens.scheduling.schedules_workbench", "SchedulesWorkbench"),
+        ("tldw_chatbook.UI.Screens.scheduling.workbench_host_screen", "WorkbenchHostScreen"),
+        ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+    ]:
+        try:
+            screen_cls = getattr(importlib.import_module(screen_module), screen_name)
+        except ImportError as exc:  # optional-deps environments
+            pytest.skip(f"{screen_module} unavailable here: {exc}")
+        css_path = getattr(screen_cls, "CSS_PATH", None) or []
+        for entry in css_path:
+            assert "screen_feature_" not in str(entry), (
+                f"{screen_name}.CSS_PATH loads {entry}: harnesses would "
+                "style themselves with the moved half of the module (the "
+                "2026-09-04 destination-shell flip); load via "
+                "TldwCli._SCREEN_OWNED_ROUTE_CSS instead"
+            )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_visit_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """First navigation to Schedules parses the split sheet; boot does not.
+
+    The functional half of the app-seam contract: the sheet is absent from
+    the app stylesheet at `_ui_ready` (that absence IS the boot-CSS win)
+    and present after arriving at the route.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert not app.stylesheet.has_source(sheet, ""), (
+            "the scheduling sheet must NOT ride the boot parse -- that "
+            "deferral is the entire TASK-24459 byte win"
+        )
+        await pilot.press("ctrl+7")
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while asyncio.get_running_loop().time() < deadline:
+            await pilot.pause()
+            if type(app.screen).__name__ == "SchedulesWorkbench":
+                break
+        assert type(app.screen).__name__ == "SchedulesWorkbench"
+        assert app.stylesheet.has_source(sheet, ""), (
+            "arriving at Schedules must load the split sheet, or the moved "
+            "rules never style the real app"
+        )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A configured `default_tab = schedules` boots with the sheet loaded.
+
+    Qodo #2409 finding 2: the in-app navigation test above never exercises
+    `_push_initial_screen`'s loading call -- deleting that call would leave
+    a schedules-default user unstyled on every boot and no test would go
+    red. This one boots through the real initial-push boundary.
+    """
+    import asyncio
+
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config = tmp_path / "config"
+    for sub in (home, data, config):
+        sub.mkdir(parents=True, exist_ok=True)
+    config_file = config / "tldw_cli" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "[first_run]\nsetup_completed = true\n\n[splash_screen]\n"
+        "enabled = false\n\n[general]\ndefault_tab = \"schedules\"\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+
+    from tldw_chatbook.app import TldwCli
+
+    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+        assert type(app.screen).__name__ == "SchedulesWorkbench", (
+            f"configured default tab did not land: {type(app.screen).__name__}"
+        )
+        assert app.stylesheet.has_source(sheet, ""), (
+            "booting INTO Schedules must load the split sheet through "
+            "_push_initial_screen, or a schedules-default user is unstyled"
+        )
+
+
+def test_stale_split_sheets_are_removed_when_their_module_leaves(
+    tmp_path: Path,
+) -> None:
+    """A partial build must not leave a dead module's generated sheet behind.
+
+    Qodo #2409 finding 3: `_build_one_split` skips absent modules, so a
+    previously generated sheet would linger in css_dir for the app's route
+    map to load -- rules whose module is no longer a build input.
+    """
+    css_dir = tmp_path / "css"
+    stage = tmp_path / "stage"
+    css_dir.mkdir()
+    stage.mkdir()
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-ghost { color: red; }\n", encoding="utf-8"
+    )
+    # No features/_evals.tcss in this tree, nothing staged -> stale, removed.
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert not (css_dir / "screen_feature_evals.tcss").exists()
+
+    # Present module keeps its sheet even when this build staged nothing
+    # new for it (the builders would have raised before publish otherwise).
+    (css_dir / "features").mkdir()
+    (css_dir / "features" / "_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    (css_dir / "screen_feature_evals.tcss").write_text(
+        ".evals-live { color: blue; }\n", encoding="utf-8"
+    )
+    css_builder._remove_stale_split_sheets(css_dir, stage)
+    assert (css_dir / "screen_feature_evals.tcss").exists()

@@ -3123,6 +3123,11 @@ def _bind_trash_mutation_seams(fake):
     fake._begin_library_media_mutation = types.MethodType(
         LibraryScreen._begin_library_media_mutation, fake
     )
+    # task-31220: the one seam every mutation handler claims the shared
+    # write interlock through.
+    fake._claim_library_media_mutation = types.MethodType(
+        LibraryScreen._claim_library_media_mutation, fake
+    )
     fake._library_media_backing_id = types.MethodType(
         LibraryScreen._library_media_backing_id, fake
     )
@@ -3818,6 +3823,126 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         for event in events
     )
     assert fake._library_media_bulk_delete_in_flight is False
+
+
+async def _trash_screen_over_a_real_controller(
+    *, begin_raises=None, worker_raises=None
+):
+    """A Trash screen fake whose controller is REAL and whose claim seam refuses.
+
+    ``claim_mutation`` advances the controller generation and publishes
+    ``mutation_pending=True`` BEFORE the shared claim seam fences and
+    schedules, so a fence/scheduling failure is only observable against the
+    real reducer -- ``mutation_pending`` is what disables every Trash control
+    and blocks every subsequent refresh.
+    """
+    item = _canonical_trash_items(1)[0]
+
+    class ControllerScreen:
+        def __init__(self):
+            self.pending = []
+
+        def run_worker(self, work, **_kwargs):
+            self.pending.append(work)
+            return work
+
+    class ListService:
+        async def list_library_media_trash(self, **_kwargs):
+            return {
+                "items": [item],
+                "total": 1,
+                "limit": 20,
+                "offset": 0,
+                "types": [str(item["media_type"])],
+            }
+
+    async def call_service(fn, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await fn(**kwargs)
+
+    controller_screen = ControllerScreen()
+    controller = LibraryMediaTrashBrowseController(
+        screen=controller_screen,
+        run_service_call=lambda: call_service,
+        media_service=lambda: ListService(),
+        sync_view=lambda: lambda _focus: None,
+        request_is_active=lambda: True,
+    )
+    controller.request(MediaTrashScope(), origin="entry", focus_identity=None)
+    await controller_screen.pending.pop()
+
+    def _refuse_worker(work, **_kwargs):
+        if worker_raises is not None:
+            raise worker_raises
+        pytest.fail("no worker may start on a refused claim")
+
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_trash_browse_controller=controller,
+        _library_media_trash_focus_identity="#library-media-trash-row-0",
+        _library_notes_focus_intent_generation=0,
+        is_mounted=False,
+        refresh=lambda **_kwargs: None,
+        call_after_refresh=lambda fn, *_args: None,
+        run_worker=_refuse_worker,
+        _focus_library_media_trash_entry=lambda: None,
+    )
+    _bind_trash_mutation_seams(fake)
+    # The real worker bodies: the seam is handed the production coroutine
+    # (and must close it), never a stand-in that would not warn if leaked.
+    fake._permanently_delete_library_media_from_trash = types.MethodType(
+        LibraryScreen._permanently_delete_library_media_from_trash, fake
+    )
+    fake._restore_library_media_from_trash = types.MethodType(
+        LibraryScreen._restore_library_media_from_trash, fake
+    )
+    if begin_raises is not None:
+        def _begin():
+            raise begin_raises
+
+        fake._begin_library_media_mutation = _begin
+    return fake
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("delete", "restore"))
+@pytest.mark.parametrize("failure_kind", ("fence", "schedule"))
+async def test_trash_claim_is_rolled_back_when_the_mutation_never_reaches_a_worker(
+    action, failure_kind
+):
+    """Qodo #3: the Trash claim outlives a refused shared claim.
+
+    Both Trash handlers claim the controller (generation advanced,
+    ``mutation_pending=True``) before ``_claim_library_media_mutation``
+    fences and schedules. Its failure path released only the shared screen
+    interlock, so a fence/scheduling error left Trash pending forever --
+    every control disabled and every refresh request dropped, for the rest
+    of the session.
+    """
+    boom = RuntimeError("fence/scheduling refused")
+    fake = await _trash_screen_over_a_real_controller(
+        begin_raises=boom if failure_kind == "fence" else None,
+        worker_raises=boom if failure_kind == "schedule" else None,
+    )
+    controller = fake._library_media_trash_browse_controller
+    event = SimpleNamespace(stop=lambda: None)
+    if action == "delete":
+        assert controller.open_delete_confirmation() is not None
+        handler = LibraryScreen.handle_library_media_trash_delete_confirm
+    else:
+        handler = LibraryScreen.handle_library_media_trash_restore
+
+    with pytest.raises(RuntimeError, match="refused"):
+        handler(fake, event)
+
+    assert controller.state.mutation_pending is False
+    assert fake._library_media_bulk_delete_in_flight is False
+    # The row survives an attempt that never touched the database, and the
+    # surface says so rather than sitting silently disabled.
+    assert controller.state.retained_items == (_canonical_trash_items(1)[0],)
+    assert controller.state.error_copy != ""
+    # A rolled-back claim is a fresh claim opportunity, not a dead surface.
+    assert controller.claim_mutation() is not None
 
 
 def test_escape_gate_only_passes_in_trash_view():

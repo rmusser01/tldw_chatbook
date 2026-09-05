@@ -1,0 +1,354 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * scheduling-owned rules split out of features/_scheduling.tcss
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit features/_scheduling.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: $block-cursor-blurred-background;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $surface-lighten-2;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: $text-error;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+
+.tldw-agentic-split-preamble-end { }
+
+/* ========================================
+ * FEATURES: Scheduling
+ * ========================================
+ * Scheduling workbench specific styles
+ * ======================================== */
+
+/* The liveness Static + bottom status strip are auto-height siblings of
+ * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
+ * this rationale used to name); without an explicit 1fr the auto-height
+ * workbench row measures its fr children against the whole content area
+ * and overflows past the footer. */
+#schedules-shell {
+    height: 1fr;
+    min-height: 0;
+}
+
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
+ * below the whole workbench, not inside the list pane, hosting the existing
+ * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
+ * that PUSHES the conflicts view over the list (redesign PR-4 task 5: the
+ * Conflicts tab it used to switch to is retired). SyncStatusWidget takes the
+ * remaining width so the badge sits flush right; `align` centers the
+ * badge (height:1, from .scheduling-queue-chip) against the taller
+ * padded SyncStatusWidget row. */
+#scheduling-status-strip {
+    height: auto;
+    border-top: solid $ds-grid-line;
+    align: left middle;
+}
+
+#scheduling-status-strip > SyncStatusWidget {
+    width: 1fr;
+}
+
+#scheduling-workbench {
+    layout: horizontal;
+    height: 1fr;
+    min-height: 10;
+    padding: 1;
+    margin: 0;
+    overflow: hidden;
+    border: solid $ds-grid-line;
+}
+
+/* Intentional ~30/45/25 width split for the scheduling workbench design plan,
+ * expressed with fr units so the three panes share leftover space with the
+ * fixed-width vertical dividers. This avoids percentage-based overflow/wrapping
+ * and differs from workflows/acp which use a 25/50/25 fr ratio. */
+#scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
+#scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
+#scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
+
+/* The queue table must fill its pane, or empty queues collapse to a single
+ * clipped row at short heights (80x24). */
+#scheduling-task-table {
+    height: 1fr;
+}
+
+/* redesign PR-4, task 5: the Automations tab's own three-pane split
+ * (#scheduling-automations-split / -pane / -detail-pane / -history-pane)
+ * is retired with the tab. The ids below that still start with
+ * `#scheduling-automation-detail-` are DefinitionDetail's own CHILD ids,
+ * not that pane's -- they follow the widget wherever it is mounted. */
+#scheduling-automation-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+/* The two detail panes' body cards: the definitions pane's question and
+ * (final review F10) the reminder pane's body text, same card. */
+#scheduling-automation-detail-question,
+#scheduling-task-detail-body-card {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $text;
+}
+
+#scheduling-queue-filter {
+    height: 1;
+    border: none;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $surface-darken-1;
+}
+
+/* redesign PR-2, Task 2: the chip row (spec S3) -- compact single-row
+ * buttons, same height:1/border:none idiom the filter Input above uses,
+ * so the row costs one line rather than a full 3-row Button box. */
+#scheduling-queue-chips {
+    height: 1;
+    margin: 0 0 1 0;
+}
+
+#scheduling-queue-chips .scheduling-queue-chip {
+    height: 1;
+    border: none;
+    min-width: 8;
+    margin-right: 1;
+    background: $surface-darken-1;
+}
+
+/* redesign PR-4, task 6 (spec §11): the collapsed-chip control -- one
+ * button standing in for the four named chips below 84 columns. Same
+ * flat single-row look as the chips it replaces (it deliberately does
+ * NOT carry `.scheduling-queue-chip`: that class is what the compact
+ * rule below hides). `display: none` by default, so it only ever appears
+ * at the widths where the four chips are gone. */
+#scheduling-chip-cycle {
+    display: none;
+    height: 1;
+    border: none;
+    width: auto;
+    min-width: 8;
+    background: $surface-darken-1;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
+    padding: 0;
+}
+
+/* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
+ * left ~20 usable ones -- narrow enough that the header's three Buttons
+ * wrapped their labels, and an auto-height row of wrapped Buttons grew to
+ * SIXTEEN rows, leaving the queue table a single line at 110x40. Sharing
+ * the width with the detail pane (which keeps its own min-width) fits the
+ * header on one row again and gives the table back its space. */
+SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
+    width: 1fr;
+    min-width: 28;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
+    width: 1fr;
+    min-width: 32;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
+    width: 20;
+    min-width: 16;
+}
+
+/* Pane headers */
+#scheduling-list-title,
+#scheduling-task-detail-header,
+#scheduling-task-inspector-header,
+#scheduling-automation-detail-header {
+    text-style: bold;
+    color: $text;
+    padding: 0 0 0 0;
+    border-bottom: solid $ds-grid-line;
+    margin-bottom: 1;
+}
+
+#scheduling-list-header {
+    height: auto;
+}
+
+#scheduling-list-header #scheduling-list-title {
+    width: 1fr;
+}
+
+#scheduling-new-task {
+    width: auto;
+    min-width: 9;
+}
+
+/* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
+ * default (see SchedulesWorkbench.on_mount / _update_mark_all_read_
+ * visibility), same height:auto row as Create above it. */
+#scheduling-mark-all-read {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
+/* redesign PR-4, task 2: the rail's Results relocation affordance,
+ * beside Mark-all-read -- same auto-width row shape, always visible
+ * (never hidden, unlike Mark-all-read). */
+#scheduling-results-badge {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
+/* Empty state */
+#scheduling-task-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+/* Lifecycle action row */
+#scheduling-task-detail-lifecycle {
+    height: auto;
+    padding: 1 0;
+    margin-top: 1;
+}
+
+#scheduling-task-detail-lifecycle Button {
+    margin: 0 1 0 0;
+}
+
+/* redesign PR-4, task 4: the legacy transfer action row (schedules-
+   handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
+   Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
+
+/* Follow-in-Console prominence */
+#schedules-follow-in-console {
+    margin-top: 1;
+    width: 100%;
+    text-style: bold;
+}
+
+/* schedules-redesign PR-3, Task 4: the definitions pane's header
+ * Pause/Resume row -- same one-Button lifecycle-row shape as
+ * `#scheduling-task-detail-lifecycle` above. `DefinitionDetail` mounts
+ * under two different ids (Automations tab + Queue tab sibling), so both
+ * selectors share this declaration rather than one id-scoped rule. */
+#scheduling-automation-detail-lifecycle {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+/* Status badge base (detail pane) */
+#scheduling-task-status-badge {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    color: $text;
+    border: none;
+    text-align: center;
+}
+
+/* Inspector metadata */
+#scheduling-inspector-metadata {
+    height: auto;
+    padding-bottom: 1;
+}
+
+#scheduling-inspector-metadata Horizontal {
+    height: auto;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+.scheduling-inspector-label {
+    color: $text-muted;
+    padding: 0 1 0 0;
+    width: 10;
+}
+
+.scheduling-inspector-value {
+    color: $text;
+    width: 1fr;
+    height: auto;
+}
+
+#scheduling-conflict-card {
+    height: auto;
+    margin-top: 1;
+}
+
+#scheduling-pane-notice {
+    color: $text-muted;
+    text-style: italic;
+    height: auto;
+    padding: 0;
+}
