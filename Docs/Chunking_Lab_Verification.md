@@ -83,6 +83,23 @@ boot-budget headroom/snapshot notices, joblib's semaphore-exhaustion serial fall
 and one unchanged RAG startup `call_from_thread` callback warning. No dependency,
 semaphore, startup or global styling repair is claimed by the selector correction.
 
+### Final code acceptance
+
+On `13441478984bf17cd28f62172bce4f59df0f85d9`, Qodo again reports zero remaining
+issues and all five review threads are resolved. [Required CI run33975848478](https://github.com/rmusser01/tldw_chatbook/actions/runs/33975848478)
+passed Fast Lane and Derived Artifacts, completing at 2026-09-05T16:02:57Z.
+[Perf Guard run33975848601](https://github.com/rmusser01/tldw_chatbook/actions/runs/33975848601)
+passed; the six GGUF jobs plus CSS and Backlog guards passed. The dedicated pinned-
+workspace platform-evidence job was skipped by its own trigger policy; cubic was
+neutral and CodeRabbit skipped review. No actionable comments remain. Fresh fetch
+confirmed latest dev93388ba69b is an ancestor of the reviewed head.
+
+TASK-31645 AC17 and all earlier criteria are accepted on the recorded local and
+remote evidence. The final task/docs commit changes no production or test source;
+its own current-head required CI and review are still checked before merge.
+Historical failures, warnings, privacy incidents and platform/resource limits
+above and below remain qualifications, not erased by this acceptance.
+
 ## Historical pre-push bookkeeping correction (2026-09-05)
 
 The user selected push/create PR, then explicitly approved correcting task-ID

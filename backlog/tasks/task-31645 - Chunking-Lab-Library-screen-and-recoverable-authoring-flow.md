@@ -1,11 +1,11 @@
 ---
 id: TASK-31645
 title: Chunking Lab - Library screen and recoverable authoring flow
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 15:45'
+updated_date: '2026-09-05 16:11'
 labels:
   - chunking
   - chunking-lab
@@ -46,7 +46,7 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
 - [x] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
 - [x] #16 All actionable PR 2416 review findings are verified and addressed with regression evidence; the rebased feature passes required checks before the user-authorized merge.
-- [ ] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
+- [x] #17 The PR UI latency guard passes without raising its broad-selector ceiling, and narrowing Lab action selectors preserves keyboard and viewport behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -95,6 +95,8 @@ Final acceptance: runtime admission now calls narrow template_runtime preprocess
 PR 2416 review corrections under existing ADR-078/ADR-118: bounded raw recovery admission now precedes full nested validation and pruning; template import refuses FIFOs including replacement races without modifying source permissions; record-field docs, structured comparison types and shared preview ceilings address the other three Qodo findings. The local ingest host now loads existing Library stylesheets, fixing two real compositor assertions without production styling changes. Combined targeted gate: 635 passed, 5 known warnings in157.71s; independent correction review found no findings and independently passed82 recovery/comparison tests and3 import/export cases. Scoped lint/format/whitespace pass. Rebase onto dev93388ba69b is complete. Docs/Chunking_Lab_Verification.md and follow-up plan record evidence and the user-authorized merge gates. AC16/status remain pending current-head remote review and required CI.
 
 Qodo reviewed published4cf7869966 with zero remaining findings and resolved all5 threads; each has an evidence reply. Required CI33974600625 passed Fast Lane and Derived Artifacts. Perf Guard33974600652 separately failed276 broad-selector rules against274, reproduced locally. Narrowed only two fixed action selectors (EditorRegion and Library Lab-entry strip) to their existing IDs and regenerated widget_defaults_self.tcss; declarations and DOM unchanged. Exact RED276/GREEN274; combined full Perf Guard selection plus Lab screen/recovery modules passed75 with10 unsuppressed warnings in117.75s (pr-perf-correction.xml). Independent selector/declaration/composition/generation review found no issues; scoped lint/format/whitespace and all6 preflight checks pass. Verification docs retain warnings and zero headroom. Existing ADR078/118 apply; no new architectural decision. AC16 accepted on remote review/required-CI evidence; AC17 and task Done await current-head remote Perf Guard. No full sweep or merge yet.
+
+Final code acceptance at13441478984bf17cd28f62172bce4f59df0f85d9: Qodo reports zero remaining issues on that exact head and all five threads are resolved. Required workflow33975848478 passed PR Fast Lane and Derived Artifacts (completed2026-09-05T16:02:57Z); Perf Guard33975848601 passed; six GGUF jobs and CSS/Backlog guards passed. Fresh fetch confirms dev93388ba69b ancestry. AC1-17 complete after independent reviews,635 feature/compatibility tests and75 performance/UI follow-up tests, scoped static checks and preflight; exact evidence and warnings remain in Docs/Chunking_Lab_Verification.md. ADR078 and backlog/decisions/118-chunking-lab-local-execution-and-recovery.md apply. Final bookkeeping is docs/task only; its current-head CI/review still gates merge. No full-suite or cross-platform claim; historical qualifications retained.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

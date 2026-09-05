@@ -37,6 +37,12 @@ rebuild widget CSS, run the exact guard and affected performance/UI selections,
 and independently review. No budget increase or new ADR is required. Final-head
 remote verification remains mandatory before merge.
 
+Final code acceptance at1344147898: Qodo reports no remaining issues, all five
+threads resolved; required workflow33975848478 and Perf Guard33975848601 passed,
+as did GGUF/CSS/Backlog checks. TASK-31645 AC1–17 are complete. This final
+bookkeeping change adds no source/test changes; its own current-head CI/review
+and latest-dev ancestry remain the final merge gate. No new ADR; ADR078/118 apply.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 
 **Goal:** Resolve TASK-31645 AC15's two reproducible architecture-guard failures without changing Lab execution or resource-admission semantics.
