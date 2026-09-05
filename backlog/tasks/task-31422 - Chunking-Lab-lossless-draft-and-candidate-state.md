@@ -48,4 +48,6 @@ Added exact UTF-8 sample identities, stable editable-B/frozen-A candidates, deli
 Publication boundaries detach and revalidate nested JSON values. Ordinary draft/view transitions use shallow session replacement and reuse immutable sample/result maps, avoiding copies of retained large reports on each edit. No Media DB schema, global validator, vendored engine, provider, or UI boundary changed. Targeted state/preflight/execution/runtime tests pass; independent review remains pending while the task stays In Progress.
 
 ADR required: yes. ADR path: `backlog/decisions/118-chunking-lab-local-execution-and-recovery.md`. Reason: this directly implements the accepted authoring identity, immutable run-input, and recovery-undo contracts without making a new architectural choice.
+
+Review fix: undoing a newly pinned A now invalidates any retained batch manifest that captured that candidate before removing it. This keeps the returned session publishable, fences both subsequent A/B completions as inactive, and preserves Undo even after a completed manifest remains retained. The later worker coordinator must observe this batch-to-`None` transition as a cancellation request and terminate active work/queued members; the pure state boundary already prevents their late results from being accepted.
 <!-- SECTION:NOTES:END -->

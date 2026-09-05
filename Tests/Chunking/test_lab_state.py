@@ -418,6 +418,27 @@ def test_failed_current_batch_member_cannot_borrow_previous_completed_result():
         pin_baseline(accepted)
 
 
+def test_undo_pin_invalidates_batch_that_captured_removed_baseline():
+    session, _ = _run_b(new_session("profile"))
+    pinned = pin_baseline(session)
+    baseline_id = next(
+        candidate_id
+        for candidate_id, candidate in pinned.candidates.items()
+        if candidate["role"] == "A"
+    )
+    requests = capture_batch(pinned, tuple(pinned.candidates))
+    installed = install_batch(pinned, requests)
+
+    undone = undo_edit(installed)
+
+    assert baseline_id not in undone.candidates
+    assert undone.batch is None
+    json.loads(undone.model_dump_json())
+    for request in requests:
+        with pytest.raises(ValueError, match="not active"):
+            accept_result(undone, _completed(request))
+
+
 def test_pure_draft_edits_reuse_large_result_and_sample_maps():
     session, _ = _run_b(new_session("profile"))
     changed = edit_json(session, _candidate_b(session), '{"chunking":')

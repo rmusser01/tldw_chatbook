@@ -789,6 +789,14 @@ def undo_edit(session: LabSession) -> LabSession:
         candidates = dict(session.candidates)
         if entry["candidate"] is None:
             candidates.pop(entry["candidate_id"], None)
+            if session.batch is not None and any(
+                request.get("candidate_id") == entry["candidate_id"]
+                for request in session.batch.get("requests", {}).values()
+            ):
+                # The later process coordinator must treat this transition as a
+                # cancellation request. Clearing membership here immediately
+                # fences every late worker result in the pure state boundary.
+                update["batch"] = None
         else:
             candidates[entry["candidate_id"]] = entry["candidate"]
         update["candidates"] = candidates
