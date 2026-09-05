@@ -2502,16 +2502,17 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
     `input`/`notification_policy` groups round-trip through `save_
     definition`'s one-level merge untouched.
 
-    Scoped to `input`/`notification_policy` deliberately, NOT `config`'s
-    own generation_mode/scope/finding_policy trio: traced (empirically,
-    via `preview_automation_definition` -> `validate_recurring_question_
-    config`) that those three are unconditionally NORMALIZED WITH
-    DEFAULTS on every local save regardless of which row was actually
-    edited -- a PRE-EXISTING behavior of the shared preview pipeline the
-    create/edit modal never exercises (it always sends explicit values),
-    now newly reachable because task 4 is the first caller that can send
-    a payload leaving them genuinely absent. Not a task-4 regression and
-    out of this task's scope to change; flagged in the report instead."""
+    Extended by task-31414 to cover `config`'s own generation_mode/scope/
+    finding_policy trio too: `validate_recurring_question_config` used to
+    unconditionally NORMALIZE those three WITH DEFAULTS on every local
+    save regardless of which row was actually edited (traced via
+    `preview_automation_definition`), silently backfilling `scope`/
+    `finding_policy` here even though this definition's own row edits
+    `generation_mode` alone. The fix threads `mode` ("create"/"update")
+    into the validator so an edit gates the backfill on presence: the
+    edited key (`generation_mode`) is still normalized, but `scope`/
+    `finding_policy` -- genuinely absent from this row since creation --
+    stay absent in storage instead of being invented."""
     db, service = _real_scheduling_service(tmp_path)
     try:
         definition_id = db.create_automation_definition(
@@ -2523,6 +2524,15 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
             config={"generation_mode": "optional"},
             notification_policy={"on_success": True, "on_failure": False},
         )
+        # Neither `config.scope`/`config.finding_policy` NOR the dedicated
+        # `finding_policy`/`retention_policy` columns were ever set here --
+        # the latter two fall back to their SQL schema defaults. Captured
+        # before the edit so the post-edit assertions can prove those
+        # dedicated columns were left untouched, not merely re-written
+        # with the same value.
+        before = db.get_automation_definition(definition_id)
+        assert "scope" not in before["config"]
+        assert "finding_policy" not in before["config"]
         app = WorkbenchTestApp()
         app.scheduling_service = service
         async with app.run_test(size=(220, 60)) as pilot:
@@ -2568,6 +2578,25 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
                 "on_failure": False,
             }
             assert model_static.render_line(0).text.strip() == "auto"
+
+            # task-31414 AC1/AC4: editing generation_mode alone must not
+            # invent scope/finding_policy -- they stay absent in `config`.
+            assert "scope" not in stored["config"]
+            assert "finding_policy" not in stored["config"]
+            # AC1/AC3: the dedicated finding_policy/retention_policy
+            # columns (kept in sync with `config` on a write that DOES
+            # carry them) are left byte-for-byte untouched by an edit
+            # that never carried them at all -- not wiped, not re-defaulted.
+            assert stored["finding_policy"] == before["finding_policy"]
+            assert stored["retention_policy"] == before["retention_policy"]
+            # AC3: the Sources row's own "Not set" honesty (driven by
+            # `config.scope`, genuinely absent throughout) survives the
+            # same edit -- proven by the PAINTED value, not only the
+            # stored row above.
+            sources_static = detail.query_one(
+                "#scheduling-automation-detail-sources", Static
+            )
+            assert sources_static.render_line(0).text.strip() == "Not set"
     finally:
         db.close()
 

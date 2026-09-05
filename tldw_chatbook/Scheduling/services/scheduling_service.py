@@ -2813,7 +2813,7 @@ class SchedulingService:
         scope = config.get("scope")
         if isinstance(scope, dict) and "resolved_sources" in scope:
             config["scope"] = {k: v for k, v in scope.items() if k != "resolved_sources"}
-        return {
+        fields: dict[str, Any] = {
             "name": normalized.get("name"),
             "description": normalized.get("description"),
             "schedule": schedule,
@@ -2822,18 +2822,31 @@ class SchedulingService:
             "visibility_policy": preview.visibility_policy or {},
             "notification_policy": normalized.get("notification_policy") or {},
             "approval_policy": normalized.get("approval_policy") or {},
-            # Dedicated DB columns, not merely `config` members: the executor
-            # reads `row["finding_policy"]` (`automation_execution.py`'s
-            # `_resolve_finding_policy`) and the run snapshot copies
-            # `task["finding_policy"]` (`automation_handler.py`), so a policy
-            # left only inside `config` reaches neither -- every locally
-            # authored or offline-queued definition ran with the column
-            # DEFAULT (`balanced_findings`) whatever the author picked.
-            # `retention_policy` has the same column and the same exposure.
-            "finding_policy": config.get("finding_policy") or {},
-            "retention_policy": config.get("retention_policy") or {},
             "next_run_at": compute_next_run_at(schedule, now=datetime.now(timezone.utc)),
         }
+        # Dedicated DB columns, not merely `config` members: the executor
+        # reads `row["finding_policy"]` (`automation_execution.py`'s
+        # `_resolve_finding_policy`) and the run snapshot copies
+        # `task["finding_policy"]` (`automation_handler.py`), so a policy
+        # left only inside `config` reaches neither -- every locally
+        # authored or offline-queued definition ran with the column
+        # DEFAULT (`balanced_findings`) whatever the author picked.
+        # `retention_policy` has the same column and the same exposure.
+        #
+        # task-31414: only included when the validator actually produced
+        # a value for that key (`config` carries it for a create, or for
+        # an edit that supplied or already had it -- see
+        # `validate_recurring_question_config`'s `mode` gate). Omitting
+        # the dict key here -- rather than falling back to `{}` -- means
+        # `update_automation_definition`'s `**kwargs` never puts this
+        # column in its SQL `SET` clause, so an edit that never touched
+        # policy leaves the column exactly as it was instead of
+        # overwriting a real stored value with an empty dict.
+        if "finding_policy" in config:
+            fields["finding_policy"] = config["finding_policy"] or {}
+        if "retention_policy" in config:
+            fields["retention_policy"] = config["retention_policy"] or {}
+        return fields
 
     def _reject_unsupported_family(
         self, payload: dict[str, Any]
