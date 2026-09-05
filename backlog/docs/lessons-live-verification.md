@@ -1759,22 +1759,31 @@ every corrected config value. Moving the server to an unused port (`:8010`, a
 `server_id` with no keyring entry) made the identical client and identical config
 authenticate on the first request.
 
-**What to do.** `TLDW_CONFIG_PATH` isolates the config *file*; it does not isolate
-the keyring, and neither does `users_name`. For a live server run: pick a
-`server_id` (host:port) no other profile on the machine has used, or clear the
-entry first — `KeyringServerCredentialStore().clear_server("<base_url>")`. Clear
-the entries you created when you are done; they hold a live credential. And treat
-"the wire carries the right key but the server says 401" as evidence that the app
-is not reading the credential you edited, not as a server problem.
-
-**The sibling trap that seeded it.** A scratch `[tldw_api]` written with only
-`api_key = <real>` comes back from the first boot with the app's own
-`auth_token = "default-secret-key-for-single-user"` added beside it — and
-`build_runtime_api_client` resolves `auth_token or api_key or bearer_token`, so the
-placeholder wins. `config.py` screens *provider* keys for placeholder values
-(`resolve_provider_api_key`); the `[tldw_api]` token gets no such check. Write
-`auth_token`, not `api_key`, in a scratch profile, and re-read the file after the
-first boot to see what the app made of it.
+**Fixed (task-31416, task-31417).** Both root causes are closed now, not worked
+around. `RuntimeServerContextProvider` takes a `credential_profile_id` and every
+credential read/write goes through `ServerCredentialScope` keyed on
+`(server_profile_id, normalized_origin, purpose)` instead of the bare `server_id`.
+`app.py` wires `default_server_credential_profile_id()`: the default
+(un-retargeted) config path keeps `server_profile_id == server_id` — byte-for-byte
+the old unscoped behavior, so an existing single-profile install needs no
+re-entry — but a `TLDW_CONFIG_PATH`-retargeted profile gets `server_profile_id =
+str(get_cli_config_path())`, its own namespace distinct from every other
+profile's, even at the same base URL. A scratch profile's first-boot import can
+no longer seed an entry that outranks another profile's corrected config.
+Separately, `_legacy_config_token` now screens `auth_token` through
+`config.py`'s `resolve_tldw_api_auth_token` (reusing `resolve_provider_api_key` +
+`TLDW_API_PLACEHOLDER_AUTH_TOKEN`) before letting it beat `api_key`/
+`bearer_token`, so the boot-rewrite placeholder falls through to a real
+`api_key` instead of winning. Both the credential-store import and the
+placeholder-screened fallback now log which source was chosen
+(`Imported [tldw_api] config credential...`; `auth_token is the boot-rewrite
+placeholder; using api_key instead...`), so "the wire carries the right key but
+the server says 401" is diagnosable from the log, not just from reading the
+resolver. **If you still hit this on a live run**, you are on code that predates
+the fix; the port-picking workaround (`:8010`, a fresh `server_id`) and writing
+`auth_token` instead of `api_key` still apply there, but treat them as pre-fix
+workarounds, not the current guidance — verify `credential_profile_id` is wired
+in `app.py`'s `_wire_server_context_provider` first.
 
 ---
 
