@@ -170,7 +170,9 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
-    def _settle_orphaned_transfer_mutations(self, target_owner: str) -> None:
+    def _settle_orphaned_transfer_mutations(
+        self, target_owner: str | None
+    ) -> None:
         """Settle a `transfer_to_server` mutation whose scope no longer
         matches the active server (task-3, root-causes.md #5 / ruling 4).
 
@@ -187,6 +189,18 @@ class SyncEngine:
         per-primitive exception-guarded shape, run once per sync cycle
         (not startup-only) so a mid-session reconfiguration settles on
         the very next sync rather than waiting for a restart.
+
+        `target_owner=None` (final review finding 1): the workbench's
+        mount/refresh path also calls this directly -- pure local DB
+        work, so it must run even when NO server is configured/reachable
+        at all, the UAT's actual "removed the server / it went down"
+        core symptom that gating this behind a live `sync_now()` (which
+        `action_sync_now`/the mount-time probe both refuse without a
+        reachable server) never reaches. `None` never equals a real
+        `mutation_owner` string, so every still-pending transfer_to_
+        server mutation is correctly swept as orphaned when nothing is
+        configured -- exactly right, since there is no server left it
+        could still be valid for.
 
         Only a still-unattempted mutation (`to_server_pending`) is
         touched -- an ambiguous `to_server_sent` row belongs to

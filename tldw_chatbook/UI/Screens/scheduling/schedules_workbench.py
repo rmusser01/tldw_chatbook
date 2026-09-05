@@ -513,17 +513,22 @@ class SchedulesWorkbench(BaseAppScreen):
         server_reachable` is `refresh_server_reachability`'s actual probe
         result, not mere configuredness (root-causes.md #5's bug -- the
         three checks this method used to stop at never contacted
-        anything). Until a probe has succeeded this reads `False` (the
-        real service's own default), so a fresh workbench never offers a
-        server destination before anything has confirmed it is there.
-        Read via `getattr(..., True)` rather than a direct attribute
-        access: many test doubles across this test suite model "a
-        connected service" without also modeling reachability, and were
-        never meant to exercise this NEW gate -- they get the old
+        anything). It is tri-state (`None` unprobed / `True` / `False`,
+        final review finding 2) -- `bool(...)`-wrapped here so `None`
+        (never probed) still reads as unavailable, same as `False`:
+        "until a probe has succeeded, the option must not be offered"
+        (root-causes.md #5) covers BOTH "hasn't checked" and "checked and
+        failed" identically for this method's callers (the transfer
+        dropdown, `transfer_refusal`'s callers). Only the header's own
+        DISPLAY COPY (`_refresh_owner_select`) needs to tell those two
+        apart. Read via `getattr(..., True)` rather than a direct
+        attribute access: many test doubles across this test suite model
+        "a connected service" without also modeling reachability, and
+        were never meant to exercise this NEW gate -- they get the old
         available-if-configured behavior; a fake that wants to test the
         unreachable case sets `server_reachable = False` explicitly.
         """
-        return (
+        return bool(
             service is not None
             and bool(active_server_id)
             and service.server_client.notifications_service is not None
@@ -759,6 +764,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         self._refresh_server_reachability()
+        self._settle_orphaned_transfers()
         self._refresh_conflicts_badge()
         self._refresh_results_badge()
         self._sync_chip_cycle_label()
@@ -1568,8 +1574,11 @@ class SchedulesWorkbench(BaseAppScreen):
         gate above still keeps the stale pane from being re-fed.
 
         Only `load_tasks`'s SUCCESS path reaches `_render_table` -- its
-        `except` branch empties `_all_rows` and returns early -- so a
-        transient service failure never closes an open pane.
+        `except` branch returns early before ever calling it (Major 5's
+        fix made that branch non-destructive -- it no longer empties
+        `_all_rows` either, final review finding 5 -- but it still never
+        reaches `_render_table`) -- so a transient service failure never
+        closes an open pane.
         """
         host = self._pushed_host
         row_id = self._pushed_row_id
@@ -2549,8 +2558,19 @@ class SchedulesWorkbench(BaseAppScreen):
             options.append((owner_id, owner_id))
         return options, owner_id
 
-    def action_create_reminder(self) -> None:
-        """Open the create-reminder form."""
+    async def action_create_reminder(self) -> None:
+        """Open the create-reminder form.
+
+        Final review finding 3: re-probes reachability first (same
+        pattern `_run_owner_transfer`/`_on_owner_server`/`action_sync_
+        now` already follow) -- without it, a create during the mount
+        probe's still-pending window (or any time after one failed
+        probe) silently offered only "This device" in `_runs_on_options`,
+        with no notice and no correction while the form stayed open.
+        """
+        service = self._service()
+        if service is not None:
+            await self._reprobe_server_reachability(service)
         options, default_owner = self._runs_on_options()
         self.app.push_screen(
             ReminderForm(
@@ -2561,8 +2581,12 @@ class SchedulesWorkbench(BaseAppScreen):
             callback=self._on_reminder_form_result,
         )
 
-    def action_create_automation(self) -> None:
-        """Open the create-recurring-question-automation form (task-5)."""
+    async def action_create_automation(self) -> None:
+        """Open the create-recurring-question-automation form (task-5).
+
+        Final review finding 3: same re-probe as `action_create_
+        reminder` above, for the same reason.
+        """
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -2570,6 +2594,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        await self._reprobe_server_reachability(service)
         options, default_owner = self._runs_on_options()
         self.app.push_screen(
             AutomationDefinitionForm(
@@ -2582,11 +2607,11 @@ class SchedulesWorkbench(BaseAppScreen):
         """Ask which kind of scheduled task to create (task-5)."""
         self.app.push_screen(NewTaskChoiceModal(), callback=self._on_new_task_choice)
 
-    def _on_new_task_choice(self, choice: str | None) -> None:
+    async def _on_new_task_choice(self, choice: str | None) -> None:
         if choice == "reminder":
-            self.action_create_reminder()
+            await self.action_create_reminder()
         elif choice == "recurring_question":
-            self.action_create_automation()
+            await self.action_create_automation()
 
     def _on_automation_form_result(
         self, outcome: Any | None, *, was_edit: bool = False
@@ -4274,22 +4299,58 @@ class SchedulesWorkbench(BaseAppScreen):
                 "error", f"{count} sync error{'s' if count != 1 else ''}"
             )
         elif not server_available:
-            # task-3 (ruling 4): distinct copy for "nothing configured" vs
-            # "configured but the reachability probe hasn't succeeded" --
-            # the header must not assert a server as a fact it hasn't
-            # confirmed (UAT leg A defect, root-causes.md #5).
-            if active_server_id:
-                self._sync_header_status(
-                    "empty", "Server configured but not reachable"
-                )
-            else:
+            # task-3 (ruling 4) / final review finding 2: three distinct
+            # copies, not two -- "nothing configured" / "configured, the
+            # probe hasn't resolved yet" (must NOT assert "not reachable",
+            # a negative fact nothing has established -- the same class of
+            # dishonesty ruling 4 targeted, inverted, root-causes.md #5) /
+            # "configured, confirmed unreachable".
+            if not active_server_id:
                 self._sync_header_status(
                     "empty", "Local only — no server connection"
+                )
+            elif getattr(service, "server_reachable", True) is None:
+                self._sync_header_status("loading", "Checking sync status…")
+            else:
+                self._sync_header_status(
+                    "empty", "Server configured but not reachable"
                 )
         elif service.owner_id.startswith("server:"):
             self._sync_header_status("ready", "Synced with server")
         else:
             self._sync_header_status("ready", "Local schedules")
+
+    def _settle_orphaned_transfers(self) -> None:
+        """Local-DB-only orphaned-transfer sweep, independent of server
+        reachability (final review finding 1).
+
+        `SyncEngine._settle_orphaned_transfer_mutations` only ran INSIDE
+        `sync_now()`, which `action_sync_now`/the mount-time probe both
+        refuse to even start without a reachable server -- so the UAT's
+        actual core symptom (the configured server removed, or simply
+        dead, not merely switched to another reachable one) never
+        settled: no sync ever runs, so the sweep never runs, and the row
+        keeps reading "Moving to server..." forever with no Retry/
+        Cancel. This is pure local DB work (`get_pending_mutations`/
+        `set_transfer_state`, no network), so it runs unconditionally on
+        every mount -- the in-`sync_now()` call stays too (idempotent):
+        a mid-session reconfiguration onto a still-reachable OTHER server
+        settles on the very next sync without waiting for a re-mount.
+
+        `target_owner=None` when no server is configured at all -- `_settle_
+        orphaned_transfer_mutations` treats that as "every still-pending
+        transfer_to_server mutation is orphaned", which is exactly right
+        (nothing configured means nothing it could still be valid for).
+        """
+        service = self._service()
+        if service is None:
+            return
+        active_server_id = self._active_server_id()
+        target_owner = f"server:{active_server_id}" if active_server_id else None
+        try:
+            service.sync_engine._settle_orphaned_transfer_mutations(target_owner)
+        except Exception:  # noqa: BLE001
+            logger.exception("Orphaned-transfer sweep failed at mount")
 
     def _refresh_server_reachability(self) -> None:
         """Kick a background probe of server reachability (task-3, ruling 4).
@@ -4535,6 +4596,17 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_sync_failed(self, event: SyncFailed) -> None:
         self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
+        # Final review finding 6: an automation phase (definition push/
+        # pull, results pull) that failed in the SAME cycle as the
+        # reminder-phase failure this toast already reports must not be
+        # silently dropped -- symmetric with `_on_sync_completed`'s own
+        # `phase_errors` handling just below its success toast.
+        phase_errors = tuple(getattr(event.outcome, "phase_errors", ()) or ())
+        if phase_errors:
+            self.app_instance.notify(
+                "Also: " + "; ".join(phase_errors),
+                severity="warning",
+            )
         self._refresh_owner_select()
         self._request_tasks_refresh()
         self._refresh_conflicts_badge()
@@ -4941,14 +5013,26 @@ class SchedulesWorkbench(BaseAppScreen):
         # mount-time background probe last cached -- same reasoning as
         # `_run_owner_transfer`'s own re-probe.
         await self._reprobe_server_reachability(service)
-        if not self._server_available(service, self._active_server_id()):
+        active_server_id = self._active_server_id()
+        if not self._server_available(service, active_server_id):
             # Honest no-op: never claim "Sync completed" when nothing can
             # sync. Same predicate as the sync bar's collapse (review F10):
             # the bar and the s key must agree on whether sync is possible.
-            self.app_instance.notify(
-                "Local only — nothing to sync (no server connection).",
-                severity="information",
-            )
+            # Final review finding 4: split copy, not the conflated "no
+            # server connection" for both cases -- matches the header's
+            # own split (`:4272`-ish, "Server configured but not
+            # reachable" vs "Local only") and `transfer_refusal`'s own
+            # distinct reason (`scheduling_service.py`).
+            if active_server_id:
+                self.app_instance.notify(
+                    "Server configured but not reachable — nothing to sync.",
+                    severity="information",
+                )
+            else:
+                self.app_instance.notify(
+                    "Local only — nothing to sync (no server connection).",
+                    severity="information",
+                )
             return
         self._sync_running = True
         self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
@@ -4970,7 +5054,9 @@ class SchedulesWorkbench(BaseAppScreen):
             if outcome is not None and getattr(outcome, "status", None) == "error":
                 self.post_message(
                     SyncFailed(
-                        owner_id, getattr(outcome, "error", None) or "sync error"
+                        owner_id,
+                        getattr(outcome, "error", None) or "sync error",
+                        outcome=outcome,
                     )
                 )
                 return

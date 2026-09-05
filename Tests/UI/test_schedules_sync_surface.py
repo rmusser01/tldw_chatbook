@@ -144,6 +144,40 @@ async def test_failed_sync_reports_failure_not_a_noop():
 
 
 @pytest.mark.asyncio
+async def test_failed_sync_also_surfaces_phase_errors():
+    """Final review finding 6: `_on_sync_failed` used to drop
+    `phase_errors` outright -- an automation phase (definition push/pull,
+    results pull) that failed in the SAME cycle as the reminder-phase
+    failure this toast already reports never reached the user at all on
+    THIS path (only `_on_sync_completed`'s success path read them)."""
+    app = _App(
+        _SyncService(
+            SyncOutcome(
+                "error",
+                error="connection refused",
+                phase_errors=("Automation results pull: scheduled_task_not_found",),
+            )
+        )
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+
+        await _sync_via_action(pilot, workbench)
+
+        notifications = list(pilot.app._notifications)
+        failure = [n for n in notifications if "Sync failed" in n.message]
+        assert failure and "connection refused" in failure[0].message
+        also = [n for n in notifications if "Automation results pull" in n.message]
+        assert also, [
+            (n.message, n.severity) for n in notifications
+        ]
+        assert also[0].severity == "warning"
+
+
+@pytest.mark.asyncio
 async def test_not_applicable_sync_says_so():
     app = _App(_SyncService(SyncOutcome("not_applicable")))
     async with app.run_test(size=(160, 48)) as pilot:

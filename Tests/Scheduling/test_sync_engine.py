@@ -3739,6 +3739,49 @@ async def test_orphaned_reminder_transfer_mutation_settles_to_failed(tmp_path):
     )
 
 
+def test_orphaned_transfer_mutation_settles_when_no_server_is_configured(
+    tmp_path,
+):
+    """Final review finding 1: the removed-server/dead-server case, the
+    UAT's actual core symptom -- `target_owner=None` (nothing configured
+    at all) must settle every still-pending transfer_to_server mutation,
+    not just ones scoped to a DIFFERENT server. Calls the sweep directly
+    (it's a plain sync method, no network, no `sync_now()` round trip
+    needed) -- the workbench's `_settle_orphaned_transfers` calls it the
+    exact same way at mount, unconditionally, regardless of reachability.
+    """
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:removed-host",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    engine = SyncEngine(db, server_client=None, owner_id="local")
+
+    engine._settle_orphaned_transfer_mutations(None)
+
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_failed", (
+        "no server configured means nothing this mutation could still be "
+        "valid for -- it must settle, not hang forever"
+    )
+    pending = db.get_pending_mutations(
+        "server:removed-host", primitive="reminder_task"
+    )
+    assert len(pending) == 1
+    assert pending[0]["payload"]["transfer_errors"]
+
+
 @pytest.mark.asyncio
 async def test_orphaned_definition_transfer_mutation_settles_to_failed(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")

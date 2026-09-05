@@ -3480,7 +3480,7 @@ async def test_create_reminder_action_saves_new_reminder():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        pilot.app.screen.action_create_reminder()
+        await pilot.app.screen.action_create_reminder()
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, ReminderForm)
@@ -3577,7 +3577,7 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
 
-            pilot.app.screen.action_create_reminder()
+            await pilot.app.screen.action_create_reminder()
             await pilot.pause()
             assert isinstance(pilot.app.screen, ReminderForm)
 
@@ -4695,6 +4695,91 @@ def _connected_service(tmp_path, app):
     return db, service
 
 
+# -- Final review finding 2: the header must not assert "not reachable"
+# before any probe has run. ---------------------------------------------
+
+
+class _SlowProbeServerClient:
+    """A server client whose `get_capabilities` blocks on a controllable
+    `asyncio.Event` -- lets a test observe the mount-time probe's
+    still-pending window deterministically instead of racing real time
+    (same idiom `test_schedules_notification_observer.py`'s own
+    `_GatedServerClient` uses)."""
+
+    def __init__(self) -> None:
+        self.notifications_service = object()
+        self.release = asyncio.Event()
+
+    async def get_capabilities(self):
+        await self.release.wait()
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_header_paints_checking_not_a_false_unreachable_during_mount_probe(
+    tmp_path,
+):
+    """Final review finding 2: `on_mount` calls `_refresh_owner_select()`
+    one line before `_refresh_server_reachability()` kicks the probe
+    worker, and `server_reachable` used to default `False` (a two-state
+    bool with no "unprobed" value) -- so the header asserted "Server
+    configured but not reachable" (a negative network fact nothing had
+    established) for the whole still-pending window, then silently
+    corrected once the worker resolved. `server_reachable` is now
+    tri-state (`None` unprobed); the header must paint the existing
+    honest "Checking sync status…" copy instead, and correct to the true
+    state once the probe (blocked here on a controllable event, not real
+    time) actually resolves."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+
+    app = WorkbenchTestApp()
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    app.active_server_id = "1"
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="1")
+    )
+    server_client = _SlowProbeServerClient()
+    service = SchedulingService(
+        db=db,
+        server_client=server_client,
+        runtime_source="local",
+        app_getter=lambda: app,
+    )
+    app.scheduling_service = service
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            # No pause yet -- the mount-time probe worker has been
+            # scheduled but cannot possibly have resolved (it's blocked
+            # on `release`, which nothing has set).
+            header = pilot.app.screen.query_one(
+                "#schedules-destination-header", DestinationHeader
+            )
+            assert header.state.status_label == "Checking sync status…", (
+                f"got {header.state.status_label!r} -- must not assert "
+                "reachability nothing has established yet"
+            )
+            assert "not reachable" not in header.state.status_label
+
+            server_client.release.set()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert header.state.status_label == "Local schedules", (
+                f"got {header.state.status_label!r} -- must correct once "
+                "the probe actually resolves (owner stayed 'local' "
+                "throughout this test, so a resolved reachable server "
+                "reads 'Local schedules', not 'Synced with server' -- the "
+                "point under test is that it is no longer 'Server "
+                "configured but not reachable')"
+            )
+    finally:
+        db.close()
+
+
 # -- Fix round 1, finding 1: _on_owner_server / action_sync_now must
 # re-probe like _run_owner_transfer already did, not trust a stale
 # mount-time `server_reachable` while the background probe is still
@@ -4764,6 +4849,139 @@ async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
                 "the re-probe must resolve to reachable before deciding, "
                 "not refuse on the stale pending default"
             )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_create_reminder_reprobes_during_the_mount_probe_window(
+    tmp_path,
+):
+    """Final review finding 3: `_runs_on_options` (read by `action_
+    create_reminder`/`action_create_automation`) was the one gate site
+    fix round 1 did not re-probe -- a create during the mount probe's
+    still-pending window silently offered only "This device" in the
+    runs-on Select, with no notice and no correction while the form
+    stayed open."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+
+            await pilot.app.screen.action_create_reminder()
+            await pilot.pause()
+
+            form = pilot.app.screen
+            assert isinstance(form, ReminderForm)
+            runs_on = form.query_one("#reminder-runs-on", Select)
+            option_values = [value for _label, value in runs_on._options]
+            assert "server:1" in option_values, (
+                f"got {option_values!r} -- the re-probe must resolve to "
+                "reachable before building the runs-on options, not "
+                "silently offer only 'This device'"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
+    tmp_path,
+):
+    """Final review finding 1's own pinned scenario: a reminder is queued
+    `to_server_pending` while a server was configured, then the server is
+    REMOVED entirely (`active_server_id -> None`) -- the UAT's actual
+    core symptom, not merely a switch to another reachable server.
+
+    The row must settle to `to_server_failed` from `on_mount` ALONE, with
+    no sync ever running: no server is configured, so `_server_
+    configured`/`_server_available` both read `False`, `_start_server_
+    notification_observer`/`_schedule_catch_up_results_pull` both no-op,
+    and nothing in this test ever calls `action_sync_now`/presses `s` --
+    `_settle_orphaned_transfers` (called directly from `on_mount`,
+    unconditionally) is the only mechanism that could possibly settle it.
+    """
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Standup",
+        schedule_kind="one_time",
+        run_at="2099-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",  # the server _connected_service just configured
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    # The server is removed entirely.
+    app.runtime_policy.state.active_server_id = None
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            row = db.get_reminder_task(local_id)
+            assert row["transfer_state"] == "to_server_failed", (
+                "must settle from on_mount alone -- no server is "
+                "configured, so no sync could ever have run"
+            )
+            pending = db.get_pending_mutations(
+                "server:1", primitive="reminder_task"
+            )
+            assert len(pending) == 1
+            assert pending[0]["payload"]["transfer_errors"]
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_sync_now_splits_configured_unreachable_from_unconfigured(
+    tmp_path,
+):
+    """Final review finding 4: `action_sync_now`'s refusal used the
+    conflated "Local only -- nothing to sync (no server connection)."
+    copy even when a server WAS configured (merely unreachable) -- the
+    exact conflation the branch removed two surfaces away (the header's
+    own split, `transfer_refusal`'s own distinct reason). A configured-
+    but-unreachable server must name THAT, not "no server connection"."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    service._server_reachable = False  # confirmed unreachable, not unprobed
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # re-assert after mount's probe
+
+            # `_FakeConnectedServerClient.get_capabilities` always
+            # succeeds, so force the re-probe itself to fail this once --
+            # a genuinely unreachable server, not merely an unprobed one.
+            async def _fail_reachability():
+                service._server_reachable = False
+                return False
+
+            service.refresh_server_reachability = _fail_reachability
+
+            workbench = pilot.app.screen
+            await workbench.action_sync_now()
+            await pilot.pause()
+
+            messages = [n.message for n in pilot.app._notifications]
+            assert any(
+                "Server configured but not reachable" in m for m in messages
+            ), messages
+            assert not any("no server connection" in m for m in messages), messages
     finally:
         db.close()
 
