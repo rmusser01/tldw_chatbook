@@ -61,7 +61,15 @@ _REMOTE_RECOVERY_KINDS = frozenset(
 
 
 def fold_system_prompt(system_prompt: str | None, greeting: str) -> str:
-    """Fold the seeded greeting exactly as the provider send path does."""
+    """Fold the seeded greeting exactly as the provider send path does.
+
+    Args:
+        system_prompt: Configured system text, if any.
+        greeting: Seeded assistant greeting folded into system context.
+
+    Returns:
+        Combined system text.
+    """
     return fold_greeting_into_system_prompt(system_prompt or "", greeting)
 
 
@@ -108,15 +116,34 @@ def build_console_spend_history_projection(
     run_status: ConsoleRunStatus,
     has_submit_task: bool,
 ) -> ConsoleSpendHistoryProjection:
-    """Project provider-request and billed-history rows without reading media."""
+    """Project provider-request and billed-history rows without reading media.
+
+    Args:
+        messages: Ordered transcript rows for the active session.
+        recovery: Recovery ownership, whose checkpoint uses persisted IDs.
+        preparation: Local preparation ownership using transient message IDs.
+        run_status: Current provider-run lifecycle state.
+        has_submit_task: Whether a submission is currently in progress.
+
+    Returns:
+        Transient IDs admitted to request context and settled spend history.
+    """
     request_excluded_user_id: str | None = None
     current_excluded_user_id: str | None = None
     checkpoint = recovery.checkpoint if recovery is not None else None
     remote_user = _remote_active_user_id(messages, recovery)
     if checkpoint is not None:
-        current_excluded_user_id = checkpoint.user_message_id
+        current_excluded_user_id = next(
+            (
+                message.id
+                for message in messages
+                if message.role is ConsoleMessageRole.USER
+                and message.persisted_message_id == checkpoint.user_message_id
+            ),
+            checkpoint.user_message_id,
+        )
         if recovery.kind not in _ACCEPTED_RECOVERY_KINDS:
-            request_excluded_user_id = checkpoint.user_message_id
+            request_excluded_user_id = current_excluded_user_id
     elif remote_user is not None:
         current_excluded_user_id = remote_user
     elif preparation is not None and preparation.transient_user_message_id is not None:
@@ -185,7 +212,15 @@ def build_console_current_cost_messages(
     messages: Sequence[ConsoleChatMessage],
     current_ids: Collection[str],
 ) -> list[ConsoleChatMessage]:
-    """Return settled cost rows without estimating input already in real usage."""
+    """Return settled cost rows without estimating input already in real usage.
+
+    Args:
+        messages: Ordered session transcript.
+        current_ids: Transient IDs admitted to settled spend history.
+
+    Returns:
+        Settled rows, omitting user estimates covered by assistant usage.
+    """
     rows = [
         message
         for message in messages
@@ -211,7 +246,16 @@ def build_console_context_messages(
     request_ids: Collection[str] | None,
     draft_text: str,
 ) -> list[dict[str, str]]:
-    """Return lifecycle-filtered text rows plus the mounted draft."""
+    """Return lifecycle-filtered text rows plus the mounted draft.
+
+    Args:
+        messages: Ordered session transcript.
+        request_ids: Admitted transient IDs, or None to include all rows.
+        draft_text: Current composer text.
+
+    Returns:
+        Role/content dictionaries with a nonblank draft appended.
+    """
     rows = [
         {
             "role": str(getattr(message.role, "value", message.role)),
@@ -226,13 +270,25 @@ def build_console_context_messages(
 
 
 def build_console_next_send_projection(
-    messages: Sequence[ConsoleChatMessage],
+    has_historical_media: bool,
     has_pending_attachments: bool,
     request_tokens: int | None,
     input_per_mtok: float | None,
     draft_text: str,
 ) -> ConsoleNextSendSpendState:
-    """Build the input-only forecast from text and attachment metadata."""
+    """Build the input-only forecast from text and admitted media metadata.
+
+    Args:
+        has_historical_media: Whether provider-admitted history carries media,
+            after lifecycle filtering, capability checks, and image budgeting.
+        has_pending_attachments: Whether the draft carries staged media.
+        request_tokens: Estimated next-request text tokens, if available.
+        input_per_mtok: Uncached input price per million tokens, if known.
+        draft_text: Composer text before canonical validation.
+
+    Returns:
+        Additional input-charge estimate or an explicit unavailable state.
+    """
     validated_draft, validation_error = validate_console_draft(
         draft_text, allow_empty=True
     )
@@ -242,14 +298,11 @@ def build_console_next_send_projection(
             "On next send: unavailable\n"
             "This message cannot be sent until the draft is corrected.",
         )
-    has_media = has_pending_attachments or any(
-        message.attachments or message.image_data is not None for message in messages
-    )
     return build_console_next_send_spend_state(
         request_tokens=request_tokens,
         input_per_mtok=input_per_mtok,
         sendable_text=bool(validated_draft.strip()),
-        has_media=has_media,
+        has_media=has_pending_attachments or has_historical_media,
     )
 
 
@@ -262,12 +315,30 @@ def build_console_spend_cost_state(
     pricing_as_of: str | None,
     pricing_available: bool,
     context_state: ConsoleContextControlState | None,
-    messages: Sequence[ConsoleChatMessage],
+    has_historical_media: bool,
     has_pending_attachments: bool,
     input_per_mtok: float | None,
     draft_text: str,
 ) -> ConsoleCostState:
-    """Compose Current and next-send display state from captured pure inputs."""
+    """Compose Current and next-send display state from captured pure inputs.
+
+    Args:
+        snapshot: Settled current-spend totals and availability.
+        cache_state: Observed prompt-cache status.
+        break_reason: Safe description of a cache invalidation, if any.
+        projected_delta_usd: Estimated extra charge from cache invalidation.
+        ttl_remaining_s: Remaining cache lifetime in seconds, if known.
+        pricing_as_of: Pricing catalog timestamp, if known.
+        pricing_available: Whether the selected model has known pricing.
+        context_state: Context usage presentation, if available.
+        has_historical_media: Whether admitted request history includes media.
+        has_pending_attachments: Whether the draft carries staged media.
+        input_per_mtok: Uncached input price per million tokens, if known.
+        draft_text: Current composer text before canonical validation.
+
+    Returns:
+        Current spend, optionally combined with context and next-send copy.
+    """
     empty_priced = (
         snapshot.available
         and snapshot.row_count == 0
@@ -289,7 +360,7 @@ def build_console_spend_cost_state(
     if context_state is None:
         return current
     next_send = build_console_next_send_projection(
-        messages,
+        has_historical_media,
         has_pending_attachments,
         context_state.request_tokens,
         input_per_mtok,
@@ -309,21 +380,29 @@ class ConsoleDraftSpendRefresh:
     timer: Any | None = None
 
     def schedule(self) -> None:
+        """Replace any pending timer with one coalesced refresh."""
         self.stop()
         self.timer = self.schedule_timer(self.delay_seconds, self.refresh)
 
     def route_edit(self, *, run_active: bool) -> None:
+        """Schedule an idle edit or cancel refreshes during an active run.
+
+        Args:
+            run_active: Whether provider work currently owns the draft.
+        """
         if run_active:
             self.stop()
         else:
             self.schedule()
 
     def stop(self) -> None:
+        """Cancel the pending refresh timer, if one exists."""
         if self.timer is not None:
             self.timer.stop()
         self.timer = None
 
     def refresh(self) -> None:
+        """Clear timer ownership and refresh context and spend displays."""
         self.timer = None
         self.sync_settings_summary()
         self.sync_cost_chip()

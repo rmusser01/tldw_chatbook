@@ -849,7 +849,11 @@ class ConsoleStatusChips(Horizontal):
         chip.refresh(layout=True)
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Reapply width-aware cost copy without requiring a state change."""
+        """Reapply width-aware cost copy without requiring a state change.
+
+        Args:
+            _event: Textual resize notification; width is read from the app.
+        """
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
         except NoMatches:

@@ -1260,6 +1260,75 @@ async def test_dispatched_echo_keeps_context_full_and_current_frozen():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded", ["failed", "assistant", "missing-data", "nonvision", "unaccepted"]
+)
+async def test_excluded_historical_media_keeps_next_send_priced(monkeypatch, excluded):
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationState
+
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(session_id, role=ConsoleMessageRole.USER, content="prior")
+        message = store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT
+            if excluded == "assistant"
+            else ConsoleMessageRole.USER,
+            content="image row",
+            attachments=(
+                MessageAttachment(
+                    None if excluded == "missing-data" else b"pixels",
+                    "image/png",
+                    "history.png",
+                    0,
+                ),
+            ),
+        )
+        if excluded == "failed":
+            store.mark_message_send_blocked(message.id)
+        controller = console._ensure_console_chat_controller()
+        if excluded == "nonvision":
+            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            monkeypatch.setattr(
+                controller,
+                "resolve_turn_configuration_snapshot",
+                lambda _id: replace(
+                    configuration,
+                    capabilities={**configuration.capabilities, "vision": False},
+                ),
+            )
+        if excluded == "unaccepted":
+            monkeypatch.setattr(
+                store,
+                "preparation_for_session",
+                lambda _id: SimpleNamespace(
+                    transient_user_message_id=message.id,
+                    state=ConsoleTurnPreparationState.PREPARING,
+                ),
+            )
+        monkeypatch.setattr(
+            controller,
+            "_provider_message_payloads",
+            Mock(side_effect=AssertionError("serialized media")),
+        )
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "follow up " * 500
+        )
+        console._sync_console_settings_summary()
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert _next_send_dollars(state) > 0
+
+
+@pytest.mark.asyncio
 async def test_context_cost_refresh_does_not_materialize_attachment_payloads(
     monkeypatch,
 ):

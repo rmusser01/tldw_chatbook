@@ -5107,7 +5107,10 @@ class ChatScreen(BaseAppScreen):
                     )
                 )
             except Exception:
-                logger.exception("Console settings display-name preparation failed")
+                logger.exception(
+                    "Console settings display-name preparation failed (submission_id={})",
+                    submission.submission_id,
+                )
                 display_name_prepare_failed = True
 
         async def persist_display_name() -> None:
@@ -5126,7 +5129,10 @@ class ChatScreen(BaseAppScreen):
                     display_name_plan,
                 )
             except Exception:
-                logger.exception("Console settings display-name persistence failed")
+                logger.exception(
+                    "Console settings display-name persistence failed (submission_id={})",
+                    submission.submission_id,
+                )
                 self.app_instance.notify(
                     "Name changed for this session, but it may not survive reopening.",
                     severity="warning",
@@ -10257,7 +10263,21 @@ class ChatScreen(BaseAppScreen):
                 pricing_as_of,
                 pricing is not None,
                 context_state,
-                messages,
+                any(
+                    row.attachments
+                    for row in controller._lightweight_provider_message_rows(
+                        [
+                            message
+                            for message in messages
+                            if message.id in history.request_ids
+                        ],
+                        skip_failed=True,
+                        session_id=session_id,
+                        turn_context=controller.resolve_turn_configuration_snapshot(
+                            session_id
+                        ),
+                    )
+                ),
                 bool(store.pending_attachments(session_id)),
                 pricing.input_per_mtok if pricing is not None else None,
                 composer.draft_text() if composer is not None else "",

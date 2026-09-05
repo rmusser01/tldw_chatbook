@@ -151,7 +151,17 @@ def build_console_next_send_spend_state(
     sendable_text: bool,
     has_media: bool,
 ) -> ConsoleNextSendSpendState:
-    """Build an honest uncached-input forecast for the next request."""
+    """Build an honest uncached-input forecast for the next request.
+
+    Args:
+        request_tokens: Estimated next-request text tokens, if known.
+        input_per_mtok: Uncached input price per million tokens, if known.
+        sendable_text: Whether the validated draft contains text to send.
+        has_media: Whether the request includes media with unestimated cost.
+
+    Returns:
+        Additional input charge or an explicit empty/unavailable state.
+    """
     detail = (
         f"Estimated text input: ~{format_context_tokens(request_tokens)} tokens."
         if request_tokens is not None
@@ -384,7 +394,16 @@ def build_console_context_cost_state(
     cost: ConsoleCostState,
     next_send: ConsoleNextSendSpendState | None = None,
 ) -> ConsoleCostState:
-    """Combine context fullness with current and next-send spend states."""
+    """Combine context fullness with current and next-send spend states.
+
+    Args:
+        context: Estimated request occupancy and model capacity.
+        cost: Current settled spend and cache presentation.
+        next_send: Additional input-charge forecast, if available.
+
+    Returns:
+        Full and compact labels with detailed context and spend tooltips.
+    """
     next_send = next_send or ConsoleNextSendSpendState(
         "unavailable",
         "On next send: unavailable\nA next-send spend estimate has not been provided.",

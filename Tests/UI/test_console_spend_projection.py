@@ -60,10 +60,12 @@ def _context_state(*, request_tokens: int | None = 1_000):
     ),
 )
 def test_accepted_user_remains_in_request_context_but_not_current(kind):
-    user = ConsoleChatMessage(ConsoleMessageRole.USER, "accepted", id="user")
+    user = ConsoleChatMessage(
+        ConsoleMessageRole.USER, "accepted", id="user", persisted_message_id="db-user"
+    )
     recovery = SimpleNamespace(
         kind=kind,
-        checkpoint=SimpleNamespace(user_message_id=user.id),
+        checkpoint=SimpleNamespace(user_message_id=user.persisted_message_id),
     )
 
     projection = build_console_spend_history_projection(
@@ -72,6 +74,21 @@ def test_accepted_user_remains_in_request_context_but_not_current(kind):
 
     assert user.id in projection.request_ids
     assert user.id not in projection.current_ids
+
+
+def test_unaccepted_checkpoint_excludes_persisted_user_from_both_projections():
+    user = ConsoleChatMessage(
+        ConsoleMessageRole.USER, "unaccepted", id="user", persisted_message_id="db-user"
+    )
+    recovery = SimpleNamespace(
+        kind=ConsoleDispatchRecoveryKind.QUARANTINED,
+        checkpoint=SimpleNamespace(user_message_id=user.persisted_message_id),
+    )
+    projection = build_console_spend_history_projection(
+        [user], recovery, None, ConsoleRunStatus.IDLE, False
+    )
+    assert not projection.request_ids
+    assert not projection.current_ids
 
 
 def test_production_shaped_remote_owner_is_not_current():
@@ -213,37 +230,21 @@ def test_context_projection_adds_live_draft_and_seeded_greeting():
     ]
 
 
-@pytest.mark.parametrize(
-    "message",
-    (
-        ConsoleChatMessage(
-            ConsoleMessageRole.ASSISTANT,
-            "generated",
-            attachments=(SimpleNamespace(id="image"),),
-        ),
-        ConsoleChatMessage(
-            ConsoleMessageRole.USER,
-            "failed image",
-            status="failed",
-            image_data=b"image",
-        ),
-    ),
-)
-def test_any_historical_media_makes_forecast_unavailable(message):
-    state = build_console_next_send_projection([message], False, 1_000, 3.0, "sendable")
+def test_admitted_historical_media_makes_forecast_unavailable():
+    state = build_console_next_send_projection(True, False, 1_000, 3.0, "sendable")
     assert state.label == "unavailable"
     assert "Media cost is not estimated" in state.tooltip
 
 
 def test_zero_input_price_is_known_and_empty_draft_is_dash():
-    priced = build_console_next_send_projection([], False, 1_000, 0.0, "send")
-    empty = build_console_next_send_projection([], False, 1_000, 3.0, "  ")
+    priced = build_console_next_send_projection(False, False, 1_000, 0.0, "send")
+    empty = build_console_next_send_projection(False, False, 1_000, 3.0, "  ")
     assert priced.label == "~+$0.00"
     assert empty.label == "—"
 
 
 def test_invalid_draft_never_promises_a_next_send_charge():
-    state = build_console_next_send_projection([], False, 1_000, 3.0, "x" * 200_001)
+    state = build_console_next_send_projection(False, False, 1_000, 3.0, "x" * 200_001)
 
     assert state.label == "unavailable"
     assert "cannot be sent" in state.tooltip
@@ -257,7 +258,7 @@ def test_pending_media_or_unknown_forecast_inputs_are_unavailable(
     has_pending, request_tokens, input_per_mtok
 ):
     state = build_console_next_send_projection(
-        [], has_pending, request_tokens, input_per_mtok, "sendable"
+        False, has_pending, request_tokens, input_per_mtok, "sendable"
     )
     assert state.label == "unavailable"
 
@@ -272,7 +273,7 @@ def test_unknown_current_pricing_does_not_hide_known_next_send_forecast():
         None,
         True,
         _context_state(),
-        [ConsoleChatMessage(ConsoleMessageRole.USER, "history")],
+        False,
         False,
         3.0,
         "draft",
@@ -286,7 +287,6 @@ def test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero():
     failed = ConsoleCostSnapshot(None, 0, False, False, 0, available=False)
     empty = ConsoleCostSnapshot(None, 0, False, False, 0)
     context = _context_state()
-    message = ConsoleChatMessage(ConsoleMessageRole.USER, "history")
     failed_state = build_console_spend_cost_state(
         failed,
         ConsoleCacheState.WARM,
@@ -296,7 +296,7 @@ def test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero():
         "2026-09-04",
         True,
         context,
-        [message],
+        False,
         False,
         3.0,
         "draft",
@@ -310,7 +310,7 @@ def test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero():
         "2026-09-04",
         True,
         context,
-        [],
+        False,
         False,
         3.0,
         "",
