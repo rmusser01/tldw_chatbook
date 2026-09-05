@@ -155,3 +155,89 @@ three distinct theme/rendering failures. The resumed sweep also exposed stale
 summarization diagnostic-boundary hashes after rebasing and a Library media
 selection readiness failure; both remain recorded for investigation. Final
 diagnostic reconciliation must follow the reviewed controller moves.
+
+## Further resumed verification and remaining failure ledger
+
+The fourth non-UI continuation stopped at its failure limit with **8,255 passed,
+32 failed, 123 skipped** in 1,161.67 seconds. This is a partial continuation,
+not a full sweep completion; passing selections overlap and must not be summed.
+The XML evidence is `/private/tmp/tldw-review-nonui-remaining-wave4-20260905.xml`.
+
+Further complete-file verification after focused repairs:
+
+- Agent test-owned database cleanup: **47 passed**. Native descriptor probes
+  confirmed five send-test descriptors and four branching-test descriptors
+  return to zero; no descriptor threshold or garbage-collection guard changed.
+- Guarded attachment/exchange cascades and semantic migration guards:
+  **94 passed**. Tests use the real semantic mutation coordinator and explicitly
+  retain raw-SQL rejection checks.
+- Native grammar and accepted skill-hook fixtures: **64 passed**, preserving
+  exact execution ownership and hook ordering assertions.
+- Historical/current migration checks: **122 passed**. Historical assertions run
+  against their exact schema version, followed by current-schema preservation.
+- Retrieval extraction and dictionary-send fixtures: **184 passed**. The native
+  Console journey file also passed **349 tests**; later hook-binding adjustments
+  are covered by the related 184-test selection.
+- Library constructor assembly: **46 passed** in the final architecture/import
+  selection and **16 passed** in Notes coverage. The broader UI selection recorded
+  **276 passed, 8 failed**; all eight failures were reproduced at the pre-assembly
+  baseline and remain open, not waived. The Library size ceiling was tightened.
+
+Wave-four failures already repaired above include guarded attachment deletion,
+native grammar ownership, accepted skill-hook ordering, and four migration cases.
+The remaining observed families are tracked explicitly:
+
+- Three summarization diagnostic-boundary fixtures: TASK-18801; reconcile only
+  after final reviewed controller movement.
+- Atomic promotion context-policy ownership: TASK-31744; real SQLite probes show
+  false save conflicts for staged and inherited policies.
+- Inert legacy Notes timer residue: TASK-31746; AST guard and lifecycle coverage.
+- Library Skills reserved-name drift: TASK-31748; fifteen missing runtime/command
+  names, with the four-source guard retained.
+- Two MCP stdio cases: wire-tool inventory and legacy-client startup.
+- Three fork-transition census cases: audit the new settings mutation/fence paths
+  before changing the classification inventory.
+- Two sync-log retention deletes, a conversation-delete property, and one outbox
+  deliberate-corruption fixture now encounter semantic mutation authorization.
+- Two durable-turn settlement/retry cases need ownership and recovery diagnosis.
+- Seven briefing-export cases seed multiple unfinished runs for one watchlist,
+  conflicting with the current uniqueness contract.
+- One Library media-selection live-evidence case fails its settled-state wait.
+
+Previously observed Notes rendering/contrast, eight Library UI baseline cases,
+load-sensitive retry/process-cleanup cases, final Console size/closeout evidence,
+and unexecuted remainder selections are still outstanding. This draft is not
+merge-ready and no full-suite green result is asserted.
+
+### Subsequent verified repairs
+
+- TASK-31744: **63 passed** for promotion/settings persistence. Public-flow real
+  SQLite regressions cover staged post-promotion saves, failed-save retry, and
+  inherited fork policies retaining revision ownership. A further 386 behavioral
+  tests passed; the three fork-census failures reproduced against the unchanged
+  HEAD source. The aggregate run's descriptor-growth warning remains unqualified.
+- TASK-31745: **96 passed**. Environment worker forwarding now names its existing
+  group/thread/exclusive arguments explicitly; scheduling choices are unchanged.
+- TASK-31746: **32 passed** for retired Notes sync and live lifecycle coverage.
+  The inert timer field is removed; Library's ceiling tightened to 41,302 lines.
+- TASK-31747: **12 passed**, including enforcing error-state contrast checks for
+  all 72 shipped themes at both wide and narrow sizes. The minimum measured Save
+  failed contrast is 5.070:1; the 4.5:1 requirement and Git error style are unchanged.
+- TASK-31752: **126 passed** in the recovery/checkpoint selection, including all
+  25 round-one tests. Fault doubles now cross the actual dispatch callback. One
+  round-two checkpoint-transition failure reproduced with the unchanged helper;
+  it is being investigated as TASK-31754. The aggregate descriptor warning is
+  retained, not treated as passing resource evidence.
+- TASK-31755: **76 passed**. Export and query fixtures explicitly seed completed
+  briefing history; the single-active-run uniqueness constraint is unchanged.
+- TASK-18801: the complete summarization privacy file is **257 passed**. Statement
+  review proved ten identical logs moved from ChatScreen to retrieval; checked
+  and generated inventories now agree at 584 owners, 1,336 TASK-492 calls, 7,615
+  TASK-494 calls and 11 sinks. Only the two stale normalized boundary hashes were
+  updated. Clean upstream-dev qualification remains pending integration.
+
+The Console private-delegate cleanup, Skills split-reader refresh defect, and
+pre-dispatch failure classification are active work. One newly observed Skills
+trust journey also reproduced in the pre-assembly baseline. Notes compact paint,
+the previously recorded Library baseline cases, MCP/fork-census/guarded-delete
+families, and remaining unexecuted review selections are not yet resolved.
