@@ -1914,6 +1914,22 @@ class ChatScreen(BaseAppScreen):
             )
         return super().check_action(action, parameters)
 
+    def action_abandon_console_tool_call(self) -> None:
+        """task-31386: the activity line's "abandon call" click.
+
+        Abandons the viewed session's in-flight tool call and lets the turn
+        continue (``ConsoleChatController.abandon_active_tool_call``); a
+        stale click -- the call already ended -- is a no-op with a notice.
+        """
+        controller = self._ensure_console_chat_controller()
+        tool_name = controller.abandon_active_tool_call()
+        if tool_name:
+            self.app_instance.notify(
+                f"Abandoning {tool_name}… the turn continues.", severity="warning"
+            )
+        else:
+            self.app_instance.notify("No tool call is running.", severity="information")
+
     def action_exit_console_hands_free(self) -> None:
         """Priority Esc: exit the hands-free loop from any point (task-5
         review I2) -- see `check_action`'s gate and the `BINDINGS` entry's
@@ -15916,7 +15932,8 @@ class ChatScreen(BaseAppScreen):
             # is what joins the refresh key below -- so an idle transcript
             # can never repaint once a second off a stale run snapshot.
             turn_activity = transcript.apply_turn_activity(
-                self._agent.console_turn_activity()
+                self._agent.console_turn_activity(),
+                action=self._agent.console_turn_activity_abandon_action(),
             )
             visible_citation_counts = {
                 message_id: count
