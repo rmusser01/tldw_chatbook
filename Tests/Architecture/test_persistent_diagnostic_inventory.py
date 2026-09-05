@@ -599,6 +599,10 @@ _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
 _TASK_15743_CURRENT_OWNERS = {
     (
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "Failed to load Library conversations page.",
+    ): "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py",
+    (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "console fleet wake mount-claim failed",
     ): "tldw_chatbook/UI/Console_Modules/fleet.py",

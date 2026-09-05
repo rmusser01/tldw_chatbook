@@ -1142,13 +1142,13 @@ class ConsoleSessionSwitcherModal(
         visible = page is not None and (page.total > page.limit or page.offset > 0)
         controls.display = visible
         if not visible:
-            status.update("")
+            status.update("", layout=False)
             return
         previous.disabled = page.offset <= 0
         following.disabled = not page.has_more
         first = page.offset + 1 if page.entries else 0
         last = page.offset + len(page.entries)
-        status.update(f"{first}–{last} of {page.total}")
+        status.update(f"{first}–{last} of {page.total}", layout=False)
 
     def _update_receipt_status(self) -> None:
         """Expose only content-free local activity storage readiness."""
@@ -1243,13 +1243,17 @@ class ConsoleSessionSwitcherModal(
 
     def _set_status(self, message: str) -> None:
         try:
-            self.query_one("#console-switcher-status", Static).update(message)
+            self.query_one("#console-switcher-status", Static).update(
+                message, layout=False
+            )
         except NoMatches:
             pass
 
     def _set_feedback(self, message: str) -> None:
         try:
-            self.query_one("#console-switcher-feedback", Static).update(message)
+            self.query_one("#console-switcher-feedback", Static).update(
+                message, layout=False
+            )
         except NoMatches:
             pass
         self._set_status(message)

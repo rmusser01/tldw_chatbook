@@ -559,7 +559,10 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monkeypatch):
+@pytest.mark.parametrize("coordinated", [False, True])
+async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(
+    monkeypatch, coordinated
+):
     """Generation reconciliation and manual refresh share one load group."""
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
@@ -578,8 +581,28 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
 
     monkeypatch.setattr(screen_module, "generate_briefing", held_generate)
 
+    if coordinated:
+
+        class Coordinator:
+            async def accept_briefing(self, requested_watchlist_id, preset_id):
+                return await held_generate(
+                    db, requested_watchlist_id, preset_id=preset_id
+                )
+
+        app.watchlists_operation_coordinator = Coordinator()
+
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         real_list_briefings = db.list_briefings
+        real_load_briefings = screen._load_briefings
+        loader_groups = []
+
+        async def observed_load_briefings(**kwargs):
+            from textual.worker import get_current_worker
+
+            loader_groups.append(get_current_worker().group)
+            await real_load_briefings(**kwargs)
+
+        screen._load_briefings = observed_load_briefings
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         pane.query_one("#artifacts-generate-button", Button).press()
         async with asyncio.timeout(10):
@@ -633,6 +656,8 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
         assert [row["id"] for row in recorded] == [newest_snapshot[0]["id"]]
         assert screen._loaded_briefings == newest_snapshot
         assert pane.briefings == newest_snapshot
+        assert len(loader_groups) >= 2
+        assert set(loader_groups) == {"wl-briefings-load"}
 
 
 @pytest.mark.asyncio

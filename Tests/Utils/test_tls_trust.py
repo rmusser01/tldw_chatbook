@@ -278,6 +278,23 @@ def test_build_requests_session_explicit_verify_wins(_set_ssl_config):
     assert session.verify is True  # explicit verify beats the disabled policy
 
 
+def test_build_requests_session_applies_default_and_explicit_timeouts(monkeypatch):
+    from tldw_chatbook.Utils import egress
+
+    observed = []
+    monkeypatch.setattr(egress, "default_session_timeout", lambda: (2.0, 9.0))
+    monkeypatch.setattr(
+        tls_trust._requests.Session,
+        "request",
+        lambda self, method, url, **kwargs: observed.append(kwargs.get("timeout")),
+    )
+    with tls_trust.build_requests_session() as session:
+        session.get("https://example.invalid")
+        session.get("https://example.invalid", timeout=4.0)
+
+    assert observed == [(2.0, 9.0), 4.0]
+
+
 def test_create_default_session_carries_tls_policy(_set_ssl_config):
     """The shared session factory carries the TLS policy on session.verify.
 
