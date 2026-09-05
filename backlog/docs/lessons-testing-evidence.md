@@ -11274,3 +11274,20 @@ quiescence/registry boundary rather than a single-thread `close()`. Diagnose a
 session FD warning by splitting test files, classifying descriptors with
 `lsof`, and inspecting live owners after finalizers; GC or a higher threshold
 cannot establish ownership or fix a registered worker handle.
+
+## Lifecycle relocation tests must include production change notifications
+
+**TASK-21123, 2026-09-04.** Moving Buddy ownership to the app initially passed
+the old mount harness, which manually reconciled state and omitted the new
+controller notification callback. Wiring the production callback exposed tests
+that installed mount gates after enable had already mounted the view, and a
+close/geometry test that sent input after the view had retired. Explicit caller
+cancellation tests now isolate their caller; the merge test gates owner retirement
+while admitting both edits. Independent review also reproduced late mounts after
+shutdown during a geometry flush and reuse of a generation-invalidated view after
+canceled retirement. Both received failing-then-passing regression tests.
+
+**What to do.** Bind production lifecycle notifications in integration harnesses.
+Gate the specific await boundary a race test intends to exercise; a persistence
+writer starting does not prove the originating view is still current. Check
+shutdown and generation authority again after teardown awaits, before reuse/mount.

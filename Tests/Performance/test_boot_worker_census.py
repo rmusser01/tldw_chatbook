@@ -93,7 +93,6 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("_refresh_workspace_files_availability_snapshot", "console-workspace-files-availability"),
         ("build_worker", "console-changed-files"),
         ("load", "console-prompt-history"),
-        ("reconcile_persona_buddy_view", "persona-buddy-view-reconcile"),
         # Rail-preference persistence: observed on the FIRST boot of a fresh
         # profile (initial state write); allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
