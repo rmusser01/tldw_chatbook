@@ -506,11 +506,11 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
 - Modify: Canvas user/security documentation
 
-- [ ] Build probes for representative provider-generated pages and adversarial near-limit pages. Record compiler latency, render-plan expansion, QuickJS heap/stack, startup/event interruption accuracy, patch throughput, and browser process memory.
-- [ ] Run probes on the repository's supported baseline environment and save summarized, non-source evidence. Do not include model outputs that may contain user data.
-- [ ] Lower initial quotas where needed to keep compile/startup under the intended 100 ms worker threshold or browser interaction responsive. Do not raise a security ceiling without separate review.
-- [ ] Add boundary tests for the final values and document what users see when each quota is exceeded.
-- [ ] Commit: `perf(canvas): freeze measured runtime quotas`
+- [x] Build probes for representative synthetic assistant-authored pages and adversarial near-limit pages. Label fixture provenance explicitly; this qualification does not claim live-provider sampling. Record compiler latency, render-plan expansion, QuickJS heap/stack, startup/event interruption accuracy, patch throughput, and browser process memory.
+- [x] Run probes on the repository's supported baseline environment and save summarized, non-source evidence. Do not include model outputs that may contain user data.
+- [x] Lower initial quotas where needed to keep compile/startup under the intended 100 ms worker threshold or browser interaction responsive. Do not raise a security ceiling without separate review. Remaining compiler scheduling is explicitly gated by Task 7.2a.
+- [x] Add boundary tests for the final values and document what users see when each quota is exceeded.
+- [x] Commit: `perf(canvas): freeze measured runtime quotas`
 
 ### Task 7.2a: Resolve measured compiler blocking at interactive boundaries
 
@@ -519,6 +519,9 @@ The implementation may place tests beside an existing narrower suite when that b
 the qualification host. Native preview, served preview, and HTML-block import
 can execute this work on the UI/server event loop. This exceeds the repository's
 100 ms worker threshold and is a rollout blocker, not a documentation caveat.
+The stricter review-fix probe at the final 1,800-node/900-rule ceilings measured
+107.189 ms median and 124.874 ms maximum under host load, confirming that lower
+quotas alone do not remove the scheduling requirement.
 
 **Files:**
 

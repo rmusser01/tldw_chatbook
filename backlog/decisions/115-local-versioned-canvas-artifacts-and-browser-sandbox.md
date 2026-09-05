@@ -465,6 +465,35 @@ validated proxy/keyring posture. Independent review approved commits
 `69405e7c8d`, `e69141538f`, and `ff8a45fb65`. Quota measurements and complete
 rollout verification remain in TASK-31232's subsequent steps.
 
+### Runtime quota qualification record
+
+Task 7.2 lowered V1 ceilings to 1,800 DOM nodes, 900 CSS rules, and 500
+patches per operation; the 256 KiB script ceiling and other limits were
+retained. Python, renderer, worker, and virtual facade enforce the same values,
+and packaged asset hashes were regenerated. The reproducible probe uses
+explicitly labeled synthetic assistant-authored documents, not sampled live
+provider responses or user content. The design's measured-results section
+records the single macOS/Python 3.12/Chromium qualification environment.
+
+Direct trusted-engine checks distinguish a successful 16 MiB allocation from
+an exact guest out-of-memory refusal for a 32 MiB allocation under the
+configured 32 MiB heap. Recursion has a positive accepted control and an
+observed exact native engine stack trap; that trap is containment evidence
+under the configured 512 KiB stack setting, not independent proof that this
+setting caused refusal. A trapped probe runtime is never reused and its
+owning browser context is closed. Unexpected host/API/disposal errors fail
+qualification with bounded errors rather than counting as limit refusals.
+No probe diagnostics are exposed to generated code.
+
+Browser memory measurements are gross summed process-tree RSS, potentially
+double-counting shared macOS pages, not Canvas-only memory or QuickJS heap
+measurements. Trusted startup, generated execution, and end-to-end event
+clocks are reported separately. Compiler measurements at the final combined
+ceilings ranged from 83.857 ms median/97.181 ms maximum in the initial run to
+107.189/124.874 ms in the review-fix run. Thus lowered quotas do not guarantee
+sub-100-ms main-loop work: Task 7.2a is a required scheduling gate before
+rollout, preserving existing mutation ownership and lifecycle fencing.
+
 ## Context
 
 Chatbook's Console already persists a branching message tree, records one
