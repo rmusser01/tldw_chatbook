@@ -203,6 +203,7 @@ draft = DraftState(raw_json=raw, parsed_json=parsed_json,
 
 - Create: `tldw_chatbook/DB/Chunking_Lab_DB.py`, `tldw_chatbook/Chunking/lab_autosave.py`.
 - Modify: `tldw_chatbook/DB/private_sqlite.py` (register `db.chunking_lab`).
+- Modify as needed: `tldw_chatbook/Chunking/lab_models.py` (extract shared shallow/reference validation so checkpoint saves do not duplicate invariants or deep-copy retained blobs).
 - Docs: `backlog/docs/sqlite-private-owner-inventory.md` (enumerate the new registered connection owner alongside its inventory tests).
 - Test: `Tests/DB/test_chunking_lab_db.py`, `Tests/Chunking/test_lab_autosave.py`, `Tests/DB/test_private_sqlite_inventory.py`.
 
@@ -255,7 +256,8 @@ WHERE singleton = 1 AND epoch = ? AND generation = ?;
 
 - Create: `tldw_chatbook/Chunking/lab_recovery.py`.
 - Modify: `tldw_chatbook/DB/Chunking_Lab_DB.py`, `tldw_chatbook/Chunking/lab_autosave.py`.
-- Test: `Tests/Chunking/test_lab_recovery.py`, `Tests/DB/test_chunking_lab_db.py`.
+- Modify: `tldw_chatbook/Chunking/lab_state.py` (bounded content undo and pruning of unused active sample/result entries).
+- Test: `Tests/Chunking/test_lab_recovery.py`, `Tests/DB/test_chunking_lab_db.py`, `Tests/Chunking/test_lab_state.py`.
 
 **Interfaces**
 
@@ -264,6 +266,7 @@ WHERE singleton = 1 AND epoch = ? AND generation = ?;
 - Expose these transactions through `AutosaveWriter.async replace(imported: LabSession, displaced: LabSession) -> tuple[LabSession, CheckpointToken]` and `async undo_restore() -> tuple[LabSession, CheckpointToken]`; callers never write the store concurrently. Drain/invalidate queued old writes before replacement and adopt the new token only on success.
 - Replacement normalizes the target profile to the current store, assigns a new epoch, and preserves displaced **in-memory** content in the same transaction. Quiescing workers and old writer requests is the task-5 coordinator's prerequisite, not a UI-only convention.
 - Envelope version 1 is UTF-8 JSON, max 256 MiB total; each raw draft max 2 MiB, each sample max 2 MiB, each result max 32 MiB, at most two candidates, depth 64, at most 16 referenced sample/result blobs combined. A bounded whole current checkpoint is max 8 MiB excluding blobs. Reject over-limit edits/imports explicitly without losing the previous value; no truncation. Apply these limits to exportable active state as well as imports; undo/previous checkpoints are not exported.
+- Keep one prior content-action undo in v1 (separate from one-level Undo restore); native editor undo is not reimplemented. Replace, rather than append indefinitely to, the application undo tuple on the next content mutation; view changes preserve it. Prune sample/result map entries unreachable from current/previous candidate results, active sample/batch, and available undo. Repeated editing/reruns must not retain an unbounded history or exhaust the active 16-blob allowance solely because unused results were left in a map. Preserve all still-inspectable and undo-needed content.
 
 - [ ] Write the failing pure round-trip test, plus malformed/newer/digest-mismatch/oversized inputs and failed atomic replacement.
 
@@ -281,6 +284,7 @@ def test_recovery_export_preserves_invalid_authoring_text():
 
 - [ ] Run `pytest Tests/Chunking/test_lab_recovery.py -q` and confirm missing-feature failure.
 - [ ] Implement structural validation independently of executable recipe validation; reject NaN/Infinity, duplicate JSON keys, dangling references, illegal candidate membership, digest mismatches, and bounded-depth/count violations before state replacement. Raw authoring strings remain opaque. No pickle, archive extraction, embedded path reads, or model reconstruction with side effects.
+- [ ] Exercise many draft edits, source replacements, and reruns with bounded active undo/reachability. Confirm current/previous and undo-needed results remain inspectable, view changes preserve undo, and obsolete map entries disappear without rewriting retained blob payloads.
 
 ```python
 def export_recovery(session: LabSession) -> bytes:

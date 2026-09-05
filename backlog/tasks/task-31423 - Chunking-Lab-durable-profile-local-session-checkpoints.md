@@ -1,11 +1,11 @@
 ---
 id: TASK-31423
 title: Chunking Lab - durable profile-local session checkpoints
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:12'
-updated_date: '2026-09-05 00:24'
+updated_date: '2026-09-05 00:55'
 labels:
   - chunking
   - chunking-lab
