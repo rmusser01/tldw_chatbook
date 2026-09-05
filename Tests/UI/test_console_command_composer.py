@@ -25,7 +25,6 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -146,7 +145,8 @@ class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
 
 
 class _RawCliComposerHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    # No ChatScreen is pushed here to load its Console-owned rules.
+    CSS_PATH = [str(BUNDLED_STYLESHEET), *ChatScreen.CSS_PATH]
 
     def compose(self):
         yield ConsoleComposerBar(id="console-native-composer")
@@ -650,10 +650,12 @@ async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
-    None
-):
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry(
+    theme: str,
+) -> None:
     host = _RawCliComposerHarness()
+    host.theme = theme
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
@@ -676,8 +678,8 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
-        # Production $ds-status-error-readable resolves to this AA-safe foreground.
-        readable_error_color = Color.parse("#ff8fa3")
+        # TASK-31264: the semantic error foreground follows theme polarity.
+        readable_error_color = Color.parse(host.get_css_variables()["text-error"])
         assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
