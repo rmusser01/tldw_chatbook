@@ -1080,8 +1080,10 @@ def test_store_cleanup_fences_handoff_registration_racing_after_drain(
     assert store.pending_provider_trace_settlement_count(assistant.id) == 0
 
 
+@pytest.mark.parametrize("failure_kind", ["recursive", "text_budget"])
 def test_sanitizer_failure_seals_content_free_incomplete_outcome(
     db: CharactersRAGDB,
+    failure_kind: str,
 ) -> None:
     repository = ConsoleTraceRepository()
     coordinator = ConsoleTraceSettlementCoordinator(repository)
@@ -1091,7 +1093,14 @@ def test_sanitizer_failure_seals_content_free_incomplete_outcome(
 
     settled = coordinator.settle(
         db,
-        _request(call_id, response={"content": recursive}),
+        _request(
+            call_id,
+            response={
+                "content": recursive
+                if failure_kind == "recursive"
+                else "x" * MAX_TRACE_RESPONSE_BYTES,
+            },
+        ),
     )
 
     assert settled.state is TraceCallState.COMPLETE
@@ -1114,7 +1123,9 @@ def test_oversized_response_is_replaced_by_one_bounded_labeled_artifact(
 
     settled = coordinator.settle(
         db,
-        _request(call_id, response={"content": "x" * MAX_TRACE_RESPONSE_BYTES}),
+        # Reach the byte ceiling without first exceeding the sanitizer's
+        # independent one-million-codepoint work limit.
+        _request(call_id, response={"content": "é" * (MAX_TRACE_RESPONSE_BYTES // 2)}),
     )
 
     assert settled.integrity_state == "incomplete"
@@ -1147,7 +1158,7 @@ def test_queued_settlement_drops_oversized_response_and_usage_values(
     request = _request(
         call_id,
         response={
-            "content": "x" * MAX_TRACE_RESPONSE_BYTES + response_canary,
+            "content": "é" * (MAX_TRACE_RESPONSE_BYTES // 2) + response_canary,
         },
         usage={
             "provider_detail": "y" * settlement_module.MAX_TRACE_USAGE_BYTES
@@ -1426,13 +1437,25 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         first, repository, sequence=3, state=TraceCallState.RESPONSE_STARTED
     )
     ConsoleTraceSettlementCoordinator(repository).settle(first, _request(terminal_id))
+    # RESERVED has a real SQLite created_at, unlike the explicit historical
+    # dispatch timestamps above. Recover after that reservation is stale too.
+    recovery_at, repeat_recovery_at = (
+        first.get_connection()
+        .execute(
+            """SELECT strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day'),
+                  strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day', '+1 second')
+             FROM console_trace_calls WHERE call_id = ?""",
+            (reserved_id,),
+        )
+        .fetchone()
+    )
     first.close_connection()
 
     reopened = CharactersRAGDB(str(path), "trace-restart-second")
     coordinator = ConsoleTraceSettlementCoordinator(repository)
     recovered = recover_console_trace_calls(
         reopened,
-        occurred_at="2026-08-31T02:00:00Z",
+        occurred_at=recovery_at,
         repository=repository,
     )
     assert {record.call_id: record.state for record in recovered} == {
@@ -1441,8 +1464,7 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         response_id: TraceCallState.INTERRUPTED,
     }
     assert (
-        coordinator.recover_open_calls(reopened, occurred_at="2026-08-31T02:00:01Z")
-        == ()
+        coordinator.recover_open_calls(reopened, occurred_at=repeat_recovery_at) == ()
     )
     assert (
         repository.get_call(reopened.get_connection().cursor(), terminal_id).state
