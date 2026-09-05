@@ -1,13 +1,19 @@
 ---
 id: TASK-31662
 title: >-
-  Inspect rail density: single-line rows, right-aligned secondaries, redundancy removal
-status: In Progress
+  Inspect rail density: single-line rows, right-aligned secondaries, redundancy
+  removal
+status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
-labels: [console, inspector, ux, critique-2026-09-05]
-priority: medium
+updated_date: '2026-09-05 20:41'
+labels:
+  - console
+  - inspector
+  - ux
+  - critique-2026-09-05
 dependencies: []
+priority: medium
 ---
 
 ## Description
@@ -25,7 +31,6 @@ Owner ruling 2026-09-05: the Local row STAYS as designed (do not cut it).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [x] #1 Rows with empty secondary text occupy one line; rows whose secondary fits beside the primary render on one line (secondary right-aligned)
 - [x] #2 At 80x24 the Environment section at rest shows its four top-level rows in five lines (header + four one-line rows, measured on the real Console; was eleven lines), with nothing scrolled off WITHIN the section — the rail's own eight-line pinned stack above its three-line scroll body still caps what the RAIL shows at 80x24 and is out of this task's scope (see Implementation Notes)
@@ -36,6 +41,7 @@ Owner ruling 2026-09-05: the Local row STAYS as designed (do not cut it).
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. MEASURE first: probe the real Console at 80x24 and 200x50 for the
    section/body/row widths and the rail's scroll geometry, rather than
    inheriting the "~34 columns" claim the current budget rests on.
@@ -54,9 +60,11 @@ Owner ruling 2026-09-05: the Local row STAYS as designed (do not cut it).
    re-pin the widget test at the width the smallest terminal produces.
 6. CSS in the component source only, regenerate, and sweep the status
    variants' child combinators for the new nesting.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Rows in `ConsoleInspectorSection` now take one line unless they need two,
 the two rail sections stop restating themselves in their own headers, and
 every column budget is derived from the rail width that was MEASURED rather
@@ -137,3 +145,4 @@ and the four test files
 `Tests/UI/test_console_environment_section.py`,
 `Tests/UI/test_console_environment_wiring.py`,
 `Tests/Chat/test_console_environment_state.py`).
+<!-- SECTION:NOTES:END -->
