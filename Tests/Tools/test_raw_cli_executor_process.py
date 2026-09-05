@@ -1102,6 +1102,7 @@ def test_published_exit_beats_dead_worker_missing_terminal_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shell_exited = threading.Event()
+    real_monotonic = time.monotonic
     monotonic_times = iter((100.0, 100.25, 101.25))
 
     class MissingTerminalQueue:
@@ -1117,10 +1118,11 @@ def test_published_exit_beats_dead_worker_missing_terminal_fallback(
     messages = MissingTerminalQueue()
     monkeypatch.setattr(raw_cli, "_RAW_POST_EXIT_DRAIN_SECONDS", 1.0)
     monkeypatch.setattr(
-        raw_cli.time,
-        "monotonic",
-        lambda: next(monotonic_times),
+        raw_cli,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(monotonic_times)),
     )
+    assert time.monotonic is real_monotonic
     spool = tempfile.TemporaryFile(mode="w+b")
     accumulator = raw_cli._OutputAccumulator(spool, 1024)
 
