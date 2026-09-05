@@ -67,6 +67,14 @@ async def _open_image_gen(pilot) -> None:
     await _open_settings_category(pilot, "#settings-category-image_generation")
 
 
+async def _click_visible_button(screen, pilot, selector: str) -> None:
+    """Scroll a Settings action into the Pilot viewport before clicking it."""
+    button = screen.query_one(selector, Button)
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    await pilot.click(selector)
+
+
 async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -363,7 +371,7 @@ default_model = "old-model"
         assert "*" in str(rail_button.label)
         assert not panel.query_one("#settings-imagegen-save", Button).disabled
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         config_path = tmp_path / "config.toml"
@@ -406,7 +414,7 @@ enabled_backends = ["openrouter"]
         enabled_checkbox.value = False
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -444,7 +452,7 @@ default_model = "original-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-revert")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-revert")
         await pilot.pause()
         await pilot.pause()
 
@@ -506,7 +514,7 @@ api_key = "sk-saved-key"
         )
         assert str(source_line.renderable) == "missing"
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     config_path = tmp_path / "config.toml"
@@ -548,7 +556,7 @@ api_key = "fake-stale-legacy-token"
         ).press()
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     config_path = tmp_path / "config.toml"
@@ -583,7 +591,7 @@ enabled_backends = ["openrouter"]
         key_input.value = "sk-pasted-key"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -638,7 +646,7 @@ default_theme = "textual-dark"
         model_input.value = "openai/gpt-5-image-mini"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     config_path = tmp_path / "config.toml"
@@ -793,7 +801,7 @@ enabled_backends = ["openrouter"]
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -1163,7 +1171,7 @@ default_model = "old-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     config_path = tmp_path / "config.toml"
@@ -1201,7 +1209,7 @@ enabled_backends = ["swarmui"]
         token_input.value = "fake-swarm-token"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -1247,7 +1255,7 @@ enabled_backends = ["swarmui"]
 @pytest.mark.parametrize("size", [(235, 52), (120, 45)])
 @pytest.mark.asyncio
 async def test_backend_row_controls_visible_and_clickable_under_real_css(
-    scratch_config, size
+    scratch_config, size, monkeypatch
 ):
     scratch_config(
         """
@@ -1255,6 +1263,12 @@ async def test_backend_row_controls_visible_and_clickable_under_real_css(
 default_backend = "openrouter"
 enabled_backends = ["openrouter", "swarmui"]
 """
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if (section, key) == ("splash_screen", "enabled") else default
+        ),
     )
     app = _build_test_app()
     async with app.run_test(size=size) as pilot:
@@ -1439,7 +1453,7 @@ enabled_backends = ["openrouter"]
         # line itself, independent of whatever happens to repopulate it.
         sentinel = {"__sentinel__": True}
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
         assert screen._image_gen_raw_section_cache != sentinel, (
             "a successful Save must invalidate the cache"
@@ -1454,7 +1468,7 @@ enabled_backends = ["openrouter"]
         model_input.value = "yet-another-model"
         await pilot.pause()
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-revert")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-revert")
         await pilot.pause()
         await pilot.pause()
         assert screen._image_gen_raw_section_cache != sentinel, (
@@ -1554,7 +1568,7 @@ default_sampler = "euler"
             field.value = ""
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -1604,7 +1618,7 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
         )
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
 
     assert resets == []
@@ -1672,7 +1686,7 @@ default_seed = 7
             "#settings-imagegen-field-comfyui-default_seed", Input
         ).value = ""
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
@@ -1731,7 +1745,7 @@ base_url = "http://127.0.0.1:8188"
             "#settings-imagegen-field-comfyui-base_url", Input
         ).value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
@@ -1769,7 +1783,7 @@ async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
         )
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_visible_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     assert resets == [None]
