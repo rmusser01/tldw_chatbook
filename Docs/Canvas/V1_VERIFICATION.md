@@ -126,6 +126,64 @@ format ranges passed. This is unchanged inherited lint debt, not whole-repositor
 clean lint. The earlier six baseline failures and all review limitations above
 remain outside these targeted passing results.
 
+## Authorized residual correction (`1467bdf0a6`)
+
+The additional pass implements session-incarnation-wide temporary 8 MiB
+admission, virtual-only detached edits with bounded reconstruction of supported
+explicit empty/false form properties, and original authority/owner/enabled/
+source checks before compile-refusal repair. Scoped rereview is pending; the
+earlier open findings are not closed by these implementation claims alone.
+
+Final focused Python command:
+
+```sh
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_canvas_controller.py::test_temporary_owner_enforces_exact_default_session_bytes_across_scopes Tests/Chat/test_console_canvas_controller.py::test_production_owner_counts_concurrent_bytes_and_abort_releases_them Tests/Chat/test_console_canvas_controller.py::test_temporary_import_and_rename_share_admission_without_partial_stage Tests/Chat/test_console_canvas_controller.py::test_durable_committed_stage_is_not_double_counted_after_persistence Tests/Canvas/test_staging.py::test_staging_uses_lower_durable_conversation_source_ceiling Tests/UI/test_console_message_controller.py::test_late_canvas_compile_refusal_cannot_replace_stale_draft Tests/UI/test_console_message_controller.py::test_production_message_controller_prefills_canvas_repair_without_source_state Tests/Canvas/test_compiler_scheduling.py::test_chat_screen_html_import_yields_and_checks_view_before_apply
+```
+
+Exit 0: **11 passed, 1 warning in 2.02s**. Coverage includes the actual default
+8 MiB boundary across two temporary conversation scopes, concurrent reservation
+release, durable accounting, and paused compiler refusal after disable/re-enable,
+owner replacement or exact source change. Stale cases preserve the actual draft
+and perform no composer load; legitimate repair remains covered.
+
+```sh
+../../.venv/bin/python -m pytest -q Tests/Canvas/browser/test_canvas_zero_egress.py::test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds
+../../.venv/bin/python -m pytest -q Tests/Canvas/test_runtime_assets.py
+```
+
+Final browser exit 0: **1 passed, 1 warning in 3.45s**. The actual renderer
+handles multi-event detach/edit/restructure/reinsert, current empty/false form
+state, listener continuity and existing identity/cycle controls. Detached edits
+also consume the existing 500-operation budget. The final wrapper captured
+pytest 67173, driver 67257, Chromium 67276/67284/67285 and the exact profile
+while alive; no captured process or profile remained afterward. Two earlier
+passing wrappers missed Chromium/profile provenance and are not final cleanup
+evidence. No ambient process was selected or terminated.
+
+Runtime assets exit 0: **20 passed, 1 optional archive-cache skip, 1 warning in
+1.24s**. Initial sandboxed browser and asset attempts failed at macOS launch/
+loopback permission boundaries; these are not product REDs. The identical owned
+checks outside that sandbox produced the results above. No download occurred.
+Warnings are the known Requests dependency mismatch.
+
+Product REDs were recorded separately: one extra byte admitted above the
+temporary ceiling; detached setters addressing pruned renderer IDs; detached
+mutations bypassing the operation budget; and three stale compile refusals
+reaching repair. Intermediate corrections also fixed an internal non-iterable
+null-prototype list and an option-element test using a checkbox-only assertion.
+Those categories are not retrospectively assigned to the original defects.
+
+Final worker syntax/manifest verification, compileall, changed-file/range lint
+and format checks and diff whitespace checks passed. Root independently closed
+the equal-lint-totals doubt without application imports or rerunning tests:
+for all nine Python paths in `54fe0b160..1467bdf0a6`, compare Ruff JSON on each
+exact revision's `git show` source through the same stdin filename. Counters of
+`(path, code, message)` preserve multiplicity and ignore line shifts: **176 at
+each revision, zero added and zero removed**. Exit 0. Four inherited whole-file
+format-debt files remain; this does not claim globally clean lint/formatting.
+
+## Earlier exact-selection diagnosis
+
 The stricter exact-reopen test subsequently reproduced a product defect: the
 child selects the historical root, but the existing served renderer remains on
 its old branch. The committed gateway/shell/parent repair carries exact
