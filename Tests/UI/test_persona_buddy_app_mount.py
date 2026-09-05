@@ -94,6 +94,16 @@ def _enabled_preferences() -> PersonaBuddyPreferences:
     )
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_overlay_refresh_without_screens_starts_no_presentation_work(enabled):
+    app = _BuddyApp(PersonaBuddyPreferences(enabled=enabled))
+    assert app.screen_stack == []
+
+    app._schedule_persona_buddy_overlay()
+
+    assert getattr(app, "_persona_buddy_overlay", None) is None
+
+
 @pytest.mark.asyncio
 async def test_threaded_controller_changes_reconcile_without_manual_ui_calls():
     app = _BuddyApp(PersonaBuddyPreferences())

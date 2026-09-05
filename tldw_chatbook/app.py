@@ -12101,6 +12101,8 @@ class TldwCli(
 
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
+        if not self.screen_stack:
+            return
         owner = getattr(self, "_persona_buddy_overlay", None)
         if owner is not None and owner.closed:
             return
