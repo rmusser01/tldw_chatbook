@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from fnmatch import fnmatchcase
 import hashlib
 from io import BytesIO
 import json
@@ -1325,7 +1326,20 @@ def test_samira_package_data_patterns_are_explicit_and_bounded() -> None:
     )
     setuptools = pyproject["tool"]["setuptools"]
     assert setuptools["include-package-data"] is False
-    assert setuptools["package-data"]["tldw_chatbook"] == [
+    samira_assets = [
+        path.relative_to(PACKAGE_ROOT).as_posix()
+        for path in SAMIRA_ASSET_DIR.rglob("*")
+        if path.is_file()
+    ]
+    # Include broad ancestor globs too: filtering only by the Samira prefix
+    # would silently accept an unbounded pattern such as "assets/**/*".
+    samira_patterns = [
+        pattern
+        for pattern in setuptools["package-data"]["tldw_chatbook"]
+        if pattern.startswith("assets/characters/samira/")
+        or any(fnmatchcase(asset, pattern) for asset in samira_assets)
+    ]
+    assert samira_patterns == [
         "assets/characters/samira/*.json",
         "assets/characters/samira/*.png",
         "assets/characters/samira/*.md",
