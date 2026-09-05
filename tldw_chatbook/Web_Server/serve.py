@@ -134,7 +134,10 @@ class _ServedCanvasAuthorityProxy:
     """Bounded parent transport for one browser-scoped AppService child."""
 
     def __init__(self, owner: ChatbookWebServerMixin) -> None:
+        from tldw_chatbook.Canvas.compilation import CanvasCompilation
+
         self._owner = owner
+        self._compilation = CanvasCompilation()
 
     async def _request(self, scope, message_type, payload):
         child_id = self._owner._served_browser_children.get(scope.browser_session_id)
@@ -166,8 +169,32 @@ class _ServedCanvasAuthorityProxy:
         return payload, metadata
 
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
+        captured = await self._plan_scope(scope)
         _payload, metadata = await self._read(scope)
-        return compile_canvas_document(metadata["source"])
+        plan = await self._compilation.run_async(
+            lambda: compile_canvas_document(metadata["source"])
+        )
+        if await self._plan_scope(scope) != captured:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        return plan
+
+    async def _plan_scope(self, scope: CanvasGatewayScope) -> tuple:
+        """Recheck the child-owned branch without transporting another source copy."""
+        response = await self._request(scope, "scope.snapshot.request", {})
+        payload = response.payload
+        if (
+            payload["session_id"] != scope.conversation_session_id
+            or payload["selected_canvas_id"] != scope.canvas_id
+            or payload["selected_revision_id"] != scope.revision_id
+        ):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        return (
+            payload["session_id"],
+            payload["conversation_id"],
+            tuple(payload["active_message_ids"]),
+            payload["selected_canvas_id"],
+            payload["selected_revision_id"],
+        )
 
     async def read_source(self, scope: CanvasGatewayScope):
         payload, metadata = await self._read(scope)

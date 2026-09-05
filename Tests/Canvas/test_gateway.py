@@ -140,6 +140,55 @@ async def _post_json(
     return await session.post(url, data=json.dumps(value), headers=headers)
 
 
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+async def test_same_revision_reload_rejects_an_awaited_old_load_plan(monkeypatch):
+    authority = _Authority([])
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_plan(scope):
+        started.set()
+        await release.wait()
+        return compile_canvas_document("<!doctype html><p>old load</p>")
+
+    monkeypatch.setattr(authority, "resolve_render_plan", delayed_plan)
+    gateway = CanvasGateway(authority=authority)
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            origin, csrf, _capability = await _ready_bridge(
+                session, gateway, launch, prepare=False
+            )
+            pending = asyncio.create_task(
+                session.get(
+                    _launch_url(launch, "api/plan"),
+                    headers={
+                        "Sec-Fetch-Dest": "empty",
+                        "Sec-Fetch-Site": "same-origin",
+                    },
+                )
+            )
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                replacement = await _post_json(
+                    session,
+                    _launch_url(launch, "api/frame"),
+                    {},
+                    origin=origin,
+                    csrf=csrf,
+                )
+                assert replacement.status == 200
+            finally:
+                release.set()
+            response = await pending
+            assert response.status == 503
+            assert "old load" not in await response.text()
+    finally:
+        await gateway.aclose()
+
+
 async def _ready_bridge(
     session: aiohttp.ClientSession,
     gateway: CanvasGateway,

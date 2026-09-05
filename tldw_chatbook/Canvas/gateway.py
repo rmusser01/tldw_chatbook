@@ -1845,8 +1845,10 @@ class CanvasGateway:
         except CanvasCapabilityError:
             return _error_response("plan_unavailable", 401)
         plan = await _maybe_await(self._authority.resolve_render_plan(scope))
-        if not self._session_is_current(session, scope) or not isinstance(
-            plan, CanvasRenderPlan
+        if (
+            session.current_load_id != load_id
+            or not self._session_is_current(session, scope)
+            or not isinstance(plan, CanvasRenderPlan)
         ):
             return _error_response("plan_unavailable", 503)
         return web.json_response(_render_plan_wire(plan))

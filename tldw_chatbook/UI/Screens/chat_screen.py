@@ -19606,7 +19606,8 @@ class ChatScreen(BaseAppScreen):
             raise RuntimeError("Canvas source message is no longer current")
         message = store.get_message(message_id)
         authority = self._console_canvas_authority()
-        info = authority.import_html(
+        runtime = self._console_runtime()
+        info = await authority.import_html_async(
             session_id=session_id,
             source=source,
             create_new=reference.create_new,
@@ -19617,6 +19618,7 @@ class ChatScreen(BaseAppScreen):
             ),
             block_index=reference.block_index,
             block_identity=reference.identity,
+            _is_current=lambda: self.is_mounted and self._console_runtime() is runtime,
         )
         return await self._open_console_canvas_selection(
             session_id=session_id,

@@ -80,6 +80,30 @@ def _html(text: str) -> str:
     )
 
 
+@pytest.mark.parametrize("mismatch", ["source", "profile"])
+def test_prepared_import_rejects_mismatched_plan_without_write(db, mismatch):
+    conversation = _conversation(db)
+    message = _message(db, conversation, "assistant")
+    source = _html("private source")
+    plan = compile_canvas_document(
+        _html("different") if mismatch == "source" else source
+    )
+    if mismatch == "profile":
+        # Deliberately corrupt an internal prepared value at the service boundary.
+        object.__setattr__(plan, "runtime_profile", "future-profile")
+    service = CanvasService(db)
+    with pytest.raises(CanvasServiceError) as error:
+        service.import_canvas(
+            _scope(conversation, message),
+            title="Example",
+            source=source,
+            _prepared_plan=plan,
+        )
+    assert error.value.code == "document_incompatible"
+    assert "private source" not in str(error.value)
+    assert service.list_canvases(_scope(conversation, message)) == ()
+
+
 def _create_canvas(
     repository: CanvasRepository,
     conversation_id: str,

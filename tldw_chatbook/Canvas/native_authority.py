@@ -27,6 +27,7 @@ from .gateway import (
 from .limits import sha256_utf8, validate_utf8_text
 from .models import (
     CanvasReadResult,
+    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
@@ -104,6 +105,21 @@ class _ParsedBlockImport:
 
 
 @dataclass(frozen=True, slots=True)
+class _ImportCapture:
+    scope: CanvasScope
+    selection: tuple[str, str] | None
+    owner: Any
+    view_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedImport:
+    capture: _ImportCapture
+    title: str
+    plan: CanvasRenderPlan
+
+
+@dataclass(frozen=True, slots=True)
 class CanvasBridgeTarget:
     """Exact source-free native chat target captured by one browser shell."""
 
@@ -159,6 +175,7 @@ class NativeConsoleCanvasAuthority:
     ) -> None:
         self._scope_resolver = scope_resolver
         self._canvas_controller = canvas_controller
+        self._compilation = canvas_controller.compilation
         self._bridge_sink = bridge_sink
         self._bridge_prepare = bridge_prepare
         self._auto_open = auto_open
@@ -176,6 +193,7 @@ class NativeConsoleCanvasAuthority:
         self._events: dict[tuple[str, str], list[CanvasGatewayEvent]] = {}
         self._lock = RLock()
         self._disposed = False
+        self._view_generation = 0
 
     def dispose(self) -> None:
         """Fence publication replay state and release runtime-owned memory."""
@@ -207,6 +225,8 @@ class NativeConsoleCanvasAuthority:
     ) -> None:
         """Refresh view callbacks while preserving runtime-owned selections."""
 
+        if self._scope_resolver != scope_resolver:
+            self._view_generation += 1
         self._scope_resolver = scope_resolver
         self._bridge_sink = bridge_sink
         self._bridge_prepare = bridge_prepare
@@ -311,22 +331,109 @@ class NativeConsoleCanvasAuthority:
             receipt.auto_open_in_flight = False
             receipt.auto_opened = True
 
-    def import_html(
+    def _capture_import(
+        self, session_id: str, block_arguments: Mapping[str, Any]
+    ) -> _ImportCapture:
+        scope = self._scope_resolver(session_id)
+        self._parsed_block_key(
+            scope,
+            **{
+                key: block_arguments.get(key)
+                for key in (
+                    "source_message_id",
+                    "origin_message_id",
+                    "source_turn_id",
+                    "block_index",
+                    "block_identity",
+                )
+            },
+        )
+        with self._lock:
+            if self._disposed or self._enabled_reader() is not True:
+                raise RuntimeError("canvas_scope_unavailable")
+            selected = self._selection.get(session_id)
+            selection = (selected.canvas_id, selected.revision_id) if selected else None
+            owner = self._canvas_controller.capture_interactive_owner(
+                scope, temporary=self._is_temporary(scope)
+            )
+            return _ImportCapture(scope, selection, owner, self._view_generation)
+
+    def _prepare_import(self, capture: _ImportCapture, source: str) -> _PreparedImport:
+        plan = self._canvas_controller.prepare_import(
+            source, temporary=self._is_temporary(capture.scope)
+        )
+        return _PreparedImport(capture, _document_title(source), plan)
+
+    async def import_html_async(
         self,
         *,
         session_id: str,
         source: str,
+        _is_current: Callable[[], bool] | None = None,
+        **kwargs: Any,
+    ) -> CanvasRevisionInfo:
+        """Prepare only pure source off-loop; apply under freshly checked authority."""
+        if _is_current is not None and not _is_current():
+            raise RuntimeError("canvas_scope_unavailable")
+        capture = self._capture_import(session_id, kwargs)
+        existing = self._apply_import(
+            session_id=session_id, source=source, capture=capture, **kwargs
+        )
+        if existing is not None:
+            return existing
+        prepared = await self._compilation.run_async(
+            lambda: self._prepare_import(capture, source)
+        )
+        if _is_current is not None and not _is_current():
+            raise RuntimeError("canvas_scope_unavailable")
+        result = self._apply_import(
+            session_id=session_id,
+            source=source,
+            capture=capture,
+            _prepared=prepared,
+            **kwargs,
+        )
+        assert result is not None
+        return result
+
+    def import_html(
+        self, *, session_id: str, source: str, **kwargs: Any
+    ) -> CanvasRevisionInfo:
+        """Synchronous import for existing non-interactive callers."""
+        capture = self._capture_import(session_id, kwargs)
+        existing = self._apply_import(
+            session_id=session_id, source=source, capture=capture, **kwargs
+        )
+        if existing is not None:
+            return existing
+        prepared = self._compilation.run(lambda: self._prepare_import(capture, source))
+        result = self._apply_import(
+            session_id=session_id,
+            source=source,
+            capture=capture,
+            _prepared=prepared,
+            **kwargs,
+        )
+        assert result is not None
+        return result
+
+    def _apply_import(
+        self,
+        *,
+        session_id: str,
+        source: str,
+        capture: _ImportCapture,
         create_new: bool = False,
         source_message_id: str | None = None,
         origin_message_id: str | None = None,
         source_turn_id: str | None = None,
         block_index: int | None = None,
         block_identity: str | None = None,
-    ) -> CanvasRevisionInfo:
+        _prepared: _PreparedImport | None = None,
+    ) -> CanvasRevisionInfo | None:
         """Create a revision from an authorized transcript block and select it."""
 
-        scope = self._scope_resolver(session_id)
-        title = _document_title(source)
+        scope = capture.scope
         parsed_key = self._parsed_block_key(
             scope,
             source_message_id=source_message_id,
@@ -340,6 +447,22 @@ class NativeConsoleCanvasAuthority:
         )
         origin_turn_id = source_turn_id or scope.run_id
         with self._lock:
+            current = self._scope_resolver(session_id)
+            selected = self._selection.get(session_id)
+            selection = (selected.canvas_id, selected.revision_id) if selected else None
+            if (
+                self._disposed
+                or self._enabled_reader() is not True
+                or self._view_generation != capture.view_generation
+                or current.session_id != scope.session_id
+                or current.conversation_id != scope.conversation_id
+                or current.active_message_ids != scope.active_message_ids
+                or selection != capture.selection
+            ):
+                raise RuntimeError("canvas_scope_unavailable")
+            self._canvas_controller.validate_interactive_owner(
+                scope, capture.owner, temporary=self._is_temporary(scope)
+            )
             if parsed_key is not None and not create_new:
                 prior = self._parsed_block_imports.get(parsed_key)
                 if prior is None:
@@ -374,6 +497,8 @@ class NativeConsoleCanvasAuthority:
                         existing.revision.revision_id,
                     )
                     return existing.revision
+            if _prepared is None:
+                return None
             selection = self._selection.get(session_id)
             if not create_new and selection is not None:
                 result = self._update(
@@ -383,15 +508,19 @@ class NativeConsoleCanvasAuthority:
                     source,
                     origin_message_id=revision_origin_message_id,
                     origin_turn_id=origin_turn_id,
+                    prepared_plan=_prepared.plan,
+                    expected_owner=capture.owner,
                 )
                 info = result.revision
             else:
                 created = self._create(
                     scope,
-                    title,
+                    _prepared.title,
                     source,
                     origin_message_id=revision_origin_message_id,
                     origin_turn_id=origin_turn_id,
+                    prepared_plan=_prepared.plan,
+                    expected_owner=capture.owner,
                 )
                 info = created.revision
             if parsed_key is not None and not create_new:
@@ -483,8 +612,27 @@ class NativeConsoleCanvasAuthority:
                 revision_id=chosen.revision.revision_id,
             )
 
-    def resolve_render_plan(self, scope: CanvasGatewayScope):
-        return compile_canvas_document(self._read_gateway(scope).source)
+    async def resolve_render_plan(self, scope: CanvasGatewayScope):
+        captured = self._selected_scope(scope)
+        owner = self._canvas_controller.capture_interactive_owner(
+            captured, temporary=self._is_temporary(captured)
+        )
+        source = self._read_exact(captured, scope.canvas_id, scope.revision_id).source
+        plan = await self._compilation.run_async(
+            lambda: compile_canvas_document(source)
+        )
+        current = self._selected_scope(scope)
+        if (
+            self._disposed
+            or self._enabled_reader() is not True
+            or current.conversation_id != captured.conversation_id
+            or current.active_message_ids != captured.active_message_ids
+        ):
+            raise RuntimeError("canvas_scope_unavailable")
+        self._canvas_controller.validate_interactive_owner(
+            captured, owner, temporary=self._is_temporary(captured)
+        )
+        return plan
 
     def control_scope_snapshot(self, scope: CanvasGatewayScope) -> CanvasScope:
         """Return the exact active branch scope for the private served channel."""
@@ -852,6 +1000,8 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
+        prepared_plan: CanvasRenderPlan,
+        expected_owner: Any,
     ) -> Any:
         result = self._canvas_controller.interactive_create_canvas(
             scope,
@@ -860,6 +1010,8 @@ class NativeConsoleCanvasAuthority:
             title=title,
             html=source,
             temporary=self._is_temporary(scope),
+            _prepared_plan=prepared_plan,
+            _expected_owner=expected_owner,
         )
         return type(
             "InteractiveCreate",
@@ -880,6 +1032,8 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
+        prepared_plan: CanvasRenderPlan,
+        expected_owner: Any,
     ):
         result = self._canvas_controller.interactive_update_canvas(
             scope,
@@ -889,6 +1043,8 @@ class NativeConsoleCanvasAuthority:
             expected_parent_revision_id=parent_id,
             html=source,
             temporary=self._is_temporary(scope),
+            _prepared_plan=prepared_plan,
+            _expected_owner=expected_owner,
         )
         if not hasattr(result, "revision"):
             raise RuntimeError("Canvas changed before import")

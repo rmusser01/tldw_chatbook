@@ -239,6 +239,7 @@ class CanvasService:
         source: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
+        _prepared_plan: CanvasRenderPlan | None = None,
     ) -> CanvasCreateResult:
         """Durably import a user-selected transcript HTML block."""
 
@@ -249,6 +250,7 @@ class CanvasService:
             actor_kind="user_import",
             origin_message_id=origin_message_id,
             origin_turn_id=origin_turn_id,
+            _prepared_plan=_prepared_plan,
         )
 
     def _create_canvas(
@@ -260,6 +262,7 @@ class CanvasService:
         actor_kind: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
+        _prepared_plan: CanvasRenderPlan | None = None,
     ) -> CanvasCreateResult:
         verified = self._validate_scope(scope, require_active_path=True)
         origin_message_id = origin_message_id or scope.active_message_ids[-1]
@@ -271,7 +274,7 @@ class CanvasService:
         origin_path = scope.active_message_ids[
             : verified.path_positions[origin_message_id] + 1
         ]
-        plan = self._compile(source)
+        plan = self._compile(source, _prepared_plan)
         repository_error: CanvasServiceError | None = None
         try:
             created = self._repository.create_canvas(
@@ -325,6 +328,7 @@ class CanvasService:
         source: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
+        _prepared_plan: CanvasRenderPlan | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a replacement imported explicitly by the user."""
 
@@ -336,6 +340,7 @@ class CanvasService:
             actor_kind="user_import",
             origin_message_id=origin_message_id,
             origin_turn_id=origin_turn_id,
+            _prepared_plan=_prepared_plan,
         )
 
     def _update_canvas(
@@ -348,6 +353,7 @@ class CanvasService:
         actor_kind: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
+        _prepared_plan: CanvasRenderPlan | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         verified = self._validate_scope(scope, require_active_path=True)
         origin_message_id = origin_message_id or scope.active_message_ids[-1]
@@ -368,7 +374,7 @@ class CanvasService:
         if expected_parent_revision_id != base.revision_id:
             return self._conflict(base)
 
-        plan = self._compile(source)
+        plan = self._compile(source, _prepared_plan)
         repository_error: CanvasServiceError | None = None
         try:
             revision = self._repository.append_revision(
@@ -549,12 +555,16 @@ class CanvasService:
             return selected
         return default
 
-    def _compile(self, source: str) -> CanvasRenderPlan:
+    def _compile(
+        self, source: str, prepared_plan: CanvasRenderPlan | None = None
+    ) -> CanvasRenderPlan:
         failure_issues: tuple[CanvasCompatibilityIssue, ...] | None = None
         try:
-            plan = self._compiler(source)
+            plan = self._compiler(source) if prepared_plan is None else prepared_plan
             if not isinstance(plan, CanvasRenderPlan):
                 raise CanvasLimitError("compiler returned an invalid render plan")
+            if plan.runtime_profile != "canvas-v1":
+                raise CanvasLimitError("unsupported Canvas runtime profile")
             plan.source_identity.verify_source(source)
             return plan
         except CanvasCompileError as exc:

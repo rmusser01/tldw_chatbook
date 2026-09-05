@@ -13,14 +13,16 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Canvas.compilation import CanvasCompilation
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
-from tldw_chatbook.Canvas.limits import sha256_utf8
+from tldw_chatbook.Canvas.limits import CanvasLimitError, sha256_utf8
 from tldw_chatbook.Canvas.models import (
     CanvasConflictResult,
     CanvasListItem,
     CanvasMutationResult,
     CanvasOrigin,
     CanvasReadResult,
+    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
@@ -310,6 +312,7 @@ class ConsoleCanvasController:
         self._promotion_leases: dict[str, object] = {}
         self._session_generations: dict[str, int] = {}
         self._lock = threading.RLock()
+        self.compilation = CanvasCompilation()
         self._settlement_listeners: list[
             Callable[[CanvasSettlementPublication], None]
         ] = []
@@ -477,6 +480,23 @@ class ConsoleCanvasController:
         html: str,
         _run_owner: CanvasRunOwner | None = None,
     ) -> CanvasMutationResult:
+        arguments = {"tool_call_id": tool_call_id, "title": title, "html": html}
+        preflight = self._create_canvas(scope, **arguments, _run_owner=_run_owner)
+        if not isinstance(preflight, CanvasRunOwner):
+            return preflight
+        plan = self.compilation.run(lambda: compile_canvas_document(html))
+        return self._create_canvas(scope, **arguments, _run_owner=preflight, _plan=plan)
+
+    def _create_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        tool_call_id: str,
+        title: str,
+        html: str,
+        _run_owner: CanvasRunOwner | None = None,
+        _plan: CanvasRenderPlan | None = None,
+    ) -> CanvasMutationResult | CanvasRunOwner:
         with self._lock:
             stage = self._require_scope(scope, _run_owner)
             request_digest = sha256_utf8(f"create\0{title}\0{html}")
@@ -485,7 +505,9 @@ class ConsoleCanvasController:
                 return replay
             if stage.state is not CanvasRunState.OPEN:
                 raise RuntimeError("canvas_scope_unavailable")
-            plan = compile_canvas_document(html)
+            if _plan is None:
+                return stage.run_owner
+            plan = _plan
             now = datetime.now(UTC).isoformat()
             info = CanvasRevisionInfo(
                 canvas_id=str(uuid4()),
@@ -512,10 +534,23 @@ class ConsoleCanvasController:
         title: str,
         html: str,
         temporary: bool,
+        _prepared_plan: CanvasRenderPlan | None = None,
+        _expected_owner: Any = ...,
     ) -> CanvasMutationResult:
         """Create a user-opened Canvas through the shared staging authority."""
 
+        owner = (
+            self.capture_interactive_owner(scope, temporary=temporary)
+            if _expected_owner is ...
+            else _expected_owner
+        )
+        plan = (
+            self.compilation.run(lambda: self.prepare_import(html, temporary=temporary))
+            if _prepared_plan is None
+            else _prepared_plan
+        )
         with self._lock:
+            self.validate_interactive_owner(scope, owner, temporary=temporary)
             if not temporary:
                 created = self._service_call(
                     "import_canvas",
@@ -524,14 +559,15 @@ class ConsoleCanvasController:
                     source=html,
                     origin_message_id=origin_message_id,
                     origin_turn_id=origin_turn_id,
+                    _prepared_plan=plan,
                 )
                 return CanvasMutationResult(
                     created.revision, created.compatibility_issues
                 )
+            self._validate_import_plan(html, plan)
             stage = self._new_interactive_stage(
                 scope, origin_message_id=origin_message_id, temporary=True
             )
-            plan = compile_canvas_document(html)
             now = datetime.now(UTC).isoformat()
             info = CanvasRevisionInfo(
                 canvas_id=str(uuid4()),
@@ -561,10 +597,23 @@ class ConsoleCanvasController:
         expected_parent_revision_id: str,
         html: str,
         temporary: bool,
+        _prepared_plan: CanvasRenderPlan | None = None,
+        _expected_owner: Any = ...,
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a user import replacement through durable or staged history."""
 
+        owner = (
+            self.capture_interactive_owner(scope, temporary=temporary)
+            if _expected_owner is ...
+            else _expected_owner
+        )
+        plan = (
+            self.compilation.run(lambda: self.prepare_import(html, temporary=temporary))
+            if _prepared_plan is None
+            else _prepared_plan
+        )
         with self._lock:
+            self.validate_interactive_owner(scope, owner, temporary=temporary)
             selected = replace(
                 scope,
                 selected_canvas_id=canvas_id,
@@ -579,6 +628,7 @@ class ConsoleCanvasController:
                     source=html,
                     origin_message_id=origin_message_id,
                     origin_turn_id=origin_turn_id,
+                    _prepared_plan=plan,
                 )
             current = self.read_session_canvas(selected, canvas_id, temporary=True)
             if current.revision.revision_id != expected_parent_revision_id:
@@ -591,10 +641,10 @@ class ConsoleCanvasController:
                     current.revision.sequence,
                     current.revision.origin,
                 )
+            self._validate_import_plan(html, plan)
             stage = self._new_interactive_stage(
                 scope, origin_message_id=origin_message_id, temporary=True
             )
-            plan = compile_canvas_document(html)
             info = CanvasRevisionInfo(
                 canvas_id=canvas_id,
                 revision_id=str(uuid4()),
@@ -621,6 +671,45 @@ class ConsoleCanvasController:
                 self._session_generations.get(scope.session_id, 0) + 1
             )
             return CanvasMutationResult(info, plan.compatibility_issues)
+
+    def capture_interactive_owner(
+        self, scope: CanvasScope, *, temporary: bool
+    ) -> CanvasSessionOwner | None:
+        """Capture the existing session incarnation before pure import preparation."""
+        with self._lock:
+            owner = self._session_owners.get(scope.session_id)
+            self.validate_interactive_owner(scope, owner, temporary=temporary)
+            return owner
+
+    def validate_interactive_owner(
+        self, scope: CanvasScope, owner: Any, *, temporary: bool
+    ) -> None:
+        """Fence imported work against closure, promotion, and same-ID replacement."""
+        with self._lock:
+            if self._closed or (
+                temporary
+                and (
+                    owner is None
+                    or self._session_owners.get(scope.session_id) is not owner
+                    or scope.session_id in self._promotion_leases
+                )
+            ):
+                raise RuntimeError("canvas_scope_unavailable")
+
+    @staticmethod
+    def _validate_import_plan(source: str, plan: Any) -> None:
+        if (
+            not isinstance(plan, CanvasRenderPlan)
+            or plan.runtime_profile != "canvas-v1"
+        ):
+            raise CanvasLimitError("invalid prepared Canvas plan")
+        plan.source_identity.verify_source(source)
+
+    def prepare_import(self, source: str, *, temporary: bool) -> CanvasRenderPlan:
+        """Compile pure input on the caller's admitted worker, preserving service errors."""
+        if not temporary:
+            return self._service_call("_compile", source)
+        return compile_canvas_document(source)
 
     def interactive_rename_canvas(
         self,
@@ -784,6 +873,29 @@ class ConsoleCanvasController:
         html: str,
         _run_owner: CanvasRunOwner | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
+        arguments = {
+            "tool_call_id": tool_call_id,
+            "canvas_id": canvas_id,
+            "expected_parent_revision_id": expected_parent_revision_id,
+            "html": html,
+        }
+        preflight = self._update_canvas(scope, **arguments, _run_owner=_run_owner)
+        if not isinstance(preflight, CanvasRunOwner):
+            return preflight
+        plan = self.compilation.run(lambda: compile_canvas_document(html))
+        return self._update_canvas(scope, **arguments, _run_owner=preflight, _plan=plan)
+
+    def _update_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        tool_call_id: str,
+        canvas_id: str,
+        expected_parent_revision_id: str,
+        html: str,
+        _run_owner: CanvasRunOwner | None = None,
+        _plan: CanvasRenderPlan | None = None,
+    ) -> CanvasMutationResult | CanvasConflictResult | CanvasRunOwner:
         with self._lock:
             stage = self._require_scope(scope, _run_owner)
             request_digest = sha256_utf8(
@@ -834,7 +946,9 @@ class ConsoleCanvasController:
                     return self._cache_conflict(
                         stage, tool_call_id, request_digest, parent, "stale_parent"
                     )
-            plan = compile_canvas_document(html)
+            if _plan is None:
+                return stage.run_owner
+            plan = _plan
             info = CanvasRevisionInfo(
                 canvas_id=canvas_id,
                 revision_id=str(uuid4()),
