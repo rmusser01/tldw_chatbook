@@ -5,6 +5,11 @@ Architecture: [ADR-115](../../backlog/decisions/115-local-versioned-canvas-artif
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
+Latest scoped rereview (`a7bcc6b094..648530ac6`) closes I1 and I4; I2 remains
+open for select-value restoration order and mixed-presence subtree identities.
+TASK-31232 remains In Progress with AC9 and AC10 open. Details below preserve
+earlier findings chronologically rather than representing every historical
+finding as still open.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
 create-triggered native opening, exact card/replacement-session coverage and
@@ -131,8 +136,25 @@ remain outside these targeted passing results.
 The additional pass implements session-incarnation-wide temporary 8 MiB
 admission, virtual-only detached edits with bounded reconstruction of supported
 explicit empty/false form properties, and original authority/owner/enabled/
-source checks before compile-refusal repair. Scoped rereview is pending; the
-earlier open findings are not closed by these implementation claims alone.
+source checks before compile-refusal repair. The static scoped rereview closes
+I1 (temporary cap) and I4 (stale repair). It retains I2 for two cases not covered
+by the passing browser test:
+
+- `select.value` is restored before reconstructed options are appended, so a
+  non-first or empty/no-match value can be replaced by native selection defaults.
+  Child-dependent values must be restored after the child structure, with
+  deliberate ordering relative to explicit option overrides.
+- Reconstruction checks renderer presence only at its root, then recreates
+  every descendant. A child newly created or still live in the reinsertion
+  operation can therefore receive a duplicate create and be refused. Each
+  descendant needs correct present/absent handling while retaining parent
+  attachments and bounds.
+
+These are static code-path residuals, not new executed failing tests. The
+review found no separate new Critical/Important issue and did not reopen
+I3/I5/M1/M2. One authorized additional pass and its scoped rereview are now
+complete, but the feature is not ready to merge. An additional DOM-only pass
+requires explicit direction; AC9's six baseline failures remain separate.
 
 Final focused Python command:
 

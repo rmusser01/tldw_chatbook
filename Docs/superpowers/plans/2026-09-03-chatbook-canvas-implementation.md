@@ -597,12 +597,12 @@ two Minor corrections. Earlier task-level evidence remains historical evidence,
 not satisfaction of these newly identified production seams. TASK-31232 AC3 is
 reopened and AC10 records the corrective outcomes; AC9 remains unsatisfied.
 
-- [ ] Enforce count/revision/byte quotas in the actual Console mutation owner
+- [x] Enforce count/revision/byte quotas in the actual Console mutation owner
   before staging, including existing/concurrent history and failure release.
 - [ ] Preserve bounded DOM identity for move/reinsert and reject cycles atomically.
 - [x] Preserve ordinary non-opt-in continuation bytes and assistant text while
   retaining fail-closed sensitive Canvas projection in mixed rounds.
-- [ ] Discover transcript HTML-fence identity cheaply and compile compatibility
+- [x] Discover transcript HTML-fence identity cheaply and compile compatibility
   only through bounded off-loop validation, retaining stale-message fences.
 - [x] Keep valid historical pins on ordinary publication; preserve explicit
   selection and Follow semantics, including same-revision pin intent.
@@ -631,17 +631,26 @@ ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sa
 Reason: enforce the existing temporary resource, virtual DOM and stale-effect
 contracts without changing storage, permissions or runtime boundaries.
 
-- [ ] Enforce exact default 8 MiB temporary admission, including confirmed
+- [x] Enforce exact default 8 MiB temporary admission, including confirmed
   temporary history, concurrent stages, multiple turns, import/rename and abort
   release, while preserving the separate durable ceiling.
 - [ ] Support detached text/attribute/property/style and subtree edits before
   reinsertion with bounded transactional state; restore supported empty/false
   form values after attributes. Verify through the actual browser renderer.
-- [ ] Suppress late compile-refusal repair effects after disable or changes to
+- [x] Suppress late compile-refusal repair effects after disable or changes to
   the captured owner/session/source block; retain the valid repair control and
   successful import fences with no retained source cache.
-- [ ] Record exact RED/GREEN, final affected tests/statics/asset integrity and
+- [x] Record exact RED/GREEN, final affected tests/statics/asset integrity and
   owned browser cleanup, then obtain one scoped author-independent rereview.
+
+Implementation `1467bdf0a6`, scoped rereview through `648530ac6`: I1 and I4
+addressed; I2 still requires child-dependent select-value restoration after
+options exist and per-descendant presence handling during reconstruction.
+The latter prevents duplicate creates when a new or live child is added to
+an already-detached parent before reinsertion. These are required supported
+DOM behaviors, not harmless waivers. The authorized pass is exhausted; retain
+the worktree/evidence and request a specifically scoped DOM-only continuation.
+TASK-31232 AC3 is now checked; AC9 and AC10 remain open.
 
 ## Execution Handoff
 
