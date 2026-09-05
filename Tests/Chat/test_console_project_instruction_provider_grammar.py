@@ -89,7 +89,7 @@ def test_native_adapter_keeps_native_context_grammar_with_empty_tool_catalog(
         store=None,
         provider_gateway=None,
         resolution=None,
-        assistant_message_id=None,
+        assistant_message_id="native-grammar-assistant-owner",
         should_cancel=lambda: False,
         loop=None,
         native_tools=True,
