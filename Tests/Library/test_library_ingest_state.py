@@ -2732,6 +2732,158 @@ def test_analysis_hint_does_not_block_start() -> None:
     assert state.start_enabled is True
 
 
+# ---------------------------------------------------------------------------
+# task-28007 Task 3 (AC#1/AC#2): batch-analyze a run's analysis-skipped items
+# ---------------------------------------------------------------------------
+
+
+def _skipped_job(**overrides) -> LibraryIngestJob:
+    defaults = dict(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.DONE,
+        media_id=7,
+        submitted_at=100.0,
+        finished_at=101.0,
+        progress={
+            "message": (
+                "Imported notes.txt — analysis skipped: no analysis "
+                "provider is configured"
+            ),
+            "analysis_skipped": "no analysis provider is configured",
+        },
+    )
+    defaults.update(overrides)
+    return LibraryIngestJob(**defaults)
+
+
+def test_analyze_skipped_action_hidden_without_skipped_items():
+    """No skipped rows -- the action never appears, ready or not."""
+    done = _job(
+        state=IngestJobState.DONE,
+        media_id=1,
+        progress={"message": "Imported x.txt"},
+    )
+    state = build_library_ingest_state(
+        (done,), form=LibraryIngestFormState(), analysis_action_ready=True
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_action_hidden_while_the_provider_is_not_ready():
+    """AC#1's gate: skipped items alone are not enough -- Task 1's reason
+    must ALSO be empty (re-offering the action would repeat the exact
+    failure it exists to fix)."""
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=False,
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_action_shows_with_skipped_items_and_a_ready_provider():
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+    assert state.show_analyze_skipped is True
+
+
+def test_analyze_skipped_ids_span_the_whole_visible_queue_not_one_batch():
+    """The action id is fixed/singular ("library-ingest-analyze-skipped"),
+    so it is ONE canvas-wide control over every skipped id currently in
+    the queue -- never one per batch (which could mount the same id
+    twice and crash)."""
+    first = _skipped_job(job_id="ingest-job-1", media_id=1, batch_id="local-aaa")
+    second = _skipped_job(job_id="ingest-job-2", media_id=2, batch_id="local-bbb")
+    state = build_library_ingest_state(
+        (first, second),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+    )
+    assert set(state.analyze_skipped_media_ids) == {"1", "2"}
+
+
+def test_analyze_skipped_excludes_an_id_this_action_already_fixed():
+    """N is the count of skipped rows that STILL have no analysis: an id
+    the screen's own outcomes map already marked ok=True drops out."""
+    state = build_library_ingest_state(
+        (_skipped_job(media_id=7),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_outcomes={"7": (True, "")},
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_keeps_an_id_this_action_failed_on():
+    """A failed re-attempt still has no analysis -- it stays offered."""
+    state = build_library_ingest_state(
+        (_skipped_job(media_id=7),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_outcomes={"7": (False, "analysis did not persist")},
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+
+
+def test_analyze_skipped_action_disabled_while_a_run_is_active():
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_running=True,
+    )
+    assert state.show_analyze_skipped is True
+    assert state.analyze_skipped_running is True
+
+
+def test_analyze_outcome_paints_a_success_receipt_on_its_own_row():
+    """AC#2: rows ARE individually addressable in the Import canvas -- the
+    outcome overlays the row's OWN progress line, replacing the stale
+    "analysis skipped: ..." note with the receipt grammar (same glyphs
+    Task 2 used on the Media canvas)."""
+    job = _skipped_job(media_id=7, source_path="/tmp/notes.txt")
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (True, "")},
+    )
+    row = state.queue_rows[0]
+    assert row.progress is not None
+    assert row.progress["message"] == "✓ analyzed · notes.txt"
+
+
+def test_analyze_outcome_paints_a_failure_receipt_with_its_reason():
+    job = _skipped_job(media_id=7, source_path="/tmp/notes.txt")
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (False, "analysis did not persist")},
+    )
+    row = state.queue_rows[0]
+    assert row.progress["message"] == (
+        "✗ analysis failed · notes.txt · analysis did not persist"
+    )
+
+
+def test_analyze_outcome_is_a_no_op_for_a_job_without_a_media_id():
+    job = _skipped_job(media_id=None)
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (True, "")},
+    )
+    row = state.queue_rows[0]
+    assert "analysis skipped" in row.progress["message"]
+
+
 # --- task-3304 (MI-17): install commands recoverable at the warning ----------
 
 

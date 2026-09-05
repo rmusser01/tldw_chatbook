@@ -618,3 +618,10 @@ a second press while a run is in flight says "Analysis already running";
 and leaving Library mid-run stops it with a notice naming where it got to.
 Details on the [media & conversations](library/media-and-conversations.md)
 page.)*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#1/AC#2: an
+import run left with analysis-skipped rows (no provider configured at the
+time) can be fixed in one action once a provider IS configured — "Analyze
+N skipped" above the import queue, over every skipped id currently in the
+queue. Details on the
+[import & export](library/import-and-export.md) page.)*

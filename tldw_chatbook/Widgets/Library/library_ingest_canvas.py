@@ -523,6 +523,18 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
+        if state.show_analyze_skipped:
+            # (task-28007 AC#1/AC#2) One run-summary action over every
+            # analysis-skipped id currently in the queue -- the id is
+            # fixed/singular (never job- or batch-suffixed), so this is
+            # the ONLY place it is composed.
+            yield Button(
+                f"Analyze {len(state.analyze_skipped_media_ids)} skipped",
+                id="library-ingest-analyze-skipped",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=state.analyze_skipped_running,
+            )
         # (task-2221) Per-submission group headers: rendered before the
         # first row of each headed group. Rows keep their flat order and
         # identity semantics -- the header is an extra Static, not a
