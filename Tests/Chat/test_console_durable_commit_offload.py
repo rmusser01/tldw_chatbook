@@ -35,16 +35,17 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleDispatchRecoveryKind,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @pytest.mark.parametrize("after_commit", [False, True])
-@pytest.mark.parametrize("agent_path", [False, True])
+@pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
 async def test_stop_during_dispatch_cas_settles_before_returning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     after_commit: bool,
-    agent_path: bool,
+    execution_path: str,
 ) -> None:
     """Stop must drain the actual SQLite handoff before terminal settlement."""
     db, store, controller, gateway = _controller(tmp_path)
@@ -68,8 +69,33 @@ async def test_stop_during_dispatch_cas_settles_before_returning(
     background_cancel = controller._active_cancel_events["session-2"]
     store.switch_session("session-1")
     agent_run = Mock(side_effect=AssertionError("Stopped turn entered the agent"))
-    if agent_path:
+    sync_gateway = None
+    sync_worker_finished = threading.Event()
+    adapter = Mock(side_effect=AssertionError("Stopped turn entered sync adapter"))
+    if execution_path == "agent":
         controller._agent_bridge = SimpleNamespace(run_reply=agent_run)
+    elif execution_path == "sync":
+        sync_gateway = ConsoleProviderGateway(
+            config_provider=lambda: {
+                "api_settings": {"openai": {"api_key": "test-only-key"}}
+            },
+            environ={},
+            chat_api_call_fn=adapter,
+        )
+        controller.provider_gateway = sync_gateway
+        controller.provider = "openai"
+        controller.model = "gpt-4.1"
+        mark_unknown = sync_gateway._commit_trace_dispatch_unknown
+
+        def observe_cancelled_dispatch(boundary):
+            try:
+                return mark_unknown(boundary)
+            finally:
+                sync_worker_finished.set()
+
+        monkeypatch.setattr(
+            sync_gateway, "_commit_trace_dispatch_unknown", observe_cancelled_dispatch
+        )
     repository = store.persistence.console_dispatch_repository
     original_cas = repository.cas_state
     entered = threading.Event()
@@ -104,8 +130,11 @@ async def test_stop_during_dispatch_cas_settles_before_returning(
             release.set()
         await asyncio.wait_for(submit, timeout=5)
         assert await asyncio.to_thread(finished.wait, 5)
+        if sync_gateway is not None:
+            assert await asyncio.to_thread(sync_worker_finished.wait, 5)
         assert gateway.calls == 1  # Only the unrelated background session entered.
         agent_run.assert_not_called()
+        adapter.assert_not_called()
         assert controller.run_state.status is ConsoleRunStatus.STOPPED
         assert ConsoleRunStatus.BLOCKED not in controller.run_state_history
         assert store.dispatch_recovery_for_session("session-2") == background_owner
@@ -138,6 +167,8 @@ async def test_stop_during_dispatch_cas_settles_before_returning(
         release.set()
         background_release.set()
         await asyncio.gather(submit, background, return_exceptions=True)
+        if sync_gateway is not None:
+            await sync_gateway.aclose()
         db.close()
 
 

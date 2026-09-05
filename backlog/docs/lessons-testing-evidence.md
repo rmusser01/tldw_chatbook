@@ -11489,3 +11489,10 @@ and checkpoint deletion through another connection after the worker finishes.
 Cover both direct-provider and agent pre-worker paths, repeated Stop, and
 another live session. A transcript marker read from the store is only in-memory
 evidence unless the database is checked separately.
+
+PR2428 review exposed a second instance through the real generic synchronous
+gateway: `run_coroutine_threadsafe` detached the dispatch callback from the
+cancelled stream. Shielding only the callback did not make the stream wait.
+The regression now uses that actual gateway and waits for its worker's terminal
+acknowledgement; both callback and stream drain the same assistant-owned task
+before terminal settlement.

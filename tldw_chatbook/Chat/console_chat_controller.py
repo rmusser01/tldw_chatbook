@@ -3315,7 +3315,7 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
-        self._pending_dispatch_transitions: set[str] = set()
+        self._pending_dispatch_transitions: dict[str, asyncio.Task[None]] = {}
         self._deferred_user_stop_markers: set[str] = set()
         # Physical SQLite maintenance sets this process-local gate before its
         # final provider-idle check. New runs may prepare normally but cannot
@@ -8582,6 +8582,25 @@ class ConsoleChatController:
             return await asyncio.to_thread(call, *args)
         return call(*args)
 
+    async def _drain_dispatch_transition(self, assistant_id: str) -> bool:
+        """Publish a pending handoff before settlement; report caller cancellation."""
+        transition = self._pending_dispatch_transitions.get(assistant_id)
+        if transition is None:
+            return False
+        cancelled = False
+        try:
+            while not transition.done():
+                try:
+                    await asyncio.shield(transition)
+                except asyncio.CancelledError:
+                    # Repeated Stop must not cancel the draining handoff.
+                    cancelled = True
+            transition.result()
+        finally:
+            if self._pending_dispatch_transitions.get(assistant_id) is transition:
+                self._pending_dispatch_transitions.pop(assistant_id, None)
+        return cancelled
+
     def _build_durable_trace_request(
         self,
         *,
@@ -9320,7 +9339,6 @@ class ConsoleChatController:
             # Finish publishing that exact committed owner before Stop settles
             # it; otherwise a late CAS can survive a false recovery failure.
             assistant_id = commit.assistant_message_id
-            self._pending_dispatch_transitions.add(assistant_id)
             transition = asyncio.create_task(
                 self._run_durable_postcommit_effect(
                     preparation_id,
@@ -9329,18 +9347,8 @@ class ConsoleChatController:
                     fingerprint=fingerprint,
                 )
             )
-            cancelled = False
-            try:
-                while not transition.done():
-                    try:
-                        await asyncio.shield(transition)
-                    except asyncio.CancelledError:
-                        # Repeated Stop must not cancel the draining handoff.
-                        cancelled = True
-                transition.result()
-            finally:
-                self._pending_dispatch_transitions.discard(assistant_id)
-            if cancelled:
+            self._pending_dispatch_transitions[assistant_id] = transition
+            if await self._drain_dispatch_transition(assistant_id):
                 raise asyncio.CancelledError
 
         try:
@@ -21254,6 +21262,10 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if cancel_event.is_set():
+                # A synchronous gateway schedules the dispatch callback in a
+                # separate task. Cancelling this stream does not cancel that
+                # callback, so join its handoff before touching the owner.
+                await self._drain_dispatch_transition(assistant_message_id)
                 self.store.record_trajectory_timing(
                     assistant_message_id, model_status="cancelled"
                 )

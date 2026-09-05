@@ -53,6 +53,12 @@ and [voice harness source](kokoro-harness-source.txt) are frozen audit
 artifacts for the earlier provider/Kokoro runs. Both harness byte hashes were checked against their launch
 receipts. Their host-specific source, model, dependency, and profile-source
 paths describe this run; these text files are not portable launch commands.
+They are non-executable historical `.txt` artifacts (Git mode `100644`), with
+no import or execution entrypoint in the application, scripts, or tests. Their
+paths record the explicitly selected disposable UAT directories, not a product
+input boundary. Do not run these snapshots as reusable tools: a future runnable
+harness must independently establish and validate its authorized paths. Editing
+these historical bytes to add validation would invalidate the recorded hashes.
 The existing Python virtual environment supplied dependencies. Kokoro's model
 and additional speech packages stayed in their existing temporary locations.
 The final runs used approved host network/audio access after sandbox limitations
@@ -80,7 +86,18 @@ lint baselines, and 17 identical Bandit findings on current code and HEAD with
 none added. Those repaired-run receipts follow the fix and include matching
 production hashes plus independent post-exit SQLite verification.
 
-The successful after-text Stop persisted `assistant_generation_state=stopped` and removed its dispatch checkpoint; its system stop marker existed only in memory. See [retained database observations](stop-persistence-observations.json). Four deterministic regressions cover both direct and agent execution, before and after the dispatch CAS commits, repeated Stop, and preservation of another running session. They verify terminal state through an independent SQLite connection after the transaction thread finishes. This repair follows existing [ADR-079](../../../backlog/decisions/079-console-library-conversation-authority.md).
+The successful after-text Stop persisted `assistant_generation_state=stopped` and removed its dispatch checkpoint; its system stop marker existed only in memory. See [retained database observations](stop-persistence-observations.json). The initial four deterministic regressions cover both direct and agent execution, before and after the dispatch CAS commits, repeated Stop, and preservation of another running session. They verify terminal state through an independent SQLite connection after the transaction thread finishes. This repair follows existing [ADR-079](../../../backlog/decisions/079-console-library-conversation-authority.md).
+
+PR2428 review subsequently reproduced the same cancellation race through the
+generic synchronous gateway: its `run_coroutine_threadsafe` dispatch callback
+is detached from the active stream task. The active stream now drains that same
+pending transition task before settling Stop. Six SQLite integration cases cover
+direct, agent, and real generic-sync dispatch on both sides of the CAS, including
+the sync worker's terminal acknowledgement and blocked adapter entry. Seven
+database-independent cases cover drain failure, cancellation, and exact owner
+cleanup. These review changes are verified by deterministic tests; the real
+DeepSeek receipt above records the earlier production hash and is not presented
+as a live test of the subsequent review change.
 
 Rebased onto dev `c14dadd77`: production and regression patches are range-diff
 equivalent; both independent testing-lesson additions were retained. The same
@@ -89,3 +106,5 @@ baseline failures deselected. The dependency warning and fixture file-descriptor
 growth warning remain. Independent review found no actionable cancellation or
 ownership issue. Live receipts identify their original source base; they are
 not a claim that provider/audio UAT was repeated after rebase.
+
+[Sync-provider review verification](sync-stop-review-verification.json) records the later deterministic/static checks and preserves the earlier live receipts unchanged.
