@@ -132,11 +132,21 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
 
 
 async def _wait_for_detail_call(
-    service: ControlledDetailMediaService, backing_id: int
+    service: ControlledDetailMediaService, backing_id: int, *, pilot=None
 ) -> None:
+    entered = service.detail_entered.setdefault(backing_id, threading.Event())
+    if pilot is not None:
+        # A debounced selection may still be awaiting Textual's next pump.
+        await _wait_for_condition(
+            pilot,
+            entered.is_set,
+            timeout=2.0,
+            message=f"Detail call for backing id {backing_id} did not start.",
+        )
+        return
     try:
         started = await asyncio.to_thread(
-            service.detail_entered.setdefault(backing_id, threading.Event()).wait,
+            entered.wait,
             2,
         )
         if not started:
@@ -271,6 +281,7 @@ async def _load_row_0(screen, service, pilot):
         lambda: screen._library_media_reader_session.loaded_id == row_0_id,
         message="Row 0 never settled in the Reader.",
     )
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
     return row_0_id
 
 
@@ -343,7 +354,7 @@ async def test_prev_item_binding_disabled_at_the_first_item():
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        row_0_id = await _load_row_0(screen, service, pilot)
+        await _load_row_0(screen, service, pilot)
         # Row 0 is the first (top) item: no previous exists.
         assert screen.check_action("library_media_prev_item", ()) is False
         assert screen.check_action("library_media_next_item", ()) is True

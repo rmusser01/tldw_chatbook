@@ -41,6 +41,7 @@ from Tests.UI.test_library_media_side_by_side import (
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _wait_for_condition,
+    _wait_for_selector,
 )
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -135,7 +136,7 @@ async def _load_row_with_document(screen, pilot, service, index: int, content: s
     """Seed row ``index`` with ``content`` and open it from the Items list."""
     canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
     screen.query_one(f"#library-media-row-{index}", Button).press()
-    await _wait_for_detail_call(service, backing_id)
+    await _wait_for_detail_call(service, backing_id, pilot=pilot)
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
@@ -159,7 +160,7 @@ async def _traverse_to_row(screen, pilot, service, *, from_index: int, to_index:
     screen.query_one(f"#library-media-row-{from_index}", Button).focus()
     await pilot.pause()
     await pilot.press("down")
-    await _wait_for_detail_call(service, backing_id)
+    await _wait_for_detail_call(service, backing_id, pilot=pilot)
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
@@ -177,7 +178,8 @@ async def _submit_query(screen, pilot, query: str) -> None:
     so the helper presses Find first when the input is not yet mounted.
     """
     if not screen.query("#library-media-content-search"):
-        screen.query_one("#library-media-reader-find", Button).press()
+        find = await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        find.press()
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-content-search")),

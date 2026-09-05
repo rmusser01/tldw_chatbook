@@ -1,11 +1,11 @@
 ---
 id: TASK-31648
 title: Extract Library media analysis controller
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 16:44'
-updated_date: '2026-09-05 16:55'
+updated_date: '2026-09-05 17:47'
 labels: []
 dependencies: []
 ---
@@ -18,9 +18,9 @@ Restore Library screen size governance by moving media analysis ownership into i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Media analysis provider gates, generation, persistence, overwrite choices and receipts preserve existing behavior.
-- [ ] #2 Controller dependencies are explicit and late bound; moved bodies preserve their behavior.
-- [ ] #3 Targeted characterization, architecture and static checks pass without increased existing ceilings.
+- [x] #1 Media analysis provider gates, generation, persistence, overwrite choices and receipts preserve existing behavior.
+- [x] #2 Controller dependencies are explicit and late bound; moved bodies preserve their behavior.
+- [x] #3 Targeted characterization, architecture and static checks pass without increased existing ceilings.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,7 +37,7 @@ Reason: Direct application of approved Docs/superpowers/specs/2026-08-02-screen-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Extracted media analysis generation, saving, bulk partition/retry and receipt operations into LibraryMediaAnalysisController with explicit late-bound sibling ports. Analysis receipt/edit state is controller-owned; the shared in-flight flag remains on the screen because Import reads it. Provider dispatch and readiness rendering stay screen-resident; private tests patch each owning module. DOM and handler decorators are unchanged.
-Verification: 31 analysis characterization tests passed before and after; 142 targeted controller/media/import/module-ratchet tests passed after. New module Ruff and formatter checks plus git diff --check pass. Existing screen size/method ceilings require the planned cleanup and subsequent reader extraction; task remains In Progress pending those.
-ADR: no new ADR; applies approved screen decomposition design and DESIGN.md section 7.
+Extracted media analysis generation, saving, bulk partition/retry and receipt operations into LibraryMediaAnalysisController with explicit late-bound sibling ports. Analysis receipt/edit state is controller-owned; the shared in-flight flag remains on the screen because Import reads it. Provider dispatch/readiness rendering and DOM handlers remain screen-resident. Exact state descriptors preserve old assignment seams without broad proxies.
+Verification: 31 analysis characterization tests passed before and after; 142 targeted controller/media/import/module-ratchet tests passed; subsequent combined Reader selection passed68 and Library architecture selection passed35. All20 moved analysis bodies were AST-compared unchanged. New modules/tests Ruff and formatter checks plus diffcheck pass; existing screen-wide formatter debt is outside this scoped extraction. Parent reviewed follow-up cleanup. New controller868lines; combined final screen41324lines/1301methods, below unchanged ceilings.
+ADR: no new ADR; applies approved screen decomposition design and DESIGN.md section7. Ownership/count details documented in Library decomposition recipe.
 <!-- SECTION:NOTES:END -->
