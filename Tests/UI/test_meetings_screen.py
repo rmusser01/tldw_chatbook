@@ -28,7 +28,9 @@ class FakeSession:
         self.segments: list[MeetingSegment] = []
         self.failed_segments = 0
         self.listeners: list[Any] = []
-        self.capture = SimpleNamespace(levels=lambda: (0.5, 0.25), audio_position_s=65.0, mode=mode)
+        self.capture = SimpleNamespace(
+            levels=lambda: (0.5, 0.25), audio_position_s=65.0, mode=mode, system_source_state="running"
+        )
         self._result = None
 
     def subscribe(self, listener):
@@ -182,6 +184,22 @@ async def test_start_pause_stop_flow_renders_transcript_and_footer(tmp_path):
         assert "ingest-job-3" in footer and str(tmp_path) in footer
         assert screen.query_one("#meetings-open-library", Button).disabled is False
         assert owner.stop_reasons == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_lost_tap_updates_system_status(tmp_path):
+    # Spec §7: when the tap dies and gives up, the rail must say so -- it
+    # must not keep reading its Start-time "Native (macOS tap)" copy
+    # forever while the session has silently degraded to mic-only.
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.3)
+        owner.session.capture.system_source_state = "lost"
+        await pilot.pause(0.5)
+        assert "System source lost" in _text(screen.query_one("#meetings-system-status", Static))
 
 
 @pytest.mark.asyncio

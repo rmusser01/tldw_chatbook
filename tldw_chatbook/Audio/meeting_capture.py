@@ -243,6 +243,21 @@ class MeetingCapture:
         return self._writers["mixed"].audio_position_s
 
     @property
+    def system_source_state(self) -> str:
+        """The system-audio tap's own state, for the rail's "lost" indicator.
+
+        ``"none"`` when there is no tap at all (room mode, or the tap failed
+        to start and ``start_recording`` already fell back to room mode);
+        otherwise the tap's own ``state`` (``"running"``, ``"lost"``, etc,
+        per ``system_audio_tap.py``) -- ``self._tap`` stays the SAME object
+        through a mid-session restart-once-then-give-up cycle, so its own
+        ``state`` is the only place "lost" is ever recorded.
+        """
+        if self._tap is None:
+            return "none"
+        return getattr(self._tap, "state", "unknown")
+
+    @property
     def paused(self) -> bool:
         return self._paused
 

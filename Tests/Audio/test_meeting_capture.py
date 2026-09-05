@@ -199,6 +199,22 @@ def test_start_builds_mic_with_retain_off_and_starts_tap(tmp_path):
     assert tap.state == "running"
 
 
+def test_system_source_state_reflects_tap(tmp_path):
+    # Room mode: no tap at all -- "none", not the tap's own vocabulary.
+    room_cap, _, _, _ = _capture(tmp_path, call_mode=False)
+    assert room_cap.system_source_state == "none"
+
+    # Call mode: mirrors the tap's own state, live, including a mid-session
+    # "lost" transition -- `self._tap` stays the SAME object through the
+    # spec's restart-once-then-give-up cycle, so reading its `.state` is
+    # exactly what the rail needs to notice a loss.
+    call_cap, _, tap, _ = _capture(tmp_path, call_mode=True)
+    call_cap.start_recording(callback=lambda b: None)
+    assert call_cap.system_source_state == "running"
+    tap.state = "lost"
+    assert call_cap.system_source_state == "lost"
+
+
 def test_mic_frame_pulls_one_tap_frame_and_zero_fills(tmp_path):
     cap, recorders, tap, writers = _capture(tmp_path)
     cap.start_recording(callback=lambda b: None)

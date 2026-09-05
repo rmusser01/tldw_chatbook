@@ -54,6 +54,11 @@ class MeetingsScreen(BaseAppScreen):
         # once the first prepare cycle has settled.
         self._syncing_pickers = True
         self.rendered_lines: list[str] = []
+        # Set once per session the first time the tap reports "lost" (spec
+        # §7); reset on Start so a NEW session's tap gets its own chance to
+        # show the indicator rather than being permanently suppressed by a
+        # previous session's loss.
+        self._lost_shown = False
 
     # ---- compose ----------------------------------------------------------
     def compose_content(self) -> ComposeResult:
@@ -222,6 +227,7 @@ class MeetingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#meetings-start")
     def _start_pressed(self) -> None:
         self._stop_requested = False
+        self._lost_shown = False
         self.query_one("#meetings-start", Button).disabled = True
         self.rendered_lines.clear()
         self.query_one("#meetings-transcript", RichLog).clear()
@@ -362,6 +368,11 @@ class MeetingsScreen(BaseAppScreen):
             mic, sys_ = session.capture.levels()
             self.query_one("#meetings-level-mic", ProgressBar).progress = int(mic * 100)
             self.query_one("#meetings-level-sys", ProgressBar).progress = int(sys_ * 100)
+            if not self._lost_shown and getattr(session.capture, "system_source_state", None) == "lost":
+                self._lost_shown = True
+                self.query_one("#meetings-system-status", Static).update(
+                    "System audio: System source lost — continuing from the microphone"
+                )
         except Exception as exc:  # noqa: BLE001
             logger.debug("meetings tick: {}", exc)
 
