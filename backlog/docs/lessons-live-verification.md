@@ -24,6 +24,23 @@ preconditions were made explicit.
 Traps found by running the app and talking to a real server, which the test suite
 structurally could not surface. Every entry states the incident that produced it.
 
+## Modal return can race an admitted operation (TASK-31552, 2026-09-05)
+
+The llama.cpp snapshot live UAT saved successfully but rejected confirmed Restore
+three times with `launch_unavailable`. Returning from the confirmation scheduled
+a screen-reentry readiness refresh; its temporary `ready=False` collided with the
+already-admitted Restore's staging. The same real runtime/image round-trip passed
+when only that callback was suppressed. Retaining the last completed observation
+while a new probe is pending fixes that distinction; actual failed probes must
+still invalidate readiness. Test these interleavings with barriers, including
+failure assertions **after** operation settlement, not merely after releasing it.
+
+The subsequent UAT retention loop also sent Enter twice within Textual Button's
+0.2-second `-active` feedback interval. The second key was ignored, and a harness
+waiting only for completion misreported a ten-minute operation timeout. Wait for
+the control to accept keyboard input and separately bound operation admission;
+do not infer that a server request exists just because the harness sent a key.
+
 ---
 
 ## Shell width equality does not prove pane containment
