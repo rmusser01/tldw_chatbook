@@ -143,8 +143,6 @@ _POLL_ATTEMPTS = 200
 _POLL_INTERVAL_SECONDS = 0.05
 
 
-
-
 def _conversation_settings_return_snapshot(
     *,
     provider: str = "llama_cpp",
@@ -702,7 +700,7 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
             settings_revision=store.session_settings_revision(session.id),
             snapshot=snapshot,
         )
-        real_claim = console._claim_conversation_settings_return
+        real_claim = console._settings_navigation._claim_conversation_settings_return
         replacement_target: ConsoleSettingsReturnTarget | None = None
 
         def stage_replacement_before_claim(handoffs, captured_target):
@@ -713,20 +711,18 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
                 monkeypatch.setattr(
-                    console,
+                    console._settings_navigation,
                     "_claim_conversation_settings_return",
                     real_claim,
                 )
             return real_claim(handoffs, captured_target)
 
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_claim_conversation_settings_return",
             stage_replacement_before_claim,
         )
@@ -743,9 +739,10 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
         assert replacement_target is not None
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
         return_copy = str(
             host.screen_stack[-1]
             .query_one("#console-settings-return-status", Static)
@@ -778,17 +775,16 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
             settings_revision=store.session_settings_revision(session.id),
             snapshot=snapshot,
         )
-        real_rejection_copy = console._conversation_settings_return_rejection_copy
+        real_rejection_copy = (
+            console._settings_navigation._conversation_settings_return_rejection_copy
+        )
         checks = 0
         replacement_target: ConsoleSettingsReturnTarget | None = None
 
         def reject_first_after_claim(target):
             nonlocal checks, replacement_target
             checks += 1
-            if (
-                target.return_revision == first_target.return_revision
-                and checks == 2
-            ):
+            if target.return_revision == first_target.return_revision and checks == 2:
                 current_settings = store.session_settings(session.id)
                 assert current_settings is not None
                 store.replace_session_settings(
@@ -800,15 +796,13 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
             return real_rejection_copy(target)
 
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_conversation_settings_return_rejection_copy",
             reject_first_after_claim,
         )
@@ -825,9 +819,10 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
         assert replacement_target is not None
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -931,7 +926,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             settings_revision=store.session_settings_revision(session.id),
             snapshot=first_snapshot,
         )
-        real_reopen = console._reopen_suspended_console_settings
+        real_reopen = console._settings_navigation._reopen_suspended_console_settings
         real_mount_status = console._mount_conversation_settings_return_status
         transferred_before_replacement = False
         first_status_at_boundary: str | None = None
@@ -970,9 +965,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=replacement_snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
                 if _on_transfer_committed is not None:
@@ -993,11 +986,9 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         async def record_first_status_boundary(target, snapshot):
             nonlocal first_status_at_boundary, first_claim_at_boundary
             if target.return_revision == first_target.return_revision:
-                first_status_at_boundary = (
-                    app.pending_handoffs.exact_revision_status(
-                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                        first_target.return_revision,
-                    )
+                first_status_at_boundary = app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    first_target.return_revision,
                 )
                 first_claim_at_boundary = (
                     console._pending_conversation_settings_return_claim
@@ -1005,7 +996,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             await real_mount_status(target, snapshot)
 
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_reopen_suspended_console_settings",
             stage_replacement_after_transfer,
         )
@@ -1033,7 +1024,9 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         assert first_claim_at_boundary is None
         assert replacement_target is not None
         assert replacement_snapshot is not None
-        assert console._pending_conversation_settings_return_target == replacement_target
+        assert (
+            console._pending_conversation_settings_return_target == replacement_target
+        )
         assert console._suspended_conversation_settings is replacement_snapshot
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -1070,7 +1063,6 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         )
 
 
-
 @pytest.mark.asyncio
 async def test_conversation_settings_return_releases_transient_modal_mount_failure(
     monkeypatch,
@@ -1099,7 +1091,7 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
             snapshot=snapshot,
         )
 
-        real_open = console._open_console_settings
+        real_open = console._settings_navigation._open_console_settings
         attempts = 0
 
         async def fail_once_then_open(**kwargs):
@@ -1109,10 +1101,15 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
                 return False
             return await real_open(**kwargs)
 
-        monkeypatch.setattr(console, "_open_console_settings", fail_once_then_open)
+        monkeypatch.setattr(
+            console._settings_navigation, "_open_console_settings", fail_once_then_open
+        )
         console.apply_navigation_context(target.to_context())
         for _ in range(80):
-            if attempts == 1 and not console._conversation_settings_return_restore_in_progress:
+            if (
+                attempts == 1
+                and not console._conversation_settings_return_restore_in_progress
+            ):
                 break
             await pilot.pause(0.05)
 
@@ -1137,9 +1134,10 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert store.active_session_id == session.id
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -1178,7 +1176,7 @@ async def test_conversation_settings_return_pretransfer_cancellation_retains_ret
                 raise
 
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_open_console_settings",
             block_before_modal_transfer,
         )
@@ -1252,7 +1250,9 @@ async def test_conversation_settings_return_transient_cleanup_preserves_new_sess
             await allow_restore_exit.wait()
             return False
 
-        monkeypatch.setattr(console, "_open_console_settings", block_then_fail)
+        monkeypatch.setattr(
+            console._settings_navigation, "_open_console_settings", block_then_fail
+        )
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             restore_started,
@@ -1420,7 +1420,9 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
 
-        assert await original_console._open_console_settings() is True
+        assert (
+            await original_console._settings_navigation._open_console_settings() is True
+        )
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
                 break
@@ -1444,9 +1446,9 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             "#settings-provider-api-key",
             timeout=10.0,
         )
-        fresh_settings.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-PRODUCTION-ROUND-TRIP-KEY"
-        )
+        fresh_settings.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-PRODUCTION-ROUND-TRIP-KEY"
         await pilot.pause()
         fresh_settings.action_settings_save_category(allow_text_entry_focus=True)
         for _ in range(80):
@@ -1499,9 +1501,10 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
                 break
             await pilot.pause(0.05)
         assert isinstance(app.screen, SettingsScreen)
-        assert app.screen.query_one(
-            "#settings-provider-return-continuation"
-        ).display is False
+        assert (
+            app.screen.query_one("#settings-provider-return-continuation").display
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -1771,7 +1774,7 @@ async def test_conversation_settings_return_atomic_failure_retains_retry_without
             == "pending"
         )
 
-        console._consume_pending_conversation_settings_return()
+        console._settings_navigation._consume_pending_conversation_settings_return()
         for _ in range(120):
             if (
                 not console._conversation_settings_return_restore_in_progress
@@ -1885,7 +1888,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             fail_first_terminal_status_check,
         )
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_reopen_suspended_console_settings",
             transfer_without_mount,
         )
@@ -1912,7 +1915,9 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
 
         assert reopened_tokens == [161]
         assert replacement_target is not None
-        assert console._pending_conversation_settings_return_target == replacement_target
+        assert (
+            console._pending_conversation_settings_return_target == replacement_target
+        )
         assert console._suspended_conversation_settings is replacement_snapshot
         assert (
             real_status(
@@ -1922,7 +1927,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             == "pending"
         )
 
-        console._consume_pending_conversation_settings_return()
+        console._settings_navigation._consume_pending_conversation_settings_return()
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
         while time.monotonic() < deadline:
             if (
@@ -2155,7 +2160,7 @@ async def test_conversation_settings_return_posttransfer_cancellation_keeps_targ
             raise asyncio.CancelledError
 
         monkeypatch.setattr(
-            console,
+            console._settings_navigation,
             "_reopen_suspended_console_settings",
             cancel_after_transfer,
         )
@@ -2217,7 +2222,9 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
             ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
 
-        assert await original_console._open_console_settings() is True
+        assert (
+            await original_console._settings_navigation._open_console_settings() is True
+        )
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
                 break
@@ -2239,7 +2246,9 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
             timeout=10.0,
         )
         dirty_key = "DUMMY-FORCED-DISMISS-RETURN-KEY"
-        original_settings.query_one("#settings-provider-api-key", Input).value = dirty_key
+        original_settings.query_one(
+            "#settings-provider-api-key", Input
+        ).value = dirty_key
         for _ in range(80):
             return_without_save = original_settings.query_one(
                 "#settings-provider-return-without-save", Button
@@ -2480,7 +2489,9 @@ async def test_conversation_settings_return_unmount_releases_acquired_exact_clai
                 break
             await pilot.pause(0.05)
         assert console is not None
-        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=10.0)
+        await _wait_for_selector(
+            console, pilot, "#console-native-composer", timeout=10.0
+        )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         snapshot = _conversation_settings_return_snapshot()
@@ -2502,10 +2513,14 @@ async def test_conversation_settings_return_unmount_releases_acquired_exact_clai
                     restore_cancelled.set()
             return False
 
-        monkeypatch.setattr(console, "_open_console_settings", hold_restore)
+        monkeypatch.setattr(
+            console._settings_navigation, "_open_console_settings", hold_restore
+        )
         console.apply_navigation_context(target.to_context())
-        console._consume_pending_conversation_settings_return()
-        await wait_for_signal(restore_started, what="Conversation settings restore claim")
+        console._settings_navigation._consume_pending_conversation_settings_return()
+        await wait_for_signal(
+            restore_started, what="Conversation settings restore claim"
+        )
         assert (
             app.pending_handoffs.exact_revision_status(
                 HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -5498,10 +5513,12 @@ async def test_console_one_token_generation_test_has_fixed_isolated_policy(monke
         draft_generation=2,
     )
     screen._build_console_provider_selection_for_settings = (
-        lambda session_id, settings: SimpleNamespace(session_id=session_id, settings=settings)
+        lambda session_id, settings: SimpleNamespace(
+            session_id=session_id, settings=settings
+        )
     )
 
-    result = await screen._test_console_generation(
+    result = await screen._settings_navigation._test_console_generation(
         session.id, ConsoleGenerationTestRequest(draft, identity)
     )
 
@@ -5560,7 +5577,7 @@ async def test_console_generation_test_failure_is_bounded_and_sanitized() -> Non
         draft_generation=2,
     )
 
-    result = await screen._test_console_generation(
+    result = await screen._settings_navigation._test_console_generation(
         "session-1", ConsoleGenerationTestRequest(draft, identity)
     )
 
@@ -5601,7 +5618,9 @@ async def test_console_generation_test_preserves_bounded_transport_category(
             )
 
         async def complete_auxiliary(self, _request):
-            raise chat_screen_module.ChatProviderError(
+            from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+
+            raise ChatProviderError(
                 secret,
                 status_code=status_code,
                 details=RuntimeError(secret),
@@ -5621,7 +5640,7 @@ async def test_console_generation_test_preserves_bounded_transport_category(
         draft_generation=2,
     )
 
-    result = await screen._test_console_generation(
+    result = await screen._settings_navigation._test_console_generation(
         "session-1", ConsoleGenerationTestRequest(draft, identity)
     )
 

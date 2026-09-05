@@ -86,6 +86,7 @@ from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .settings_durability import ConsoleSettingsDurabilityController
+from .settings_navigation import ConsoleSettingsNavigationController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -602,6 +603,115 @@ class _DeferredConsoleTerminalController:
         return bool(await self._resolve().request_resize(columns, rows))
 
 
+def build_console_settings_controllers(screen: Any) -> None:
+    """Wire the settings workflow and its app-lifetime durability services."""
+    screen._settings_navigation = ConsoleSettingsNavigationController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _build_console_provider_selection_for_settings=lambda *args, **kwargs: (
+            screen._build_console_provider_selection_for_settings(*args, **kwargs)
+        ),
+        _commit_console_settings_submission_live=lambda submission: (
+            screen._settings_durability._commit_console_settings_submission_live(
+                submission
+            )
+        ),
+        _console_context_control_state_for_session=lambda *args, **kwargs: (
+            screen._console_context_control_state_for_session(*args, **kwargs)
+        ),
+        _console_default_durability_state=lambda: (
+            screen._settings_durability._console_default_durability_state()
+        ),
+        _console_default_readiness=lambda provider, model: (
+            screen._settings_durability._console_default_readiness(provider, model)
+        ),
+        _console_run_active=lambda *args, **kwargs: screen._console_run_active(
+            *args, **kwargs
+        ),
+        _console_settings_context_estimate_for_session=lambda *args, **kwargs: (
+            screen._console_settings_context_estimate_for_session(*args, **kwargs)
+        ),
+        _console_settings_initial_draft=lambda *args, **kwargs: (
+            screen._console_settings_initial_draft(*args, **kwargs)
+        ),
+        _dispatch_console_settings_submission=lambda result: (
+            screen._settings_durability._dispatch_console_settings_submission(result)
+        ),
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _ensure_console_provider_gateway=lambda *args, **kwargs: (
+            screen._ensure_console_provider_gateway(*args, **kwargs)
+        ),
+        _global_chat_display_name=lambda *args, **kwargs: (
+            screen._global_chat_display_name(*args, **kwargs)
+        ),
+        _handle_console_default_recovery=lambda request: (
+            screen._settings_durability._handle_console_default_recovery(request)
+        ),
+        _mount_conversation_settings_return_status=lambda *args, **kwargs: (
+            screen._mount_conversation_settings_return_status(*args, **kwargs)
+        ),
+        _owns_console_screen_stack=lambda *args, **kwargs: (
+            screen._owns_console_screen_stack(*args, **kwargs)
+        ),
+        _provider_readiness_app_config=lambda *args, **kwargs: (
+            screen._provider_readiness_app_config(*args, **kwargs)
+        ),
+        _providers_models_for_console_settings=lambda *args, **kwargs: (
+            screen._providers_models_for_console_settings(*args, **kwargs)
+        ),
+        _sync_native_console_chat_ui=lambda *args, **kwargs: (
+            screen._sync_native_console_chat_ui(*args, **kwargs)
+        ),
+        _test_console_connection=lambda *args, **kwargs: (
+            screen._test_console_connection(*args, **kwargs)
+        ),
+        call_after_refresh=lambda *args, **kwargs: screen.call_after_refresh(
+            *args, **kwargs
+        ),
+        notify=lambda *args, **kwargs: screen.app.notify(*args, **kwargs),
+        pop_screen=lambda: screen.app.pop_screen(),
+        post_message=lambda *args, **kwargs: screen.post_message(*args, **kwargs),
+        push_screen=lambda *args, **kwargs: screen.app.push_screen(*args, **kwargs),
+        run_worker=lambda worker, *, exclusive, group="conversation-settings-navigation": (
+            screen.run_worker(worker, exclusive=exclusive, group=group)
+        ),
+        is_mounted_accessor=lambda: screen.is_mounted,
+        screen_stack_accessor=lambda: screen.app.screen_stack,
+    )
+
+    screen._settings_durability = ConsoleSettingsDurabilityController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _global_chat_display_name=lambda *args, **kwargs: (
+            screen._global_chat_display_name(*args, **kwargs)
+        ),
+        _provider_readiness_app_config=lambda *args, **kwargs: (
+            screen._provider_readiness_app_config(*args, **kwargs)
+        ),
+        _sync_console_identity_surfaces=lambda *args, **kwargs: (
+            screen._sync_console_identity_surfaces(*args, **kwargs)
+        ),
+        _sync_console_settings_recovery_surfaces=lambda *args, **kwargs: (
+            screen._sync_console_settings_recovery_surfaces(*args, **kwargs)
+        ),
+        _sync_native_console_chat_ui=lambda *args, **kwargs: (
+            screen._sync_native_console_chat_ui(*args, **kwargs)
+        ),
+        run_worker=lambda worker, *, exclusive, group: screen.run_worker(
+            worker, exclusive=exclusive, group=group
+        ),
+    )
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
@@ -638,33 +748,7 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
-    screen._settings_durability = ConsoleSettingsDurabilityController(
-        app_instance=screen.app_instance,
-        _ensure_console_chat_controller=lambda *args, **kwargs: (
-            screen._ensure_console_chat_controller(*args, **kwargs)
-        ),
-        _ensure_console_chat_store=lambda *args, **kwargs: (
-            screen._ensure_console_chat_store(*args, **kwargs)
-        ),
-        _global_chat_display_name=lambda *args, **kwargs: (
-            screen._global_chat_display_name(*args, **kwargs)
-        ),
-        _provider_readiness_app_config=lambda *args, **kwargs: (
-            screen._provider_readiness_app_config(*args, **kwargs)
-        ),
-        _sync_console_identity_surfaces=lambda *args, **kwargs: (
-            screen._sync_console_identity_surfaces(*args, **kwargs)
-        ),
-        _sync_console_settings_recovery_surfaces=lambda *args, **kwargs: (
-            screen._sync_console_settings_recovery_surfaces(*args, **kwargs)
-        ),
-        _sync_native_console_chat_ui=lambda *args, **kwargs: (
-            screen._sync_native_console_chat_ui(*args, **kwargs)
-        ),
-        run_worker=lambda worker, *, exclusive, group: screen.run_worker(
-            worker, exclusive=exclusive, group=group
-        ),
-    )
+    build_console_settings_controllers(screen)
 
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
