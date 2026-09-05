@@ -45,7 +45,7 @@ and post-rebase integration still need completion.
 
 ## Open at the checkpoint
 
-- TASK-31642: final integrated Console/decomposition verification and closeout.
+- TASK-31717: final integrated Console/decomposition verification and closeout.
 - TASK-31707: oversized trace boundary inputs and cold reserved-call clock setup;
   diagnosis recorded, no implementation yet.
 - TASK-31708: agent gateway/gate fixture signatures and regeneration failure
@@ -72,3 +72,44 @@ with the native project environment. Platform, configured-service, and
 unfinished-feature skips are not proof of executed coverage.
 
 No full-suite completion or merge readiness is asserted by this checkpoint.
+
+## Rebase and draft PR
+
+[Draft PR #2427](https://github.com/rmusser01/tldw_chatbook/pull/2427) preserves
+this progress. The review was rebased onto
+`da2fbdbc212d16030bb2802a91944527c5db43e7`; a second fetch confirmed that dev tip
+before publishing. This incorporated 73 upstream commits since the previous
+review base and replayed 109 review commits. The local backup branch
+`codex/dev-test-review-before-rebase-20260905` preserves the prior checkpoint.
+
+Conflicts retained upstream last-good Scheduling display and async reachability
+checks, alongside unmounted-screen guards and first-use imports. Console timer
+tracking/cancellation was retained with the settings-navigation controller.
+The diagnostic inventory was rebuilt from the merged owners, preserving the
+upstream additions and reviewed controller movements. Review-only Backlog ID
+collisions are renumbered; upstream task identities are preserved.
+
+Post-rebase evidence:
+
+- All 195 changed Python files parsed; branch whitespace checks passed.
+- Scheduling, Library reuse, import closures, migration and workspace roots:
+  241 passed, 2 failed. Both failures exposed the same newly added Console
+  suspend caller still targeting a helper moved to the settings-navigation
+  controller. Integration plan: retarget that call to the existing owner and
+  rerun the complete reuse and settings-return selection. ADR required: no;
+  this preserves an existing owner boundary, not a new lifecycle policy.
+- Architecture/preimport selection: 44 passed, 3 failed. Console is 17,541
+  lines against 16,873; Library is 41,651 against 41,324; preimport adds 504
+  modules against 500. The ceilings remain unchanged. Upstream growth needs
+  further decomposition/import work before this draft can be merge-ready.
+- The suspend caller was retargeted to the existing settings-navigation owner.
+  Both complete Console/Library reuse files now pass: 8 tests in 32.25 seconds.
+  Full-screen Ruff and changed-line formatting also pass.
+- The broader Console reuse/settings-return selection produced 32 passes and
+  3 failures. The failures still expect navigation to create a fresh Console or
+  cancel an unmount worker; upstream now reuses/suspends the screen. The final
+  failure's cancellation-suppressing fixture required interrupting teardown.
+  These test journeys need adaptation; their existing handoff assertions have
+  not been relaxed for this checkpoint.
+- Diagnostic inventory verification reports no drift: 584 owners, 1,336
+  TASK-492 calls, 7,615 TASK-494 calls and 11 sink files.
