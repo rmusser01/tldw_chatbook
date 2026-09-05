@@ -1,5 +1,6 @@
 """AgentRunsDB against a real on-disk SQLite file."""
 
+import re
 import sqlite3
 from contextlib import contextmanager
 
@@ -291,7 +292,10 @@ def test_local_command_resume_projection_bounds_raw_rows_before_json_projection(
     assert ".payload" not in retained_columns
     assert "ar.steps" not in retained_columns
     assert "length(CAST(ar.id AS BLOB))" in query
-    assert "length(CAST(ar.assistant_message_id AS BLOB))" in query
+    assert re.search(
+        r"length\(CAST\(\s*ar\.assistant_message_id AS BLOB\s*\)\) BETWEEN 1 AND 128",
+        eligibility,
+    )
     assert "length(CAST(ar.status AS BLOB))" in eligibility
     assert "length(CAST(ar.created_at AS BLOB))" in eligibility
     assert "length(CAST(ar.steps AS BLOB))" in eligibility

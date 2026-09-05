@@ -40,6 +40,7 @@ CORE_OWNER_CASES = (
         ChaChaNotes_DB,
         "db.chachanotes.primary",
         {
+            "factory": ChaChaNotes_DB._QuiescentSQLiteConnection,
             "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             "check_same_thread": False,
             "timeout": 15,
