@@ -113,3 +113,10 @@ Post-rebase evidence:
   not been relaxed for this checkpoint.
 - Diagnostic inventory verification reports no drift: 584 owners, 1,336
   TASK-492 calls, 7,615 TASK-494 calls and 11 sink files.
+- Final combined rebase qualification: **247 passed** in 89.46 seconds across
+  complete Scheduling, Console/Library reuse, reuse-helper, import-closure,
+  migration and workspace-root files. This is a targeted selection, not the
+  unfinished full review. The three architecture/preimport failures and three
+  settings-return failures above remain open.
+- Nineteen review-only task-ID collisions were disambiguated without changing
+  upstream tasks; all 3,378 task/archive records now have unique identities.
