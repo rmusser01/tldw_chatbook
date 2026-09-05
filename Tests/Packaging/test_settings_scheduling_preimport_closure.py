@@ -42,7 +42,7 @@ from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 assert form is ReminderForm
 assert screen.ReminderForm is form
 try:
-    getattr(screen, '_task31660_missing_export')
+    getattr(screen, '_task31718_missing_export')
 except AttributeError:
     pass
 else:

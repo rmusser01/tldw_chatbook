@@ -177,7 +177,7 @@ production privacy or reconstruction behavior.
 
 ## Qualify temporary filesystem metadata and use payload-specific privacy canaries
 
-**Dev test review / TASK-31661, 2026-09-05.** A fresh pytest root under
+**Dev test review / TASK-31719, 2026-09-05.** A fresh pytest root under
 `/private/tmp` inherited macOS group `wheel`: Notes fixtures were UID/GID
 501:0 while the process was 501:20. The writable-file metadata guard correctly
 reported `unsupported_metadata`. Moving the pytest root to the per-user temporary
@@ -13628,7 +13628,7 @@ pins is a product ruling to record in both task files, not a merge fix.
 
 ## An isolated helper can execute the editable install's other checkout
 
-**TASK-31638, 2026-09-05.** The stale-write and agent-worktree tests passed in
+**TASK-31713, 2026-09-05.** The stale-write and agent-worktree tests passed in
 the repository's installed checkout but returned `worker_crashed` from an
 isolated `python -I -m ...` workspace helper in a linked review worktree. The
 helper intentionally strips `PYTHONPATH`; the environment's editable install

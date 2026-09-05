@@ -1,5 +1,5 @@
 ---
-id: TASK-31664
+id: TASK-31722
 title: Align style picker tests with split CSS and reachable rows
 status: Done
 assignee:
