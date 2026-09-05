@@ -1902,7 +1902,7 @@ class ConsoleRuntime:
                 if inspect.isawaitable(result):
                     await result
             except Exception:  # noqa: BLE001 - app exit must keep progressing
-                logger.opt(exception=True).warning(
+                logger.warning(
                     "Console runtime: Canvas gateway close failed at dispose."
                 )
         dispose_canvas_authority = getattr(canvas_authority, "dispose", None)
@@ -1912,7 +1912,7 @@ class ConsoleRuntime:
                 if inspect.isawaitable(result):
                     await result
             except Exception:  # noqa: BLE001 - app exit must keep progressing
-                logger.opt(exception=True).warning(
+                logger.warning(
                     "Console runtime: Canvas authority dispose failed at exit."
                 )
         if controller is not None:

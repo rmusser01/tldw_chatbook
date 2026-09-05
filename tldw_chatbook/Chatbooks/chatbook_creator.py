@@ -557,7 +557,7 @@ class ChatbookCreator:
 
     def _collect_conversations_with_database(
         self,
-        conversation_ids: List[str],
+        conversation_ids: list[str],
         work_dir: Path,
         manifest: ChatbookManifest,
         content: ChatbookContent,

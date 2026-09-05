@@ -26468,8 +26468,8 @@ class SettingsScreen(BaseAppScreen):
             if parsed is None:
                 try:
                     candidate = get_runtime_config_snapshot()
-                except Exception:
-                    logger.exception("Failed to refresh Canvas runtime config snapshot")
+                except Exception:  # noqa: BLE001 - fail closed without logging config
+                    logger.error("Failed to refresh Canvas runtime config snapshot")
                     break
                 parsed = self._canvas_snapshot_policy(candidate)
                 if parsed is None:
@@ -26496,8 +26496,8 @@ class SettingsScreen(BaseAppScreen):
                     generation, _publish_policy
                 ):
                     return policy, True
-            except Exception:
-                logger.exception("Failed to guard Canvas config reconciliation")
+            except Exception:  # noqa: BLE001 - fail closed without logging config
+                logger.error("Failed to guard Canvas config reconciliation")
             candidate = None
 
         logger.warning("Canvas runtime config generation did not stabilize; failing closed")

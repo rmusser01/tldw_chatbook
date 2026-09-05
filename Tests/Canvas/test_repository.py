@@ -1477,6 +1477,12 @@ def test_parameter_values_remain_inert_and_query_plans_use_canvas_indexes(db) ->
         == 1
     )
 
+    assert (
+        db.get_connection()
+        .execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'")
+        .fetchone()
+        is None
+    )
     document_plan = (
         db.get_connection()
         .execute(
@@ -1501,6 +1507,28 @@ def test_parameter_values_remain_inert_and_query_plans_use_canvas_indexes(db) ->
     assert "idx_canvas_revisions_origin_message" in " ".join(
         str(row[3]) for row in revision_plan
     )
+    sequence_plan = (
+        db.get_connection()
+        .execute(
+            "EXPLAIN QUERY PLAN SELECT sequence FROM canvas_revisions "
+            "WHERE canvas_id = ? ORDER BY sequence",
+            (created.revision.canvas_id,),
+        )
+        .fetchall()
+    )
+    parent_plan = (
+        db.get_connection()
+        .execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM canvas_revisions "
+            "WHERE canvas_id = ? AND parent_revision_id IS NULL ORDER BY sequence",
+            (created.revision.canvas_id,),
+        )
+        .fetchall()
+    )
+    assert "idx_canvas_revisions_canvas_sequence" in " ".join(
+        str(row[3]) for row in sequence_plan
+    )
+    assert "idx_canvas_revisions_parent" in " ".join(str(row[3]) for row in parent_plan)
 
 
 def test_repository_scoped_mutations_accept_one_exact_durable_path(db) -> None:

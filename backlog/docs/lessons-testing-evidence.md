@@ -109,6 +109,26 @@ prove first-mutation expiration or equivalent event-sensitive behavior.
 
 ---
 
+## Close operation-owned SQLite handles; a passing GC control is not implied
+
+**TASK-31732, Canvas integration, 2026-09-05.** A passing 970-test affected run
+still grew 210 descriptors at the session sentinel. A removable pytest protocol
+probe classified the growth as regular files and isolated repeated export/import
+increments. Forcing per-test GC on the 20 thinking round-trip tests still left
+83 regular descriptors. Both Chatbook conversation collectors constructed local
+`CharactersRAGDB` owners without an explicit close. Real-handle regressions
+retained those owners and found two registered connections where only a separately
+owned observer should remain. Closing the operation's own handle in `finally`
+made all four regressions and the original 20 round trips pass with zero net
+descriptor growth (12 before and after), without changing GC or sentinel limits.
+
+**What to do.** Compare complete teardown lifetimes and aggregate resource types,
+then test exact ownership: repeated operations release their own handles while a
+same-file observer remains usable. Do not assume garbage collection will close
+registered SQLite handles or that a larger warning threshold repairs a leak.
+Conversely, do not require immediate process-baseline return for every individual
+SQLite close; another live connection can legitimately retain inode reuse FDs.
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker

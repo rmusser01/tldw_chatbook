@@ -759,7 +759,7 @@ ADR path: `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sa
 Reason: preserve the approved V1 boundary; V2 library/runtime decisions require
 their own design and ADR check before implementation.
 
-- [ ] Complete TASK-31732: reproduce/classify the FD-growth signal, correct a
+- [x] Complete TASK-31732: reproduce/classify the FD-growth signal, correct a
   proven in-scope leak if present, verify and independently review the result.
 - [ ] Preserve a recoverable pre-rebase ref, fetch latest `origin/dev`, inspect
   exact feature ancestry, and rebase only the feature range. Resolve conflicts
@@ -768,6 +768,8 @@ their own design and ADR check before implementation.
 - [ ] Run preflight and affected verification on the rebased tree. No full
   repository sweep without explicit approval. Create the PR against `dev`,
   with the retained verification and warning qualifications.
+  TASK-31741 owns the discovered diagnostic-inventory and index-census guard
+  gaps, including content-free Canvas failure logging and no-statistics plans.
 - [ ] Wait for Qodo through the app's recurring follow-up mechanism if needed.
   Read review bodies, inline threads, issue comments and suggestions; maintain
   an item-by-item resolution ledger. Verify suggestions technically, implement

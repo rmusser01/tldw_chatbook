@@ -1111,7 +1111,7 @@ class ChatbookImporter:
         self,
         extract_dir: Path,
         manifest: ChatbookManifest,
-        conversation_ids: List[str],
+        conversation_ids: list[str],
         conflict_resolution: ConflictResolution,
         prefix_imported: bool,
         status: ImportStatus,

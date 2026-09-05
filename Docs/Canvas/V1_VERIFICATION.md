@@ -4,6 +4,69 @@ Date: 2026-09-05. Isolated branch: `codex/canvas-v1`.
 Architecture: [ADR-121](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md).
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
+## Authorized integration follow-up — 2026-09-05
+
+The user has now authorized latest-dev rebase, a PR against dev, addressing Qodo
+feedback, merging after gates pass, then V2 design. The historical scope limits
+below describe their original checkpoints; they do not revoke that authorization.
+No full repository sweep or expanded Canvas privileges were authorized.
+
+TASK-31732 fixes the descriptor warning's proven Chatbook export/import cause.
+`d94c40755` gives each operation-local conversation database a `finally` close;
+two private helpers retain the original processing bodies unchanged. No database
+quiescence policy, sentinel threshold or GC fixture changed. New real SQLite
+tests preserve another same-file observer, verify exact operation handles close,
+and repeat success three times plus test post-construction setup failure. Dedicated
+malformed/cancellation lifetime cases were not added: the unconditional finally
+covers those exits structurally and existing round-trip controls cover behavior.
+
+- Unchanged ten-module diagnostic: **970 passed, 2 warnings, 176.27s**;
+  plugin session12→235 (+223; regular+224, character-1), default sentinel+210.
+- Forced-GC thinking-only control: **20 passed, 1 warning, 2.17s**, regular+83.
+  GC did not release these operation-owned handles.
+- Corrected lifetime RED: **4 failed, 1 warning, 1.70s**, all registrycount2
+  rather than observerbaseline1. Earlier fixture/Row failures are not credited.
+- GREEN lifetime plus thinking controls: **24 passed, 1 warning, 2.25s**,
+  plugin12→12, zero category/module growth under default GC cadence.
+- Original ten-module selection after repair: **970 passed, 1 warning, 172.49s**.
+  Default FD sentinel no longer warns; plugin12→152 (+140; regular+141,
+  character-1), an 83-descriptor reduction. Remaining module totals are
+  controller+90, Settings+24, store+23, provider+3, thinking-13, otherfive0.
+  This is not proof of globally zero retained descriptors or a full-suite result.
+  Residual aggregate retention in other test lifetimes remains a qualification,
+  not a reason to raise the sentinel or broaden this ownership repair.
+- Independent static review of `6226f8a18..d94c40755`: **PASS** for spec/quality;
+  no actionable defect. Reviewer performed no app imports or executable probes.
+
+The diagnostic command is the ten-module command recorded below with
+`PYTHONPATH=.superpowers/sdd/2026-09-03-chatbook-canvas-implementation` and
+`-p fd_probe` added. The removable ignored plugin reports only resource categories
+and parameter-free test names around complete teardown; it is not shipped runtime
+instrumentation. All executable checks use repository pytest pre-import isolation.
+The one retained warning is the existing Requests dependency-version mismatch.
+
+TASK-31741 owns integration artifact guards. The diagnostic statement audit against
+pin revision `b55d6b12f01461295d07b5938ca3c3cb28c7939e` covered ten changed owners:
+agent runtime/bridge, Canvas controller, chat store/runtime, importer, chat screen,
+Settings, served host and app. Four new Canvas exception/traceback handlers in
+runtime disposal and config reconciliation were changed to fixed content-free
+messages after **4 expected privacy failures (1.44s)**; GREEN **4 passed (1.58s)**.
+The first privacy attempt used the wrong logger capture for Settings and is not
+credited for those two cases. Existing generic review-hook logging semantics are
+unchanged; importer Canvas validation uses fixed error codes, other legacy import
+errors remain bounded as before. No new log sink was added. The regenerated path
+candidate count changes partly because the FD repair names two new helper scopes;
+unchanged legacy diagnostic bodies were not silently removed.
+
+All six Canvas indexes now have census entries. Four read indexes have explicit
+no-`sqlite_stat1` query plans in the real repository fixture; two composite UNIQUE
+indexes enforce foreign-key parent/hint ownership rather than read optimization.
+The isolated plan case passed; the four-module repository/Canvas privacy/Settings/
+runtime selection passed **62 tests, 1 warning, 18.32s**. Latest-dev rebase and
+post-rebase preflight remain pending; this evidence does not certify PR checks.
+
+## Earlier V1 checkpoints
+
 This is targeted evidence, **not full-suite, release, or integration approval**.
 Latest scoped rereview (`648530ac6..03cd979df`) closes both remaining I2 DOM
 cases with spec and quality gates passing and no new Critical/Important
