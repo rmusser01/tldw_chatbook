@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal, TypeAlias
 from uuid import UUID, uuid4
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 from .limits import (
     MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
@@ -460,9 +460,8 @@ class CanvasRepository:
         conversation_id = _validated_owner_id(conversation_id)
         deleted_filter = "" if include_deleted else "AND document.deleted = 0"
         try:
-            rows = (
-                self._db.get_connection()
-                .execute(
+            with self._db.transaction() as cursor:
+                rows = cursor.execute(
                     "SELECT document.id, document.conversation_id, document.created_at, "
                     "document.deleted_at FROM canvas_documents AS document "
                     "JOIN conversations AS conversation "
@@ -470,9 +469,9 @@ class CanvasRepository:
                     "WHERE document.conversation_id = ? AND conversation.deleted = 0 "
                     f"{deleted_filter} ORDER BY document.created_at, document.id",
                     (conversation_id,),
-                )
-                .fetchall()
-            )
+                ).fetchall()
+        except CharactersRAGDBError:
+            raise CanvasRepositoryError("storage_failure") from None
         except sqlite3.Error as exc:
             raise CanvasRepositoryError("storage_failure") from exc
         return tuple(_identity_from_row(row) for row in rows)
@@ -492,9 +491,8 @@ class CanvasRepository:
             else "AND document.deleted = 0 AND revision.deleted_at IS NULL"
         )
         try:
-            rows = (
-                self._db.get_connection()
-                .execute(
+            with self._db.transaction() as cursor:
+                rows = cursor.execute(
                     "SELECT revision.id AS revision_id, revision.canvas_id, "
                     "document.conversation_id, revision.parent_revision_id, "
                     "revision.sequence, revision.title, revision.runtime_profile, "
@@ -512,9 +510,9 @@ class CanvasRepository:
                     f"{deleted_filter} "
                     "ORDER BY document.created_at, document.id, revision.sequence",
                     (conversation_id,),
-                )
-                .fetchall()
-            )
+                ).fetchall()
+        except CharactersRAGDBError:
+            raise CanvasRepositoryError("storage_failure") from None
         except sqlite3.Error as exc:
             raise CanvasRepositoryError("storage_failure") from exc
         return tuple(_metadata_from_row(row) for row in rows)
@@ -536,9 +534,8 @@ class CanvasRepository:
             else "AND document.deleted = 0 AND revision.deleted_at IS NULL"
         )
         try:
-            row = (
-                self._db.get_connection()
-                .execute(
+            with self._db.transaction() as cursor:
+                row = cursor.execute(
                     "SELECT revision.id, revision.canvas_id, revision.parent_revision_id, "
                     "revision.sequence, revision.title, revision.runtime_profile, "
                     "revision.html, revision.content_sha256, revision.html_bytes, "
@@ -552,9 +549,9 @@ class CanvasRepository:
                     "AND conversation.deleted = 0 "
                     f"{deleted_filter} LIMIT 1",
                     (conversation_id, revision_id),
-                )
-                .fetchone()
-            )
+                ).fetchone()
+        except CharactersRAGDBError:
+            raise CanvasRepositoryError("storage_failure") from None
         except sqlite3.Error as exc:
             raise CanvasRepositoryError("storage_failure") from exc
         if row is None:
@@ -607,9 +604,8 @@ class CanvasRepository:
 
         conversation_id = _validated_owner_id(conversation_id)
         try:
-            row = (
-                self._db.get_connection()
-                .execute(
+            with self._db.transaction() as cursor:
+                row = cursor.execute(
                     "SELECT hint.last_canvas_id FROM canvas_conversation_hints AS hint "
                     "JOIN conversations AS conversation "
                     "ON conversation.id = hint.conversation_id "
@@ -619,9 +615,9 @@ class CanvasRepository:
                     "WHERE hint.conversation_id = ? AND conversation.deleted = 0 "
                     "AND document.deleted = 0",
                     (conversation_id,),
-                )
-                .fetchone()
-            )
+                ).fetchone()
+        except CharactersRAGDBError:
+            raise CanvasRepositoryError("storage_failure") from None
         except sqlite3.Error as exc:
             raise CanvasRepositoryError("storage_failure") from exc
         return str(row[0]) if row is not None else None

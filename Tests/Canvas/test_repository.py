@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from uuid import uuid4
@@ -108,6 +109,25 @@ def _create(
 
 def _sha256(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+_REPOSITORY_READ_METHODS = (
+    "list_identities",
+    "list_revision_metadata",
+    "read_revision",
+    "get_reopen_hint",
+)
+
+
+def _invoke_repository_read(
+    repository: CanvasRepository,
+    method_name: str,
+    conversation_id: str,
+    revision_id: str,
+):
+    if method_name == "read_revision":
+        return repository.read_revision(conversation_id, revision_id)
+    return getattr(repository, method_name)(conversation_id)
 
 
 def _turn_batch(
@@ -256,6 +276,135 @@ def test_create_list_and_exact_read_return_frozen_typed_values(db) -> None:
     assert not hasattr(exact, "__dict__")
     with pytest.raises((FrozenInstanceError, AttributeError)):
         exact.title = "mutated"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("method_name", _REPOSITORY_READ_METHODS)
+def test_repository_reads_use_one_deferred_managed_operation(
+    db,
+    monkeypatch,
+    method_name,
+) -> None:
+    conversation_id, message_id = _owner(db)
+    repository = CanvasRepository(db)
+    created = _create(repository, conversation_id, message_id)
+    repository.set_reopen_hint(conversation_id, created.identity.canvas_id)
+    real_transaction = db.transaction
+    entered: list[bool] = []
+    closed: list[bool] = []
+
+    @contextmanager
+    def observed_transaction(*, immediate=False):
+        with real_transaction(immediate=immediate) as cursor:
+            entered.append(immediate)
+            assert db._connection_quiescence._active_uses
+            yield cursor
+        with pytest.raises(sqlite3.ProgrammingError):
+            cursor.execute("SELECT 1")
+        closed.append(True)
+
+    monkeypatch.setattr(db, "transaction", observed_transaction)
+
+    result = _invoke_repository_read(
+        repository,
+        method_name,
+        conversation_id,
+        created.revision.revision_id,
+    )
+
+    assert result is not None
+    assert entered == [False]
+    assert closed == [True]
+    assert not db._connection_quiescence._active_uses
+
+
+@pytest.mark.parametrize("method_name", _REPOSITORY_READ_METHODS)
+@pytest.mark.parametrize("owner_kind", ["native", "managed"])
+def test_repository_reads_preserve_caller_transaction_rollback_ownership(
+    db,
+    method_name,
+    owner_kind,
+) -> None:
+    conversation_id, message_id = _owner(db)
+    repository = CanvasRepository(db)
+    created = _create(repository, conversation_id, message_id)
+    repository.set_reopen_hint(conversation_id, created.identity.canvas_id)
+    connection = db.get_connection()
+
+    if owner_kind == "native":
+        connection.execute("BEGIN")
+        try:
+            connection.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                ("pending caller title", conversation_id),
+            )
+            result = _invoke_repository_read(
+                repository,
+                method_name,
+                conversation_id,
+                created.revision.revision_id,
+            )
+            assert result is not None
+            assert connection.in_transaction is True
+        finally:
+            connection.rollback()
+    else:
+        with (
+            pytest.raises(RuntimeError, match="rollback control"),
+            db.transaction() as cursor,
+        ):
+            cursor.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                ("pending caller title", conversation_id),
+            )
+            result = _invoke_repository_read(
+                repository,
+                method_name,
+                conversation_id,
+                created.revision.revision_id,
+            )
+            assert result is not None
+            assert connection.in_transaction is True
+            raise RuntimeError("rollback control")
+
+    assert connection.in_transaction is False
+    assert (
+        connection.execute(
+            "SELECT title FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()[0]
+        == "owner"
+    )
+
+
+@pytest.mark.parametrize("method_name", _REPOSITORY_READ_METHODS)
+def test_repository_reads_translate_database_admission_failure_source_free(
+    db,
+    monkeypatch,
+    method_name,
+) -> None:
+    conversation_id, message_id = _owner(db)
+    repository = CanvasRepository(db)
+    created = _create(repository, conversation_id, message_id)
+    repository.set_reopen_hint(conversation_id, created.identity.canvas_id)
+    sentinel = "database-admission-private-sentinel"
+
+    def reject_use():
+        raise RuntimeError(sentinel)
+
+    with monkeypatch.context() as operation_patch:
+        operation_patch.setattr(db._connection_quiescence, "begin_use", reject_use)
+        with pytest.raises(CanvasRepositoryError) as failed:
+            _invoke_repository_read(
+                repository,
+                method_name,
+                conversation_id,
+                created.revision.revision_id,
+            )
+
+    assert failed.value.code == "storage_failure"
+    assert str(failed.value) == "storage_failure"
+    assert failed.value.__cause__ is None
+    assert failed.value.__suppress_context__ is True
+    assert sentinel not in repr(failed.value)
 
 
 def test_branching_append_allocates_monotonic_sequence_and_preserves_titles(db) -> None:
