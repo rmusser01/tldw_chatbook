@@ -88,3 +88,13 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # every per-line change is a mechanical receiver swap or a removal, not
 # new logic.
 ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
+
+# Wave-5 task 2: ingest controller move (ingest series 2/3). 57 method
+# bodies moved byte-for-byte from library_screen.py to the new
+# LibraryIngestController (UI/Library_Modules/library_ingest_
+# controller.py), each replaced by a one-line delegator (or, for the one
+# staticmethod, a class-forwarding delegator). Also touches the bypass
+# test fixtures a controller-level "seventh bypass shape" newly broke
+# (a shared wire_bypass_ingest_controller(screen) helper call inserted at
+# each affected site) -- mechanical seeding, not new logic.
+68a896993e2c28e5026e1671452ca37563a62d68
