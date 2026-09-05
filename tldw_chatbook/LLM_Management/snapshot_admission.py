@@ -541,6 +541,42 @@ def _option_and_inline(token: str) -> tuple[str, str | None]:
     return token, None
 
 
+def has_owned_slot_options(command: tuple[str, ...], env: Mapping[str, str]) -> bool:
+    """Find owned options, consuming values using the pinned admission metadata.
+
+    Known unsupported options remain traversable. Unknown arity cannot establish
+    a later conflict; ordinary admission will disable management in that case.
+    """
+    if any(
+        name in env for name in ("LLAMA_ARG_SLOT_SAVE_PATH", "LLAMA_ARG_ENDPOINT_SLOTS")
+    ):
+        return True
+    index = 1
+    while index < len(command):
+        option, inline = _option_and_inline(command[index])
+        if option in {"--slots", "--no-slots", "--slot-save-path"}:
+            return True
+        value_option = _VALUE_OPTIONS.get(option)
+        if value_option is not None:
+            arity = 1
+            if (
+                value_option.optional
+                and (index + 1 >= len(command) or command[index + 1].startswith("-"))
+                and inline is None
+            ):
+                arity = 0
+        elif option in _IGNORED_VALUE_OPTIONS or option == "--api-prefix":
+            arity = 1
+        elif option in _UNSUPPORTED_OPTIONS:
+            arity = _UNSUPPORTED_OPTIONS[option][0]
+        elif option in _FLAG_OPTIONS or option in _IGNORED_FLAGS:
+            arity = 0
+        else:
+            return False
+        index += 1 + max(0, arity - int(inline is not None))
+    return False
+
+
 def _parse_command(command: tuple[str, ...]) -> _ParsedLaunch:
     parsed = _ParsedLaunch(values={}, specified=set())
     index = 1

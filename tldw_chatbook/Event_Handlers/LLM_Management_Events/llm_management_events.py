@@ -286,20 +286,17 @@ def _prepare_snapshot_launch(app, command, claim):
     owner = getattr(app, "llamacpp_snapshot_service", None)
     if claim.provider != "llamacpp" or owner is None:
         return command, {}
-    from tldw_chatbook.LLM_Management.snapshot_admission import prepare_launch
+    from tldw_chatbook.LLM_Management.snapshot_admission import (
+        has_owned_slot_options,
+        prepare_launch,
+    )
     from tldw_chatbook.LLM_Management.snapshot_models import SnapshotError
     from tldw_chatbook.LLM_Management.snapshot_settings import load_snapshot_preferences
 
     if not load_snapshot_preferences().enabled:
         return command, {}
     environment = dict(os.environ)
-    if any(
-        token.split("=", 1)[0] in {"--slots", "--no-slots", "--slot-save-path"}
-        for token in command[1:]
-    ) or any(
-        key in environment
-        for key in ("LLAMA_ARG_SLOT_SAVE_PATH", "LLAMA_ARG_ENDPOINT_SLOTS")
-    ):
+    if has_owned_slot_options(tuple(command), environment):
         raise SnapshotError("snapshot_owned_options", submission_possible=False)
     descriptor = prepare_launch(tuple(command), environment, claim, uuid4().hex)
     if descriptor.disabled_reason:
