@@ -16219,11 +16219,9 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
-        if pending_entry_focus_generation is not None:
-            # Canvas recompose temporarily drops DOM focus outside Media.
-            # Treat that automatic fallback as part of this guarded restore;
-            # keyboard and mouse input disarm the generation before callback.
-            self._library_notes_restoring_focus = True
+        # The latest sync replaces the queued focus callback and its guard.
+        # Suppressed projections never run the callback's cleanup.
+        self._library_notes_restoring_focus = pending_entry_focus_generation is not None
         # task-31635 (critique #5 item 12): the EMPTY Reader's placeholder is
         # derived from this controller's failure state, and the canvas sync
         # below only rebuilds the Items pane -- so without this a failed page
@@ -16234,7 +16232,8 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is not None:
             viewer.sync_list_failed(self._library_media_list_unselectable())
-        _sync_library_canvas(self, "media", then=then)
+        if not _sync_library_canvas(self, "media", then=then):
+            self._library_notes_restoring_focus = False
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
         return self._media_controller._focus_library_media_page_control(invoked)
