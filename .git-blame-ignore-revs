@@ -89,6 +89,24 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # new logic.
 ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
 
+# Wave-5 task 1: ingest state object + shims (ingest series 1/3). 20
+# fields moved verbatim from library_screen.py's __init__ to the new
+# LibraryIngestState (UI/Library_Modules/library_ingest_state.py); the
+# screen keeps every original _library_ingest_<field> name alive as a
+# generated getter/setter @property shim. Also seeds this task's own
+# first-sweep object.__new__-bypassed test fixtures with a real
+# _ingest_state (the "seventh bypass shape" fix, mechanical, not new
+# logic) -- the 3 sites this sweep still missed were fixed in a separate,
+# non-relocation fix-round commit (74a6f5774), not included in this file
+# for the same reason other fix-round commits in this series aren't.
+# Filed at wave-5 close (task-4-report.md) after this hash was found
+# missing from this file -- the same gap recurs for every wave-2/3/4
+# state PR (export, collections, search+RAG, skills all lack an entry
+# here too; only the conversations exemplar's own backfilled state
+# commit and every wave's controller/cleanup commits were ever added),
+# not fixed retroactively for those here.
+12ba4fb1328eb2707750f7731826ad7375758c5a
+
 # Wave-5 task 2: ingest controller move (ingest series 2/3). 57 method
 # bodies moved byte-for-byte from library_screen.py to the new
 # LibraryIngestController (UI/Library_Modules/library_ingest_

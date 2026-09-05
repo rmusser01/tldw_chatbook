@@ -1,0 +1,492 @@
+# Review package: 3ebbab805..5b9c7bdf4
+
+## Commits
+5b9c7bdf4 docs(library): correct the ingest dead-import count and census labels (fix round 1)
+
+## Files changed
+ .git-blame-ignore-revs                             |  2 +-
+ .../progress.md                                    |  3 +
+ .../task-3-report.md                               | 89 ++++++++++++++--------
+ .../test_library_modules_size_ratchet.py           | 10 ++-
+ Tests/Architecture/test_screen_size_ratchet.py     |  7 +-
+ backlog/docs/library-decomposition-recipe.md       | 18 +++--
+ .../Library_Modules/library_ingest_controller.py   | 13 +++-
+ 7 files changed, 100 insertions(+), 42 deletions(-)
+
+## Diff
+diff --git a/.git-blame-ignore-revs b/.git-blame-ignore-revs
+index ef94bf8a3..fe051e6da 100644
+--- a/.git-blame-ignore-revs
++++ b/.git-blame-ignore-revs
+@@ -96,16 +96,16 @@ ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
+ # staticmethod, a class-forwarding delegator). Also touches the bypass
+ # test fixtures a controller-level "seventh bypass shape" newly broke
+ # (a shared wire_bypass_ingest_controller(screen) helper call inserted at
+ # each affected site) -- mechanical seeding, not new logic.
+ 68a896993e2c28e5026e1671452ca37563a62d68
+ 
+ # Wave-5 task 3: ingest cleanup (ingest series 3/3). Screen shim block
+ # deleted; 37 screen-side + 297 test-side flat-name occurrences
+ # retargeted to self._ingest_state.<field>/<receiver>._ingest_state.
+ # <field> (a mechanical receiver swap, no assertion values changed); 6
+-# dead screen delegators and 9 dead imports removed; docstring/
++# dead screen delegators and 8 dead imports removed; docstring/
+ # census-listing corrections in library_ingest_controller.py -- every
+ # per-line change is a mechanical receiver swap, a removal, or a comment
+ # fix, not new logic, same shape as the export/collections/search+RAG/
+ # skills series' own closing commits above.
+ e6148e29acf10fe1b74f6098bf8775136e1234e6
+diff --git a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
+index 246cd8e8c..1e502246e 100644
+--- a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
++++ b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
+@@ -36,10 +36,13 @@ Task 2: fix round 1 DONE — reverted `_resolve_ingest_source` to LibraryScreen
+ Task 2: complete (commits 74a6f5774..<fix-round-1-sha>). Report: .superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-2-report.md (§12 fix round 1 appended).
+ Task 2: implementer DONE (commits 44ab7383b/68a896993/18e9c60f7/2b790783b; 57/78 moved, 21 excluded across 5 battery-driven correction rounds; 5 precondition pins in RED; zero real sweep regressions); reviewer dispatching (opus)
+ Task 2: review Needs Fixes — mechanics 57/57 verified; ROUND 6 FOUND by the reviewer's mechanical module-globals census: 1 CRITICAL (_resolve_ingest_source bypasses a validate_path_simple test stub — green-but-vacuous test) + 2 Important (latent _sync_library_canvas same-shape; census must become a numbered mechanical recipe shape) — fix round 1/5 dispatched (exclude+late-bind remedy)
+ Task 2: cross-wave follow-up flagged: the module-globals patch-bypass latency may exist in prior waves' controllers (canvas_sync direct imports) — census across all six controllers to be filed at wave close, not fixed here
+ Task 2: fix round 1/5 (all addressed; byte-compare + live probe verified; pins exact 40131/1302 + 2536; commit e3d85ad21)
+ Task 2: complete (commits 74a6f5774..e3d85ad21, review clean after 1 fix round — 56 moved/22 excluded final)
+ Task 2: minor carried to Task 3: the module-globals census evidence file-list undercounts (multi-line patch sites in test_library_canvas_scoped_sync.py + 2 other files missed from the listing; no active collision) — correct the recorded census in report/recipe during cleanup
+ Task 3: dispatched (implementer sonnet), BASE=e3d85ad21 — ingest cleanup (series 3/3)
+ Task 3: DONE — censused before deleting, per the mandated order. Dynamic-dispatch census: zero hazard shapes (Ingest never intersects the reader-preference dispatcher or any choice-strip dict); found 6 `getattr(self, "_library_ingest_<field>", default)` sites needing the skills series' own receiver-fix. Screen-side retarget: 37 pre-existing flat occurrences (31 attr + 6 getattr) across 12 still-screen-resident excluded/shell methods, all retargeted to `self._ingest_state.<field>`. Test retargets: content census (never `-k`) found flat-name mentions in 19 files; 2 were false-positive-only; the remaining 17 needed 297 attribute-path retargets + 3 `SimpleNamespace` fixture restructurings (4 flat kwargs) — zero assertion values changed. Shim block deleted once zero remaining consumers confirmed. Delegator census: 6 of 56 pruned (0 external references each, double-verified) — `_adopt_library_ingest_path`, `_ingest_job_id_from_button` (the cluster's 1 staticmethod), `_library_ingest_restage_discards_work`, `_restage_library_ingest_last_submission`, `_set_library_ingest_panels_collapsed`, `_update_library_ingest_retry_label`. 9 dead imports removed; 1 more (`_ingestible_file_filters`) found `_SURFACE`-pinned and kept — NOT the first such collision (self-review caught an overstated "first" draft claim; the conversations exemplar's own Task 7 hit the identical shape first, recipe §11). Fixed the carried census-listing minor (7 files/~20 sites → true 10 files/38 sites, 3 files missed for using a non-canonical import alias). 4 docstring corrections in the controller + 2 more in the wiring test + 2 in other state-module docstrings. Wiring test finalized (shim-surface test deleted, pruned-delegator/staticmethod skip+absence pairs added). Fresh pins: screen 40131/1302 → 40094/1296 (1296 = 1302−6, pure deletion); controller 2536 → 2558 (comment-only). Full battery green: 6 wiring suites + 4 characterization files + both ratchets + support-layer surface (131 passed/2 pre-existing chat_screen), `-k "ingest and library"` (1143 passed/7 pre-existing, all matching prior documented list), 16-file targeted battery (488 passed/9 failed, 8 confirmed pre-existing via `git stash -u` + 1 already-documented Notes name), `test_library_screen.py` standalone (32/32), full sequential xdist paired-baseline sweep via isolated `git worktree` at e3d85ad21 (branch 356/3994 vs baseline 358/3992; 351 shared, 5 branch-unique all resolved on combined rerun, 7 baseline-unique not investigated), preflight all green. New forward finding: `fd_leak_sentinel` flagged a 274-fd growth on a standalone `test_library_shell.py` run, plausibly explaining the massive shared `test_library_note_*` DOM-timeout burst both sweep trees developed identically near their tail — recorded as a lead, not chased. Self-review caught two mistakes before finalizing (missing test_library_screen.py/test_library_shell.py from the targeted battery; the overstated "first `_SURFACE` collision" claim) and fixed both in place. Report: .superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-3-report.md. Recipe gains §20 (ingest series as landed) + two new §7 sweep-evidence entries + the corrected §3 eighth-bypass-shape census listing.
+ Task 3: complete (single commit, ingest series 3/3 — a cleanup PR needs no RED/GREEN split). Wave-5 (ingest) series is now fully landed: state PR (task 1) → controller PR (task 2) → cleanup PR (task 3), matching the export/collections/search+RAG/skills precedent shape exactly.
++Task 3: implementer DONE (commits e6148e29a + 3ebbab805; shims out, 37+297 retargets, 6/56 pruned, 8 imports, pins 40094/1296 + 2558; 2 self-caught corrections); reviewer dispatching (sonnet)
++Task 3: review Approved (all mechanics independently reproduced incl. pristine-base 9-red reproduction); 1 Important (8-vs-9 dead-import count in six locations) + 2 minors — fix round 1/5 dispatched (counts only)
++Task 3: fix round 1 DONE — dead-import count corrected 9→8 (10th→9th candidate) across the report (§6/§12 + KEPT-candidate note), the `test_screen_size_ratchet.py` budget comment, the recipe's §8 table row + §20 import-verification subsection, and the `.git-blame-ignore-revs` label text (hash untouched); the "mover caller" label was independently found to be systemically wrong for EVERY row in the report's delegator-census table (a moved method's body cannot call anything from the screen -- only excluded/shell methods can), not just the one row the review flagged, so all 23 KEEP rows were re-verified via `ast`-derived containing-method lookup and relabeled with the true caller name + classification; re-verifying also caught two further count errors (`_apply_library_ingest_preflight_result` 11→10; `_library_ingest_registry` 33→11, the latter a substring-contamination bug -- `_library_ingest_registry` is a literal substring of `_handle_library_ingest_registry_changed`). `_sync_library_canvas` census "site" now has a defined, reproducible counting method (one match/line of the 3-shape pattern set, deduplicated per file) plus the exact 10-file breakdown summing to 38, recorded in the controller's own module docstring and cross-referenced from the recipe/report. Both ratchets + preflight green post-fix. Commit: docs(library): correct the ingest dead-import count and census labels (fix round 1).
+diff --git a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-3-report.md b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-3-report.md
+index 8960cf251..41763a042 100644
+--- a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-3-report.md
++++ b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-3-report.md
+@@ -179,45 +179,61 @@ by grep context, zero required a change.
+ ## 4. Delegator census — 50 KEEP, 6 PRUNED
+ 
+ Of the 56 moved names: 25 `@on` handlers + 2 `action_*` methods KEEP
+ unconditionally (recipe's transform whitelist). Of the remaining 29 (28
+ plain + 1 staticmethod), a repo-wide grep for each name — `receiver.name(`
+ call sites AND a bare "name appears anywhere in the line" second pass,
+ across `tldw_chatbook/` and every `Tests/` root, excluding
+ `library_ingest_controller.py`'s own internal calls and each name's own
+ one-line screen-delegator body — found:
+ 
++**Correction (fix round 1, post-review)**: every "mover caller"/"listener
++registration"-shaped label below was WRONG in the original draft of this
++table — a moved method's body no longer lives on the screen to make such
++a call (only the controller's own internal calls could do that, and those
++are explicitly excluded from this census by definition). Every real
++screen-side caller found here is either an EXCLUDED method (still
++full-bodied on the screen) or an unrelated SHELL method — re-verified
++name-by-name via `ast`-derived containing-method lookup, not re-guessed.
++Re-verifying also caught two count errors: `_apply_library_ingest_
++preflight_result` (11 → 10: the dropped 1 was a controller-internal prose
++mention, out of this census's own scope) and `_library_ingest_registry`
++(33 → 11: the original count was contaminated by `_library_ingest_
++registry` being a literal substring of `_handle_library_ingest_registry_
++changed`, so a substring-based grep silently double-counted that name's
++own 22 references as this one's).
++
+ | Name | External references | Verdict |
+ |---|---|---|
+-| `_apply_library_ingest_backend_save` | 1 (constructor dependency binding) | KEEP |
+-| `_apply_library_ingest_preflight_result` | 11 (screen `set_timer` callback + 8 test call sites) | KEEP |
+-| `_authoritative_library_ingest_consent_is_current` | 1 (mover caller) | KEEP |
++| `_apply_library_ingest_backend_save` | 1 (excluded caller: `_save_library_ingest_backend`) | KEEP |
++| `_apply_library_ingest_preflight_result` | 10 (1 excluded caller via `call_from_thread`: `_run_library_ingest_preflight` + 9 test call sites) | KEEP |
++| `_authoritative_library_ingest_consent_is_current` | 1 (shell caller: `_apply_library_external_preparation`) | KEEP |
+ | `_cancel_library_ingest_preflight` | 3 (2 test monkeypatches + 1 prose) | KEEP |
+-| `_current_library_ingest_start_consent` | 13 (2 mover callers + 11 test call sites) | KEEP |
+-| `_disarm_library_ingest_retry_confirm` | 2 (1 mover caller + 1 test fixture kwarg) | KEEP |
+-| `_disarm_library_ingest_start_confirm` | 5 (4 mover callers + 1 test fixture kwarg) | KEEP |
+-| `_focus_library_ingest_path` | 1 (mover caller via `call_after_refresh`) | KEEP |
+-| `_handle_library_ingest_progress_changed` | 3 (2 listener registrations + 1 test call) | KEEP |
+-| `_handle_library_ingest_registry_changed` | 20 (listener registration + many test calls) | KEEP |
+-| `_invalidate_library_ingest_preflight` | 5 (mover caller + 4 test sites) | KEEP |
+-| `_library_ingest_registry` | 33 (heavily-shared accessor) | KEEP |
+-| `_library_ingest_shortcuts_for_current_state` | 4 (mover caller + 3 test sites) | KEEP |
+-| `_pause_library_ingest_transient_ui` | 1 (mover caller) | KEEP |
+-| `_reset_library_ingest_transient_state` | 3 (mover caller + 2 prose) | KEEP |
+-| `_restore_library_ingest_canvas_context` | 2 (mover caller + 1 test call) | KEEP |
+-| `_scroll_library_ingest_queue_into_view` | 1 (mover caller via `call_after_refresh`) | KEEP |
+-| `_submit_library_ingest_form` | 47 (many test call sites) | KEEP |
+-| `_sync_library_ingest_rail_for_width` | 6 (3 mover callers + 1 test call + 2 prose) | KEEP |
+-| `_sync_library_ingest_rail_from_shell` | 1 (mover caller via `call_after_refresh`) | KEEP |
+-| `_trigger_library_ingest_preflight` | 12 (mover callers + test sites) | KEEP |
+-| `_update_library_ingest_fold_hint` | 1 (mover caller via `call_after_refresh`) | KEEP |
+-| `_update_library_ingest_group_receipt` | 1 (mover caller) | KEEP |
++| `_current_library_ingest_start_consent` | 13 (1 shell caller: `_apply_library_external_preparation` + 1 excluded caller: `_enqueue_library_ingest_snapshot` + 11 test call sites) | KEEP |
++| `_disarm_library_ingest_retry_confirm` | 2 (1 excluded caller: `handle_library_ingest_option_value_changed` + 1 test fixture kwarg) | KEEP |
++| `_disarm_library_ingest_start_confirm` | 5 (4 excluded callers: `handle_library_ingest_backend_switch`, `handle_library_ingest_option_value_changed`, `handle_library_ingest_directory_browse`, `handle_library_ingest_option_reset` + 1 test fixture kwarg) | KEEP |
++| `_focus_library_ingest_path` | 1 (shell caller via `call_after_refresh`: `_select_library_rail_row_after_source_admission`) | KEEP |
++| `_handle_library_ingest_progress_changed` | 3 (2 shell listener registrations in `on_mount`/`on_unmount` + 1 test call) | KEEP |
++| `_handle_library_ingest_registry_changed` | 19 (2 shell listener registrations in `on_mount`/`on_unmount` + 1 shell prose comment + 16 test call sites) | KEEP |
++| `_invalidate_library_ingest_preflight` | 5 (1 excluded caller: `_enqueue_library_ingest_snapshot` + 4 test sites) | KEEP |
++| `_library_ingest_registry` | 11 (7 screen callers -- `on_mount`, `on_unmount`, `_library_landing_attention_action`, `check_action` (shell) + `_build_library_ingest_state`, `_enqueue_library_ingest_snapshot`, `_library_ingest_job_by_id` (excluded) -- + 4 test sites) | KEEP |
++| `_library_ingest_shortcuts_for_current_state` | 4 (1 shell caller: `_library_route_shortcuts_for_current_state` + 3 test sites) | KEEP |
++| `_pause_library_ingest_transient_ui` | 1 (shell caller: `_select_library_rail_row_after_source_admission`) | KEEP |
++| `_reset_library_ingest_transient_state` | 3 (1 shell caller: `_apply_navigation_context_state` + 2 prose) | KEEP |
++| `_restore_library_ingest_canvas_context` | 2 (1 excluded caller: `_refresh_library_ingest_canvas_preserving_context` + 1 test call) | KEEP |
++| `_scroll_library_ingest_queue_into_view` | 1 (excluded caller via `call_after_refresh`: `_enqueue_library_ingest_snapshot`) | KEEP |
++| `_submit_library_ingest_form` | 47 (test call sites only, zero screen-side callers) | KEEP |
++| `_sync_library_ingest_rail_for_width` | 6 (3 shell callers: `_update_library_notes_responsive_state`, `on_resize`, `_select_library_rail_row_after_source_admission` + 1 test call + 2 prose) | KEEP |
++| `_sync_library_ingest_rail_from_shell` | 1 (shell caller via `call_after_refresh`: `_select_library_rail_row_after_source_admission`) | KEEP |
++| `_trigger_library_ingest_preflight` | 12 (1 excluded caller: `_run_debounced_library_ingest_preflight` + 1 shell caller: `_trigger_preflight`, its own alias + 1 prose (that alias's own docstring) + 9 test sites) | KEEP |
++| `_update_library_ingest_fold_hint` | 1 (excluded caller via `call_after_refresh`: `_update_library_ingest_gate`) | KEEP |
++| `_update_library_ingest_group_receipt` | 1 (excluded caller: `handle_library_ingest_option_value_changed`) | KEEP |
+ | **`_adopt_library_ingest_path`** | **0** | **PRUNED** |
+ | **`_ingest_job_id_from_button`** (staticmethod) | **0** (internal-only `self.<name>()` calls on the controller instance) | **PRUNED** |
+ | **`_library_ingest_restage_discards_work`** | **0** | **PRUNED** |
+ | **`_restage_library_ingest_last_submission`** | **0** | **PRUNED** |
+ | **`_set_library_ingest_panels_collapsed`** | **0** | **PRUNED** |
+ | **`_update_library_ingest_retry_label`** | **0** | **PRUNED** |
+ 
+ **6 of 56 (~11%)** — the LOW end of every prior series' recorded fraction
+ (export 1-of-22 ~5% < ingest 6-of-56 ~11% < skills 16-of-86 ~19% <
+ collections 14-of-64 ~22% < search+RAG 12-of-42 ~29% < conversations
+@@ -247,21 +263,21 @@ precedent's exact wording shape. Module still imports and constructs
+ LibraryIngestState()`) — that import stays live.
+ 
+ ## 6. AST-derived dead-import prune
+ 
+ Ran an AST census (every module-level import name in `library_screen.py`,
+ zero `ast.Name`-Load usages anywhere in the module) and filtered to
+ INGEST-related names only (the census also surfaced ~35 unrelated dead
+ names from other subsystems' historical residue — explicitly out of
+ scope for this task; not touched).
+ 
+-**9 removed**, each independently confirmed already re-imported and live
++**8 removed**, each independently confirmed already re-imported and live
+ inside `library_ingest_controller.py` before deletion from the screen:
+ 
+ | Name | Source module |
+ |---|---|
+ | `ACTIVE_INGEST_STATES` | `Library.library_ingest_jobs` |
+ | `normalize_active_ingest_source` | `Library.library_ingest_jobs` |
+ | `LibraryIngestFormState` | `Library.library_ingest_state` |
+ | `build_ingest_forecast` | `Library.library_ingest_state` |
+ | `format_ingest_progress_line` | `Library.library_ingest_state` |
+ | `ingest_progress_action_signature` | `Library.library_ingest_state` |
+@@ -273,21 +289,22 @@ inside `library_ingest_controller.py` before deletion from the screen:
+ `IngestJobState`, `LibraryIngestJob`, `build_active_ingest_consent_
+ scope`, `count_duplicate_done_jobs` — each independently re-verified live
+ via `grep -c` ≥2 before leaving them in place; same for `library_ingest_
+ state`'s `validate_ingest_option_value`, `INGEST_UNAVAILABLE_COPY`,
+ `LibraryIngestCanvasState`, `LibraryIngestLastSubmission`, `active_
+ ingest_start_confirm_line`, `build_library_ingest_state`, `clamp_chunk_
+ size`, `library_ingest_retry_available`, `library_ingest_retry_label`,
+ `parse_keywords`, and `ingest_capabilities`'s `get_capabilities`, `list_
+ type_groups`, and `library_ingest_canvas`'s `ingest_scope_label`.)
+ 
+-**1 candidate found dead but deliberately KEPT**: `_ingestible_file_
++**1 more candidate (the 9th of 9 total) found dead but deliberately
++KEPT**: `_ingestible_file_
+ filters` (`Library_Modules.screen_helpers`) — checked against `Tests/
+ Architecture/test_library_support_layer_surface.py`'s `_SURFACE` dict (the
+ PR-0a re-export contract) BEFORE removal and found pinned there;
+ `test_screen_still_re_exports_every_moved_name` asserts
+ `hasattr(library_screen_module, "_ingestible_file_filters")` regardless of
+ live screen-side usage. Removed once, broke that test, re-added
+ immediately (confirmed via a clean `git diff` on that import block after
+ reverting). **Correction to an earlier draft of this report**: this is
+ NOT the first time this shape has fired — the conversations exemplar's
+ own Task 7 hit the identical collision first
+@@ -313,23 +330,30 @@ CONSTRUCTOR docstrings (not moved method bodies):
+    (a stray arithmetic slip that never corresponded to any real
+    derivation — not 78-22, not any other combination).
+ 4. The `_apply_library_ingest_backend_save`/`_sync_library_canvas`
+    module-globals census evidence: corrected from "7 files, ~20 sites"
+    to the true **10 files, 38 sites** — 3 files (`test_library_canvas_
+    scoped_sync.py`, `test_library_notes_reader.py`, `test_review_set_
+    walker.py`) were missed by task 2's own grep because their patch
+    sites used an import alias other than `library_screen`/`library_
+    screen_module` (`screen_module`, or the same alias reached through
+    `monkeypatch.context()`'s own `patcher.setattr(...)` inside a
+-   multi-line call). Re-read all 10; all still LATENT (none reaches
+-   `_apply_library_ingest_backend_save`'s own call path) — verdict
+-   unchanged (KEEP as a mover), only the recorded evidence corrected.
++   multi-line call). **"Site" defined and the per-file breakdown made
++   reproducible** (post-review fix round 1): a site is one match, one
++   line, of the census's own 3-shape pattern set (direct-attribute form,
++   fully-qualified string form, or the two-argument `monkeypatch.
++   setattr`/`patch.object` form), deduplicated by line number within a
++   file — see `library_ingest_controller.py`'s own module docstring for
++   the exact 10-file breakdown that sums to 38. Re-read all 10; all
++   still LATENT (none reaches `_apply_library_ingest_backend_save`'s own
++   call path) — verdict unchanged (KEEP as a mover), only the recorded
++   evidence corrected.
+    This is the carried minor from task 2's own re-review. Also corrected
+    in the wiring test's own two docstring mentions of "63" and in
+    `task-2-report.md` (an appended correction note, not a rewrite of the
+    historical claim) and the recipe's §3 eighth-bypass-shape entry.
+ 
+ Plus two corrections outside the controller:
+ 
+ 5. `tldw_chatbook/UI/Library_Modules/library_ingest_state.py` (task 1's
+    own state module): its own docstring said "`library_screen.py` keeps
+    every original `_library_ingest_<field>` attribute name alive as a
+@@ -362,26 +386,29 @@ Plus two corrections outside the controller:
+ - Module docstring rewritten to describe the finished 3-task series.
+ 
+ 5 of the original 6 tests remain (the shim-surface test's removal is the
+ only count change) — all 5 green post-cleanup.
+ 
+ ## 9. Fresh pins (post-cleanup, re-derived via the ratchet's own `_measure`)
+ 
+ | File | Before | After |
+ |---|---|---|
+ | `tldw_chatbook/UI/Screens/library_screen.py` (lines/methods) | 40131/1302 | **40094/1296** |
+-| `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` (lines) | 2536 | **2558** |
++| `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` (lines) | 2536 | **2558** → **2569** (fix round 1) |
+ 
+ 1296 = 1302 − 6 (exactly the pruned-delegator count — a pure deletion, no
+ replacement). Controller growth (+22) is comment-only (§7's four
+ corrections) — no method body touched, no mover count change (56
+-unchanged). Both re-pinned in this same commit per recipe §6/§17;
++unchanged). **Fix round 1 (post-review) grew it a further +11**, also
++comment-only: the `_sync_library_canvas` census's own "site" definition
++and reproducible 10-file breakdown, added to close item 3 of the review.
++Both re-pinned in this same commit per recipe §6/§17;
+ `Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_
+ left_slack_after_a_wave` and `test_library_modules_size_ratchet.py::
+ test_budget_is_not_left_slack_after_a_move` both pass at the new pins
+ (zero slack).
+ 
+ ## 10. Battery
+ 
+ All commands run from `.worktrees/library-decomp-foundation`,
+ `.venv/bin/python`.
+ 
+@@ -496,22 +523,22 @@ file-descriptor exhaustion accumulating over a long single-process test
+ session, not this task's diff. Recorded in recipe §7 as a lead for
+ whichever future task next investigates `Tests/UI`'s own sweep-flakiness
+ backdrop.
+ 
+ Isolated worktree cleaned up (`git worktree remove --force`) after the
+ sweep completed.
+ 
+ ## 12. Files changed
+ 
+ - `tldw_chatbook/UI/Screens/library_screen.py` — shim block deleted;
+-  37 screen-side field retargets; 6 delegators deleted; 9 dead imports
+-  removed (1 kept, `_SURFACE`-pinned).
++  37 screen-side field retargets; 6 delegators deleted; 8 dead imports
++  removed (1 more candidate kept, `_SURFACE`-pinned).
+ - `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` —
+   4 docstring corrections (no method body touched).
+ - `tldw_chatbook/UI/Library_Modules/library_ingest_state.py` — 1
+   docstring correction (past-tense shim description).
+ - `tldw_chatbook/Library/library_ingest_state.py` — 1 docstring
+   correction (current attribute path).
+ - `Tests/Architecture/test_library_ingest_wiring.py` — shim-surface test
+   deleted; pruned-delegator/staticmethod skip+absence pairs added; 2
+   stray "63" counts fixed; module docstring rewritten.
+ - `Tests/Architecture/test_screen_size_ratchet.py` /
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+index 1b011b8e9..a9fbff24e 100644
+--- a/Tests/Architecture/test_library_modules_size_ratchet.py
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -166,21 +166,29 @@ _BUDGETS: dict[str, int] = {
+     # counts (should be 56 -- an arithmetic slip inherited from an earlier
+     # draft, never 78-22 or any other real derivation), the "LibraryScreen
+     # keeps one-line delegators under every one of these 56 original names"
+     # claim (now false for 6 of the 56, this task's own screen-side prune),
+     # and the `_apply_library_ingest_backend_save`/`_sync_library_canvas`
+     # module-globals census evidence (corrected from 7 files/~20 sites to
+     # the true 10 files/38 sites -- 3 files missed by task 2's own grep
+     # because their patch sites used a variable name other than
+     # `library_screen`/`library_screen_module`; see the recipe's §3 for the
+     # full correction) -- all fixed in this task, +22 lines. 2536 -> 2558.
+-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2558,
++    #
++    # 2026-09-05, wave-5 task 3 fix round 1 (post-review, counts only):
++    # comment-only growth, no method body touched. The `_sync_library_
++    # canvas` census's own "site" definition (one match/line of the
++    # 3-shape pattern set, deduplicated per file) and its reproducible
++    # 10-file breakdown summing to 38 were added to this module's own
++    # docstring so a reviewer can re-derive the number without re-running
++    # the census script. 2558 -> 2569.
++    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2569,
+     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
+     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
+     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
+     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
+     # 2/3): born-governed by the glob above -- new file, pinned at its
+     # exact measured line count on landing (42 moved methods + the
+     # constructor/property scaffolding the byte-for-byte canon requires;
+     # a 43rd candidate, `_load_library_search_history`, was excluded
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index ae1fd9753..37d4f1a3c 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -435,33 +435,34 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # unrelated to any single subsystem, `on_mount`/`_library_resize_layout_
+     # signature`, and `_library_emergency_return_eligibility`) retargeted to
+     # `self._ingest_state.<field>`; 6 of the 56 moved delegators pruned
+     # (zero external references beyond the controller's own internal calls
+     # -- see `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED` in `Tests/
+     # Architecture/test_library_ingest_wiring.py`): `_adopt_library_ingest_
+     # path`, `_ingest_job_id_from_button` (the cluster's one staticmethod),
+     # `_library_ingest_restage_discards_work`, `_restage_library_ingest_
+     # last_submission`, `_set_library_ingest_panels_collapsed`, `_update_
+     # library_ingest_retry_label` -- 6 `FunctionDef`s out, no replacement
+-    # (1302 -> 1296, exactly the pruned-delegator count). 9 dead imports
++    # (1302 -> 1296, exactly the pruned-delegator count). 8 dead imports
+     # pruned, each independently confirmed already re-imported and live
+     # inside `library_ingest_controller.py`: `ACTIVE_INGEST_STATES`,
+     # `normalize_active_ingest_source` (`Library.library_ingest_jobs`);
+     # `LibraryIngestFormState`, `build_ingest_forecast`, `format_ingest_
+     # progress_line`, `ingest_progress_action_signature` (`Library.library_
+     # ingest_state`); `build_type_group_title` (`Widgets.Library.library_
+     # ingest_canvas`); `capabilities_for_backend` (`Library.ingest_
+     # capabilities`) -- a 9th candidate, `_ingestible_file_filters`
+     # (`Library_Modules.screen_helpers`), is genuinely unused by the screen
+     # too but stays per the PR-0a re-export contract (`Tests/Architecture/
+-    # test_library_support_layer_surface.py`'s `_SURFACE`), the first time
+-    # this series' own dead-import prune has collided with that contract.
++    # test_library_support_layer_surface.py`'s `_SURFACE`) -- the SAME
++    # shape the conversations exemplar's own Task 7 first hit, not a new
++    # one (recipe §11).
+     # 40131/1302 -> 40094/1296.
+     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40094, 1296),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index 2a845d190..3069e72ba 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -452,21 +452,27 @@ exactly the "don't fix cross-wave here" the review scoped this to).
+ task 2's own re-review as a recorded minor):** the 7-file/~20-hit count
+ undercounted by 3 files whose patch sites used a variable name other than
+ `library_screen`/`library_screen_module` — a fixed-string grep for those
+ two exact identifiers cannot see an import aliased to something else
+ entirely. `test_library_canvas_scoped_sync.py` (`library_screen_module`
+ inside a multi-line `patch.object(...)` call a single-line-oriented grep
+ does not span), `test_library_notes_reader.py` (`library_screen_module`,
+ patched via `monkeypatch.context()`'s own `patcher.setattr(...)` rather
+ than a bare `monkeypatch.setattr(...)`), and `test_review_set_walker.py`
+ (imports the module under the alias `screen_module`) bring the true count
+-to **10 files, 38 sites** — all still confirmed LATENT with respect to
++to **10 files, 38 sites** (**"site" defined, post-review fix round 1**:
++one match, one line, of this section's own 3-shape pattern set — direct-
++attribute form, fully-qualified string form, or the two-argument
++`monkeypatch.setattr`/`patch.object` form — deduplicated by line number
++within a file; the reproducible per-file breakdown summing to 38 is
++recorded in `library_ingest_controller.py`'s own module docstring) — all
++still confirmed LATENT with respect to
+ `_apply_library_ingest_backend_save`'s own call path (one test in
+ `test_library_canvas_scoped_sync.py` DOES exercise an Ingest-named
+ handler, `handle_library_ingest_option_value_changed`, but that method is
+ one of the 9 unbound-fake-self EXCLUSIONS — never moved — so its own bare
+ `_sync_library_canvas` call still resolves through `library_screen.py`'s
+ own globals regardless; not a collision with anything this controller
+ owns). No verdict changes; the correction is to the recorded evidence
+ only. **The lesson this adds to the census's own method (step 2 above):
+ a fixed-string grep for `library_screen`/`library_screen_module` is
+ insufficient by construction — the census must first find every name a
+@@ -3516,29 +3522,31 @@ contract (`Tests/Architecture/test_library_support_layer_surface.py`'s
+ first hit (§11), not a new one; see the census section below for the
+ correction to an earlier, overstated "first time" draft of this claim.
+ This section records what actually landed.
+ 
+ ### Fields/methods moved, per task
+ 
+ | Task | PR | What moved | Screen delta |
+ |---|---|---|---|
+ | 1 | State | 20 fields (single `_library_ingest_` prefix, no plural variant, no wiring-field exclusion, no computed/entangled defaults) → `LibraryIngestState` (0 methods). Found the recipe's seventh bypass shape: an `object.__new__`-bypassed test fixture hand-setting a flat `_library_ingest_<field>` name breaks the INSTANT the shim installs, not deferrable to cleanup like every prior bypass shape — 27 sites across 6 files fixed in the same GREEN commit (one file, `test_parakeet_v2_install_ui.py`, missed by the first sweep because its own filename/test names/`-k` keywords contain neither "ingest" nor "library" — caught by a coordinator review's content-grep, not this task's own `-k`-filtered sweep; fixed in fix round 1) | 41574 → 41520 lines, 1302 methods (unchanged) |
+ | 2 | Controller | 56 of 78 "ingest"-named method candidates → `LibraryIngestController` (25 `@on` + 2 `action_*` + 1 staticmethod + 28 plain; 22 exclusions: 4 `@work` framework-decorator hazard, 3 module-globals-coupling — one, `_resolve_ingest_source`, found only by fix round 1's coordinator-mandated mechanical module-globals census (§3's eighth bypass shape, named here for the first time), not the original battery — 9 unbound-fake-self/`object.__new__`-bypass (the seventh shape recurring at the CONTROLLER level: an excluded method's OWN caller needs `_ingest_controller` seeded too, not just `_ingest_state` — 25 more call sites across 5 files), 6 instance-attribute-monkeypatch) | 41520 → 40096 lines (round 0) → 40131 lines (fix round 1, `_resolve_ingest_source` reverted), 1302 methods (unchanged: pure move, 56 `FunctionDef`s out, 56 one-line delegators in, one of them a staticmethod). Controller born-governed at 2510, fix round 1 (the eighth-bypass-shape fix + module-globals census) → 2536 |
+-| 3 | Cleanup | Shim block (20 properties, single prefix) deleted; every remaining screen-side flat reference retargeted to `self._ingest_state.<field>` (37 pre-existing occurrences — 31 literal `self.<flat_name>` attribute accesses + 6 `getattr(self, "_library_ingest_<field>", default)` calls needing a RECEIVER fix, not just a string swap, mirroring the skills series' own `getattr` lesson — across 12 excluded/shell-plumbing methods still full-bodied on the screen); 297 test-side attribute-path retargets + 3 `SimpleNamespace` fixture restructurings (flat kwarg → nested `_ingest_state=SimpleNamespace(...)`) across 17 files spanning `Tests/UI`, `Tests/App`, `Tests/Library`, `Tests/integration`, `Tests/Utils`, and `Tests/ProductionApp` (a repo-wide content census examined 19 files total; 2 -- `test_library_url_ingest_submit.py` and `test_library_ingest_wiring.py` -- had only false-positive moved-method-name mentions, zero real field retargets; the widest real test-root spread of any series to date); 6 of the 56 screen delegators deleted (repo-wide zero-external-reference census across `tldw_chatbook/` + every `Tests/` root, excluding the controller module and each name's own delegator body); 9 dead imports removed (all left dead by task 2's own move, each independently confirmed already re-imported and live inside the controller) — a 10th candidate, `_ingestible_file_filters`, stayed despite zero screen-side uses because it is `_SURFACE`-pinned (PR-0a's own re-export contract, the same shape the conversations exemplar's own Task 7 first hit); corrected the module-globals census evidence for `_apply_library_ingest_backend_save`/`_sync_library_canvas` from 7 files/~20 sites to the true 10 files/38 sites (3 files missed by task 2's own grep because their patch sites used a variable name other than `library_screen`/`library_screen_module` — `screen_module`, and a `monkeypatch.context()`'s own `patcher.setattr(...)`); 4 module/constructor-docstring corrections in the controller (two stray "63" counts, the now-false "LibraryScreen keeps one-line delegators under every one of these 56 original names" claim, and the census-listing correction above) | 40131 → 40094 lines, 1302 → 1296 methods (6 fewer `FunctionDef`s — exactly the 6 pruned delegators). Controller: 2536 → 2558 (comment-only growth: the 4 docstring corrections) |
++| 3 | Cleanup | Shim block (20 properties, single prefix) deleted; every remaining screen-side flat reference retargeted to `self._ingest_state.<field>` (37 pre-existing occurrences — 31 literal `self.<flat_name>` attribute accesses + 6 `getattr(self, "_library_ingest_<field>", default)` calls needing a RECEIVER fix, not just a string swap, mirroring the skills series' own `getattr` lesson — across 12 excluded/shell-plumbing methods still full-bodied on the screen); 297 test-side attribute-path retargets + 3 `SimpleNamespace` fixture restructurings (flat kwarg → nested `_ingest_state=SimpleNamespace(...)`) across 17 files spanning `Tests/UI`, `Tests/App`, `Tests/Library`, `Tests/integration`, `Tests/Utils`, and `Tests/ProductionApp` (a repo-wide content census examined 19 files total; 2 -- `test_library_url_ingest_submit.py` and `test_library_ingest_wiring.py` -- had only false-positive moved-method-name mentions, zero real field retargets; the widest real test-root spread of any series to date); 6 of the 56 screen delegators deleted (repo-wide zero-external-reference census across `tldw_chatbook/` + every `Tests/` root, excluding the controller module and each name's own delegator body); 8 dead imports removed (all left dead by task 2's own move, each independently confirmed already re-imported and live inside the controller) — a 9th candidate, `_ingestible_file_filters`, stayed despite zero screen-side uses because it is `_SURFACE`-pinned (PR-0a's own re-export contract, the same shape the conversations exemplar's own Task 7 first hit); corrected the module-globals census evidence for `_apply_library_ingest_backend_save`/`_sync_library_canvas` from 7 files/~20 sites to the true 10 files/38 sites (3 files missed by task 2's own grep because their patch sites used a variable name other than `library_screen`/`library_screen_module` — `screen_module`, and a `monkeypatch.context()`'s own `patcher.setattr(...)`); 4 module/constructor-docstring corrections in the controller (two stray "63" counts, the now-false "LibraryScreen keeps one-line delegators under every one of these 56 original names" claim, and the census-listing correction above) | 40131 → 40094 lines, 1302 → 1296 methods (6 fewer `FunctionDef`s — exactly the 6 pruned delegators). Controller: 2536 → 2558 (comment-only growth: the 4 docstring corrections) |
+ 
+ **Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+ in `Tests/Architecture/test_screen_size_ratchet.py`):
+ `41574/1302 → 41520/1302 → 40096/1302 → 40131/1302 → 40094/1296` (final).
+ 
+ **Controller-file governance pin** (§17): `library_ingest_controller.py`
+ was born-governed the moment it existed (Task 2): `2510 → 2536` (Task 2's
+-own fix round 1) `→ 2558` (this cleanup task, comment-only).
++own fix round 1) `→ 2558` (this cleanup task, comment-only) `→ 2569`
++(this cleanup task's own fix round 1, post-review: the `_sync_library_
++canvas` census's "site" definition and reproducible breakdown, comment-only).
+ 
+ ### Dynamic-dispatch census — zero hazard shapes found
+ 
+ Re-derived Task 2's own findings before deleting the shim: a repo-wide
+ content grep for every one of the 20 state fields as a `getattr`/`setattr`
+ string-literal second argument, and for any dict-literal dispatch table
+ keying off a field name, found no dynamic-dispatch hazard touching Ingest.
+ Unlike the skills/search+RAG/collections precedent, Ingest fields never
+ intersect the shared reader-preference dispatcher
+ (`_replace_library_reader_preference`/`_persist_library_reader_
+@@ -3697,25 +3705,25 @@ assert genuine absence instead.
+ The task-1-generated `_library_ingest_<field>` property-shim loop
+ (installed at module end, `dataclasses.fields(LibraryIngestState)`-driven)
+ was deleted wholesale once the census above confirmed zero remaining
+ consumers anywhere in `tldw_chatbook/` or `Tests/` outside `LibraryIngest
+ Controller`'s own PERMANENT generated shim loop (installed by task 2,
+ reading `self._ingest_state_accessor().<field>` — untouched by this task,
+ per the task brief's explicit "controller shims STAY" instruction).
+ 
+ ### Import verification
+ 
+-**9 dead imports removed**, each verified single-occurrence (import line
++**8 dead imports removed**, each verified single-occurrence (import line
+ only, via AST `Name`-node usage count) in `library_screen.py`, then
+ checked against `Tests/Architecture/test_library_support_layer_surface.
+ py`'s `_SURFACE` dict (the PR-0a re-export contract) before deletion: all
+-9 left dead by task 2's own controller move (each name's only screen-side
++8 left dead by task 2's own controller move (each name's only screen-side
+ usage lived inside one of the 56 moved method bodies), each independently
+ confirmed already re-imported and live inside `library_ingest_
+ controller.py`: `ACTIVE_INGEST_STATES`, `normalize_active_ingest_source`
+ (`Library.library_ingest_jobs`); `LibraryIngestFormState`, `build_ingest_
+ forecast`, `format_ingest_progress_line`, `ingest_progress_action_
+ signature` (`Library.library_ingest_state`); `build_type_group_title`
+ (`Widgets.Library.library_ingest_canvas`); `capabilities_for_backend`
+ (`Library.ingest_capabilities`).
+ 
+ **One candidate deliberately kept despite zero screen-side uses**:
+diff --git a/tldw_chatbook/UI/Library_Modules/library_ingest_controller.py b/tldw_chatbook/UI/Library_Modules/library_ingest_controller.py
+index 1babea86f..43b6a6468 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_ingest_controller.py
++++ b/tldw_chatbook/UI/Library_Modules/library_ingest_controller.py
+@@ -264,21 +264,32 @@ examples):
+    does NOT happen).
+ 
+    **A related, deliberately UNFIXED finding from the same mechanical
+    module-globals census (recipe §3's newest numbered shape):**
+    ``_apply_library_ingest_backend_save`` ALSO reads a bare module global,
+    ``_sync_library_canvas`` itself (the call just above) -- a plain
+    function, not a method, imported fresh into this controller module
+    (``from .canvas_sync import _sync_library_canvas``, the same shape
+    every sibling controller already uses for its own ``kind=`` call). The
+    census found every ``library_screen``-scoped patch target for this name
+-   across ``Tests/`` (10 files, 38 sites, both the direct-attribute and the
++   across ``Tests/`` (10 files, 38 sites -- **a "site" is one match, one
++   line, of the census's own 3-shape pattern set (direct-attribute form
++   ``alias.name``, fully-qualified string form, or the two-argument
++   ``monkeypatch.setattr``/``patch.object`` form), deduplicated by line
++   number within a file; the exact, reproducible per-file breakdown is
++   2 (``Tests/Skills/test_skills_import.py``) + 3 (``test_library_canvas_
++   scoped_sync.py``) + 13 (``test_library_entry_compose_once.py``) + 1
++   (``test_library_file_notes_workspace.py``) + 2 (``test_library_media_
++   trash.py``) + 5 (``test_library_note_import_flow.py``) + 5
++   (``test_library_notes_folder_navigator.py``) + 1 (``test_library_
++   notes_reader.py``) + 2 (``test_library_review_round_t21116.py``) + 4
++   (``test_review_set_walker.py``) = 38**, both the direct-attribute and the
+    ``monkeypatch.setattr(module, "name", ...)``/fully-qualified-string
+    patch shapes -- **corrected by wave-5 task 3**: the original 7-file/~20-
+    site count missed 3 files whose patch sites used a variable name other
+    than ``library_screen``/``library_screen_module`` --
+    ``test_library_canvas_scoped_sync.py`` (``library_screen_module`` inside
+    a multi-line ``patch.object(...)`` call the first grep's single-line
+    pattern did not span), ``test_library_notes_reader.py`` (``library_
+    screen_module``, patched via ``monkeypatch.context()``'s own ``patcher.
+    setattr(...)`` rather than a bare ``monkeypatch.setattr(...)``), and
+    ``test_review_set_walker.py`` (imports the module under the alias

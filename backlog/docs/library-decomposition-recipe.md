@@ -927,6 +927,28 @@ rediscover the same red from scratch.
   investigates `Tests/UI`'s own sweep-flakiness backdrop, not chased
   further here (out of this task's own scope, and already proven
   non-diff-attributable by the baseline pairing).
+- Wave-5 Task 4 (wave close)'s own full sequential xdist paired-baseline
+  sweep (branch `5b9c7bdf4`+close, 356 failed/3994 passed vs. an ISOLATED
+  worktree baseline at `9e62dd8f7`, 356 failed/3985 passed; 351 shared, 5
+  baseline-unique, 5 branch-unique) found 1 more genuinely new name among
+  its 5 branch-unique (the other 4 all matched names already documented
+  above -- wave-5 task 2's own `test_loading_banner_paints_in_place_
+  without_body_rebuild` entry, wave-3 task 5's `test_wide_editor_deep_
+  link_keeps_reader_navigation_and_local_back`, and wave-4 close's/wave-5
+  task 1's own two flaky-on-rerun entries):
+  `Tests/UI/test_library_shell.py::test_library_note_compact_deep_link_
+  intent_opens_notes_stage[context2-#library-note-body-editor-False]` --
+  a Notes compact-layout deep-link test, confirmed pre-existing by
+  reproducing identically (the same 30s DOM-mount-timeout signature) in
+  TRUE isolation on BOTH the branch and the isolated pristine baseline
+  worktree (not merely a combined-run artifact -- an initial combined
+  baseline run alongside an unrelated Media test showed it passing, which
+  a follow-up true-isolation rerun on the SAME baseline tree overturned,
+  underscoring that a combined-run result is not sufficient evidence on
+  its own for a timing-sensitive DOM-mount test). This task's own diff is
+  doc-only (recipe, a `.git-blame-ignore-revs` addition, a backlog
+  filing); it touches neither Ingest nor Notes code. **Zero real
+  regressions across the whole wave-5 span.**
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -942,7 +964,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
 | 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
-| 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) and its controller PR's post-landing review found the "eighth" (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers |
+| 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL (24-vs-27-site undercount from a `-k`-filtered sweep missing a file) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
@@ -3900,4 +3922,245 @@ All commands run from `.worktrees/library-decomp-foundation`,
    import alias for the target module FIRST, then search for that alias
    specifically — a fixed-string search for the two spellings a prior
    series happened to see is not a completeness proof for the next one.**
+
+### Wave-5 close
+
+Wave-5 (`.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest`,
+branch `refactor/library-decomp-wave5-ingest`) scoped itself to ingest alone
+(the deferred-from-wave-4 subsystem, §19's own "Wave-4 close" note). The
+ingest series (Tasks 1-3, above) is complete. This section is Task 4's own
+wave-level pin-trajectory re-derivation, verification battery, and lessons.
+
+#### Pin trajectory — full wave-5 chain
+
+Re-derived from `git show <commit>:<path>` reads of the `_BUDGETS` row in
+`Tests/Architecture/test_screen_size_ratchet.py` and the controller row in
+`Tests/Architecture/test_library_modules_size_ratchet.py` at each commit
+(not carried over from any report), in true chronological order (`git log`
+lists newest-first; the table below is oldest-first):
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-5 start) | `9e62dd8f7` | 41574 / 1302 | — (file does not exist yet) |
+| 1 | Ingest state (RED — wiring test + state module + characterization pins; screen untouched) | `a11220648` | 41574 / 1302 (unchanged) | — |
+| 1 | Ingest state (GREEN, series continues) | `12ba4fb13` | 41520 / 1302 | — |
+| 1 | Fix round 1/5 — seeded the missed `object.__new__` fixtures; recipe gains the seventh bypass shape (series complete) | `74a6f5774` | 41520 / 1302 (unchanged) | — |
+| 2 | Ingest controller (RED — wiring-test + 5 new handler pins only) | `44ab7383b` | 41520 / 1302 (unchanged) | — |
+| 2 | Ingest controller (GREEN, born-governed) | `68a896993` | 40096 / 1302 | 2510 |
+| 2 | (blame-ignore, no functional change) | `18e9c60f7` | 40096 / 1302 (unchanged) | 2510 (unchanged) |
+| 2 | Fix round 1/5 — CRITICAL `_resolve_ingest_source` exclusion; recipe gains the eighth bypass shape (series complete) | `e3d85ad21` | 40131 / 1302 | 2536 |
+| 3 | Ingest cleanup (GREEN, series complete) | `e6148e29a` | 40094 / 1296 | 2558 |
+| 3 | (blame-ignore, no functional change) | `3ebbab805` | 40094 / 1296 (unchanged) | 2558 (unchanged) |
+| 3 | Fix round 1/5 — doc-only count corrections (dead-import count, delegator-caller relabel) | `5b9c7bdf4` | 40094 / 1296 (unchanged) | **2569 (wave-5 final)** |
+
+Full chain, screen: `41574/1302 → 41520/1302 → 40096/1302 → 40131/1302 →
+40094/1296` (final). Full chain, controller: born `2510` at its very first
+commit (Task 2's own GREEN) `→ 2536` (Task 2's own post-review fix round:
+the CRITICAL `_resolve_ingest_source` exclusion, comment growth from the
+census documentation added alongside it) `→ 2558` (Task 3, comment-only:
+four module/constructor-docstring corrections) `→ 2569` (Task 3's own fix
+round 1, comment-only: the `_sync_library_canvas` census's "site"
+definition and reproducible 10-file breakdown).
+
+Net wave-5 shrink: 1480 screen lines, 6 methods (the 6 pruned ingest
+delegators — a pure move is always net-zero methods on the screen; only a
+delegator prune changes the method count). Task 4's own fresh `_measure()`
+call (both ratchet files' own semantics, not `wc -l`) gives **40094 lines /
+1296 methods** for the screen and **2569 lines** for the controller — EXACT
+matches to both recorded pins, zero drift, nothing to lower.
+
+#### Verification battery (Task 4, this close)
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`, `-p no:randomly` where applicable.
+
+- **Fresh `_measure()` on both ratchet files**: 40094/1296 (screen), 2569
+  (controller) — exact match to both recorded pins, zero drift.
+- **All six wiring suites** (`test_library_collections_wiring.py`,
+  `test_library_conversations_wiring.py`, `test_library_export_wiring.py`,
+  `test_library_ingest_wiring.py`, `test_library_search_rag_wiring.py`,
+  `test_library_skills_wiring.py`) **+ 4 characterization files**
+  (`test_library_ingest_characterization.py`, `test_library_collections_
+  characterization.py`, `test_library_conversations_characterization.py`,
+  `test_library_export_characterization.py`) **+ both size guards + the
+  recompose-census guard (`test_library_recompose_ratchet.py`) + the
+  support-layer surface suite (`test_library_support_layer_surface.py`),
+  combined single run**: **105 passed, 2 failed** — both the documented
+  pre-existing `chat_screen.py` ratchet rows (recipe §7's own standing
+  list), unrelated to this diff.
+- **Full `Tests/Architecture/` run**: **550 passed, 1 skipped, 16 failed** —
+  identical categories to wave-4 close's own documented 16 (Console
+  realtime/review-selection boundary ×2, console wave6 closeout/inventory
+  ×4, default-timeout-session-guard ×1, persistent-diagnostic-inventory ×2,
+  chat_screen ratchet ×2, timer-path-static-update-inventory ×3,
+  worker-exclusive-group-inventory ×2 — same 1-skip reason, TASK-15743's
+  unfetchable pinned commits), 7 more PASSING than wave-4 close's own 543
+  (ordinary suite growth from unrelated work landed on `dev` in the
+  interim). Zero Library/Ingest-scoped failures.
+- **preflight**: `./scripts/preflight.sh` — all six derived-artifact checks
+  pass (CSS bundle, profile-owned-path census, diagnostic inventory,
+  backlog task-id sweep — 3,241 task files including this close's own new
+  follow-up filing (TASK-31650), chachanotes table allowlist, index plan
+  pins).
+
+#### Full sequential xdist paired-baseline sweep — whole-wave span
+
+Branch = wave-5 tip (`5b9c7bdf4` + this close task's own doc-only edits,
+which touch no test or production-logic file — this recipe's own edits, a
+`.git-blame-ignore-revs` addition, a backlog task filing, and the close
+report). Baseline = an ISOLATED `git worktree add` + its own `uv venv`/
+`uv pip install -e ".[dev]"` at the wave-5 START commit (`9e62dd8f7`) —
+never a same-tree checkout overlay, per this wave's OWN task-1 lesson
+(§3/§7): a same-tree overlay is interruption-unsafe for a long-running
+background sweep, and this close applied that lesson from the start rather
+than re-learning it. Run SEQUENTIALLY, not concurrently, per §7's own
+"concurrent runs amplify flakiness" lesson.
+
+**Machine load, recorded at the start of this sweep**: load average 3.03,
+3.15, 3.18 (`uptime`) with 2 `pytest` processes already on the machine (one
+unrelated, from a different repo checkout) — a substantially QUIETER
+machine than wave-4 close's own recorded ~22.7 load average, worth naming
+alongside the numbers per that close's own lesson 3.
+
+| | Failed | Passed | Wall time |
+|---|---|---|---|
+| Branch (`5b9c7bdf4` + close) | 356 | 3994 | 1457.61s (24:17) |
+| Baseline (`9e62dd8f7`) | 356 | 3985 | 1495.87s (24:55) |
+
+**351 shared failures, 5 branch-unique, 5 baseline-unique** (baseline-unique
+not investigated, per §7's own established precedent). All 5 branch-unique
+names resolved, zero real regressions: `test_library_shell.py::
+test_library_note_compact_deep_link_intent_opens_notes_stage[context2-
+#library-note-body-editor-False]` is a genuinely NEW name, confirmed
+pre-existing by reproducing identically (the same 30s DOM-mount-timeout
+signature) in TRUE isolation on BOTH the branch and the isolated pristine
+baseline worktree — added to §7's documented list below; the other 4 are
+ALL names already documented in §7: `test_library_media_reader_
+traversal_t22207.py::test_loading_banner_paints_in_place_without_body_
+rebuild` (wave-5 task 2's own entry, reconfirmed reproducing here again),
+`test_library_notes_reader.py::test_wide_editor_deep_link_keeps_reader_
+navigation_and_local_back` (wave-3 task 5), `test_library_prompts_
+canvas.py::test_library_prompt_undo_refreshes_applied_page_and_preserves_
+basket` (wave-4 close, passed cleanly here too) and `test_library_shell.py::
+test_library_media_initial_error_is_unknown_and_retry_is_unique` (wave-5
+task 1, characterized there as load-adjacent flaky, passed cleanly here).
+None of the 5 touches Ingest code or this task's own doc-only diff. **Zero
+real regressions.**
+
+#### Probe run
+
+Run separately, after both sweeps completed, to avoid CPU contention.
+Machine load at run time: `uptime` reported load average 2.31, 3.84, 5.37
+— substantially quieter than wave-4 close's own ~22.7, and close to
+wave-2 close's own unrecorded-but-implicitly-quiet baseline.
+
+```
+perl -e 'alarm 150; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_probe.py
+```
+
+| interaction | settle (ms) | max gap (ms) | recompose | full-update | mounts | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 476 | 119 | 0 | 2 | 173 | 115 |
+| media (re-click same) | 318 | 54 | 0 | 2 | 85 | 115 |
+| media (re-click same, 2nd) | 325 | 52 | 0 | 2 | 85 | 115 |
+| notes (switch) | 365 | 130 | 0 | 1 | 110 | 110 |
+| notes (re-click same) | 273 | 47 | 0 | 1 | 38 | 110 |
+| media (switch-back) | 399 | 85 | 0 | 1 | 175 | 115 |
+| notes (switch, 2nd) | 362 | 155 | 0 | 1 | 110 | 110 |
+| media (switch-back, 2nd) | 379 | 81 | 0 | 1 | 175 | 115 |
+
+Every row sits INSIDE wave-2 close's own recorded band (§16: settle
+264-485 ms, max gap 54-195 ms) — the closest match of any close-time probe
+run to that original baseline, and far below wave-4 close's own elevated
+band (settle 312-853 ms, max gap 76-587 ms under ~22.7 load). The
+load-independent columns match both prior closes row-for-row: `recompose`
+is 0 on every row (three closes running); `full-update` follows the exact
+same `2/2/2/1/1/1/1/1` pattern wave-2 close recorded. `mounts`/`nodes`
+match wave-4 close's own numbers exactly (media 173-175/115, notes
+110/110) with NO further drift on the notes-switch-2nd row this time (that
+row stayed at 110/110 here, versus wave-4's own 110→115 node growth) —
+consistent with wave-4 close's own explanation that the growth there was
+ordinary Media/Notes feature churn between wave-2 and wave-4 close, not a
+one-way ratchet; this run simply landed on the lower end of that same
+window. This wave's own diff (ingest state/controller extraction, plus
+this close's doc-only edits) touches none of the probed Media/Notes
+rail-switch path at all — the cleanest "must not move outside noise" case
+of any close to date, and the numbers bear that out: settle/gap sit
+comfortably inside the ORIGINAL wave-2 band despite three more waves of
+unrelated feature work landing on `dev` in between.
+
+#### Lessons
+
+1. **The wave's own headline structural finding is two NEW numbered bypass
+   shapes — §3's seventh and eighth — cross-referenced here, not
+   relitigated.** The seventh (an `object.__new__`-bypassed test fixture's
+   flat-name seed breaking the INSTANT a state PR's shim installs, not
+   deferrable to cleanup like every prior shape) and the eighth (a moved
+   body's bare module global patched at the OLD module path by a
+   green-but-vacuous test) were found one per task, both by REVIEW rather
+   than by either task's own full battery, both CRITICAL. That is two-for-
+   two in one series — reinforcing wave-4's own lesson 2 ("review is a
+   separate, mandatory gate, not a redundant check on a battery that
+   already passed") a second time, with a second wave's worth of
+   independent evidence for the same claim rather than a coincidence
+   specific to skills' `focused` property.
+2. **Count-accuracy discipline (wave-4's own lesson 1) had to be re-earned
+   three separate times in this series too — the existence of a stated
+   rule does not, by itself, prevent the failure the rule describes.**
+   Task 1's own fixture-seeding count went through two corrections before
+   landing (24 sites/4 files → 25/5 → the true 27/6). Task 2's own mover
+   count churned across FIVE correction rounds as battery-found hazards
+   shrank the cluster (78 → 63 → 62 → 59 → 58 → 57), and its own
+   module-globals census undercounted twice in different ways within the
+   SAME task — once by missing the two-argument `monkeypatch.setattr`
+   shape entirely (3 real sites read as 0 before the pattern was widened)
+   and again by stopping at "~20 hits/7 files" for `_sync_library_canvas`,
+   a count task 3 corrected to the true 38 sites/10 files. Task 3's own
+   delegator-census table had EVERY "mover caller" label wrong in its
+   first draft (re-verified via `ast`-derived containing-method lookup
+   across all 23 KEEP rows, not just the one review flagged), and that
+   re-verification pass itself caught two further miscounts (`_apply_
+   library_ingest_preflight_result` 11→10; `_library_ingest_registry`
+   33→11, the latter a literal substring-contamination bug). Three tasks,
+   three independent count-instability incidents, all in the ONE series
+   that already had wave-4's own numbered lesson to guard against exactly
+   this. **The generalization: re-stating the rule is not the fix — the
+   fix that actually worked every time here was an INDEPENDENT
+   re-derivation method (a repo-wide grep re-run, an `ast`-derived
+   cross-check, a byte-for-byte diff) catching what a careful-sounding
+   first draft missed, not a reviewer simply asking "are you sure."**
+3. **A durable-artifact hygiene gap can hide behind its own stated rule for
+   four consecutive waves before an audit catches it.** §10 states
+   plainly: "every pure-move commit's hash is appended to
+   `.git-blame-ignore-revs`, in the same PR that makes the move." This
+   wave's own close-time audit of that file found ingest task 1's own
+   pure-move commit (`12ba4fb13`, the state-PR extraction) was never
+   added — and, widening the check, that EVERY state-PR commit since the
+   conversations exemplar's own backfilled entry (export, collections,
+   search+RAG, and skills alike) has the identical gap; only controller-
+   move and cleanup commits were ever appended for those four series. Not
+   one review across four waves caught it, because nothing in the
+   recipe's own battery checks this file's completeness — it is pure
+   documentation hygiene with no test surface. Fixed here for ingest
+   task 1's own commit (this wave's own responsibility); the other four
+   are named, not retroactively fixed (outside this task's scope), as a
+   lead for whoever next touches this file. **The generalization: a
+   "same-PR" rule with no automated check behind it survives only as long
+   as everyone remembers it independently every time — worth a
+   self-defending guard (a CI check comparing `git log` pure-move commits
+   against this file's contents) the way the recompose census and the
+   controller-file size ratchet already are, not asserted here as
+   in-scope for this task, but recorded as the same category of gap §16
+   lesson 5 already named for the wiring cluster constants.**
+4. **This wave applied its OWN interruption-unsafe-baseline lesson
+   preemptively, and it worked.** Task 1 found the hard way (§3, §7) that
+   an in-place `git checkout <base> -- tldw_chatbook Tests` overlay is
+   fragile against a session interruption mid-sweep. Every sweep in this
+   series after that incident — task 2's, task 3's, and this close's own
+   whole-wave sweep above — used an isolated `git worktree add` plus its
+   own venv from the start, and none of them needed a redo. A lesson
+   recorded from a real incident, then actually applied by every
+   subsequent task in the SAME series without having to be reminded, is
+   the recipe doing its job — recorded here as confirmation, not a new
+   finding.
 
