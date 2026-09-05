@@ -12629,7 +12629,6 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
             "#library-media-export",
             "#library-media-select-toggle",
             "#library-media-open-viewer",
-            "#library-media-bulk-delete-undo",
         ):
             action = screen.query_one(selector, Button)
             assert action.disabled, selector
@@ -12641,6 +12640,14 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         # recover from is what wedged Media in critique #5. Rows now carry
         # only the mutation gate (a write actually in flight).
         assert not screen.query_one("#library-media-row-0", Button).disabled
+        # task-31220: nor is the receipt's Undo. It restores exactly the ids
+        # the receipt names, so it is the receipt's own recovery -- a stale
+        # PAGE cannot invalidate it, and disabling it beside a "✓ deleted"
+        # receipt broke the confirmation's "You can undo right away" promise
+        # at the one moment it mattered (critique #5).
+        undo = screen.query_one("#library-media-bulk-delete-undo", Button)
+        assert not undo.disabled
+        assert str(undo.label) == "Undo"
 
         screen._sync_library_media_browse_state(None)
         await _wait_for_condition(

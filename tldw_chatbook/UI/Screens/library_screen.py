@@ -24613,6 +24613,10 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_delete_receipt_ids = ()
+        # task-31220: Dismiss retires the WHOLE receipt, the failure copy
+        # included -- otherwise the next receipt inherits a "✗ undo failed"
+        # claim about a batch the user already dismissed.
+        self._library_media_delete_receipt_undo_failure = ""
         _sync_library_canvas(self, "media")
 
     async def _undo_library_media_bulk_delete(self, media_ids: tuple[str, ...]) -> None:
