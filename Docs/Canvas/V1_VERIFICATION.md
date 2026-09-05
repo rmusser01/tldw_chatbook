@@ -4,6 +4,48 @@ Date: 2026-09-05. Isolated branch: `codex/canvas-v1`.
 Architecture: [ADR-121](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md).
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
+## Current merge blocker — production trace after a tool turn
+
+PR2432 remains open at published head `b87f7ac31`, rebased onto dev
+`8e9d1128d`. All eight original Qodo comments have reviewed corrections and
+original-thread replies. Qodo's updated summary5554930741 explicitly marks all
+eight Resolved (zero open findings); current-head Fast Lane passes, with the
+protected derived job still in progress at last observation.
+This does **not** establish merge readiness: a new
+test-only composition probe finds a shared trace-admission gap.
+
+The real runtime/store, agent bridge, provider gateway and production trace
+factory complete a saved Canvas turn through discovery, loading, creation and
+final response. Preparation is cleared and trace settlements are drained.
+The next saved turn is blocked before transport with `unsupported_surface_change`.
+Transparent test-only traceback inspection confirms prefix1/suffix0: six tool
+artifacts must become the saved assistant response plus the next user message
+(active_changed6, incoming_changed2). Existing admission accepts a one-item
+bounded replacement or append, not their combination.
+
+- Canvas composition node: **1 failed, 1 Requests warning, 1.80s**. Command:
+  `../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_turns`.
+- Ordinary non-Canvas calculator control: a verified successful result42, final
+  response and drained first turn produce the same next-turn rejection. Existing
+  plain-history positive and changed-history negative controls still pass:
+  **1 failed, 2 passed, 1 Requests warning, 2.06s**. Command:
+  `../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_chat_controller.py::test_two_saved_turns_keep_history_references_through_production_trace`.
+- These controls ran on the rebased feature tree, not untouched dev. They prove
+  the failure is not specific to Canvas; they do not independently date its origin.
+  Earlier Canvas fixture attempts omitted required discovery and are not credited
+  as product failures.
+
+There is no existing collapse-then-append orchestration path. The proposed
+repair would extend the shared typed admission/persistence contract, retaining
+exact terminal-response revision evidence, owner/head/range/value checks and
+atomic replacement-plus-append. Response links alone cannot grant authority.
+The existing trace ledger ADR
+`backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md` must
+be reassessed before implementation. TASK-31742's plan explicitly stops for
+architecture approval; no shared runtime fix, guard relaxation, capture bypass,
+merge or V2 work has been performed. Diagnostic tests remain uncommitted and
+failing, retained for the approved repair rather than hidden with skips/xfails.
+
 ## Authorized integration follow-up — 2026-09-05
 
 The user has now authorized latest-dev rebase, a PR against dev, addressing Qodo
@@ -278,6 +320,33 @@ archive import's two info statements only moved/re-indented (no text change),
 and Settings replaced its two fixed errors with fixed text plus owned attempt
 integers. Counts and sink topology are unchanged. The archive's existing path
 privacy candidates remain explicitly legacy/unreviewed, not newly approved.
+
+Final review rebase: dev advanced to8e9d1128d while Qodo corrections were
+underway. The127-commit feature range rebased to b87f7ac31;126 patches compare
+equal and the sole range-diff change is append-only lesson context. Both the
+upstream production-trace incident and Canvas resource-probe incident remain.
+Recovery ref `codex/canvas-v1-qodo-pre-rebase-20260905` retains8eb7447f7.
+Independent combined controller/provider/trace review passes with no relaxed
+upstream guard; Canvas run IDs remain separate from trace actor/chain identity.
+Post-rebase preflight passes every category: ten stylesheet bundles,48owned-path
+occurrences/46exceptions,581diagnostic owners/12sink files,3343task files,
+108tables, and276index declarations/61plans. Browser and production trace/Canvas
+composition verification are recorded below when completed, not inferred from
+this static review or the earlier published-head CI.
+
+After the final rebase, the complete native-flow, served-flow and zero-egress
+browser files pass: **89 passed, 2 optional-browser skips, 1 Requests warning,
+175.68s**. Mandatory Chromium includes actual create/update finalization,
+confirmed draft/download actions, direct TLS/proxy admission, profile isolation,
+reconnect/recovery, shutdown, and adversarial native/served routes. Firefox and
+WebKit remain uninstalled; their skips are not cross-browser evidence. No source
+runtime, security or browser-test assertion was changed for this rerun.
+
+The final-base trace-runtime, provider-gateway, Canvas-controller, Canvas first-use,
+interaction-import closure, startup census and Chunking Lab mount selection passes:
+**538 passed, 2 warnings, 78.49s**. Census is now967/972 (five-module headroom),
+with the same ratchet and newly added upstream absent-at-ready assertions intact.
+Warnings are the existing Requests dependency and census headroom notices.
 
 ## Earlier V1 checkpoints
 
