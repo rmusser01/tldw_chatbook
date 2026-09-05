@@ -35,7 +35,11 @@ from Tests.UI.test_library_media_reader_flow import (
     _wait_for_detail_call,
 )
 from Tests.UI.test_library_media_side_by_side import WIDE_SIZE, _open_media_list
-from Tests.UI.test_library_shell import LibraryProductionCSSHarness, _wait_for_condition
+from Tests.UI.test_library_shell import (
+    LibraryProductionCSSHarness,
+    _wait_for_condition,
+    _wait_for_selector,
+)
 from tldw_chatbook.Widgets.Library.library_media_content import LibraryMediaContentBody
 
 
@@ -112,7 +116,7 @@ async def _open_raw_view_ready(screen, pilot) -> LibraryMediaContentBody:
     this, an immediate ``scroll_to`` right after load can be clamped to 0
     against a still-zero ``virtual_size``.
     """
-    body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+    body = await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
     await _wait_for_condition(
         pilot,
         lambda: body.raw_view is not None and body.raw_view.wrap_index is not None,
