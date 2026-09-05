@@ -212,9 +212,7 @@ async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs
         transaction_open.append(db.get_connection().in_transaction)
         return create_conversation(**kwargs)
 
-    monkeypatch.setattr(
-        persistence, "create_conversation", hold_the_open_transaction
-    )
+    monkeypatch.setattr(persistence, "create_conversation", hold_the_open_transaction)
 
     async def offer_a_draft_while_the_commit_is_open() -> None:
         """Press Send from the thread a real user's Send runs on.
@@ -373,9 +371,9 @@ async def test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_tur
     assert recovery.recovery_needed is True
     assert store.dispatch_recovery_blocks_submission(session_id) is True
     assert store.dispatch_recovery_for_presentation(session_id) is recovery
-    assert "pending response" in (
-        controller.send_refusal_copy(session_id) or ""
-    ).lower()
+    assert (
+        "pending response" in (controller.send_refusal_copy(session_id) or "").lower()
+    )
 
     manual = await controller.submit_draft("manual retry", session_id=session_id)
     assert manual.accepted is False
@@ -537,8 +535,7 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     assert gateway.calls == 1
     assert chat_controller.prompt_queue_registry.snapshot("session-1").total_count == 0
     assert all(
-        message.usage is None
-        for message in store.messages_for_session("session-1")
+        message.usage is None for message in store.messages_for_session("session-1")
     )
     assert runtime.requests[0].command == "printf raw"
 
@@ -623,7 +620,9 @@ async def test_raw_first_persistence_refuses_provider_reservation_then_reuses_co
     )
 
     assert raw_controller.start_user_command(stash) is True
-    await asyncio.to_thread(workers.pop(),)
+    await asyncio.to_thread(
+        workers.pop(),
+    )
     release_commit.set()
     provider_result = await asyncio.wait_for(provider_task, timeout=10)
 
@@ -635,13 +634,15 @@ async def test_raw_first_persistence_refuses_provider_reservation_then_reuses_co
     session = next(item for item in store.sessions() if item.id == "session-1")
     assert session.persisted_conversation_id is None
     durable_id = reserved_identity.conversation_id
-    conversation_count = db.get_connection().execute(
-        "SELECT COUNT(*) FROM conversations"
-    ).fetchone()[0]
+    conversation_count = (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    )
     assert conversation_count == 1
 
     assert raw_controller.start_user_command(stash) is True
-    await asyncio.to_thread(workers.pop(),)
+    await asyncio.to_thread(
+        workers.pop(),
+    )
 
     assert len(runtime.requests) == 1
     assert len(runs_db.list_runs(durable_id, agent_kind="local_command")) == 1
