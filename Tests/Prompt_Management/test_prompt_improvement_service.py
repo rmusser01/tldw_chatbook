@@ -88,7 +88,10 @@ class FakeAuxiliaryGateway:
         return len(self.requests)
 
     async def complete_auxiliary(
-        self, request: AuxiliaryCompletionRequest, route: Any | None = None
+        self,
+        request: AuxiliaryCompletionRequest,
+        *,
+        route: Any | None = None,
     ) -> AuxiliaryCompletionResult:
         """Return the next queued canned response for one auxiliary request.
 
@@ -293,6 +296,8 @@ def test_task10_gateway_signature_and_application_cap_are_reused() -> None:
     signature = inspect.signature(ConsoleProviderGateway.complete_auxiliary)
 
     assert tuple(signature.parameters) == ("self", "request", "route")
+    assert signature.parameters["route"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["route"].default is None
     assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
     assert UNKNOWN_MODEL_CONTEXT_CAP_TOKENS == 32_768
 
