@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -281,6 +282,9 @@ def main() -> None:
             data_root / "canvas-live-chatbook.sqlite", "canvas-live-chatbook"
         )
         app.chachanotes_db = database
+        # The app factory initially wires services with no DB. Bind the normal
+        # saved-conversation reader to this same owned durable database as well.
+        app._wire_chat_conversation_services()
         _configure_native_ready_console(app, model="gpt-4o")
         if not config_module.save_settings_to_cli_config(
             {
@@ -297,14 +301,45 @@ def main() -> None:
         app.chat_api_model_value = "gpt-4o"
         gateway = _ScriptedCanvasGateway()
         app.console_provider_gateway_factory = lambda: gateway
+        recovered_root_revision = None
+
+        async def load_saved_conversation():
+            nonlocal recovered_root_revision
+            path = data_root / "canvas-live-chatbook.sqlite"
+            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as saved:
+                roots = saved.execute(
+                    "SELECT d.conversation_id, r.id FROM canvas_documents d "
+                    "JOIN canvas_revisions r ON r.canvas_id=d.id "
+                    "WHERE d.deleted_at IS NULL AND r.deleted_at IS NULL AND r.sequence=1"
+                ).fetchall()
+            if len(roots) != 1:
+                raise RuntimeError("expected one owned saved Canvas root")
+            conversation_id, recovered_root_revision = roots[0]
+            loaded = await app.screen._workspace.open_console_workspace_conversation(
+                conversation_id
+            )
+            (data_root / "canvas-live-saved-loaded").write_text(
+                "loaded-without-provider"
+                if loaded is True and gateway.calls == 0
+                else "provider-called"
+                if gateway.calls
+                else "load-false"
+                if loaded is False
+                else "load-none",
+                encoding="ascii",
+            )
+
+        app.action_canvas_fixture_load_saved = load_saved_conversation
+        app._bindings.bind("f10", "canvas_fixture_load_saved", priority=True)
 
         def reopen_exact_created_card():
             # Test keyboard adapter presses the real transcript-card button;
             # routing, selected revision and authority remain production-owned.
+            target_revision = recovered_root_revision or gateway._revision_id
             card = next(
                 card
                 for card in app.screen.query(ConsoleCanvasCard)
-                if card.presentation.revision_id == gateway._revision_id
+                if card.presentation.revision_id == target_revision
             )
             screen = app.screen
             original_open = screen._open_console_canvas_selection
@@ -312,10 +347,14 @@ def main() -> None:
             def acknowledge_applied_selection():
                 handler = app.served_canvas_handler
                 scope = handler.scope
-                exact = scope is not None and scope.revision_id == gateway._revision_id
+                exact = scope is not None and scope.revision_id == target_revision
                 pinned = (
                     exact and not handler._authority.describe_selection(scope).following
                 )
+                if recovered_root_revision is not None:
+                    (data_root / "canvas-live-restored-provider-calls").write_text(
+                        str(gateway.calls), encoding="ascii"
+                    )
                 (data_root / "canvas-live-card-pressed").write_text(
                     "selected-pinned" if pinned else "selection-not-applied",
                     encoding="ascii",

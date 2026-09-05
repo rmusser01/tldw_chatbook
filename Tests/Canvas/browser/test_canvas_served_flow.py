@@ -390,14 +390,15 @@ async def _served_shell_projection(page) -> dict[str, object]:
 async def _send_console_prompt(page, prompt: str, focus_ack: Path) -> None:
     keyboard_target = page.locator("#terminal .xterm-helper-textarea")
     await keyboard_target.focus()
-    focus_ack.unlink(missing_ok=True)
-    await keyboard_target.press("Escape")
-    await keyboard_target.press("F11")
-    for _ in range(100):
-        if focus_ack.exists():
-            assert focus_ack.read_text(encoding="ascii") == "focused"
+    deadline = asyncio.get_running_loop().time() + 5
+    while asyncio.get_running_loop().time() < deadline:
+        focus_ack.unlink(missing_ok=True)
+        await keyboard_target.press("Escape")
+        await keyboard_target.press("F11")
+        while not focus_ack.exists() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+        if focus_ack.exists() and focus_ack.read_text(encoding="ascii") == "focused":
             break
-        await asyncio.sleep(0.05)
     else:
         raise AssertionError("actual Console composer focus was not acknowledged")
     await keyboard_target.press_sequentially(prompt, delay=5)
@@ -588,9 +589,107 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await expect(shell.get_by_text("Revision 1", exact=True)).to_be_visible()
             await expect(shell.get_by_text("Pinned", exact=True)).to_be_visible()
             await expect(page.locator("#terminal.-connected")).to_be_visible()
+
+            database_path = tmp_path / "test_data" / "canvas-live-chatbook.sqlite"
+
+            def persisted_canvas_rows():
+                with sqlite3.connect(
+                    f"file:{database_path}?mode=ro", uri=True
+                ) as database:
+                    return database.execute(
+                        "SELECT d.conversation_id, r.canvas_id, r.id, r.content_sha256, r.sequence "
+                        "FROM canvas_documents d JOIN canvas_revisions r ON r.canvas_id=d.id "
+                        "WHERE d.deleted_at IS NULL AND r.deleted_at IS NULL ORDER BY r.sequence"
+                    ).fetchall()
+
+            original_rows = persisted_canvas_rows()
+            assert len(original_rows) == 2
+            original_root = original_rows[0]
+            original_control_generation = stack.server._canvas_control_broker._children[
+                child_id
+            ].generation
+            browser_id = await _live_browser_session_id(
+                stack.server, page, port=stack.port
+            )
+            old_url = await page.locator("#served-canvas-frame").get_attribute("src")
+            await stack.server._canvas_control_broker.revoke_child(child_id)
+            await page.goto("about:blank")
+            for _ in range(300):
+                if browser_id not in stack.server._served_browser_children:
+                    break
+                await asyncio.sleep(0.05)
+            assert browser_id not in stack.server._served_browser_children
+            await page.goto(stack.origin)
+            await expect(page.locator("#terminal.-connected")).to_be_visible(
+                timeout=15_000
+            )
+            replacement = await _live_child_for_page(
+                stack.server, page, port=stack.port
+            )
+            assert replacement != child_id
+            await stack.server._canvas_control_broker.wait_connected(
+                replacement, timeout=15
+            )
+            assert (
+                stack.server._canvas_control_broker._children[replacement].generation
+                != original_control_generation
+            )
+            await expect(page.locator("#terminal")).to_contain_text(
+                "Composer", timeout=45_000
+            )
+            await page.locator("#terminal .xterm-helper-textarea").focus()
+            await page.locator("#terminal .xterm-helper-textarea").press("F10")
+            loaded_ack = tmp_path / "test_data" / "canvas-live-saved-loaded"
+            for _ in range(300):
+                if loaded_ack.exists():
+                    break
+                await asyncio.sleep(0.05)
+            assert loaded_ack.exists(), (
+                "normal saved-conversation load was not acknowledged"
+            )
+            assert loaded_ack.read_text(encoding="ascii") == "loaded-without-provider"
+            (tmp_path / "test_data" / "canvas-live-card-pressed").unlink()
+            await page.locator("#terminal .xterm-helper-textarea").press("F12")
+            for _ in range(300):
+                if (tmp_path / "test_data" / "canvas-live-card-pressed").exists():
+                    break
+                await asyncio.sleep(0.05)
+            assert (tmp_path / "test_data" / "canvas-live-card-pressed").read_text(
+                encoding="ascii"
+            ) == "selected-pinned"
+            await expect(shell.locator("#connection-state")).to_have_text(
+                "Connected", timeout=15_000
+            )
+            await expect(preview.locator("#chatbook-app-revision")).to_have_text(
+                "v1", timeout=15_000
+            )
+            await expect(shell.get_by_text("Pinned", exact=True)).to_be_visible()
+            restored = await _served_shell_projection(page)
+            assert restored["selection"] == {
+                "canvas_id": original_root[1],
+                "revision_id": original_root[2],
+            }
+            assert restored["metadata"]["content_sha256"] == original_root[3]
+            saved_scope = await stack.server._canvas_control_broker.request(
+                replacement, "scope.snapshot.request", {}, timeout=2
+            )
+            assert saved_scope.payload["conversation_id"] == original_root[0]
+            assert saved_scope.payload["selected_canvas_id"] == original_root[1]
+            assert saved_scope.payload["selected_revision_id"] == original_root[2]
+            assert (
+                tmp_path / "test_data" / "canvas-live-restored-provider-calls"
+            ).read_text(encoding="ascii") == "0"
+            assert persisted_canvas_rows() == original_rows
+            assert (await page.request.get(f"{stack.origin}{old_url}")).status == 404
             await browser.close()
     finally:
         await stack.aclose()
+    assert all(not path.exists() for path in stack.owned_paths)
+    assert not stack.runner.sites
+    assert all(
+        service._process is None or service._process.returncode is not None
+        for service in stack.services
+    )
 
 
 @pytest.mark.loopback_network
