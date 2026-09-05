@@ -17,6 +17,7 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "chat": "console",
     "console": "console",
     "library": "library",
+    "chunking_lab": "library",
     "artifacts": "artifacts",
     "personas": "personas",
     "watchlists_collections": "watchlists_collections",
