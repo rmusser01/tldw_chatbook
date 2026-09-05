@@ -408,7 +408,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # (method count unchanged -- pure move, 57 `FunctionDef`s stay, bodies
     # shrink; 3 dead class-level constants also deleted, their sole
     # consumers all moved). 41520/1302 -> 40096/1302.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40096, 1302),
+    # Task 2 fix round 1 (post-review): the coordinator's own mandated
+    # mechanical module-globals census (recipe §3's newest numbered shape)
+    # found `_resolve_ingest_source` reading bare `validate_path_simple`/
+    # `validate_url` -- a real, ACTIVE test (`Tests/UI/test_library_
+    # shell.py::test_library_shell_ingest_canvas_invalid_path_notifies_and_
+    # submits_nothing`) patches these at the `library_screen` path and went
+    # green-but-vacuous once the body moved (confirmed by an existing-file
+    # probe: the stub's rejection stopped firing through the moved body).
+    # Reverted to `LibraryScreen`, full-bodied (its `FunctionDef` count is
+    # therefore unchanged -- the delegator's own one-liner is simply
+    # replaced by the original body, not removed). 40096/1302 -> 40131/1302.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40131, 1302),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

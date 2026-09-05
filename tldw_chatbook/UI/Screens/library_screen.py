@@ -2566,6 +2566,9 @@ class LibraryScreen(BaseAppScreen):
             refresh_library_ingest_canvas_preserving_context=(
                 lambda: self._refresh_library_ingest_canvas_preserving_context()
             ),
+            resolve_ingest_source=(
+                lambda *a, **k: self._resolve_ingest_source(*a, **k)
+            ),
             run_debounced_library_ingest_preflight=(
                 lambda *a, **k: self._run_debounced_library_ingest_preflight(*a, **k)
             ),
@@ -32602,7 +32605,39 @@ class LibraryScreen(BaseAppScreen):
         self._trigger_preflight(self._library_ingest_form.path)
 
     def _resolve_ingest_source(self, raw_path: str) -> str | None:
-        return self._ingest_controller._resolve_ingest_source(raw_path)
+        """Validate and canonicalise a Library ingest source path or URL.
+
+        Returns ``None`` when validation fails and the caller should stop
+        (a warning notification has already been shown). URLs are returned
+        as-is; filesystem paths are expanded and normalised by
+        ``validate_path_simple``.
+        """
+        if not raw_path:
+            self._notify_library_ingest_warning("Please choose a file to import.")
+            return None
+        from urllib.parse import urlparse
+
+        if urlparse(raw_path).scheme in ("http", "https"):
+            # A URL source: skip the filesystem-existence check entirely --
+            # validate_url is a syntax check, not a network fetch, matching
+            # the file branch's "cheap, local, synchronous" validation cost.
+            if not validate_url(raw_path):
+                self._notify_library_ingest_warning(
+                    "That doesn't look like a valid http(s) URL."
+                )
+                return None
+            return raw_path
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library ingest path {raw_path!r}."
+            )
+            self._notify_library_ingest_warning("Could not find that file.")
+            return None
+        return str(validated_path)
 
     def _disarm_library_ingest_start_confirm(self) -> None:
         return self._ingest_controller._disarm_library_ingest_start_confirm()

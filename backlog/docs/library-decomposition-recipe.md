@@ -356,6 +356,105 @@ is the default method for any baseline comparison expected to run
 unattended for more than a couple of minutes**, regardless of which
 subsystem's task is running it.
 
+**An eighth bypass shape, found by a coordinator review of the ingest
+controller PR (wave-5 task 2, fix round 1) rather than by the task's own
+battery: a moved body's bare MODULE GLOBAL (an ordinary
+`from module import name` in the pre-move file, not a `self.<name>`
+attribute) can be patched at the `library_screen`-scoped path by a test
+whose OWN ASSERTIONS still pass after the move — a green-but-vacuous
+test, never a red one, because the coincidence that makes it pass is
+readily available (an unrelated, independently-true condition that
+would make the assertion pass whether or not the patch is actually
+observed).** This is the SAME underlying mechanism the module-globals-
+coupling shape (this section's own oldest entry, and the ingest
+series' own `save_setting_to_cli_config`/`_library_ingest_options_for`
+precedent) already describes — the free name resolves through the
+DEFINING module's `__globals__`, fixed at definition time, so a move to
+a different module silently repoints any test patch aimed at the old
+module — but this instance was never caught by the standard "read every
+test that monkeypatches this name" check the recipe's own §3 opening
+already prescribes, because nobody ran that check exhaustively: the
+ingest controller PR's own battery (RED→GREEN wiring, characterization,
+both ratchets, `-k` sweep, full `Tests/Architecture/`, and a full
+sequential xdist paired-baseline sweep) passed cleanly with the hazard
+already shipped, because the ONE test it silently defeats
+(`Tests/UI/test_library_shell.py::test_library_shell_ingest_canvas_
+invalid_path_notifies_and_submits_nothing`) asserts a warning fires and
+zero jobs submit for an INVALID path — and a bare nonexistent tmp path
+fails the REAL validator identically to how it would fail the intended
+STUB, so the assertions read as passing either way. Only a review pass
+that mechanically re-derived the census (rather than trusting the
+battery's own green result) caught it.
+
+**The mechanical census this shape requires, and the method that found
+it (recipe-timed at roughly one minute per subsystem once the mover set
+is final):**
+
+1. For every method that MOVED (not the excluded ones — their bodies
+   never left their original module), walk its body's `ast.Name` nodes
+   with `Load` context, excluding `self`, local variables/parameters,
+   nested-function names, and builtins, and keep only the ones that
+   match a name the NEW module imports at module level (`from x import
+   name` / `import x`) — these are the moved body's own bare module-
+   global reads, exactly the shape binding kind 1 (framework services)
+   and kind 2 (named dependencies) do NOT cover, because both of those
+   apply only to `self.<name>` attribute access, never a bare free name.
+2. For every name that census produces, grep ALL of `Tests/` — never a
+   `-k`-filtered subset, per this section's own filter-blindness rule —
+   for every shape a test can spell a `library_screen`-scoped patch
+   target in: the direct-attribute form (`library_screen_module.<name>`
+   or `library_screen.<name>`), the fully-qualified string-patch form
+   (`"tldw_chatbook.UI.Screens.library_screen.<name>"`, the target
+   `unittest.mock.patch`/`patch.object` takes), AND the two-argument
+   `monkeypatch.setattr`/`patch.object` form (`library_screen_module,
+   "<name>"` or `library_screen, "<name>"` — a STRING literal argument,
+   not a dotted attribute access, and the one shape the ingest series'
+   own first attempt at this exact census missed entirely, undercounting
+   3 real patch sites to 0 before the pattern was widened to catch it).
+3. For every name with at least one hit, read the hitting test(s) and
+   determine whether ANY of them exercises the SPECIFIC moved method's
+   own call path (not just the same free name from an unrelated
+   caller) — the same "read the test, don't infer from the grep alone"
+   discipline every other bypass shape in this section already requires.
+4. Classify each finding: an ACTIVE collision (a hitting test's own
+   assertions depend, even coincidentally, on the patch reaching the
+   moved body) requires excluding the method, exactly like every other
+   module-globals-coupling entry in this section; a LATENT collision
+   (every hit belongs to an unrelated caller/subsystem, confirmed by
+   reading each one) is a documented, deliberate "keep" — record which
+   test files were checked and why none applies, so the next reviewer
+   does not have to re-derive it from scratch.
+
+**The ingest series' own worked example of both outcomes from the same
+census pass:** `_resolve_ingest_source` reads the bare names
+`validate_path_simple`/`validate_url`; the census found exactly one
+ACTIVE collision (`test_library_shell_ingest_canvas_invalid_path_
+notifies_and_submits_nothing`, confirmed genuine by an EXISTING-file
+probe — the reviewer's own proposed check, and the general form any
+future subsystem's fix should use: temporarily make the stub reject a
+path the REAL validator would accept, so the assertion can only pass if
+the patch is actually observed, then confirm it fails pre-fix and
+passes post-fix; the probe itself is never committed, only its result)
+— excluded, reverted to the screen byte-for-byte, its one mover caller
+rebound through a named late-binding dependency. `_apply_library_
+ingest_backend_save` reads the bare name `_sync_library_canvas` (the
+shared cross-subsystem canvas-sync dispatcher every one of the six
+controllers to date imports the identical way); the census found ~20
+hits across 7 files, ALL confirmed LATENT (none is ingest-related, each
+read to confirm) — kept as a mover, verdict recorded in the controller's
+own module docstring, and the SAME shape's likely presence in the other
+five controllers flagged as a cross-wave follow-up census, not fixed
+retroactively in this task (each of those five controllers' own
+battery already passed; re-opening five landed PRs to chase a shape
+found by inspection, with no confirmed active collision, is exactly the
+"don't fix cross-wave here" the review scoped this to). **The general
+rule: this census is a MANDATORY step of every future subsystem's
+controller-PR sweep, run to completion (not stopped at the first hit,
+not skipped because the ordinary battery came back green) — an ordinary
+green battery proves nothing about this shape's absence, precisely
+because a green-but-vacuous test is indistinguishable from a genuinely
+passing one without reading it.**
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:

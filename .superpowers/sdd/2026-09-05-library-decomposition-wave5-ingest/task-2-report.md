@@ -509,3 +509,201 @@ source, not a loose substring check.
   writing this report) — but a reviewer re-deriving the census from
   scratch should expect to land on 57/21, not the plan's own pre-task
   estimate, and should treat that as expected convergence, not drift.
+
+## 12. Fix round 1 (post-review)
+
+Coordinator review round 6 (the mandated exhaustive module-globals census)
+found 1 CRITICAL + 2 Important + 2 minors against the original report/
+commits above. All addressed in commit `fix(library): exclude _resolve_
+ingest_source (module-globals patch bypass); mechanical globals census
+(fix round 1)`.
+
+### CRITICAL — `_resolve_ingest_source` was a green-but-vacuous move
+
+**The method.** The coordinator's own mechanical module-globals census
+(now recipe §3's newest numbered "eighth bypass shape" entry, added in
+this fix round — see below): enumerate every bare module-global name a
+moved body reads (an `ast.Name` `Load` matching a `from x import name` at
+the NEW module's top, never a `self.<name>` attribute — those are already
+covered by the two established binding kinds), then grep ALL of `Tests/`
+for a `library_screen`-scoped patch target among them, checking THREE
+spellings: the direct-attribute form (`library_screen_module.<name>`),
+the fully-qualified string-patch form (`"tldw_chatbook.UI.Screens.
+library_screen.<name>"`), and the two-argument `setattr`/`patch.object`
+form (`library_screen_module, "<name>"` — a bare STRING argument, the one
+spelling my OWN first pass at this census (during the original build)
+never checked, silently undercounting `validate_path_simple`'s 3 real
+patch sites to 0).
+
+**The finding.** `_resolve_ingest_source` reads the bare names `validate_
+path_simple`/`validate_url`. `Tests/UI/test_library_shell.py::test_
+library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing`
+patches `tldw_chatbook.UI.Screens.library_screen.validate_path_simple`
+with a stub that unconditionally raises `ValueError`, then presses
+`#library-ingest-start` with a source path `"/tmp/whatever.txt"` that
+does not exist on disk. Once the body moved, the controller's own
+separately-imported `validate_path_simple` binding was the one actually
+called -- the SCREEN-scoped stub was never reached. The test still PASSED
+(warning fires, zero jobs submitted) because the REAL validator's own
+"file does not exist" `ValueError` produces the identical observable
+outcome as the stub's unconditional one -- a green-but-vacuous test, not
+a red one, and therefore invisible to every RED/GREEN check, wiring
+check, and xdist sweep this task's own battery ran.
+
+**Confirmed genuine, not assumed**, by an existing-file probe (per the
+review's own suggested method; the probe itself is a one-off `python -c`
+script, never committed): created a REAL temp file, patched
+`tldw_chatbook.UI.Screens.library_screen.validate_path_simple` to reject
+it unconditionally, and called `_resolve_ingest_source` both directly on
+the screen and through `screen._ingest_controller._resolve_ingest_source`.
+With the body still moved, the direct screen call raised the stub's
+rejection but the controller-forwarded call did NOT (proving the
+patch-bypass); after the fix below, both paths correctly observe the
+patch and return `None` with the expected warning.
+
+**Fix.** Reverted `_resolve_ingest_source` to `LibraryScreen`, byte-for-
+byte (re-verified against the pre-move `74a6f5774` original -- exact
+match). Removed from `LibraryIngestController` entirely (including its
+now-dead `logger`/`validate_path_simple`/`validate_url` imports -- all
+three had zero other callers in the file, confirmed by grep before
+removing). Its one mover caller, `_submit_library_ingest_form`, reaches
+it through a new named late-binding dependency (`resolve_ingest_source`),
+identical in shape to the 6 existing instance-attribute-monkeypatch
+exclusions' own bindings. Mover count: 57 -> 56; exclusions: 21 -> 22
+(3 module-globals-coupling now, was 2).
+
+### IMPORTANT — `_apply_library_ingest_backend_save` / `_sync_library_canvas`
+
+Same census, same shape: `_apply_library_ingest_backend_save` reads the
+bare module global `_sync_library_canvas` (the shared cross-subsystem
+canvas-sync dispatcher). The widened 3-spelling grep found ~20 patch
+sites across 7 files (`test_library_file_notes_workspace.py`, `test_
+library_entry_compose_once.py`, `test_library_note_import_flow.py`,
+`test_library_review_round_t21116.py`, `test_library_media_trash.py`,
+`test_library_notes_folder_navigator.py`, `Tests/Skills/test_skills_
+import.py` -- the last 3 newly found by the widened grep, missed by my
+original narrower one). Read every one: **zero is ingest-related** --
+all 7 patch it for notes/media/skills canvas syncs. **Verdict: KEEP as a
+mover**, recorded explicitly in the controller's own module docstring.
+Rationale: (1) no ACTIVE test collision exists to fix, unlike `_resolve_
+ingest_source`; (2) mechanically, `_sync_library_canvas` is a bare
+FUNCTION call (not `self.<name>`), so it cannot be late-bound as a named
+dependency without editing the moved body -- the only two accommodations
+are "exclude the whole method" or "leave it, documented," and excluding
+a working, correctly-tested method to guard a theoretical, zero-evidence
+risk would be over-conservative; (3) the identical bare-`_sync_library_
+canvas` shape exists in all five PRIOR controllers (conversations,
+export, collections, search+RAG, skills) that call this same dispatcher
+-- this is a systemic pattern, not an ingest defect. A cross-controller
+audit of all six is recorded as a follow-up (recipe's new §3 entry
+names it explicitly), NOT fixed retroactively here, per the review's own
+scope instruction.
+
+### IMPORTANT — recipe gains the mechanical module-globals census (new numbered shape)
+
+Added to `backlog/docs/library-decomposition-recipe.md` §3: the "eighth
+bypass shape" entry, with the 4-step method (enumerate bare module
+globals moved bodies read; grep all 3 patch spellings across ALL of
+`Tests/`; read every hit to classify active-vs-latent; exclude on active,
+document-and-keep on latent), this task's own CRITICAL finding as the
+worked "active" example, and the `_apply_library_ingest_backend_save`
+finding as the worked "latent" example. Also states the general rule:
+this census is now a MANDATORY step of every future subsystem's
+controller-PR sweep, run to completion regardless of how clean the
+ordinary battery comes back -- a green-but-vacuous test is by
+construction indistinguishable from a genuinely-passing one without
+actually reading it.
+
+### Minors
+
+- **Ratchet comment arity**: re-verified with `inspect.signature(
+  LibraryIngestController.__init__)` rather than hand-counted. Before this
+  fix round: 37 params excl. `self` (1 positional `screen` + 36 keyword-
+  only), confirmed via the SAME method against the pre-fix-round commit.
+  After: 38 (1 + 37) -- a clean +1 matching the one new `resolve_ingest_
+  source` dependency, no other drift. Both ratchet files' comments
+  updated to state the verified numbers and the method used, not a
+  hand-count.
+- **`Tests/UI/test_parakeet_v2_install_ui.py`** named explicitly: run in
+  this fix round (`25 passed`) as part of the closing verification --
+  named here because its own filename/test names contain neither
+  "ingest" nor "library" (task 1's own filter-blindness precedent file),
+  so it is invisible to every `-k`-filtered sweep this task ran and must
+  be checked by an explicit, content-grep-justified inclusion rather than
+  assumed covered.
+
+### Verification (fix round 1)
+
+```
+$ .venv/bin/python -m pytest Tests/Architecture/test_library_ingest_wiring.py \
+    Tests/UI/test_library_ingest_characterization.py \
+    Tests/UI/test_library_ingest_inline_consent.py \
+    Tests/Architecture/test_screen_size_ratchet.py \
+    Tests/Architecture/test_library_modules_size_ratchet.py \
+    Tests/UI/test_parakeet_v2_install_ui.py \
+    "Tests/UI/test_library_shell.py::test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing" \
+    -p no:randomly -q
+2 failed (both the documented pre-existing chat_screen.py ratchet rows), 130 passed
+```
+
+- Fixed module-globals census re-run: zero remaining ACTIVE collisions
+  (the two hits still present -- `LIBRARY_ROW_INGEST_MEDIA`, a plain
+  constant value-read, and `_sync_library_canvas`, the documented latent
+  finding -- both confirmed non-actionable by reading every hit).
+- Existing-file stub-fires probe: confirmed the fix (see CRITICAL section
+  above); probe itself not committed.
+- `-k "ingest and library"` across all four roots: 1303 passed/7 failed,
+  all 7 identical to task 1's own documented pre-existing list (unchanged
+  from before this fix round).
+- Full `Tests/Architecture/`: 551 passed/16 failed/1 skipped -- same
+  count and category as the original report's own §8 entry; the
+  diagnostic-inventory regeneration (below) removed the one transient
+  3rd failure that round had, and the two genuinely-flaky diagnostic-
+  inventory tests remain (confirmed flaky, not caused by this fix, in the
+  original report's own §8).
+- `Docs/security/production-diagnostic-inventory.json` regenerated a
+  second time: `_resolve_ingest_source`'s own `logger.opt(exception=True).
+  warning(...)` statement moved back from the controller to the screen
+  verbatim (digest `1abdbd0be7261096` unchanged, confirmed via `--
+  statements --since <prior-pin-commit>` before writing).
+- `preflight.sh`: all six derived-artifact checks pass.
+
+### Files changed (fix round 1)
+
+- `tldw_chatbook/UI/Screens/library_screen.py` — `_resolve_ingest_source`
+  reverted to its full, byte-for-byte original body; one new named
+  dependency (`resolve_ingest_source`) added to the `LibraryIngestController(...)`
+  constructor call.
+- `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` —
+  `_resolve_ingest_source`'s moved body removed; a named-dependency
+  constructor param/property added in its place; dead `logger`/`validate_
+  path_simple`/`validate_url` imports removed; module docstring updated
+  (exclusion counts, the new module-globals-coupling entry, and the
+  `_apply_library_ingest_backend_save`/`_sync_library_canvas` latent-
+  finding verdict).
+- `Tests/Architecture/test_library_ingest_wiring.py` — `_resolve_ingest_
+  source` removed from the cluster tuple; counts and docstrings corrected
+  (56/22).
+- `Tests/UI/test_library_shell.py`, `Tests/UI/test_library_ingest_inline_
+  consent.py` — their respective `wire_bypass_ingest_controller`/`_wire_
+  bypass_ingest_controller` helpers gained the new `resolve_ingest_source`
+  binding (the constructor now requires it).
+- `Tests/Architecture/test_screen_size_ratchet.py`,
+  `Tests/Architecture/test_library_modules_size_ratchet.py` — both rows
+  re-measured and re-pinned fresh (40096→40131 lines for the screen;
+  2510→2536 lines and 37→38 verified constructor arity for the
+  controller).
+- `Docs/security/production-diagnostic-inventory.json` — regenerated.
+- `backlog/docs/library-decomposition-recipe.md` — new §3 "eighth bypass
+  shape" entry (the mechanical module-globals census, its 3-spelling grep
+  method, and both this task's worked examples).
+
+### Confirmation
+
+The task's own commits (`44ab7383b`, `68a896993`, `18e9c60f7`,
+`2b790783b`) are NOT amended -- this fix round lands as new, additional
+commits on top, per the "never amend, always a new commit" discipline.
+The RED/GREEN pair those commits establish is unaffected by this fix
+round (the RED commit's own wiring-test rewrite and 5 characterization
+pins never referenced `_resolve_ingest_source`'s eventual mover-vs-
+exclusion status).

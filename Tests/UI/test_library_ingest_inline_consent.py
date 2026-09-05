@@ -187,6 +187,9 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
         refresh_library_ingest_canvas_preserving_context=(
             lambda: screen._refresh_library_ingest_canvas_preserving_context()
         ),
+        resolve_ingest_source=(
+            lambda *a, **k: screen._resolve_ingest_source(*a, **k)
+        ),
         run_debounced_library_ingest_preflight=(
             lambda *a, **k: screen._run_debounced_library_ingest_preflight(*a, **k)
         ),

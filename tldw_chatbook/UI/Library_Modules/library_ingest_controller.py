@@ -12,7 +12,7 @@ the job queue's row actions (open/retry/dismiss/view-on-server/choose-gguf/
 retry-faster-whisper/cancel/force-stop -- job-id parsing only; see
 exclusions below for the ones excluded), Clear-finished/expand-all/
 collapse-all, and rail-width auto-collapse. ``LibraryScreen`` keeps
-one-line delegators under every one of these 63 original names (62 plain
+one-line delegators under every one of these 56 original names (55 plain
 delegators + 1 class-forwarding staticmethod delegator).
 
 **Cluster derivation.** Wave-5 task 1's own census: an ``ast`` scan of
@@ -38,7 +38,7 @@ concerns. There is no subset of the cluster that only ever calls within
 itself. **Decision: ONE combined ``LibraryIngestController``**, matching the
 skills/search+RAG precedent's identical resolution at a comparable scale.
 
-**21 of the 78 candidates excluded, not moved (57 move):**
+**22 of the 78 candidates excluded, not moved (56 move):**
 
 1. **4 `@work(thread=True)`-decorated methods -- the "framework-decorator
    self-type assertion" hazard (recipe §3, the export series' own
@@ -55,8 +55,32 @@ skills/search+RAG precedent's identical resolution at a comparable scale.
    ingest_backend_switch``; ``_save_library_ingest_options``, called only by
    the ALSO-excluded ``_enqueue_library_ingest_snapshot``/``handle_library_
    ingest_option_reset``) need no binding at all.
-2. **2 module-globals-coupling exclusions (recipe §3's oldest documented
-   shape, and a close variant of it).**
+2. **3 module-globals-coupling exclusions (recipe §3's oldest documented
+   shape, and two close variants of it).**
+   - ``_resolve_ingest_source`` reads the bare names ``validate_path_
+     simple``/``validate_url`` (ordinary module-level imports in
+     ``library_screen.py``, resolved against the DEFINING module's
+     ``__globals__`` at call time). Found by the coordinator-mandated
+     mechanical module-globals census (recipe §3's newest numbered shape,
+     see that entry for the method), NOT by the original battery -- the
+     first-draft move shipped GREEN because ``Tests/UI/test_library_
+     shell.py::test_library_shell_ingest_canvas_invalid_path_notifies_and_
+     submits_nothing`` patches ``tldw_chatbook.UI.Screens.library_screen.
+     validate_path_simple`` with a stub that unconditionally raises, then
+     presses ``#library-ingest-start`` with a NONEXISTENT tmp path -- the
+     assertions (a warning fires, zero jobs submitted) pass whether the
+     STUB fires or the REAL validator's own "file does not exist" check
+     fires, so the moved body's silently-bypassed patch produced a
+     GREEN-BUT-VACUOUS test, not a red one. Confirmed genuine (not
+     assumed) by a probe: with the body still moved, patching ``library_
+     screen.validate_path_simple`` to reject an EXISTING file left the
+     controller's own separately-imported ``validate_path_simple`` binding
+     unaffected -- the file passed real validation and no warning fired --
+     then, after reverting the exclusion below, the SAME probe correctly
+     produced the warning through both the direct screen call and the
+     controller's forwarded call. Reverted to ``LibraryScreen``, UNMOVED,
+     full-bodied; its only caller, ``_submit_library_ingest_form`` (a
+     mover), reaches it through a named late-binding dependency below.
    - ``_remember_library_ingest_location`` reads the bare name ``save_
      setting_to_cli_config`` (an ordinary module-level import in
      ``library_screen.py``, resolved against the DEFINING module's
@@ -208,8 +232,8 @@ skills/search+RAG precedent's identical resolution at a comparable scale.
      body also calls the ALSO-moved ``_library_ingest_registry``, reached
      the same accessor-callable way once excluded.
 
-**57 of the 78 candidates move onto this controller** (25 ``@on`` handlers +
-2 ``action_*`` methods + 1 ``@staticmethod`` + 29 plain).
+**56 of the 78 candidates move onto this controller** (25 ``@on`` handlers +
+2 ``action_*`` methods + 1 ``@staticmethod`` + 28 plain).
 
 **Byte-for-byte canon** (moved bodies never edited -- every name they
 reference that is not this controller's own state is rebound under the SAME
@@ -233,7 +257,40 @@ examples):
    back to a full ``screen.refresh(recompose=True)`` -- exactly the
    whole-screen recompose ``Tests/UI/test_library_canvas_scoped_sync.py::
    test_ingest_backend_switch_recomposes_only_the_ingest_canvas`` asserts
-   does NOT happen). One more name joins this group for a narrower reason:
+   does NOT happen).
+
+   **A related, deliberately UNFIXED finding from the same mechanical
+   module-globals census (recipe §3's newest numbered shape):**
+   ``_apply_library_ingest_backend_save`` ALSO reads a bare module global,
+   ``_sync_library_canvas`` itself (the call just above) -- a plain
+   function, not a method, imported fresh into this controller module
+   (``from .canvas_sync import _sync_library_canvas``, the same shape
+   every sibling controller already uses for its own ``kind=`` call). The
+   census found every ``library_screen``-scoped patch target for this name
+   across ``Tests/`` (7 files, ~20 sites, both the direct-attribute and the
+   ``monkeypatch.setattr(module, "name", ...)``/fully-qualified-string
+   patch shapes) and confirmed NONE is ingest-related -- all 7 files
+   (``test_library_file_notes_workspace.py``, ``test_library_entry_
+   compose_once.py``, ``test_library_note_import_flow.py``, ``test_
+   library_review_round_t21116.py``, ``test_library_media_trash.py``,
+   ``test_library_notes_folder_navigator.py``, ``Tests/Skills/test_
+   skills_import.py``) patch it for notes/media/skills canvas syncs, zero
+   for Ingest. **Verdict: KEEP as a mover.** Unlike ``_resolve_ingest_
+   source`` above, there is no ACTIVE test whose assertions this coupling
+   silently defeats -- excluding a whole method to guard against a
+   theoretical, currently-unexercised collision would be over-conservative
+   (and mechanically odd besides: ``_sync_library_canvas`` is a bare
+   FUNCTION call, not `self.<name>`, so it cannot be late-bound as a
+   named dependency without editing the body -- the only two
+   accommodations available are "exclude the whole method" or "leave it,
+   documented"). The identical bare-``_sync_library_canvas`` shape exists
+   in every one of the five prior controllers (conversations, export,
+   collections, search+RAG, skills) that call this same shared dispatcher
+   -- this is a SYSTEMIC pattern, not an ingest-specific defect, and a
+   cross-controller audit of all six is recorded as a follow-up, not
+   fixed here (out of this task's own scope).
+
+   One more name joins this group for a narrower reason:
    ``LIBRARY_INGEST_SHORTCUTS`` is a ``LibraryScreen`` CLASS attribute (a
    literal tuple, not an ``__init__`` field) that ``Tests/UI/test_library_
    ingest_keyboard.py`` reads directly off the SCREEN (``screen.LIBRARY_
@@ -264,15 +321,16 @@ examples):
    accessor pair exists for this subsystem (task 1's own finding: "no
    field holds a live controller/coordinator instance"); (d) N/A -- no
    merely-delegate-to-existing-controller properties exist for Ingest
-   (unlike Skills' import-coordinator precedent); (e) 12 named late-binding
+   (unlike Skills' import-coordinator precedent); (e) 13 named late-binding
    callables for the exclusions above that a MOVER still calls/references
    internally (``_build_ingest_options_snapshot``, ``_build_library_ingest_
    state``, ``_do_submit_ingest``, ``_library_ingest_browse_location``,
    ``_library_ingest_job_by_id``, ``_notify_library_ingest_warning``,
    ``_persist_library_ingest_location``, ``_refresh_library_ingest_canvas_
-   preserving_context``, ``_run_debounced_library_ingest_preflight``,
-   ``_run_library_ingest_preflight``, ``_update_library_ingest_dynamic_
-   regions``, ``_update_library_ingest_gate``) -- each a ``lambda`` that
+   preserving_context``, ``_resolve_ingest_source``, ``_run_debounced_
+   library_ingest_preflight``, ``_run_library_ingest_preflight``,
+   ``_update_library_ingest_dynamic_regions``, ``_update_library_ingest_
+   gate``) -- each a ``lambda`` that
    re-reads ``screen.<name>`` on every invocation, at CALL time, not a
    value captured once at construction, which is exactly why every bypass
    fixture named above keeps working unmodified after this move.
@@ -311,7 +369,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from loguru import logger
 from textual import on
 from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
@@ -342,8 +399,6 @@ from ...Library.library_ingest_state import (
 )
 from ...Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from ...Third_Party.textual_fspicker import FileOpen
-from ...Utils.input_validation import validate_url
-from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Library import (
     LibraryIngestCanvas,
     LibraryIngestPreflightSummary,
@@ -364,14 +419,14 @@ if TYPE_CHECKING:
 
 
 class LibraryIngestController:
-    """Owns the Ingest canvas cluster (57 methods).
+    """Owns the Ingest canvas cluster (56 methods).
 
     Holds no state of its own beyond what it reads and writes through
     ``LibraryIngestState`` (via the injected accessor) and the shared
     shell/framework bindings below. ``LibraryScreen`` constructs exactly one
     of these, in ``__init__`` right after ``self._skills_controller``, and
     keeps one-line delegators for every original name this cluster moved
-    (57 -- see the module docstring for the full derivation and the 21
+    (56 -- see the module docstring for the full derivation and the 22
     exclusions).
     """
 
@@ -424,6 +479,7 @@ class LibraryIngestController:
         notify_library_ingest_warning,
         persist_library_ingest_location,
         refresh_library_ingest_canvas_preserving_context,
+        resolve_ingest_source,
         run_debounced_library_ingest_preflight,
         run_library_ingest_preflight,
         update_library_ingest_dynamic_regions,
@@ -509,6 +565,7 @@ class LibraryIngestController:
         self._refresh_library_ingest_canvas_preserving_context_fn = (
             refresh_library_ingest_canvas_preserving_context
         )
+        self._resolve_ingest_source_fn = resolve_ingest_source
         self._run_debounced_library_ingest_preflight_fn = (
             run_debounced_library_ingest_preflight
         )
@@ -720,6 +777,10 @@ class LibraryIngestController:
         return self._refresh_library_ingest_canvas_preserving_context_fn
 
     @property
+    def _resolve_ingest_source(self) -> Any:
+        return self._resolve_ingest_source_fn
+
+    @property
     def _run_debounced_library_ingest_preflight(self) -> Any:
         return self._run_debounced_library_ingest_preflight_fn
 
@@ -735,7 +796,7 @@ class LibraryIngestController:
     def _update_library_ingest_gate(self) -> Any:
         return self._update_library_ingest_gate_fn
 
-    # -- moved cluster methods (57), byte-for-byte, original file order ---
+    # -- moved cluster methods (56), byte-for-byte, original file order ---
     def _library_ingest_shortcuts_for_current_state(
         self,
     ) -> tuple[tuple[str, str], ...]:
@@ -1808,41 +1869,6 @@ class LibraryIngestController:
         if not self._build_library_ingest_state().start_enabled:
             return
         self._submit_library_ingest_form()
-
-    def _resolve_ingest_source(self, raw_path: str) -> str | None:
-        """Validate and canonicalise a Library ingest source path or URL.
-
-        Returns ``None`` when validation fails and the caller should stop
-        (a warning notification has already been shown). URLs are returned
-        as-is; filesystem paths are expanded and normalised by
-        ``validate_path_simple``.
-        """
-        if not raw_path:
-            self._notify_library_ingest_warning("Please choose a file to import.")
-            return None
-        from urllib.parse import urlparse
-
-        if urlparse(raw_path).scheme in ("http", "https"):
-            # A URL source: skip the filesystem-existence check entirely --
-            # validate_url is a syntax check, not a network fetch, matching
-            # the file branch's "cheap, local, synchronous" validation cost.
-            if not validate_url(raw_path):
-                self._notify_library_ingest_warning(
-                    "That doesn't look like a valid http(s) URL."
-                )
-                return None
-            return raw_path
-        try:
-            validated_path = validate_path_simple(
-                Path(raw_path).expanduser(), require_exists=True
-            )
-        except ValueError:
-            logger.opt(exception=True).warning(
-                f"Rejected Library ingest path {raw_path!r}."
-            )
-            self._notify_library_ingest_warning("Could not find that file.")
-            return None
-        return str(validated_path)
 
     def _disarm_library_ingest_start_confirm(self) -> None:
         """Drop a pending two-press Start consent.

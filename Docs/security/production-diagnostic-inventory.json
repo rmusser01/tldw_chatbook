@@ -2595,13 +2595,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "1fe3f88484ea8dae985b",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 2,
       "diagnostic_digest": "a5d9efad9e09d4fd1244",
       "owner": "TASK-494",
@@ -2819,8 +2812,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 103,
-      "diagnostic_digest": "d83b8bf1ce49e36beb2e",
+      "call_count": 104,
+      "diagnostic_digest": "bc23f0ee6b49abb5b080",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9470,20 +9463,6 @@
     {
       "candidates": [
         {
-          "call_digest": "1abdbd0be7261096",
-          "method": "warning",
-          "path_expressions": [
-            "raw_path"
-          ],
-          "scope": "LibraryIngestController._resolve_ingest_source",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "1654c8f3ddd90aa4",
           "method": "error",
           "path_expressions": [
@@ -9504,6 +9483,15 @@
             "job.source_path"
           ],
           "scope": "LibraryScreen._open_job_in_library",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "1abdbd0be7261096",
+          "method": "warning",
+          "path_expressions": [
+            "raw_path"
+          ],
+          "scope": "LibraryScreen._resolve_ingest_source",
           "status": "legacy_unreviewed"
         },
         {
@@ -11361,7 +11349,7 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 574,
+    "owner_files": 573,
     "path_privacy_candidate_calls": 715,
     "persistent_sink_files": 10,
     "task_492_calls": 1338,

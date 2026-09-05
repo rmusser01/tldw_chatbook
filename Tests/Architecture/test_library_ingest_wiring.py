@@ -15,11 +15,18 @@ collections/search+RAG series' own Task-3/4-shaped cleanup precedent.
 equivalent job on the controller side.
 
 Task 2 adds the full-cluster ownership/same-name-delegator-forwarding
-checks (``_INGEST_CLUSTER_METHOD_NAMES``, 57 names). See
+checks (``_INGEST_CLUSTER_METHOD_NAMES``, 56 names). See
 ``library_ingest_controller.py``'s own module docstring for the full
-78-candidate derivation and the 21 exclusions (4 ``@work`` framework-
-decorator hazard, 2 module-globals-coupling, 9 unbound-fake-self/
+78-candidate derivation and the 22 exclusions (4 ``@work`` framework-
+decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/
 ``object.__new__``-bypass, 6 instance-attribute-monkeypatch).
+
+Task 2 fix round 1 (post-review): ``_resolve_ingest_source`` moved back
+to the exclusion list (module-globals coupling on ``validate_path_
+simple``/``validate_url``, found by the coordinator-mandated mechanical
+module-globals census, not the original battery -- see ``library_ingest_
+controller.py``'s own module docstring for the full incident, including
+the existing-file probe that confirmed it).
 """
 from __future__ import annotations
 
@@ -53,14 +60,18 @@ def test_state_object_fields_match_the_shim_surface() -> None:
 #: original `LibraryScreen` name. Derived from a full `ast` census of every
 #: `LibraryScreen` method whose name contains "ingest" (78 raw matches, 78
 #: unique -- matching Task 1's own census), minus 4 `@work` framework-
-#: decorator-hazard exclusions, 2 module-globals-coupling exclusions, 9
-#: unbound-fake-self/`object.__new__`-bypass exclusions, and 6 instance-
-#: attribute-monkeypatch exclusions (`_build_library_ingest_state`,
-#: `_library_ingest_job_by_id`, `_notify_library_ingest_warning`,
-#: `_refresh_library_ingest_canvas_preserving_context`, `_update_library_
-#: ingest_dynamic_regions`, `_update_library_ingest_gate`) -- NOT a
-#: prefix/substring shortcut. See `library_ingest_controller.py`'s module
-#: docstring for the full per-name reasoning behind every exclusion.
+#: decorator-hazard exclusions, 3 module-globals-coupling exclusions
+#: (`_remember_library_ingest_location`, `_load_library_ingest_options_
+#: from_config`, and `_resolve_ingest_source` -- the last one moved back
+#: here in fix round 1, found by the mechanical module-globals census, not
+#: the original battery), 9 unbound-fake-self/`object.__new__`-bypass
+#: exclusions, and 6 instance-attribute-monkeypatch exclusions
+#: (`_build_library_ingest_state`, `_library_ingest_job_by_id`,
+#: `_notify_library_ingest_warning`, `_refresh_library_ingest_canvas_
+#: preserving_context`, `_update_library_ingest_dynamic_regions`,
+#: `_update_library_ingest_gate`) -- NOT a prefix/substring shortcut. See
+#: `library_ingest_controller.py`'s module docstring for the full per-name
+#: reasoning behind every exclusion.
 _INGEST_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_adopt_library_ingest_path",
     "_apply_library_ingest_backend_save",
@@ -82,7 +93,6 @@ _INGEST_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_on_library_ingest_top_button",
     "_pause_library_ingest_transient_ui",
     "_reset_library_ingest_transient_state",
-    "_resolve_ingest_source",
     "_restage_library_ingest_last_submission",
     "_restore_library_ingest_canvas_context",
     "_scroll_library_ingest_queue_into_view",
@@ -143,8 +153,8 @@ def test_ingest_cluster_method_names_are_genuinely_ingest_named() -> None:
         n for n in _INGEST_CLUSTER_METHOD_NAMES if "ingest" not in n.lower()
     ]
     assert not not_ingest_named, f"non-ingest-named cluster entries: {not_ingest_named!r}"
-    assert len(_INGEST_CLUSTER_METHOD_NAMES) == 57, (
-        f"expected 57 moved names, got {len(_INGEST_CLUSTER_METHOD_NAMES)}"
+    assert len(_INGEST_CLUSTER_METHOD_NAMES) == 56, (
+        f"expected 56 moved names, got {len(_INGEST_CLUSTER_METHOD_NAMES)}"
     )
 
 

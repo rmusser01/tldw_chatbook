@@ -146,7 +146,18 @@ _BUDGETS: dict[str, int] = {
     # derivation, including 6 instance-attribute-monkeypatch exclusions
     # found only by running the battery) pinned at its exact measured line
     # count.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2510,
+    # Task 2 fix round 1 (post-review): `_resolve_ingest_source` excluded
+    # (module-globals coupling on `validate_path_simple`/`validate_url`,
+    # found by the mechanical module-globals census, not the battery --
+    # see the screen ratchet's own comment above for the full incident);
+    # 56 moved methods, one named dependency added for its mover caller.
+    # Constructor arity verified with `inspect.signature(LibraryIngest
+    # Controller.__init__)` rather than hand-counted: 37 -> 38 params excl.
+    # `self` (1 positional `screen` + 36 -> 37 keyword-only named
+    # dependencies), a clean +1 matching the one new dependency. Dead
+    # imports removed (`logger`, `validate_path_simple`, `validate_url` --
+    # all now unused in this file). 2510 -> 2536 lines.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2536,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
