@@ -61,6 +61,17 @@ class PostRecomposeCallback:
         """
         self._post_recompose_callback = callback
 
+    @property
+    def has_pending_recompose_callback(self) -> bool:
+        """Whether a follow-up is already queued for the next recompose.
+
+        ``queue_after_recompose`` REPLACES, so a caller that would install a
+        best-effort follow-up (rather than an intentional supersession) has
+        to ask first or it silently evicts the owner's -- task-31567 lost a
+        bulk-delete receipt's "land on Undo" intent that way.
+        """
+        return self._post_recompose_callback is not None
+
     def preserve_same_id_focus_after_recompose(self) -> None:
         """Replace a focused child with its newly composed same-ID owner."""
         focused = self.app.focused

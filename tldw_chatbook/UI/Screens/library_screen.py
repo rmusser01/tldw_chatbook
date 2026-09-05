@@ -39608,12 +39608,20 @@ class LibraryScreen(BaseAppScreen):
             # trap ``PostRecomposeCallback`` exists for -- measured: the
             # screen-level callback ran before the new children mounted and
             # the grip still won).
-            viewer.queue_after_recompose(
-                partial(
-                    self._restore_library_media_focus,
-                    self._capture_library_media_focus_identity(),
+            # ...unless the Find token owns this recompose. It was consumed
+            # into ``find_focus_pending`` a few lines above, so the restore's
+            # own token guard reads False by the time it runs (review I2);
+            # read the viewer's copy here instead. Without this the seam
+            # re-focused the pressed Find BUTTON on the way through -- a
+            # third focus move, and a foreign ``DescendantFocus``, inside the
+            # window the token channel owns.
+            if not viewer.find_focus_pending:
+                viewer.queue_after_recompose(
+                    partial(
+                        self._restore_library_media_focus,
+                        self._capture_library_media_focus_identity(),
+                    )
                 )
-            )
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -40008,6 +40016,14 @@ class LibraryScreen(BaseAppScreen):
           has already focused a real widget by the time this runs, which
           the "focus is not a grip" check below detects generically.
 
+        Not a whole-screen guarantee: this runs from the two media
+        recompose choke points (the ``kind == "media"`` branch of
+        ``_sync_library_canvas`` and ``_sync_library_media_viewer_state``,
+        plus that seam's screen-level fallback). A bare background
+        ``refresh(recompose=True)`` elsewhere still drops focus to ``None``
+        -- covering that means ``BaseAppScreen.refresh``/``compose_content``
+        and every Library destination, which is its own task.
+
         Args:
             previous: Identity captured by
                 ``_capture_library_media_focus_identity`` before the
@@ -40030,6 +40046,16 @@ class LibraryScreen(BaseAppScreen):
             # The widget itself is gone (a row the write removed, the Find
             # bar a mode switch closed): the list entry is the honest
             # landing spot -- never the grip Textual would pick.
+            self._focus_library_list_entry()
+            return
+        if not target.focusable:
+            # Same failure, quieter: ``Screen.set_focus`` NO-OPS on a widget
+            # whose ``focusable`` is False, so treating this as success left
+            # focus on the grip. The media canvas and the viewer both
+            # compose gated actions disabled (Select all / Clear / Export /
+            # Analyze / Delete, Find, Generate) and those gates flip on
+            # exactly the recompose this seam wraps, so a captured id can
+            # come back unfocusable (review I1).
             self._focus_library_list_entry()
             return
         self.set_focus(target)

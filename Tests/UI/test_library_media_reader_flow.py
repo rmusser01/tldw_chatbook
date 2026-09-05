@@ -2100,7 +2100,11 @@ async def test_media_focus_restore_never_clobbers_a_queued_follow_up(size):
         screen = await _open_media_list(host, pilot)
         canvas = screen.query_one("#library-media-canvas")
         ran: list[str] = []
-        canvas.queue_after_recompose(lambda: ran.append("owner"))
+        def owner() -> None:
+            ran.append("owner")
+            screen.query_one("#library-media-row-1", Button).focus()
+
+        canvas.queue_after_recompose(owner)
 
         # A target-less media sync (Select all, a receipt dismiss, a facet
         # reload): it must leave the queued follow-up alone.
@@ -2108,5 +2112,99 @@ async def test_media_focus_restore_never_clobbers_a_queued_follow_up(size):
         await _settle(pilot)
 
         assert ran == ["owner"], ran
+        # ...and the owner's focus outcome survives: the restore defers to
+        # whatever the queued follow-up put focus on.
+        assert _focused_id(screen) == "library-media-row-1", screen.focused
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_restore_falls_back_to_the_list_entry_when_the_target_is_disabled(size):
+    """task-31567 AC#1 (review I1): a target that comes back DISABLED is gone.
+
+    ``Screen.set_focus`` silently no-ops on a widget whose ``focusable`` is
+    False, and the seam treated that as success -- so a recompose that
+    re-composes the captured id under a flipped gate left focus exactly
+    where the defect puts it, on a pane grip. "Export" is gated on the
+    selection being non-empty, so clearing the selection from the focused
+    Export button is that shape as a real gesture.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-export-selected")
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-media-export-selected", Button
+            ).disabled,
+            message="Selecting a row never enabled Export.",
+        )
+        export = screen.query_one("#library-media-export-selected", Button)
+        export.focus()
+        await pilot.pause()
+        assert _focused_id(screen) == "library-media-export-selected"
+
+        # Clear the selection: Export is re-composed under its own gate,
+        # disabled, so the captured identity resolves but cannot take focus.
+        screen.query_one("#library-media-select-clear", Button).press()
+        await _settle(pilot)
+
+        assert screen.query_one("#library-media-export-selected", Button).disabled
+        assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
+        focused = screen.focused
+        assert focused is not None and focused.has_class("library-media-row"), focused
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_opening_find_costs_no_extra_focus_move(size):
+    """task-31567 (review I2): the Find token owns the gesture that OPENS Find.
+
+    ``_sync_library_media_viewer_state`` consumes the one-shot token into
+    ``viewer.find_focus_pending`` BEFORE the restore is queued, so the
+    seam's own ``_library_media_find_focus_pending`` guard reads False and
+    cannot fire. The restore then re-focused the pressed Find BUTTON on the
+    way through -- a third focus move (and a foreign ``DescendantFocus``)
+    inside the window the token channel owns. Base makes two.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        await _settle(pilot)
+
+        find_button = screen.query_one("#library-media-reader-find", Button)
+        find_button.focus()  # a real click focuses the button it presses
+        await pilot.pause()
+
+        moves: list[str] = []
+        original_set_focus = screen.set_focus
+
+        def counting_set_focus(_self, widget, scroll_visible=True):
+            moves.append(str(getattr(widget, "id", widget)))
+            return original_set_focus(widget, scroll_visible=scroll_visible)
+
+        screen.set_focus = MethodType(counting_set_focus, screen)
+        try:
+            find_button.press()
+            await _settle(pilot)
+        finally:
+            del screen.set_focus
+
+        assert screen._library_media_find_open is True
+        assert _focused_id(screen) == "library-media-content-search", screen.focused
+        assert "library-media-reader-find" not in moves, moves
+        assert len(moves) <= 2, moves
         for media_id in tuple(service.detail_release):
             service.release(media_id)

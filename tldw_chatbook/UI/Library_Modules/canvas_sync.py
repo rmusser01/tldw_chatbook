@@ -607,9 +607,7 @@ def _sync_library_canvas(
                     _explicit()
                 screen._restore_library_media_focus(_previous)
 
-            if then is not None or (
-                getattr(canvas, "_post_recompose_callback", None) is None
-            ):
+            if then is not None or not canvas.has_pending_recompose_callback:
                 # NEVER clobber a follow-up another sync already queued.
                 # ``queue_after_recompose`` REPLACES, and a media mutation
                 # queues its ``focus_identity`` follow-up (PR E's "land on
