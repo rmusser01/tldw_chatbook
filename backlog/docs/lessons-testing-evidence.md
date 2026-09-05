@@ -11664,3 +11664,19 @@ but that is not proof of no filesystem effect. Prefer repository pytest fixtures
 and establish owned config/data before application imports: an in-memory subject
 does not make its module's bootstrap side-effect-free. Do not delete ambient
 state afterward or suppress the deviation from the verification record.
+
+## Parameter IDs can accidentally activate keyword-based test gates
+
+Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium
+regression parameter named `live` meant an existing rendered child, not an
+external service. The repository's collection hook checks `"live" in
+item.keywords`, so the parameter case was skipped without `--run-live`.
+Renaming it `existing` exercised the intended case and exposed the expected
+duplicate-create failure. The definitive RED separately parameterized both
+selection outcomes too, preventing the first failure from masking the second.
+
+Rule: inspect collected outcomes and skip reasons, not just command success or
+test-function count. Use parameter IDs that do not collide with keyword-based
+suite gates; do not opt into external/live suites to rescue a local case.
+Independently parameterize distinct required failures when an earlier assertion
+would otherwise prevent a later one from running.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 18:17'
+updated_date: '2026-09-05 18:30'
 labels:
   - canvas
   - settings
@@ -36,7 +36,7 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 - [x] #7 Served live verification covers split pane, hot reload, branch switch, exact transcript reopen, authenticated remote/proxy flow, and two-browser isolation
 - [x] #8 Archive 3.0 round-trip and zero-egress evidence are captured through the outermost user-visible paths
 - [ ] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
-- [ ] #10 Final review regressions demonstrate production staging count/byte admission, supported DOM move/reinsert behavior, byte-preserving ordinary disabled continuations, nonblocking transcript Canvas actions, and pin-preserving settlement publication; helper limit validation and close/hide copy match their actual contracts
+- [x] #10 Final review regressions demonstrate production staging count/byte admission, supported DOM move/reinsert behavior, byte-preserving ordinary disabled continuations, nonblocking transcript Canvas actions, and pin-preserving settlement publication; helper limit validation and close/hide copy match their actual contracts
 <!-- AC:END -->
 
 ## Implementation Plan

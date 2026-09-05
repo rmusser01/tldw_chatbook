@@ -599,7 +599,7 @@ reopened and AC10 records the corrective outcomes; AC9 remains unsatisfied.
 
 - [x] Enforce count/revision/byte quotas in the actual Console mutation owner
   before staging, including existing/concurrent history and failure release.
-- [ ] Preserve bounded DOM identity for move/reinsert and reject cycles atomically.
+- [x] Preserve bounded DOM identity for move/reinsert and reject cycles atomically.
 - [x] Preserve ordinary non-opt-in continuation bytes and assistant text while
   retaining fail-closed sensitive Canvas projection in mixed rounds.
 - [x] Discover transcript HTML-fence identity cheaply and compile compatibility
@@ -634,7 +634,7 @@ contracts without changing storage, permissions or runtime boundaries.
 - [x] Enforce exact default 8 MiB temporary admission, including confirmed
   temporary history, concurrent stages, multiple turns, import/rename and abort
   release, while preserving the separate durable ceiling.
-- [ ] Support detached text/attribute/property/style and subtree edits before
+- [x] Support detached text/attribute/property/style and subtree edits before
   reinsertion with bounded transactional state; restore supported empty/false
   form values after attributes. Verify through the actual browser renderer.
 - [x] Suppress late compile-refusal repair effects after disable or changes to
@@ -662,13 +662,23 @@ ADR required: no new ADR; existing ADR-115 applies.
 ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 Reason: correct supported DOM reconstruction under the existing bounded runtime.
 
-- [ ] Restore explicit select values after their options exist, including a
+- [x] Restore explicit select values after their options exist, including a
   non-first option and empty/no-match selection, preserving default-only state.
-- [ ] Reconstruct mixed-presence subtrees without duplicate native IDs when a
+- [x] Reconstruct mixed-presence subtrees without duplicate native IDs when a
   new or live child joins an absent parent; preserve attachments and limits.
-- [ ] Add actual-renderer failing regressions, verify final targeted tests and
+- [x] Add actual-renderer failing regressions, verify final targeted tests and
   asset integrity with owned browser cleanup, and obtain one scoped rereview
   from the previously reviewed HEAD `648530ac6`.
+
+Implementation `981b1f8c1`, scoped rereview through `03cd979df`: both remaining
+I2 cases addressed; spec and quality gates pass with no new Critical/Important
+fix-diff issue. Exact final browser evidence is 5 passed; runtime assets 20
+passed with one optional archive-input skip. See `Docs/Canvas/V1_VERIFICATION.md`
+for commands and qualifications. All final-review implementation findings are
+closed, and TASK-31232 AC10 is checked. AC9 remains open for six characterized
+pre-existing selected-suite failures; do not mark Done or infer authorization
+for those repairs, a full sweep, merge or cleanup. Preserve the branch and
+review evidence pending separate direction on that acceptance blocker.
 
 ## Execution Handoff
 

@@ -5,14 +5,16 @@ Architecture: [ADR-115](../../backlog/decisions/115-local-versioned-canvas-artif
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
-Latest scoped rereview (`a7bcc6b094..648530ac6`) closes I1 and I4; I2 remains
-open for select-value restoration order and mixed-presence subtree identities.
-TASK-31232 remains In Progress with AC9 and AC10 open. Details below preserve
+Latest scoped rereview (`648530ac6..03cd979df`) closes both remaining I2 DOM
+cases with spec and quality gates passing and no new Critical/Important
+fix-diff issue identified. All final-review implementation findings are now
+closed. TASK-31232 remains In Progress with AC9 open and AC10 checked.
+Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
 The user authorized one DOM-only correction and scoped rereview of those two
 I2 cases. Implementation `981b1f8c1` and targeted evidence are recorded below;
-the scoped verdict is pending. This does not waive AC9's six characterized
+the scoped verdict passed. This does not waive AC9's six characterized
 baseline failures or authorize a full sweep.
 Independent Task 7.4 review found five Important evidence/fixture gaps. Fix
 commit `0724726a0c` adds strict corpus outcomes, persisted Console completion,
@@ -79,8 +81,14 @@ This does not replace earlier inherited lint-debt qualifications elsewhere.
 
 The pass touches only the runtime worker, its integrity manifest and the browser
 test file. The review package starts at the actual previous-reviewed HEAD
-`648530ac6`. AC10 stays open until that scoped review; AC9 independently remains
-open for the six baseline failures. No baseline suites or full sweep rerun.
+`648530ac6` and ends at `03cd979df`. The static-only scoped rereview closed both
+I2 cases: per-descendant presence preserves necessary attachments, and deferred
+selection patches follow complete child structure. Spec and quality gates pass
+with no new Critical/Important fix-diff issue identified. The reviewer did not
+rerun tests or import application modules. Earlier authorship and evidence
+qualifications remain recorded below; this is not another broad review.
+AC10 is checked. AC9 independently remains open for the six baseline failures.
+No baseline suites or full sweep rerun, no task Done or integration approval.
 
 ## Whole-branch review (`facd1e0fb0`): needs fixes
 
