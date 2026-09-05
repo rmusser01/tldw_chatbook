@@ -814,3 +814,30 @@ the two failures apart:
 **What to do.** Nothing new — run both existing checks at *commit/merge* time, not at plan
 time. The point of this entry is only that across one arc, both fired, and each cost about
 a minute against a renumbering cleanup that has previously taken hours.
+
+## `dev` is strict + enforce-admins: a BEHIND PR cannot merge, `--admin` or not (media wave 4 PRs C/D, 2026-09-04)
+
+**The incident.** PR #2390 was green on every check on head `6856e48d66`, then dev took
+one unrelated commit. `gh pr merge --admin --merge` was refused twice with
+`Required status check "Derived artifacts reproduce from their sources" is expected` even
+though that check-run reported `completed/success` on the head. The branch protection on
+`dev` has `strict: true` (branch must be up to date) and `enforce_admins: true`, so the
+required check is re-evaluated against the moved base and the admin bypass does not exist.
+I had ruled "no second update-branch" from a mis-remembered treadmill lesson and lost
+about 25 minutes proving the merge could not happen. PR #2400 then needed **four**
+update-branches in 70 minutes — dev moved every 20-40 minutes that evening, against a
+15-minute Fast Lane + Derived cycle — and one of those moves was my own docs-only PR
+#2401 landing first.
+
+**What to do.**
+- A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
+  the moment dev moves, then merge within the minute Derived reports success. The old
+  "never update-branch every round" note means *do not update while checks or Qodo are
+  still mid-run on the current head*; it never meant skip an update after dev moved.
+- Before each update, run `comm -12` over the two `git diff --name-only <merge-base>..`
+  lists. The one overlap that keeps recurring is the generated CSS bundle
+  (`tldw_chatbook/css/tldw_cli_modular.tcss`, PR #2389 vs #2390): fast-forward the
+  worktree to the merged head and run `python -m tldw_chatbook.css.build_css` +
+  `python tldw_chatbook/css/check_bundle_sync.py` before Derived gets there.
+- When one session holds a code PR and a docs PR, merge the **code PR first** — landing
+  the docs PR moves dev and puts the code PR straight back on the treadmill.

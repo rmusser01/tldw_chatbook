@@ -1983,3 +1983,23 @@ looked untoggled in the capture taken right after the click, then opened
 when the following key arrived), so capture again before concluding a
 click was dead; and Ctrl+Shift+Right (expand every rail section) did
 nothing when sent through tmux — open sections one at a time instead.
+
+## A host out of POSIX semaphores fails every multiprocessing pool with "No space left on device" — and the disk is fine (media wave 4 PR D, 2026-09-04)
+
+**The incident.** The Task 3 implementer's live import run (two text files through the
+Library Import canvas) died with `OSError(28, 'No space left on device')` from
+`multiprocessing.Pool`. The data volume was 84% used with 300 GB free. Reproduced outside
+the app with nothing but `python -c "import multiprocessing as mp; mp.Lock()"` — same
+error. Root cause: macOS's named-semaphore limit was exhausted by 38-40 `pytest`
+processes that four other Claude sessions were running in parallel on the same machine;
+it stayed exhausted for the rest of the evening. Every live import for PR #2400 was
+blocked; the gate, the id set and the per-row receipts were verified in real-screen
+app-tests with a stubbed resolver and generator instead, and the PR body says so.
+
+**What to do.**
+- When a live step dies with ENOSPC on a disk that is not full, run the one-line
+  `mp.Lock()` probe before touching the app; count `pytest` processes with
+  `ps -axo command | grep -c '[p]ytest'`.
+- Do not kill other sessions' runs to free the semaphores. Either wait for them to finish
+  or reboot; until then, substitute app-tests and state the gap in the PR — never report a
+  live verification you could not run.
