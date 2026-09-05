@@ -12,7 +12,7 @@ Chatbook PR2428 merged as `66a1cbf8fdabf2f54e3222e64895bea472d42d76`; server PR2
 
 Provider wrapper87330/child87336 and Kokoro wrapper87001/child87013 exited0 with no app exception. Normal config byte hashes were unchanged. No microphone was opened. Credentials remained in child memory and were not written to these receipts or the scratch config. Each run used its own disposable profile and null keyring backend. These are mounted Textual `run_test` interactions with real network/audio output, not physical Terminal or human microphone acceptance.
 
-OpenAI realtime remains untested: neither modern nor environment OpenAI configuration was present at preflight. Intentional human microphone participation was requested and remains pending. TASK31585 AC9 stays open.
+At this initial preflight, OpenAI realtime had not been tested because neither modern nor environment OpenAI configuration was present. Subsequent human microphone and Codex OAuth checks are recorded below. TASK31585 AC9 stays open pending complete realtime interaction acceptance.
 
 The [initial recovery probe](provider-20260905-e36c7b3c4c/provider.json) read the prior Stop terminal state immediately after queuing the new send. It did not wait for a new assistant identity, so its false recovery result is a harness defect. The corrected probe requires that identity before accepting a terminal state and passes without application changes. Both original and corrected receipts are retained.
 
@@ -24,10 +24,16 @@ Verification: receipt JSON, identity/hash invariants, exact result assertions an
 
 The user explicitly authorized up to20 seconds of capture, local transcription, recognized test text sent to DeepSeek, and Kokoro playback. In [microphone-20260905-7c50b8573a](microphone-20260905-7c50b8573a/microphone.json), the user spoke the requested test phrase. Local faster-whisper recognized blue/notebook/ready (38 characters). DeepSeek completed a nonempty response; Kokoro drained68608 PCM bytes. The user [confirmed hearing the reply clearly](microphone-20260905-7c50b8573a/human-confirmation.json).
 
-Stop was requested after20.01s. The dictation state returned idle, then wrapper99022 reaped child99028 with exit0 and no app exception. The tested source is documentation commit969043daf on top of merged dev66a1cbf8f; production controller hashes match the earlier merged-code runs. Normal config was unchanged. No raw microphone audio or transcript content is included in the evidence; only the authorized transcript was sent to DeepSeek. This is local STT plus DeepSeek/Kokoro, not OpenAI realtime. OpenAI has no configured credential.
+Stop was requested after20.01s. The dictation state returned idle, then wrapper99022 reaped child99028 with exit0 and no app exception. The tested source is documentation commit969043daf on top of merged dev66a1cbf8f; production controller hashes match the earlier merged-code runs. Normal config was unchanged. No raw microphone audio or transcript content is included in the evidence; only the authorized transcript was sent to DeepSeek. This is local STT plus DeepSeek/Kokoro. The later OAuth check below uses a different authentication source.
 
 `captured_bytes=97920` counts only VAD-forwarded speech chunks, not the entire20s microphone buffer. `dictation_session_released=false` reports the cached session wrapper, which the successful dictation path intentionally retains; it does not establish an open recorder. The controller claims/stops its active service, and final process exit closes any remaining device handles.
 
 Migu remained idle during actual capture (`buddy_capture_states=[idle]`). TASK31741 tracks connecting local dictation lifecycle to the existing request-owned Buddy listening state. The voice conversation works, but the listening visual is not accepted.
 
 Two earlier attempts are preserved: [first attempt](microphone-20260905-1b48acf67c/execution.json) exited1 because the harness read `draft_text` without calling it; [second attempt](microphone-20260905-84cb282039/microphone.json) returned no transcript and sent nothing externally because the user missed its recording window. The successful run added a five-second countdown. Neither earlier attempt is counted as a microphone-transcription pass.
+
+## Codex OAuth realtime provider check
+
+At the user's explicit request, the existing Codex OAuth access token was passed in memory to Chatbook's production `OpenAIRealtimeSession`. The [authentication probe](codex-oauth-realtime-auth.json) received `session.created`. The [production session probe](codex-oauth-realtime-provider.json) then returned the exact requested synthetic reply, “The blue notebook is ready.”, and 105600 bytes of output PCM, with zero errors and session closure.
+
+The [frozen harness](codex-oauth-realtime-provider-harness.txt) documents the path exercised. No microphone was opened and the returned audio was not played. These results establish current OAuth authentication and provider response compatibility; they do not establish human realtime voice acceptance, a saved Chatbook OAuth connection, or token refresh behavior. Credentials were not persisted in these artifacts or copied into Chatbook settings.

@@ -1,12 +1,12 @@
 ---
 id: TASK-31756
 title: Preserve Console dictation retry while its confirmation dialog is open
-status: In Progress
+status: Done
 created_date: 2026-09-05 22:04
 references:
 - backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 - Tests/UI/test_console_dictation.py
-updated_date: 2026-09-05 22:08
+updated_date: 2026-09-05 22:42
 ---
 
 ## Description
@@ -45,6 +45,7 @@ Files: tldw_chatbook/UI/Console_Modules/dictation.py, tldw_chatbook/UI/Screens/c
 Verification: prior unchanged-code failures were the two mounted Retry/Keep draft cases. After correction, pytest Tests/UI/test_console_dictation.py Tests/UI/test_console_dictation_buddy.py -q --tb=short: 23 passed, one existing requests warning (47.64s). Streaming selection (-k 'retry or abandon or start_worker or preparing or start_returns'): 5 passed, 83 deselected (5.53s). New teardown-before-confirm regression fails with retry_calls 1 instead of 0 when the identity fence is removed, and passes with the fence. Scoped Ruff across both production files and tests: 204 existing findings before/after, none added. Scoped Bandit on both production files: 9 before/after, none added. New Buddy tests Ruff check/format clean; git diff --check passes. Existing production/test formatting debt was preserved.
 
 Independent Buddy timing review: listening is published only after successful startup and the existing mounted/session identity fence. Cancelling during startup nulls the session first, so late successful startup discards rather than acquiring. State exits release the captured exact sink/UUID, so delayed old callbacks cannot clear newer ownership. Preparation cancellation and same-session restart regressions pass. No microphone, server, or git mutation performed. Main task owns final integration.
+Root verification repeated the focused mounted dictation/Buddy suites: 23 passed (42.86s), /private/tmp/migu-dictation-root-verification.log. Fix is committed as 14cd81b2247acde771180c3af95a8d6cd5f03ecb and independently reviewed. No new lint or security findings versus baseline; task documentation, regression evidence, ADR check and incident lesson are complete. Human listening-state acceptance remains separately tracked in TASK-31741.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
