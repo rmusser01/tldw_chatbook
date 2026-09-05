@@ -427,6 +427,32 @@ async def test_failed_recovery_reports_and_re_offers_recover(tmp_path, monkeypat
         assert screen.query_one("#meetings-recover", Button).disabled is False
 
 
+def test_unmounted_screen_never_subscribes_or_touches_widgets(tmp_path):
+    """Q14: navigation can unmount Meetings while the threaded start is still
+    running. `_on_started` then subscribed the dead screen to the app-owned
+    session for the rest of the meeting, and the next mount subscribed a
+    second one. An unmounted screen has no widgets either, so every other
+    worker-completion callback would raise out of `call_from_thread`."""
+    app = _build_test_app()
+    owner = FakeOwner(tmp_path)
+    app.meeting_session_owner = owner
+    screen = MeetingsScreen(app)        # constructed, never mounted
+    assert screen.is_mounted is False
+
+    session = FakeSession(tmp_path / "2026-09-04_1430")
+    screen._on_started(session)
+    assert session.listeners == [] and screen._attached is None
+
+    # None of these may raise (they would, on a screen with no widgets).
+    screen._show_prepare_error("no transcriber")
+    screen._start_failed("device busy")
+    screen._stop_failed("read-only file system")
+    screen._on_stopped(None)
+    screen._recovered("Recovered 2026-09-04_1000")
+    screen._recovery_failed("Recovery failed: truncated meeting.json")
+    assert screen._stop_requested is False
+
+
 @pytest.mark.asyncio
 async def test_device_selects_apply_choice(tmp_path):
     host, owner = await _boot(tmp_path)

@@ -159,6 +159,8 @@ class MeetingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._apply_prepared, prepared)
 
     def _show_prepare_error(self, reason: str) -> None:
+        if not self.is_mounted:
+            return
         self.query_one("#meetings-provider-status", Static).update(f"Transcriber: {reason}")
 
     def _apply_prepared(self, prepared: PrepareResult) -> None:
@@ -254,10 +256,20 @@ class MeetingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._on_started, session)
 
     def _start_failed(self, reason: str) -> None:
+        if not self.is_mounted:
+            return
         self.app_instance.notify(f"Meeting failed to start: {reason}", severity="error")
         self.query_one("#meetings-start", Button).disabled = False
 
     def _on_started(self, session: Any) -> None:
+        # Navigation can unmount Meetings while the threaded start is still
+        # running. Subscribing here would leave the dead screen attached to
+        # the app-owned session for the rest of the meeting, receiving every
+        # event, while the next mount subscribes a second time (Qodo Q14).
+        # Nothing is lost by skipping it: the session stays app-owned and
+        # `_attach_if_running` replays `session.segments` on the next mount.
+        if not self.is_mounted:
+            return
         self._attached = session
         session.subscribe(self._on_session_event)
         self._set_buttons(session.state)
@@ -295,11 +307,18 @@ class MeetingsScreen(BaseAppScreen):
 
     def _stop_failed(self, reason: str) -> None:
         self._stop_requested = False
+        if not self.is_mounted:
+            return
         self._detach()
         self._set_buttons("stopped")
         self.app_instance.notify(f"Meeting failed to stop cleanly: {reason}", severity="error")
 
     def _on_stopped(self, result: MeetingResult | None) -> None:
+        # `on_unmount` has already detached; the widget updates below would
+        # raise on a screen that is no longer composed (Qodo Q14).
+        if not self.is_mounted:
+            self._stop_requested = False
+            return
         self._detach()
         self._set_buttons("stopped")
         self._stop_requested = False
@@ -435,11 +454,15 @@ class MeetingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._recovered, copy)
 
     def _recovered(self, copy: str) -> None:
+        if not self.is_mounted:
+            return
         self.query_one("#meetings-footer", Static).update(copy)
         self.query_one("#meetings-recovery", Static).update("")
 
     def _recovery_failed(self, copy: str) -> None:
         """Nothing was recovered: keep the recovery line and offer Recover again."""
+        if not self.is_mounted:
+            return
         self.query_one("#meetings-footer", Static).update(copy)
         self.query_one("#meetings-recover", Button).disabled = False
 
