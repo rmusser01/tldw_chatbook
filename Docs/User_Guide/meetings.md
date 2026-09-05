@@ -121,10 +121,10 @@ what happens to a meeting once it's queued.
   a call needs macOS's System Audio Recording permission granted to
   whatever terminal/app runs tldw_chatbook (macOS prompts the first time a
   session actually tries to tap system audio). Until it's granted, the
-  helper process exits immediately and the session falls back to mic-only
-  ("room mode") with all rows labelled "You" — Meetings does not ask for
-  this permission proactively, and there is no in-app control to request
-  it early. Packaged macOS builds declare
+  helper process exits immediately and the session is designed to fall
+  back to mic-only ("room mode") — Meetings does not ask for this
+  permission proactively, and there is no in-app control to request it
+  early. Packaged macOS builds declare
   `NSAudioCaptureUsageDescription` ("tldw_chatbook records what your
   computer plays so meetings can be transcribed.") so the OS prompt shows
   useful text.
