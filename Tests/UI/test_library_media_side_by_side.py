@@ -58,11 +58,16 @@ def _many_media_items(count: int = 45) -> list[dict[str, object]]:
 
 
 async def _open_media_list(host, pilot):
-    """Select the Media rail row and wait for the list rows to mount."""
+    """Select Media and await mounted rows plus completed entry focus."""
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    await _wait_for_condition(
+        pilot,
+        lambda: not screen._library_notes_restoring_focus,
+        message="Media list entry focus restoration never completed.",
+    )
     return screen
 
 

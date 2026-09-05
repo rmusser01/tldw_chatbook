@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.UI.Library_Modules.library_media_state import LibraryMediaState
 from tldw_chatbook.UI.Screens import library_screen as screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
@@ -16,7 +17,8 @@ def test_replaced_entry_callback_releases_guard(monkeypatch, replacement_accepte
     control_focus_calls = []
     screen = SimpleNamespace(
         _library_selected_row_id=screen_module.LIBRARY_ROW_BROWSE_MEDIA,
-        _library_media_view="list",
+        _media_state=LibraryMediaState(view="list"),
+        _mounted_library_media_viewer=lambda: None,
         _library_media_browse_controller=SimpleNamespace(applied_scope=None),
         _build_library_media_state=lambda: SimpleNamespace(selected_id="media-1"),
         focused=None,
@@ -58,7 +60,8 @@ def test_replaced_entry_callback_releases_guard(monkeypatch, replacement_accepte
 def test_suppressed_entry_sync_releases_guard(monkeypatch):
     screen = SimpleNamespace(
         _library_selected_row_id=screen_module.LIBRARY_ROW_BROWSE_MEDIA,
-        _library_media_view="list",
+        _media_state=LibraryMediaState(view="list"),
+        _mounted_library_media_viewer=lambda: None,
         _library_media_browse_controller=SimpleNamespace(applied_scope=None),
         _build_library_media_state=lambda: SimpleNamespace(selected_id="media-1"),
         focused=None,

@@ -211,7 +211,7 @@ async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
         )
 
         # Settle the final row so teardown is clean before asserting.
-        await _wait_for_detail_call(service, final_backing_id)
+        await _wait_for_detail_call(service, final_backing_id, pilot=pilot)
         _release_everything(service)
         await _wait_for_condition(
             pilot,
@@ -372,7 +372,7 @@ async def test_image_item_traversal_wall_time_probe():
             + f" state_builds={pass_through_state_builds}"
         )
 
-        await _wait_for_detail_call(service, final_backing_id)
+        await _wait_for_detail_call(service, final_backing_id, pilot=pilot)
         _release_everything(service)
         await _wait_for_condition(
             pilot,

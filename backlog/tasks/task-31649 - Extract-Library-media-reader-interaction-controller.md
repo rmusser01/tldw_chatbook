@@ -46,3 +46,5 @@ Reason: Apply the existing Wave-7 ownership documented in backlog/docs/library-d
 ## Implementation Notes
 
 The original extraction checkpoint remains recoverable in backup branch codex/pr2427-before-rebase-20260908 (908612df15). During rebase onto dev 0fa35d00e8, the older Reader owner is superseded by dev's canonical Media state/controller and retained Screen seams, rather than recreating duplicate owners. Historical recipe evidence is retained and explicitly labeled. Current-tree verification remains pending; this task is not Done.
+
+Historical close at 0384f137fc recorded 27 AST-identical moved bodies, 68 Reader checks, 35 Library architecture checks and an earlier 142-case combined selection passing. Keep its independent request-release, mounted-readiness and focus-guard repairs; those are not redundant ownership moves. The rebased comparison found 26 Reader bodies equivalent after state spelling normalization and one newer dev scroll-restoration fix, retained unchanged. Fresh Analysis/Reader characterization plus Media wiring passed 16 checks; the historical Done state does not substitute for complete rebased verification.

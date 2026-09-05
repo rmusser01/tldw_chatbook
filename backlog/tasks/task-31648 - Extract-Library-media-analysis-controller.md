@@ -51,3 +51,5 @@ ADR: no new ADR; applies approved screen decomposition design and DESIGN.md sect
 
 2026-09-08 ruling: the preceding extraction notes describe the historical pre-rebase checkpoint. Dev 0fa35d00e8 now owns Media state centrally and six of these methods on MediaController; replaying the old controller would create competing state and method owners. Retain dev's structure instead and preserve the useful behavior checks. Original extraction remains recoverable in codex/pr2427-before-rebase-20260908 (908612df15). Rebased verification remains pending; this does not mark the task Done.
 <!-- SECTION:NOTES:END -->
+
+Historical close at 0384f137fc: the pre-Wave-7 branch recorded all 20 Analysis bodies AST-identical, 68 combined Reader checks and 35 Library architecture checks passing, plus new-file Ruff/format and scoped legacy lint. That evidence described the old extraction, not this rebased tree. The fresh rebase checkpoint's Analysis/Reader characterization and Media wiring selection passed 16 tests; complete affected-file verification remains pending.
