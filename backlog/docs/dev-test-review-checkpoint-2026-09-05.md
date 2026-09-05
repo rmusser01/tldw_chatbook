@@ -385,3 +385,17 @@ review found a tokenizer-fallback gap, which was repaired and re-reviewed with n
 remaining findings. All wider failure families above remain open unless explicitly
 superseded here. XML evidence: `/private/tmp/tldw-current-chat-repair-final.xml`
 and `/private/tmp/tldw-31755-script-scope-final.xml`.
+
+Post-rebase diagnostic qualification is now measured: the rebuild matches the
+committed inventory exactly (**589 owners, 1,336 TASK-492 calls, 30 upstream
+TASK-31551 calls, 7,615 TASK-494 calls, 12 sinks**). The two complete inventory
+and summarization-privacy files produced **322 passed / 5 failed** in 463.74
+seconds (`/private/tmp/tldw-rebased-diagnostic-qualification.xml`). Two virtualenv
+exclusion fixture dictionaries omit the new `task_31551_calls: 0` summary field.
+Three TASK-18801 boundary/mutant controls reject the pre-rebase manifest hash:
+actual `caa76e94acdbf3d61961e90bcfe307c21ed5c09bfc061d7c054ba497ff817684`, pinned
+`ac5cd5bf7bc9d5f35d80fd71a78953ea96cd6cc60fced84b2e4f60c332bc04f1`.
+TASK-18801's whole-file acceptance criterion is reopened for this current tree.
+No pins were changed; the upstream owner/sink delta needs governed review before
+reconciliation. These five are recorded remaining failures, not regressions
+silently excluded from the successful repair selections.
