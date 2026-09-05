@@ -543,7 +543,6 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
     seed_builtin_content,
 )
-from .Audio.meeting_owner import build_meeting_session_owner
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
@@ -7690,7 +7689,9 @@ class TldwCli(
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
         self.audio_cpp_model_install_owner = AudioCppModelInstallOwner()
-        self.meeting_session_owner = build_meeting_session_owner(self)
+        # Built lazily by the `meeting_session_owner` property so the meeting
+        # modules are not resident at `_ui_ready` (UI-ready module census).
+        self._meeting_session_owner = None
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         #: TASK-1143 (F5): count of Console agent runs/rounds the last
@@ -17181,6 +17182,29 @@ class TldwCli(
             return
         await owner.close_and_drain()
 
+    @property
+    def meeting_session_owner(self):
+        """App-owned meeting session owner, built on first use.
+
+        Deferred so ``Audio.meeting_owner`` and the session/tap/wav modules it
+        pulls in are not resident at ``_ui_ready``: the UI-ready module census
+        (``Tests/Performance/test_ui_ready_module_census.py``) ratchets that
+        count, and these four modules only matter once someone opens Meetings
+        or presses a Console voice control.
+        """
+        owner = self._meeting_session_owner
+        if owner is None:
+            from .Audio.meeting_owner import build_meeting_session_owner
+
+            owner = build_meeting_session_owner(self)
+            self._meeting_session_owner = owner
+        return owner
+
+    @meeting_session_owner.setter
+    def meeting_session_owner(self, owner) -> None:
+        """Inject an owner (tests use a fake); ``None`` returns to lazy building."""
+        self._meeting_session_owner = owner
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
@@ -17204,7 +17228,10 @@ class TldwCli(
         if coordinator is not None:
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
-        await asyncio.to_thread(self.meeting_session_owner.shutdown)
+        meeting_session_owner = self._meeting_session_owner
+        if meeting_session_owner is not None:
+            # Only an owner that was actually built can hold a live meeting.
+            await asyncio.to_thread(meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
 
