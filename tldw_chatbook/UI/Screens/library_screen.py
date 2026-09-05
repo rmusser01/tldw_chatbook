@@ -5122,16 +5122,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._notes_state.tree_expanded_ids = set(receipt.expanded_folder_ids)
         self._notes_state.tree_selected_placement_id = receipt.selected_placement_id
-        semantic_role = receipt.focus_role
-        if receipt.focus_semantic_id:
-            semantic_role = f"{semantic_role}:{receipt.focus_semantic_id}"
-        focus = LibraryNotesFocusIdentity(
-            stage="notes",
-            region="navigator",
-            note_id=receipt.selected_note_id or None,
-            semantic_role=semantic_role or "filter",
-            scroll_offset=receipt.scroll_offset,
-        )
+        focus = receipt.focus_identity
         if not self._restore_library_notes_focus_identity(focus, guard):
             return
         rail = (
@@ -29364,17 +29355,7 @@ class LibraryScreen(BaseAppScreen):
         placement_id = self._notes_state.tree_selected_placement_id
         receipt = self._notes_state.browse_return_receipt
         identity = (
-            LibraryNotesFocusIdentity(
-                stage="notes",
-                region="navigator",
-                note_id=receipt.selected_note_id or None,
-                semantic_role=(
-                    f"{receipt.focus_role}:{receipt.focus_semantic_id}"
-                    if receipt.focus_semantic_id
-                    else receipt.focus_role or "filter"
-                ),
-                scroll_offset=receipt.scroll_offset,
-            )
+            receipt.focus_identity
             if receipt is not None
             else LibraryNotesFocusIdentity(
                 stage="notes",
