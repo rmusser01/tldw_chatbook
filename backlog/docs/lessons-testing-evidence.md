@@ -24,6 +24,13 @@ subjects restored the checks without raising the boot budget.
 paint checks. When replacing a type selector, inspect its subclasses and preserve
 the relevant cascade precedence, not just the obvious direct widget instances.
 
+The same PR then inherited TASK-31450's 976/972 startup breach. A controller's
+closed-rail dispatch guard did not prevent its constructor and module imports
+from loading four Environment modules. First-use owner/projection construction
+restored 972/972, but required explicit first-open painting for a workspace-less
+panel (there is no worker result to paint it). Measure imports as well as I/O,
+and pair lazy-owner guards with a no-result first-use UI test.
+
 ---
 
 ## Spend forecasts must test admitted media and durable recovery IDs

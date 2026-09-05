@@ -1,5 +1,39 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Approved Console startup remediation
+
+The owner approved fixing the inherited Console regression in PR #2419.
+Environment now initializes on first Inspect use, retains one controller after
+that, and keeps never-opened focus/fleet/poll callbacks cold. Initial closed-rail
+composition uses empty placeholders; first-open paints even without a workspace
+(where no worker landing would otherwise occur). Reopen/recompose reuse the
+captured snapshot. Rail IDs live with rail state, with compatibility exports from
+the Environment module. Existing controller dispatch, TTL and failure policy are
+unchanged, including callbacks to an already-created owner while hidden.
+
+The original census was observed RED at 976/972. Final census is **972/972**,
+with all four Environment implementation modules absent. New mounted coverage
+exercises closed focus/poll/fleet, first-open no-workspace rendering and owner
+reuse on reopen. Verification: **226 passed, 2 failed** in the initial broader
+Environment/rail/fleet/workspace run; the two callback compatibility failures
+were corrected and all **24 wiring tests pass** (35.80s). The affected three-case
+recheck passes; boot plus snapshot-service checks are **59 passed** (32.47s),
+and the final projection/census repeat is **32 passed** (11.74s).
+
+Evidence: `pr-env-lazy-red.log`, `pr-env-targeted.log`,
+`pr-env-callback-recheck.log`, `pr-env-wiring-final.log`,
+`pr-env-final-boot.log`, `pr-env-exports-final.log` in the same scratch directory.
+Independent read-only review and its final re-review report no actionable
+findings. Generated CSS/inventory and whitespace checks pass; lint findings on
+the six touched Python files match their pre-change baselines (203 total).
+The two baseline-clean files pass Ruff lint; existing broader formatting debt
+was not rewritten. No assertion, budget, network policy or dependency was relaxed.
+
+The next dev advance, `e49a7a16d32053434053895ba3559b970ec06289`, contains
+only Buddy UAT documentation/assets, with no production/test-source changes.
+The earlier paused-merge statements below are historical and superseded by this
+approved fix and subsequent GitHub check settlement.
+
 ## Latest dev rebase and boot integration
 
 `dev` advanced again to `7e904737c787886c983c6c3312f0f9ca67c43453`

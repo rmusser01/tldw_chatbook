@@ -97,6 +97,34 @@ def _row_ids(section: ConsoleInspectorSection) -> list[str]:
 
 
 @pytest.mark.asyncio
+async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner():
+    """Lazy first-open must paint even when no gather can produce a landing."""
+    async with _console_screen() as (pilot, screen):
+        screen._review_selection._console_change_review_workspace_roots = lambda: ()
+        assert screen._console_environment_owner is None
+        screen.notify_terminal_focus_regained()
+        screen._poll_console_environment()
+        screen._run_coalesced_console_agent_fleet_sync()
+        assert screen._console_environment_owner is None
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        owner = screen._console_environment
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert section.display
+        assert "env-empty" in _row_ids(section)
+        screen._set_console_rail_preference(right_open=False)
+        await pilot.pause()
+        screen.notify_terminal_focus_regained()
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert screen._console_environment is owner
+        assert section.display
+        assert "env-empty" in _row_ids(section)
+
+
+@pytest.mark.asyncio
 async def test_fix_row_inserts_failure_text_into_composer():
     """The failing-checks "Fix" row must reach the real composer draft."""
     async with _console_screen() as (pilot, screen):
