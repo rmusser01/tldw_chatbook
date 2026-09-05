@@ -1,7 +1,6 @@
 # ADR-119: llama.cpp Prompt-cache Snapshot Ownership
 
 Status: Accepted — reviewed design and approved review amendments
-Status: Proposed — reviewed direction, written contract pending review
 
 Date: 2026-09-04
 
@@ -70,13 +69,6 @@ These semantics require explicit lifecycle and disk ownership beyond widget stat
    Show preparation stages and elapsed time without server polling. A timeout
    after possible submission is an unknown outcome, not cancellation, and must
    not cause automatic retries or cleanup.
-7. Compare actual model/projector/runtime identity and state-affecting configuration
-   before restore. Block known mismatches and missing required evidence in v1.
-   Matching configuration is not a guarantee of binary portability or cache reuse.
-   The server owns decoding; Chatbook does not implement the packed binary format.
-8. Refresh slot observations before acting but make no atomic idle-reservation
-   promise. Serialize server Save/Restore operations. A timeout after submission is an unknown
-   outcome, not cancellation, and must not cause automatic retries or cleanup.
    Keep Save/Restore disabled for the uncertain generation until resolved/stopped;
    catalog browsing and confirmed deletion remain available.
 9. Preserve the source snapshot on restore failure and describe possible loss of
@@ -117,9 +109,6 @@ space. Successful operations release their working copies promptly; cleanup
 failure remains visible independently of retention. Integrity checks during the
 already-required staging copy avoid a second full source-file read. Uncertain
 operations can require stopping the managed server, and orphaned
-Restores may be unavailable after changing runtime/model configuration. Files
-can be large; the keep count is not a byte quota, and active copies require extra
-space. Uncertain operations can require stopping the managed server, and orphaned
 working files remain visible until their writer is known to have stopped.
 The v1 transport envelope excludes advanced TLS/prefix/router/shared-network
 launches without changing their ordinary launcher support. Windows privacy

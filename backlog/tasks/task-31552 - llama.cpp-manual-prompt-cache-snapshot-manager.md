@@ -9,6 +9,7 @@ updated_date: '2026-09-05 18:51'
 status: To Do
 assignee: []
 created_date: '2026-09-05 01:15'
+updated_date: '2026-09-05 01:32'
 labels: []
 dependencies: []
 references:
@@ -26,16 +27,7 @@ Let users manually preserve and reload processed llama.cpp context, including su
 ### Design status
 <!-- SECTION:DESCRIPTION:END -->
 
-## Acceptance Criteria
-<!-- AC:BEGIN -->
-- [ ] #1 Users can save a selected slot with an automatically generated timestamp name and restore a saved snapshot to an eligible slot on a Chatbook-launched server.
-- [ ] #2 The manager retains the newest 10 complete snapshots per profile by default, supports a validated configurable count, and prunes only after a fully committed successful save.
-- [ ] #3 Snapshot operations honor launch identity, endpoint readiness, compatibility evidence, private file ownership, and uncertain operation outcomes across navigation and restart.
-- [ ] #4 The UI explains cache-only restore semantics, exposes actionable failure and partial-success states, and remains keyboard usable in the production Models screen.
-- [ ] #5 Targeted automated checks and an isolated real-server save/restart/restore test prove persistence and actual same-image prefix reuse with an eligible model.
-<!-- AC:END -->
-
-## Design status
+### Design status
 
 The user selected manual management before automatic per-conversation persistence,
 Chatbook-launched servers, timestamp-generated names, and configurable retention
@@ -58,6 +50,12 @@ terminal working-file cleanup, separate probe/operation deadlines, and visible
 cross-model retention wording. These now have targeted automated contract evidence,
 not a claim of real-model or audio reuse. ADR-119 records the accepted amendments.
 Implementation has not started; acceptance criteria remain unchecked.
+
+The user approved integration of the follow-up review: compatibility-gated save
+publication, integrity checks before restore, proxy-free loopback transport,
+terminal working-file cleanup, separate probe/operation deadlines, and visible
+cross-model retention wording. These are requirements for implementation, not
+claims of tested application behavior. ADR-119 records the accepted amendments.
 
 ADR required: yes
 
@@ -290,3 +288,15 @@ first-open empty-state rendering, reopening, controller/wiring tests, and PR CI.
 ADR required: no new ADR. ADR path: backlog/decisions/097-boot-budget-ratchets.md.
 Reason: first-use deferral restores TASK-31450 AC6 within existing ownership;
 no storage, network, display-policy or boot-budget change.
+- [ ] #1 Users can save a selected slot with an automatically generated timestamp name and restore a saved snapshot to an eligible slot on a Chatbook-launched server.
+- [ ] #2 The manager retains the newest 10 complete snapshots per profile by default, supports a validated configurable count, and prunes only after a fully committed successful save.
+- [ ] #3 Snapshot operations honor launch identity, endpoint readiness, compatibility evidence, private file ownership, and uncertain operation outcomes across navigation and restart.
+- [ ] #4 The UI explains cache-only restore semantics, exposes actionable failure and partial-success states, and remains keyboard usable in the production Models screen.
+- [ ] #5 Targeted automated checks and an isolated real-server save/restart/restore test prove persistence and actual same-image prefix reuse with an eligible model.
+- [ ] #6 Save is disabled without complete required compatibility evidence; evidence invalidated before publication prevents retaining the new snapshot or pruning older ones, including with keep count 1.
+- [ ] #7 Restore verifies staged byte length and SHA-256 before any Restore POST; truncated or same-length corrupted input leaves the destination slot untouched.
+- [ ] #8 All management and readiness traffic uses a validated numeric loopback destination with proxies and redirects disabled; proxy environment variables and redirect responses cannot forward requests or credentials elsewhere.
+- [ ] #9 Successful and acknowledged terminal operations and proven pre-submission failures release safe working files; repeated restores do not accumulate copies, cleanup failures expose residual bytes, and uncertain operations retain files until safe.
+- [ ] #10 Five-second probe deadlines are separate from explicit ten-minute Save/Restore submission deadlines; preparation and elapsed operation status remain visible and slow valid operations are not failed at the probe deadline.
+- [ ] #11 The Save area visibly states the effective newest-N retention limit across all models, including count changes and narrow terminal layouts.
+<!-- AC:END -->

@@ -4,6 +4,7 @@ Date: 2026-09-04
 
 Status: Complete and merged into dev in [PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) on 2026-09-05. All 15 task criteria are checked; real text/image persistence and reuse evidence is recorded in the [live UAT report](../reviews/2026-09-05-llamacpp-slot-snapshots-uat.md). Automatic conversation binding, audio qualification, and Windows private storage remain deferred.
 Status: Written design for review; implementation not started.
+Status: Reviewed design; approved review amendments integrated. Implementation not started.
 
 Task: [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
@@ -222,7 +223,10 @@ toward retention and never become eligible for automatic deletion.
 2. Submit once. On a valid successful response, verify returned slot/filename,
    token and byte counts, regular-file identity, and on-disk bytes. Zero-token
    saves are reported as empty and do not publish or prune.
-3. Flush the completed binary, compute its digest off-thread, and publish binary
+3. Revalidate the captured compatibility evidence and launch claim. If evidence
+   is no longer valid, do not publish or prune; report that the snapshot was not
+   retained and clean up its acknowledged working output. Otherwise flush the
+   completed binary, compute its SHA-256 digest off-thread, and publish binary
    and metadata under the catalog lock. Allocate publication order under that
    lock before writing metadata. The atomic metadata publication is the commit
    marker; only records with both validated members are restorable.
@@ -340,9 +344,10 @@ from retention; they never block new
 Existing Stop remains an
 explicit way to end the generation; it does not claim to preserve its cache.
 
-After confirmed stop, discard only that operation's verified owned working
-files. Following an app crash, old working areas whose server liveness cannot be
-established remain incomplete and excluded from retention; they never block new
+After confirmed stop and settlement of local file work, discard only that
+operation's verified owned working files. Following an app crash, old working
+areas whose server liveness cannot be established remain incomplete and excluded
+from retention; they never block new
 launches in distinct working areas. Show their disk usage separately and permit
 cleanup only after writer termination is established. Never infer termination
 from the age of a directory or a reused PID alone.
@@ -399,10 +404,18 @@ Required evidence includes:
    Use the real CSS stack.
 2. Recording HTTP tests for optional/missing slot fields, readiness/auth, args
    precedence, stale launch completion, busy races, timeout without retry, and
-   restore failure. Verify unsupported configurations have truthful controls.
+   restore failure. A truncated or same-length corrupted snapshot must produce
+   no Restore POST and leave the destination untouched. Verify that proxy
+   environment settings cannot reroute management traffic and redirects cannot
+   trigger a second request or forward credentials. Test IPv4/IPv6 loopback and
+   rejection of non-loopback hostname results. Use fake clocks to distinguish a
+   five-second probe deadline from a longer pending mutation and its ten-minute
+   deadline/unknown outcome. Verify unsupported configurations have truthful controls.
 3. Production-shaped Textual tests for keyboard Save/Restore/Delete, disabled
    reasons, preserved focus and selection, navigation away/back during operations,
-   and visible controls at 80x24 and a normal wide terminal. Use the real CSS stack.
+   elapsed-time updates, and visible controls at 80x24 and a normal wide terminal.
+   Verify the cross-model keep-count wording beside Save, including count changes.
+   Use the real CSS stack.
 4. Isolated opt-in real-server tests: text and image save, process restart, restore,
    then send the matching request without forcing `id_slot` and measure cached
    prefix reuse. A different image must not reuse its mismatched media prefix.
