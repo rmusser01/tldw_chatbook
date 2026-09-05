@@ -716,6 +716,29 @@ isolation incident, static-debt and resource-warning qualifications. Preserve
 the worktree and seek separate direction on the newly identified retry cases;
 do not infer a full sweep, integration or another repair scope from this review.
 
+### User-authorized retry correction
+
+The user approved addressing the two remaining failed-assistant retry cases.
+This covers their shared cause and directly affected regressions, not unrelated
+repairs, a full repository sweep, integration or permission changes.
+
+ADR required: no new ADR; existing ADR-115 applies.
+ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+Reason: restore or correctly verify existing exact-run settlement, atomic message/
+artifact commit, retry and staged-history cleanup contracts without new boundaries.
+
+- [ ] Reproduce both failing retry parameter cases, trace settlement ownership
+  through failure, successful retry and persistence, and distinguish missing
+  durable results from legitimate staging cleanup or stale test expectations.
+- [ ] Correct the cause with regression evidence while preserving stale-run
+  fencing, discarded failed revisions, atomic rollback and restart hydration.
+- [ ] Run the complete retry parameter group and affected Canvas/Console checks,
+  static analysis and independent scoped review, then reconcile AC9 honestly.
+
+All executable tests remain coordinator-owned isolated pytest runs; the worker
+is limited to static inspection, edits and exact git operations. Preserve prior
+isolation incident records and the nonblocking stale-comment observation.
+
 ## Execution Handoff
 
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.
