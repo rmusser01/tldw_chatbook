@@ -1,5 +1,5 @@
 ---
-id: TASK-31637
+id: TASK-31647
 title: >-
   Library select-mode rows: sibling canvases (conversations/notes/prompts) still
   swallow a fast second click

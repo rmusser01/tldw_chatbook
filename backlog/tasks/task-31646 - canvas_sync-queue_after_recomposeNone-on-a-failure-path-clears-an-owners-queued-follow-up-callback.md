@@ -1,5 +1,5 @@
 ---
-id: TASK-31636
+id: TASK-31646
 title: >-
   canvas_sync: queue_after_recompose(None) on a failure path clears an owner's
   queued follow-up callback
