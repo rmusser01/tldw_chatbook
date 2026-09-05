@@ -2479,8 +2479,12 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
         )
 
         await app.handle_screen_navigation(NavigateToScreen("settings"))
+        from tldw_chatbook.UI.Console_Modules.settings_navigation import (
+            ConsoleSettingsNavigationController,
+        )
+
         monkeypatch.setattr(
-            ChatScreen,
+            ConsoleSettingsNavigationController,
             "_consume_pending_conversation_settings_return",
             lambda self: None,
         )
@@ -3052,7 +3056,7 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         composer.set_pending_attachment_label(attachment.label)
         transcript_before = tuple(store.messages_for_session(store.active_session_id))
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsolePromptsModal)
@@ -3120,7 +3124,7 @@ async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> N
         before = composer.capture_draft_snapshot()
         store = console._ensure_console_chat_store()
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         workbench = host.screen_stack[-1]
         workbench.query_one("#console-prompts-improve", Button).press()
@@ -3187,7 +3191,7 @@ async def test_prompt_library_projection_collision_keeps_manual_recipe_available
         composer.insert_text("Draft [[TLDW_PROTECTED:literal-collision]] ")
         composer.insert_file_segment("PRIVATE INLINE BYTES", "secret.txt · 20 B")
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         await pilot.pause()
 
@@ -3236,7 +3240,7 @@ async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() ->
         store = console._ensure_console_chat_store()
         store.set_session_system_prompt(store.active_session_id, "Be accurate.")
 
-        console._open_console_prompts_modal(initial_mode="improve")
+        console._prompts._open_console_prompts_modal(initial_mode="improve")
         await pilot.pause()
         await pilot.pause()
         modal = host.screen_stack[-1]
@@ -3277,7 +3281,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-improve", Button).press()
@@ -3342,7 +3346,7 @@ async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
         composer.insert_text("Draft answer")
         before = composer.capture_draft_snapshot()
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         if artifact_type == "recipe":
@@ -3398,7 +3402,7 @@ async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_app
         transcript_before = tuple(store.messages_for_session(original_session_id))
         original_settings = store.switch_session(original_session_id).settings
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-improve", Button).press()
@@ -3473,7 +3477,7 @@ async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift:
         store = console._ensure_console_chat_store()
         transcript_before = tuple(store.messages_for_session(store.active_session_id))
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         for selector in (
@@ -3544,7 +3548,7 @@ async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_u
         ).settings.system_prompt
         transcript_before = tuple(store.messages_for_session(store.active_session_id))
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-improve", Button).press()
@@ -3599,7 +3603,7 @@ async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_fa
         store = console._ensure_console_chat_store()
         transcript_before = tuple(store.messages_for_session(store.active_session_id))
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-result-prompt-1", Button).press()
@@ -3647,7 +3651,7 @@ async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("Draft answer")
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         if artifact_type == "recipe":
@@ -3695,7 +3699,7 @@ async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("Draft answer")
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsolePromptsModal)
@@ -3752,7 +3756,7 @@ async def test_edited_saved_prompt_applies_as_unsaved_copy_with_zero_usage():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("Draft answer")
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-result-prompt-1", Button).press()
@@ -3786,7 +3790,7 @@ async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_v
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         store.set_session_system_prompt(store.active_session_id, "Be accurate.")
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-improve", Button).press()
@@ -3860,7 +3864,7 @@ async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_save
         session.persisted_conversation_id = "conversation-1"
         store.persistence = persistence
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         modal.query_one("#console-prompts-improve", Button).press()
@@ -5263,7 +5267,7 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     }
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.provider == "local_llamacpp"
     assert selection.base_url == "http://127.0.0.1:9099"
@@ -5282,7 +5286,7 @@ def test_console_provider_selection_carries_active_session_system_prompt():
         replace(settings, system_prompt="Answer only in French.")
     )
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.system_prompt == "Answer only in French."
 
@@ -5311,7 +5315,7 @@ def test_console_provider_selection_floors_missing_active_workspace_read_only():
     assert service.get_active_workspace() is None
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
     # Read-only: the passive read must NOT have healed the registry ...
@@ -5319,7 +5323,7 @@ def test_console_provider_selection_floors_missing_active_workspace_read_only():
     # ... that is the ensure seams' job, and it still works.
     service.ensure_default_workspace()
     assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
-    selection_after = screen._build_console_provider_selection()
+    selection_after = screen._provider_selection._build_console_provider_selection()
     assert selection_after.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
@@ -5345,7 +5349,7 @@ def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     }
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
 
@@ -5371,7 +5375,7 @@ def test_console_llamacpp_api_base_url_wins_over_merged_provider_api_url(monkeyp
     }
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
 
@@ -5396,7 +5400,7 @@ def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     }
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
 
@@ -5424,7 +5428,7 @@ def test_console_session_settings_blank_base_url_keeps_llamacpp_fallback(monkeyp
     store.switch_session(session.id)
     screen._console_chat_store = store
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
     assert selection.explicit_model == "settings-model"
@@ -5453,7 +5457,7 @@ def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypat
     store.switch_session(session.id)
     screen._console_chat_store = store
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9999"
     assert selection.explicit_model == "settings-model"
@@ -5474,7 +5478,7 @@ def test_console_generation_test_selection_uses_validated_draft_without_session_
         streaming=True,
     )
 
-    selection = screen._build_console_provider_selection_for_settings(
+    selection = screen._provider_selection._build_console_provider_selection_for_settings(
         session.id, draft
     )
 
@@ -5561,7 +5565,7 @@ async def test_console_one_token_generation_test_has_fixed_isolated_policy(monke
         credential_revision=1,
         draft_generation=2,
     )
-    screen._build_console_provider_selection_for_settings = (
+    screen._provider_selection._build_console_provider_selection_for_settings = (
         lambda session_id, settings: SimpleNamespace(
             session_id=session_id, settings=settings
         )
@@ -5613,11 +5617,15 @@ async def test_console_generation_test_failure_is_bounded_and_sanitized() -> Non
             raise RuntimeError(secret)
 
     screen = ChatScreen.__new__(ChatScreen)
-    from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+        build_console_provider_selection_controller,
+    )
 
     build_console_settings_controllers(screen)
+    build_console_provider_selection_controller(screen)
     screen._ensure_console_provider_gateway = lambda: FailingGateway()
-    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    screen._provider_selection._build_console_provider_selection_for_settings = lambda *_args: object()
     draft = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
     identity = ProviderDraftIdentity(
         provider_key="openai",
@@ -5679,11 +5687,15 @@ async def test_console_generation_test_preserves_bounded_transport_category(
             )
 
     screen = ChatScreen.__new__(ChatScreen)
-    from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_settings_controllers,
+        build_console_provider_selection_controller,
+    )
 
     build_console_settings_controllers(screen)
+    build_console_provider_selection_controller(screen)
     screen._ensure_console_provider_gateway = lambda: FailingGateway()
-    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    screen._provider_selection._build_console_provider_selection_for_settings = lambda *_args: object()
     draft = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
     identity = ProviderDraftIdentity(
         provider_key="llama_cpp",
@@ -6545,7 +6557,7 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
         )
         await console._sync_native_console_chat_ui()
 
-        await console._submit_console_native_draft("hello")
+        await console._submission._submit_console_native_draft("hello")
         await _wait_for_text(console, pilot, "Provider blocked")
 
         messages = store.messages_for_session(store.active_session_id)
@@ -6621,7 +6633,7 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
         # card's action button carries this recovery instead (Phase 2 spec,
         # section 2).
         await _wait_for_selector(console, pilot, "#console-setup-modal-action")
-        console._active_console_provider_model_display = lambda: (
+        console._provider_selection._active_console_provider_model_display = lambda: (
             "huggingface",
             "meta-llama/test-model",
             None,
@@ -6790,7 +6802,7 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
             copied_text = app.copy_to_clipboard.call_args.args[0]
             plain_export = transcript.to_plain_text()
             save_note.reset_mock()
-            await console._save_console_message_as_note(message.id)
+            await console._message._save_console_message_as_note(message.id)
             save_payload = save_note.call_args.kwargs["content"]
             provider_messages = controller._provider_messages_for_session(session.id)
             provider_contents = [row.get("content") for row in provider_messages]
@@ -9073,11 +9085,11 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
     user = SimpleNamespace(role=ConsoleMessageRole.USER, content="question")
 
-    wired = screen._console_save_as_destinations(assistant)
+    wired = screen._message._console_save_as_destinations(assistant)
     assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
     assert all(d.available for d in wired)
 
-    gated = screen._console_save_as_destinations(user)
+    gated = screen._message._console_save_as_destinations(user)
     chatbook = next(d for d in gated if d.label == "Chatbook")
     assert chatbook.available is False
     assert (
@@ -9090,7 +9102,7 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     app.media_db = None
     app.prompts_db = None
     app.local_chatbook_service = None
-    dark = screen._console_save_as_destinations(assistant)
+    dark = screen._message._console_save_as_destinations(assistant)
     assert all(d.available is False for d in dark)
     reasons = {d.label: d.reason for d in dark}
     assert reasons["Note"] == "Notes service is not ready in this session."
@@ -9118,7 +9130,7 @@ def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
     assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
     screen._console_active_session_is_ephemeral = lambda: True
-    blocked = screen._console_save_as_destinations(assistant)
+    blocked = screen._message._console_save_as_destinations(assistant)
     assert all(d.available is False for d in blocked)
     reasons = {d.label: d.reason for d in blocked}
     assert reasons["Note"] == blocked_reason("save-as-note", ephemeral=True)
@@ -9127,7 +9139,7 @@ def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
     assert reasons["Chatbook"] == blocked_reason("save-as-chatbook", ephemeral=True)
 
     screen._console_active_session_is_ephemeral = lambda: False
-    wired = screen._console_save_as_destinations(assistant)
+    wired = screen._message._console_save_as_destinations(assistant)
     assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
     assert all(d.available for d in wired)
 
@@ -9144,7 +9156,7 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
     screen._console_active_session_is_ephemeral = lambda: True
 
     with patch.object(message_module, "blocked_reason", lambda *a, **k: None):
-        destinations = screen._console_save_as_destinations(assistant)
+        destinations = screen._message._console_save_as_destinations(assistant)
 
     reasons = {d.label: d.reason for d in destinations}
     assert all(
@@ -9190,7 +9202,7 @@ def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
         return real_blocked_reason(action_id, ephemeral=ephemeral)
 
     with patch.object(message_module, "blocked_reason", spy):
-        destinations = screen._console_save_as_destinations(assistant)
+        destinations = screen._message._console_save_as_destinations(assistant)
 
     assert requested_action_ids, (
         "the ephemeral Save-as path never asked the registry anything -- "
@@ -12253,9 +12265,9 @@ def _restore_console_snapshot_with_sessions(screen: ChatScreen, payload) -> None
                 message = ChatScreen._restore_console_message(raw_message)
                 if message is None:
                     continue
-                screen._rehydrate_console_message_image(message)
+                screen._message._rehydrate_console_message_image(message)
                 restored_messages[session.id].append(message)
-        screen._rehydrate_console_message_attachments(
+        screen._message._rehydrate_console_message_attachments(
             [message for messages in restored_messages.values() for message in messages]
         )
         active_session_id = payload.get("active_session_id")
@@ -12266,7 +12278,7 @@ def _restore_console_snapshot_with_sessions(screen: ChatScreen, payload) -> None
                 str(active_session_id) if active_session_id is not None else ""
             ),
         )
-        screen._rehydrate_console_message_generation_metadata(store, restored_messages)
+        screen._message._rehydrate_console_message_generation_metadata(store, restored_messages)
     screen._restore_native_console_state(payload)
 
 
@@ -12322,22 +12334,24 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     )
     from tldw_chatbook.UI.Console_Modules.wiring import (
         build_console_settings_controllers,
+        build_console_provider_selection_controller,
     )
 
     build_console_settings_controllers(screen)
+    build_console_provider_selection_controller(screen)
     stub_image_controller(
         screen,
         context="test_console_native_chat_flow._bare_console_screen",
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         recent_console_image_messages=(
-            lambda messages: screen._recent_console_image_messages(messages)
+            lambda messages: screen._message._recent_console_image_messages(messages)
         ),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         console_generation_browse=lambda: screen._console_generation_browse(),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
         build_console_provider_selection=(
-            lambda: screen._build_console_provider_selection()
+            lambda: screen._provider_selection._build_console_provider_selection()
         ),
         ensure_console_provider_gateway=(
             lambda: screen._ensure_console_provider_gateway()
@@ -12351,7 +12365,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
             lambda: screen._console_visible_draft_session_id
         ),
         append_native_console_system_message=(
-            lambda *args, **kwargs: screen._append_native_console_system_message(
+            lambda *args, **kwargs: screen._message._append_native_console_system_message(
                 *args, **kwargs
             )
         ),
@@ -12361,7 +12375,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         default_console_session_settings=(
             lambda: screen._session._default_console_session_settings()
         ),
-        clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
+        clear_console_composer_draft=(lambda: screen._commands._clear_console_composer_draft()),
     )
 
     # `_restore_native_console_state`'s message-rehydration calls
@@ -12396,7 +12410,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
             lambda: screen._session._current_console_conversation_id()
         ),
         active_console_provider_model_display=(
-            lambda: screen._active_console_provider_model_display()
+            lambda: screen._provider_selection._active_console_provider_model_display()
         ),
         console_initial_session_title_for_workspace=lambda workspace_id: "",
         console_change_review_run_id=lambda store, message_id: None,
@@ -13202,7 +13216,7 @@ async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
         session = store.ensure_session()
         store.set_pending_attachment(session.id, _staged_image_attachment())
 
-        reason = console._console_send_blocked_reason()
+        reason = console._submission._console_send_blocked_reason()
         assert "can't accept images" in reason
 
 
@@ -13221,7 +13235,7 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         session = store.ensure_session()
         store.set_pending_attachment(session.id, _staged_image_attachment())
 
-        assert console._console_attachment_blocked_reason() == ""
+        assert console._submission._console_attachment_blocked_reason() == ""
 
 
 def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
@@ -13246,12 +13260,12 @@ def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     screen = ChatScreen(_build_test_app())
     settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
     monkeypatch.setattr(
-        screen,
+        screen._provider_selection,
         "_active_console_settings_readiness",
         lambda: (settings, readiness),
     )
     monkeypatch.setattr(
-        screen,
+        screen._provider_selection,
         "_active_console_provider_model_display",
         lambda: ("OpenAI", "gpt-4.1", settings),
     )
@@ -13268,14 +13282,14 @@ def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     assert screen._console_setup_blocked_reason() == (
         "Add API key in Settings > Providers & Models before sending."
     )
-    assert screen._console_send_blocked_reason() == (
+    assert screen._submission._console_send_blocked_reason() == (
         "Console send blocked: Add an API key for OpenAI before sending."
     )
     surface_copy = "\n".join(
         (
             screen._console_provider_blocker_copy(),
             screen._console_setup_blocked_reason(),
-            screen._console_send_blocked_reason(),
+            screen._submission._console_send_blocked_reason(),
         )
     )
     assert "READY legacy poison" not in surface_copy
@@ -13375,7 +13389,7 @@ def test_resume_hydrates_image_messages_including_image_only_rows():
         ],
     }
 
-    messages = screen._console_messages_from_conversation_tree(tree)
+    messages = screen._message._console_messages_from_conversation_tree(tree)
 
     assert len(messages) == 2
     assert messages[0].image_data == b"\x89PNG-bytes"
@@ -13523,7 +13537,7 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
             image_mime_type="image/png",
         )
 
-        await console._save_console_message_image(message.id)
+        await console._message._save_console_message_image(message.id)
 
         saved = list(tmp_path.glob("console_image_*.png"))
         assert len(saved) == 1
@@ -13571,8 +13585,8 @@ async def test_save_console_message_image_disambiguates_filename_collision(
             image_mime_type="image/png",
         )
 
-        await console._save_console_message_image(message.id)
-        await console._save_console_message_image(message.id)
+        await console._message._save_console_message_image(message.id)
+        await console._message._save_console_message_image(message.id)
 
         saved = sorted(tmp_path.glob("console_image_*.png"))
         assert len(saved) == 2
@@ -13687,7 +13701,7 @@ def test_rehydrate_console_message_image_refetches_bytes_from_db():
         )
     )
 
-    screen._rehydrate_console_message_image(message)
+    screen._message._rehydrate_console_message_image(message)
 
     assert message.image_data == b"\x89PNG-bytes"
     assert message.image_mime_type == "image/png"
@@ -13715,7 +13729,7 @@ def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
         )
     )
 
-    screen._rehydrate_console_message_image(message)  # must not raise
+    screen._message._rehydrate_console_message_image(message)  # must not raise
 
     assert message.image_data is None
     assert message.image_mime_type == "image/png"
@@ -14092,7 +14106,7 @@ def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
         messages.append(message)
 
     _state, cache = screen._ensure_console_image_view()
-    recent = screen._recent_console_image_messages(messages)
+    recent = screen._message._recent_console_image_messages(messages)
     most_recent_ids = [m.id for m in messages[-IMAGE_CACHE_MAX_ENTRIES:]]
     assert len(recent) == IMAGE_CACHE_MAX_ENTRIES
     assert [m.id for m in recent] == most_recent_ids
@@ -14118,7 +14132,7 @@ def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
     # (c) No churn: recomputing pending over the same bounded subset finds
     # nothing left to prepare — the working set converges instead of
     # flapping between decode and eviction.
-    assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []
+    assert cache.pending_ids(screen._message._recent_console_image_messages(messages)) == []
 
 
 def test_console_image_prep_kick_skips_ids_already_preparing():
@@ -14155,7 +14169,7 @@ def test_console_image_prep_kick_skips_ids_already_preparing():
     _state, cache = screen._ensure_console_image_view()
 
     # Same helper chain the sync site uses to compute the raw pending set.
-    recent = screen._recent_console_image_messages(messages)
+    recent = screen._message._recent_console_image_messages(messages)
     assert cache.pending_ids(recent) == [(message.id, message.image_data)]
 
     # Stage the id as already-preparing, exactly as the kick site does right
@@ -14462,7 +14476,7 @@ async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
             ),
         )
 
-        await console._save_console_message_image(message.id)
+        await console._message._save_console_message_image(message.id)
 
         saved = sorted(tmp_path.glob("console_image_*"))
         assert len(saved) == 3
@@ -14682,7 +14696,7 @@ async def test_console_save_as_savers_confirm_at_success_severity():
         # delegator for `_as_note` only, so the other three are reached
         # through `_message`. This test was written after that move and had
         # therefore never once run green.
-        await console._save_console_message_as_note(message.id)
+        await console._message._save_console_message_as_note(message.id)
         await console._message._save_console_message_as_media(message.id)
         await console._message._save_console_message_as_prompt(message.id)
         await console._message._save_console_message_as_chatbook(message.id)

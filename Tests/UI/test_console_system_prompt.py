@@ -268,7 +268,7 @@ async def test_console_system_prompt_modal_apply_updates_settings_and_rail_previ
         assert _rail_system_line_text(console) == "System: none"
 
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -296,7 +296,7 @@ async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_non
         assert _rail_system_line_text(console) == "System: Be terse."
 
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -324,7 +324,7 @@ async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
         await pilot.pause(0.1)
 
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -638,7 +638,7 @@ async def test_console_system_prompt_modal_save_to_library_creates_new_prompt(tm
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -679,7 +679,7 @@ async def test_console_system_prompt_modal_save_to_library_duplicate_name_shows_
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -704,7 +704,7 @@ async def test_console_system_prompt_modal_save_to_library_missing_name_shows_in
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -802,7 +802,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        baseline = console._active_console_settings_context_estimate()
+        baseline = console._context_cost._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         console._session._apply_console_session_system_prompt(
@@ -810,7 +810,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         )
         await pilot.pause(0.1)
 
-        after = console._active_console_settings_context_estimate()
+        after = console._context_cost._active_console_settings_context_estimate()
         assert after.used_tokens is not None
         assert after.used_tokens > baseline.used_tokens
 

@@ -135,9 +135,11 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
     from tldw_chatbook.UI.Console_Modules.wiring import (
         build_console_commands_controller,
+        build_console_provider_selection_controller,
     )
 
     build_console_commands_controller(screen)
+    build_console_provider_selection_controller(screen)
     # Must precede the `_console_chat_store` assignment below: that is a
     # property whose setter reaches `ConsoleRuntime.attach_view` ->
     # `ChatScreen.console_view_hooks`, which reads
@@ -172,14 +174,14 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         app_instance=screen.app_instance,
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         recent_console_image_messages=(
-            lambda messages: screen._recent_console_image_messages(messages)
+            lambda messages: screen._message._recent_console_image_messages(messages)
         ),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         console_generation_browse=lambda: screen._console_generation_browse(),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
         build_console_provider_selection=(
-            lambda: screen._build_console_provider_selection()
+            lambda: screen._provider_selection._build_console_provider_selection()
         ),
         ensure_console_provider_gateway=(
             lambda: screen._ensure_console_provider_gateway()
@@ -193,7 +195,7 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
             lambda: screen._console_visible_draft_session_id
         ),
         append_native_console_system_message=(
-            lambda *args, **kwargs: screen._append_native_console_system_message(
+            lambda *args, **kwargs: screen._message._append_native_console_system_message(
                 *args, **kwargs
             )
         ),
@@ -203,7 +205,7 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         default_console_session_settings=(
             lambda: screen._session._default_console_session_settings()
         ),
-        clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
+        clear_console_composer_draft=(lambda: screen._commands._clear_console_composer_draft()),
     )
 
     def _unreached(*_args, **_kwargs):
@@ -1141,10 +1143,10 @@ async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
     async def _spy_handler(parse):
         handler_calls.append(parse)
 
-    screen._console_command_generate_image = _spy_handler
+    screen._image._console_command_generate_image = _spy_handler
 
     parse = CommandParse(kind="command", name="generate-image", args="a dragon")
-    await screen._dispatch_console_command(parse)
+    await screen._commands._dispatch_console_command(parse)
 
     assert handler_calls == [], "the handler must not run in a temporary chat"
     messages = [m.content for m in store.messages_for_session(temp.id)]
@@ -1153,7 +1155,7 @@ async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
     # Control: a normal (non-ephemeral) session still dispatches.
     normal = store.create_session(title="Normal")
     store.switch_session(normal.id)
-    await screen._dispatch_console_command(parse)
+    await screen._commands._dispatch_console_command(parse)
 
     assert len(handler_calls) == 1
     assert handler_calls[0] is parse
@@ -1203,7 +1205,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
         pass
 
     screen._console_composer_or_none = _mock_composer_or_none
-    screen._clear_console_composer_draft = _mock_clear_draft
+    screen._commands._clear_console_composer_draft = _mock_clear_draft
 
     # Stub in-flight tracking
     def _mock_inflight_sessions():
@@ -1260,7 +1262,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     parse = CommandParse(kind="command", name="generate-image", args="@anime a dragon")
 
     # Invoke the handler
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     # Verify run_generation_batch was called once with correct kwargs
     assert len(captured_kwargs) == 1
@@ -1332,7 +1334,7 @@ async def test_llm_context_options_disabled_by_kill_switch():
 @pytest.mark.asyncio
 async def test_llm_context_options_resolves_ready_provider():
     screen = _bare_generation_screen(ConsoleChatStore())
-    screen._build_console_provider_selection = lambda: "selection-sentinel"
+    screen._provider_selection._build_console_provider_selection = lambda: "selection-sentinel"
 
     class _FakeGateway:
         async def resolve_for_send(self, selection):
@@ -1359,7 +1361,7 @@ async def test_llm_context_options_resolves_ready_provider():
 @pytest.mark.asyncio
 async def test_llm_context_options_provider_not_ready():
     screen = _bare_generation_screen(ConsoleChatStore())
-    screen._build_console_provider_selection = lambda: "selection-sentinel"
+    screen._provider_selection._build_console_provider_selection = lambda: "selection-sentinel"
 
     class _FakeGateway:
         async def resolve_for_send(self, selection):
@@ -1382,7 +1384,7 @@ async def test_llm_context_options_resolution_exception_degrades_gracefully():
     def _raise():
         raise RuntimeError("selection blew up")
 
-    screen._build_console_provider_selection = _raise
+    screen._provider_selection._build_console_provider_selection = _raise
     options = await screen._image._console_generate_image_llm_context_options(
         _imagegen_cfg()
     )
@@ -1402,7 +1404,7 @@ def _wired_generate_image_screen(store, *, batch_calls, batch_data=b"generated_i
         provider="openai"
     )
     screen._console_composer_or_none = lambda: None
-    screen._clear_console_composer_draft = lambda: None
+    screen._commands._clear_console_composer_draft = lambda: None
     screen._image._console_imagegen_inflight_sessions = lambda: set()
 
     def _mock_batch(**kwargs):
@@ -1468,7 +1470,7 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="")
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     assert len(batch_calls) == 1
     prompt = batch_calls[0]["prompt"]
@@ -1528,7 +1530,7 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="")
-    await screen._console_command_generate_image(parse)  # must not raise
+    await screen._image._console_command_generate_image(parse)  # must not raise
 
     assert len(batch_calls) == 1
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
@@ -1579,7 +1581,7 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="")
-    await screen._console_command_generate_image(parse)  # must not raise/hang
+    await screen._image._console_command_generate_image(parse)  # must not raise/hang
 
     assert len(batch_calls) == 1
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
@@ -1625,7 +1627,7 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="")
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     assert len(batch_calls) == 1
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
@@ -1664,7 +1666,7 @@ async def test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path(
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="")
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     assert len(batch_calls) == 1
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
@@ -1701,7 +1703,7 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
     )
 
     parse = CommandParse(kind="command", name="generate-image", args="a red dragon")
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     assert len(batch_calls) == 1
     assert batch_calls[0]["prompt"] == "a red dragon"
@@ -1757,7 +1759,7 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
         # this fake must accept the same keyword the real method does.
         system_messages.append(text)
 
-    screen._append_native_console_system_message = _fake_append_system
+    screen._message._append_native_console_system_message = _fake_append_system
 
     monkeypatch.setattr(
         image_module,
@@ -1781,7 +1783,7 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
 
     parse = CommandParse(kind="command", name="generate-image", args="a red dragon")
 
-    await screen._console_command_generate_image(parse)
+    await screen._image._console_command_generate_image(parse)
 
     # The draft the user had typed before dispatch must come back.
     assert composer.draft_text() == "a red dragon that got typed before the crash"

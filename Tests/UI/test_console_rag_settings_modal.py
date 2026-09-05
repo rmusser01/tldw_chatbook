@@ -679,7 +679,7 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
     ChatScreen._run_console_library_rag_from_visible_action(empty)
 
     empty.app_instance.notify.assert_not_called()
-    empty._open_console_library_search.assert_called_once()
+    empty._retrieval.open_library_search.assert_called_once()
     empty._retrieval._stage_console_library_rag_launch.assert_not_called()
 
 
@@ -705,7 +705,6 @@ def test_dedicated_query_still_wins_over_the_composer_draft():
 @pytest.mark.unit
 def test_modal_open_prefills_a_normal_question_draft():
     """Manual search prefills the exact composer draft without guessing."""
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = Mock()
     screen._console_library_rag_query = ""
@@ -715,7 +714,7 @@ def test_modal_open_prefills_a_normal_question_draft():
     screen._console_composer_or_none.return_value = composer
     screen._retrieval = _retrieval_for(screen)
 
-    ChatScreen._open_console_library_search(screen)
+    screen._retrieval.open_library_search()
 
     modal = screen.app_instance.push_screen.call_args.args[0]
     assert modal._query == "  what   changed in auth  "

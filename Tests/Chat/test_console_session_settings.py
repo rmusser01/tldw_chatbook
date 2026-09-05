@@ -3024,7 +3024,6 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             await asyncio.wait_for(finished.wait(), timeout=1)
             assert not provider_cancelled
 
-            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
             fresh_memory = _settings_close_memory(
                 "Fresh durable memory after compaction"
@@ -3112,8 +3111,21 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 _apply_console_settings_result=lambda *_args, **_kwargs: None,
             )
             build_console_settings_controllers(production_opener)
-            await ChatScreen._open_console_settings(  # type: ignore[arg-type]
-                production_opener,
+            production_opener._context_cost = SimpleNamespace(
+                _console_settings_context_estimate_for_session=(
+                    production_opener._console_settings_context_estimate_for_session
+                ),
+                _console_context_control_state_for_session=(
+                    production_opener._console_context_control_state_for_session
+                ),
+            )
+            production_opener._provider_selection = SimpleNamespace(
+                _providers_models_for_console_settings=providers_models,
+                _provider_readiness_app_config=(
+                    production_opener._provider_readiness_app_config
+                ),
+            )
+            await production_opener._settings_navigation._open_console_settings(
                 focus_context=True,
             )
             await pilot.pause()

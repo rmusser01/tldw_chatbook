@@ -699,7 +699,7 @@ async def test_first_time_user_character_chat_journey(
             try:
                 print(
                     "blocked_reason:",
-                    repr(chat_screen._console_send_blocked_reason()),
+                    repr(chat_screen._submission._console_send_blocked_reason()),
                 )
             except Exception as exc:
                 print("blocked_reason check raised:", exc)

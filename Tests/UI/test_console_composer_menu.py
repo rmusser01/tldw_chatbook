@@ -1248,7 +1248,7 @@ def test_prompts_menu_choice_opens_exactly_one_browse_modal():
 
     screen = ChatScreen.__new__(ChatScreen)
     calls: list[bool] = []
-    screen._open_console_prompts_modal = lambda: calls.append(True)
+    screen._prompts._open_console_prompts_modal = lambda: calls.append(True)
 
     screen._handle_console_composer_menu_choice("prompts")
 

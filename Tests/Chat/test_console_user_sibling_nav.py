@@ -187,7 +187,7 @@ def test_select_console_message_variant_moves_active_leaf_between_user_siblings(
     _app, screen, store, session, u1, _a1, u2 = _build_two_user_siblings()
     assert store.active_leaf(session.id) == u2.id
 
-    screen._select_console_message_variant(u2.id, direction="variant-previous")
+    screen._message._select_console_message_variant(u2.id, direction="variant-previous")
 
     # u1 has its own downstream reply (a1), so swiping back lands on u1's
     # most-recent descendant -- the same "resume mid-conversation" contract
@@ -195,7 +195,7 @@ def test_select_console_message_variant_moves_active_leaf_between_user_siblings(
     # deepest_descendant_of_sibling_subtree), now exercised on a user fork.
     assert store.active_leaf(session.id) == _a1_id(store, u1)
 
-    screen._select_console_message_variant(u1.id, direction="variant-next")
+    screen._message._select_console_message_variant(u1.id, direction="variant-next")
 
     assert store.active_leaf(session.id) == u2.id
 
@@ -210,9 +210,9 @@ def test_select_console_message_variant_noop_at_either_end_for_user_siblings():
 
     # u1 is the FIRST user sibling (index 0) -- pressing "previous" on its
     # row must not move the active leaf (still u2, off u1's row).
-    screen._select_console_message_variant(u1.id, direction="variant-previous")
+    screen._message._select_console_message_variant(u1.id, direction="variant-previous")
     assert store.active_leaf(session.id) == u2.id
 
     # u2 is the LAST user sibling -- pressing "next" on it is a no-op too.
-    screen._select_console_message_variant(u2.id, direction="variant-next")
+    screen._message._select_console_message_variant(u2.id, direction="variant-next")
     assert store.active_leaf(session.id) == u2.id

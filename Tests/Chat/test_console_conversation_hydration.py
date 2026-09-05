@@ -420,7 +420,7 @@ def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
     """
     app = _fixture_app(tmp_path)
     screen = ChatScreen(app)
-    messages = screen._console_messages_from_conversation_tree(FIXTURE_TREE)
+    messages = screen._message._console_messages_from_conversation_tree(FIXTURE_TREE)
 
     shape = [(m.persisted_message_id, m.parent_message_id) for m in messages]
     assert shape == [

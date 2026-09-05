@@ -3678,7 +3678,7 @@ def test_console_prefers_configured_provider_when_app_reactive_is_stale_default(
     app.chat_api_provider_value = "OpenAI"
     screen = ChatScreen(app)
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.provider == "llama_cpp"
     assert selection.explicit_model == "local-model"
@@ -3712,7 +3712,7 @@ def test_console_provider_selection_normalizes_display_provider_key():
     screen._console_control_provider = "Llama_cpp"
     screen._console_control_model = "local-model"
 
-    selection = screen._build_console_provider_selection()
+    selection = screen._provider_selection._build_console_provider_selection()
 
     assert selection.provider == "llama_cpp"
     assert selection.explicit_model == "local-model"

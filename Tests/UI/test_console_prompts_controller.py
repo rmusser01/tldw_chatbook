@@ -190,7 +190,7 @@ async def test_prompts_modal_open_persists_the_reviewed_system_selection() -> No
         session_id = store.active_session_id
         assert session_id is not None
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsolePromptsModal)
@@ -232,7 +232,7 @@ async def test_prompts_modal_apply_refuses_when_the_system_prompt_moved() -> Non
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
 
@@ -271,7 +271,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         console._open_console_provider_recovery = recovery
         console._console_provider_blocker_copy = lambda: "No provider configured."
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
 
@@ -356,7 +356,7 @@ class _CountingResolutionGateway:
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:
-    console._open_console_prompts_modal()
+    console._prompts._open_console_prompts_modal()
     await pilot.pause()
     modal = host.screen_stack[-1]
     assert isinstance(modal, ConsolePromptsModal)
@@ -583,7 +583,7 @@ async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> Non
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("/prompt Summarize")
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
         assert composer.draft_text() == "Summarize the following."
@@ -1055,7 +1055,7 @@ async def test_system_command_applies_and_persists_the_resolved_system_part() ->
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
 
-        await console._console_command_apply_system(SimpleNamespace(args="Summarize"))
+        await console._prompts._console_command_apply_system(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
         assert store.session_settings(session_id).system_prompt == "You are terse."
@@ -1146,10 +1146,10 @@ async def test_prompt_history_store_is_lazy_shared_and_factory_seamed() -> None:
     app.console_prompt_history_factory = lambda: sentinel
     screen = ChatScreen(app)
 
-    first = screen._ensure_console_prompt_history()
+    first = screen._prompts._ensure_console_prompt_history()
 
     assert first is sentinel
-    assert screen._ensure_console_prompt_history() is sentinel
+    assert screen._prompts._ensure_console_prompt_history() is sentinel
 
 
 @pytest.mark.asyncio
@@ -1176,7 +1176,7 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
             _append_application(session_id, "staged body"),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
         await pilot.pause()
 
         assert composer.draft_text() == "existing\nstaged body"
@@ -1213,7 +1213,7 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
             _append_application(session_id, "staged body"),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
         await pilot.pause()
 
         assert composer.draft_text() == ""

@@ -220,7 +220,7 @@ async def test_posix_mounted_real_terminal_focus_input_and_navigation(
             assert await pilot.click("#console-terminal-return")
             await _wait_for_selector(console, pilot, "#console-native-transcript")
             before_turn = manager.projection(session_id)
-            await console._submit_console_native_draft("ordinary model turn")
+            await console._submission._submit_console_native_draft("ordinary model turn")
             await _wait_until(pilot, lambda: bool(gateway.sent_messages))
             assert manager.projection(session_id) == before_turn
 

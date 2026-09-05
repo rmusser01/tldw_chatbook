@@ -341,7 +341,7 @@ async def test_console_ghost_text_renders_and_right_arrow_accepts(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         # The screen shares ONE history store between composer and controller.
-        assert composer._prompt_history is console._ensure_console_prompt_history()
+        assert composer._prompt_history is console._prompts._ensure_console_prompt_history()
         composer.focus()
         await pilot.pause(0.3)  # let the mount-time history load land
         composer._cursor_blink_timer.pause()

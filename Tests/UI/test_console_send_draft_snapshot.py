@@ -134,7 +134,7 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 
         monkeypatch.setattr(controller, "run_prompt_chain", accepted_then_user_types)
 
-        await console._submit_console_native_draft(
+        await console._submission._submit_console_native_draft(
             "original mouse draft", session.id
         )
 
@@ -371,7 +371,7 @@ async def test_console_active_run_rejection_appends_visible_system_row():
             session_id=session.id,
         )
 
-        await console._submit_console_native_draft("hello", session.id)
+        await console._submission._submit_console_native_draft("hello", session.id)
 
         messages = store.messages_for_session(session.id)
         system_messages = [m for m in messages if m.role is ConsoleMessageRole.SYSTEM]
@@ -410,7 +410,7 @@ async def test_console_session_closed_mid_dispatch_notifies_instead_of_silent_sw
             (str(message), kwargs.get("severity", ""))
         )
 
-        await console._submit_console_native_draft("hello", closed_id)
+        await console._submission._submit_console_native_draft("hello", closed_id)
 
         assert any(
             "before your message could send" in note for note, _sev in notices
@@ -495,7 +495,7 @@ async def test_console_send_watchdog_recovers_stash_the_pressed_handler_never_co
         # was dropped by a prune racing delivery) by invoking the watchdog
         # directly -- exactly how `on_key`'s Enter branch schedules it via
         # `set_timer`, just without waiting out the real delay.
-        console._recover_stuck_console_send_stash(stash)
+        console._submission._recover_stuck_console_send_stash(stash)
 
         assert composer.draft_text() == "watchdog test"
         assert console._console_pending_send_stash is None
@@ -524,7 +524,7 @@ async def test_console_send_watchdog_is_a_noop_once_the_stash_is_consumed():
         # non-buggy path) -- simulate that here, ahead of the watchdog.
         console._console_pending_send_stash = None
 
-        console._recover_stuck_console_send_stash(stash)
+        console._submission._recover_stuck_console_send_stash(stash)
 
         # Nothing resurrected: the composer stays exactly as the normal
         # accept/refuse path already left it.
@@ -561,7 +561,7 @@ async def test_setup_refusal_after_acceptance_preserves_draft(
             return ConsoleSubmitResult(False, False, "Setup cancelled")
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
-        await console._submit_console_native_draft("original draft", session.id)
+        await console._submission._submit_console_native_draft("original draft", session.id)
         expected = (
             "original draft" + late_text
             if keyboard
@@ -601,7 +601,7 @@ async def test_setup_refusal_does_not_restore_consumed_stash_into_other_visible_
         # the ordinary final sync would finish that transition and replace B.
         monkeypatch.setattr(console, "_sync_native_console_chat_ui", AsyncMock())
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
-        await console._submit_console_native_draft("A private draft", session.id)
+        await console._submission._submit_console_native_draft("A private draft", session.id)
         assert composer.draft_text() == "B private draft"
 
 
@@ -635,7 +635,7 @@ async def test_post_acceptance_refusal_restores_undo_redo_only_for_unsent_draft(
             return ConsoleSubmitResult(accepted, False, "Setup result")
 
         monkeypatch.setattr(controller, "run_prompt_chain", finish_after_setup)
-        await console._submit_console_native_draft("original draft", session.id)
+        await console._submission._submit_console_native_draft("original draft", session.id)
         if accepted:
             assert composer.draft_text() == ""
             assert not composer.undo()

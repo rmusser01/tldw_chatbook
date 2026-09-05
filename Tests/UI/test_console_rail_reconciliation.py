@@ -2074,7 +2074,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
             owner._on_reconcile = observe_outer
             state = replace(owner.state, model_row="Model: screen-path-probe")
             monkeypatch.setattr(
-                screen, "_build_console_settings_summary_state", lambda: state
+                screen._context_cost, "_build_console_settings_summary_state", lambda: state
             )
             screen._sync_console_settings_summary()
         else:

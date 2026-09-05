@@ -517,7 +517,7 @@ async def test_at_most_one_failure_toast_per_reply():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
 
@@ -941,7 +941,7 @@ async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thre
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         marshal_calls = Mock()
         console.app_instance.call_from_thread = marshal_calls
@@ -976,7 +976,7 @@ async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         marshal_calls = Mock()
         console.app_instance.call_from_thread = marshal_calls
@@ -1030,7 +1030,7 @@ async def test_hands_free_marshal_swallows_call_from_thread_failure():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
 
         def _raise_not_running(callback, *args):
@@ -1066,7 +1066,7 @@ async def test_hands_free_marshal_swallows_a_raising_callback_on_the_ui_thread()
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
 
         def _raising_callback() -> None:
@@ -1096,7 +1096,7 @@ async def test_append_stream_chunk_never_raises_off_thread_even_when_call_from_t
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         store = console._ensure_console_chat_store()
         message = store.append_message(
@@ -1297,7 +1297,7 @@ async def test_reply_identity_same_session_new_id_claims_and_feeds():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         assert session is not None
@@ -1353,7 +1353,7 @@ async def test_reply_identity_rejects_a_concurrent_background_session_reply():
         )
         store.switch_session(sending_session_id)
 
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         _prime_hands_free_send(console, session)
@@ -1397,7 +1397,7 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         store = console._ensure_console_chat_store()
@@ -1469,7 +1469,7 @@ async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token()
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         sending_session_id = _prime_hands_free_send(console, session)
@@ -1521,7 +1521,7 @@ async def test_zero_content_reply_completion_still_completes_the_turn():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console._enter_console_hands_free_loop(capture_live=True)
+        console._hands_free._enter_console_hands_free_loop(capture_live=True)
         await pilot.pause()
         session = console._console_hands_free
         sending_session_id = _prime_hands_free_send(console, session)
