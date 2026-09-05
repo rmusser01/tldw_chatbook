@@ -335,7 +335,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
-        """Apply the controller's stale-page gate to one unsafe action."""
+        """Apply the controller's stale-OR-mutation gate to one unsafe action.
+
+        Final review M-1: despite the name (and despite reading as the
+        symmetric partner of ``_gate_mutation_action`` below, which gates on
+        write-in-flight only), this disables on EITHER input -- a stale page
+        OR a write actually in flight. Do not assume a mutation ending
+        leaves these controls live if the page is still stale.
+        """
         reason = self.mutation_action_reason or self.stale_action_reason
         if reason:
             button.label = library_disabled_action_label(base_label, True)
@@ -956,13 +963,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 set_actions.styles.height = "auto"
                 with set_actions:
+                    # Final review I-3: NOT ``_gate_stale_action``, for the
+                    # same reason the bulk-delete receipt's Undo above is
+                    # exempt -- this Undo restores exactly the one set its
+                    # own copy names, so a stale PAGE behind it cannot
+                    # invalidate it. Before this branch both receipts' Undo
+                    # were gated identically; leaving this one on the stale
+                    # gate let it sit disabled beside a live sibling
+                    # receipt's Undo with no rule the user could infer.
                     undo_set = Button(
                         "Undo",
                         id="library-media-review-dismiss-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo_set, "Undo")
+                    yield self._gate_mutation_action(undo_set, "Undo")
                     close_receipt = Button(
                         "Dismiss",
                         id="library-media-review-dismiss-receipt-close",

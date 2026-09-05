@@ -12806,7 +12806,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
-                assert controller.stale_copy == "Retry failed · RuntimeError"
+                assert controller.stale_copy == "Couldn't retry · RuntimeError"
                 assert not screen.query_one(
                     "#library-media-row-0", Button
                 ).disabled

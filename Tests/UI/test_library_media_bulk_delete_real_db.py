@@ -237,7 +237,7 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rows_still_open_while_the_page_sits_behind_the_mutation_gate(tmp_path):
+async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_path):
     """task-31220: recovery is never gated by what it recovers from.
 
     Critique #5 sat behind ``Media changed; retry to load a current page.``
@@ -327,7 +327,7 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
                     str(screen.query_one("#library-media-status", Static).renderable)
                 )
 
-            assert painted == ["Retry failed · timed out"] * 2
+            assert painted == ["Couldn't retry · timed out"] * 2
             # Recovery is never gated by what it recovers from.
             rows = screen.query(".library-media-row")
             assert len(rows) == 3

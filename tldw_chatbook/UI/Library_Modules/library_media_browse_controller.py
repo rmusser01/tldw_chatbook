@@ -27,7 +27,11 @@ _SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
 _FACET_ERROR = "Couldn't load media types. Retry."
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
-_RETRY_FAILED_PREFIX = "Retry failed · "
+# Final review I-2: not "Retry failed · " -- the Analyze receipt on this
+# same canvas (library_media_canvas.py) already has a Button labelled
+# exactly "Retry failed", and the two can be on screen together. Matches
+# the module's own "Couldn't load ..." vocabulary instead.
+_RETRY_FAILED_PREFIX = "Couldn't retry · "
 # Review I-2: no number. This request path is a bare ``asyncio.to_thread``
 # with no ``wait_for`` and no deadline, so any bound quoted here would be
 # invented. (The 5 s figure belongs to the screen-level source snapshot,
@@ -82,6 +86,12 @@ class LibraryMediaBrowseController:
         self.loading = False
         self.error_copy = ""
         self.stale_copy = ""
+        # Final review M-3: the reason the PAGE went stale, kept separate
+        # from ``stale_copy`` (the pager's own status line, which a failed
+        # Retry overwrites with "Couldn't retry · <reason>"). Every gated
+        # action's tooltip reads this one instead, so it keeps explaining
+        # why the action is off across repeated failed retries.
+        self.stale_reason = ""
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -208,6 +218,7 @@ class LibraryMediaBrowseController:
                         self.freshness = "stale"
                         self.error_copy = ""
                         self.stale_copy = _SHRINK_COPY
+                        self.stale_reason = _SHRINK_COPY
                     else:
                         self.error_copy = _SERVICE_ERROR
                     self._sync(focus_identity)
@@ -255,6 +266,7 @@ class LibraryMediaBrowseController:
         self.inflight_scope = None
         self.error_copy = ""
         self.stale_copy = ""
+        self.stale_reason = ""
         self._sync(focus_identity)
         return True
 
@@ -282,6 +294,7 @@ class LibraryMediaBrowseController:
         self.freshness = "stale"
         self.error_copy = ""
         self.stale_copy = stale_copy.strip()
+        self.stale_reason = self.stale_copy
 
     def begin_mutation(self) -> MediaBrowseScope:
         """Fence reads before a durable write and preserve its applied scope."""

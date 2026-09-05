@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import inspect
+import re
 import sqlite3
 import types
 from types import SimpleNamespace
@@ -819,6 +820,39 @@ async def test_review_dismiss_receipt_absent_when_no_name():
             pilot.app.query_one(
                 "#library-media-review-dismiss-receipt-copy", Static
             )
+
+
+class _GatedReviewDismissReceiptCanvasApp(ConsolidatedCSSApp):
+    """The review-set dismiss receipt rendered under a stale page."""
+
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=dataclasses.replace(
+                _select_mode_canvas_state(),
+                select_mode=False,
+                review_dismiss_receipt_name="Read later",
+            ),
+            stale_action_reason="Media changed; retry to load a current page.",
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_review_dismiss_receipt_undo_stays_live_while_the_page_is_stale():
+    """Final review I-3: the bulk-delete receipt's Undo is exempt from the
+    stale-page gate because it restores exactly the ids its own copy names
+    -- the same argument applies verbatim to the review-set dismiss
+    receipt's Undo, which restores exactly the one set its own copy names.
+    Before this branch both receipts' Undo were gated identically; the
+    branch created the divergence (bulk-delete moved to
+    ``_gate_mutation_action``, this one stayed on ``_gate_stale_action``),
+    leaving one receipt's Undo live beside another's disabled "○ Undo"
+    with no rule the user could infer."""
+    app = _GatedReviewDismissReceiptCanvasApp()
+    async with app.run_test() as pilot:
+        undo = pilot.app.query_one("#library-media-review-dismiss-undo", Button)
+        assert str(undo.label) == "Undo"
+        assert undo.disabled is False
 
 
 def _select_mode_with_preview_state() -> LibraryMediaCanvasState:
@@ -2904,11 +2938,27 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
     own tests above prove it always releases.
     """
     source = inspect.getsource(library_screen_module)
-    assert source.count("_library_media_bulk_delete_in_flight = True") == 1
+    # Final review M-2: not ``source.count`` -- neither black nor
+    # ruff-format runs in this repo's preflight/CI, so a formatting change
+    # (no spaces around ``=``, single quotes, a tuple-unpack assignment)
+    # would slip an exact substring count past silently while a seventh
+    # hand-written claim site exists. A pattern tolerant of whitespace and
+    # quote style is not fooled by reformatting.
+    assert (
+        len(
+            re.findall(
+                r"_library_media_bulk_delete_in_flight\s*=\s*True", source
+            )
+        )
+        == 1
+    )
     # Review M-2: the likelier future mistake is a seventh handler that
     # schedules into the shared group WITHOUT claiming -- exactly the
     # ADR-055 rule this seam exists to enforce.
-    assert source.count('group="library_media_bulk_delete"') == 1
+    assert (
+        len(re.findall(r"""group=['"]library_media_bulk_delete['"]""", source))
+        == 1
+    )
     assert "_library_media_bulk_delete_in_flight = True" in inspect.getsource(
         LibraryScreen._claim_library_media_mutation
     )

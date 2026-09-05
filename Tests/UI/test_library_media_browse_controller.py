@@ -495,17 +495,52 @@ async def test_failed_retry_under_the_stale_gate_says_why_and_clears_on_success(
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == f"Retry failed · {reason}"
+    assert controller.stale_copy == f"Couldn't retry · {reason}"
     assert controller.freshness == "stale"
     assert controller.error_copy == ""
     assert controller.pager.retry_visible is True
-    assert controller.pager.status_copy == f"Retry failed · {reason}"
+    assert controller.pager.status_copy == f"Couldn't retry · {reason}"
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
     assert controller.stale_copy == ""
     assert controller.freshness == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_stale_reason_survives_a_failed_retry_for_the_tooltip() -> None:
+    """Final review M-3: ``stale_copy`` is overwritten by a failed retry's
+    "Couldn't retry · <reason>" (the pager's own status line, asserted
+    above), but every OTHER gated action's tooltip reads a reason too --
+    and "Couldn't retry · timed out" does not explain why Export is off.
+    ``stale_reason`` names why the page went stale and a failed retry must
+    never touch it, so the tooltip keeps making sense across repeated
+    failures.
+    """
+    screen = _Screen()
+    service = _Service(_page(1, 20), TimeoutError(), _page(1, 19))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    controller.begin_mutation()
+    controller.reconcile_committed_mutation(remove_ids=("local:media:1",))
+    why_stale = "Media changed; retry to load a current page."
+    assert controller.stale_copy == why_stale
+    assert controller.stale_reason == why_stale
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.stale_copy == "Couldn't retry · timed out"
+    assert controller.stale_reason == why_stale
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.stale_copy == ""
+    assert controller.stale_reason == ""
 
 
 @pytest.mark.asyncio

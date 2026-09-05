@@ -15623,8 +15623,13 @@ class LibraryScreen(BaseAppScreen):
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
+            # Final review M-3: not ``stale_copy`` -- a failed Retry
+            # overwrites that with "Couldn't retry · <reason>", which does
+            # not explain why every OTHER gated action (Export, sort, ...)
+            # is disabled. ``stale_reason`` names why the page went stale
+            # and a failed retry never touches it.
             "stale_action_reason": (
-                controller.stale_copy if controller.freshness == "stale" else ""
+                controller.stale_reason if controller.freshness == "stale" else ""
             ),
             "mutation_action_reason": (
                 "Media change in progress."
