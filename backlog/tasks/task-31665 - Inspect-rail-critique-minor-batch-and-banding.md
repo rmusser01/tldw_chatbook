@@ -34,4 +34,6 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [ ] #8 One canonical Change Review opener decided and documented (four exist today)
 - [ ] #9 Row secondary text meets 4.5:1 on every background it actually renders over (after #1 lands)
 - [ ] #10 A bound→bound workspace switch must not transiently render the new root's branch/counts beside the OLD root's PR/checks while the deferred gh fetch is in flight (per-field replace in the non-UNBOUND landing branch; review finding, TASK-31660 round 1)
+- [ ] #11 A persistent UNKNOWN root (no chat controller / no active session) must not sit on "Checking workspace…" with an inert Refresh indefinitely (31660 re-review obs — the AC#4 situation one state over)
+- [ ] #12 test_unknown_root_never_paints_the_unbound_copy asserts the rail is open after its toggle (vacuity guard); empty-state docs table and environment.py module docstring updated for the UNKNOWN state
 <!-- AC:END -->

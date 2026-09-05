@@ -31,4 +31,5 @@ rows). Repo precedent for the fix: the left rail's System line trailing ▸
 - [ ] #2 "Commit or push · N files" is renamed to name what it does (e.g. "Review & commit… · N files")
 - [ ] #3 Refresh shows a transient acknowledgment (e.g. "Refreshing…") even when the data comes back unchanged
 - [ ] #4 Stale state carries a text marker alongside color, and stale/error no longer share an identical hue on rows a user must read
+- [ ] #5 The UNBOUND copy names the true cause or goes cause-agnostic: workspace_roots == () also occurs when Change Review consent is not ENABLED for a bound folder (the common default), when the consent service is absent/raises, and when all bound roots are skipped — "No folder is bound" is wrong in those cases (31660 re-review obs; the "changes are not tracked here" clause stays true). Distinguish consent-off if the admission data allows; also restore the remediation half of Change Review's copy (bind/enable path)
 <!-- AC:END -->

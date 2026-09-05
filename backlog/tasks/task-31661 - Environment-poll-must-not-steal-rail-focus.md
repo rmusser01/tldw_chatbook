@@ -2,7 +2,7 @@
 id: TASK-31661
 title: >-
   Environment 10s poll silently resets rail focus when the file set changes
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, ux, critique-2026-09-05]

@@ -2,7 +2,7 @@
 id: TASK-31660
 title: >-
   Environment panel state honesty: UNBOUND and PENDING states (stale-root P0)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, ux, critique-2026-09-05]
