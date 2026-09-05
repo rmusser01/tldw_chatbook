@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -20,6 +22,157 @@ from tldw_chatbook.Library.library_shell_state import library_choice_label
 LIBRARY_MEDIA_EMPTY_COPY = (
     "No media in your Library yet. Import something to see it here."
 )
+
+LIBRARY_MEDIA_SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
+# Final review I-2: not "Retry failed · " -- the Analyze receipt on this
+# same canvas (library_media_canvas.py) already has a Button labelled
+# exactly "Retry failed", and the two can be on screen together. Matches
+# the module's own "Couldn't load ..." vocabulary instead.
+_RETRY_FAILED_PREFIX = "Couldn't retry · "
+# Review I-2: no number. This request path is a bare ``asyncio.to_thread``
+# with no ``wait_for`` and no deadline, so any bound quoted here would be
+# invented. (The 5 s figure belongs to the screen-level source snapshot,
+# a different path.)
+_TIMEOUT_REASON = "timed out"
+# task-31944: the reader-facing reason for the classes that actually reach
+# this mapper without a usable message of their own. Before this, they fell
+# through to ``type(exc).__name__`` and the callout read "Couldn't retry ·
+# ConnectionRefusedError" -- a name, not something to act on. Ordered
+# specific-first (``ConnectionError`` is an ``OSError``, every ``sqlite3``
+# error is a ``sqlite3.Error``); anything unmapped takes the fallback, which
+# keeps PR G's privacy rule -- an arbitrary exception's TEXT never reaches a
+# screen, only OS/SQLite messages do, path-redacted.
+_DATABASE_UNREADABLE_REASON = "the database could not be read"
+_CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (ConnectionError, "the connection failed"),
+    # ``Client_Media_DB_v2`` wraps every sqlite3 failure in its OWN
+    # ``DatabaseError`` before it ever reaches this mapper (e.g.
+    # ``raise DatabaseError("Media search failed.") from None``), so this
+    # entry only covers a caller that talks to sqlite directly.
+    # ``DatabaseError`` is mapped separately, below, via a function-local
+    # import.
+    (sqlite3.Error, _DATABASE_UNREADABLE_REASON),
+)
+_UNMAPPED_REASON = "an unexpected error"
+# task-31982 AC#2: the recovery step a repeated failure names instead of
+# repeating its one sentence. A media read faulting the same way on a
+# consecutive Retry is a persistent fault the in-callout Retry cannot clear;
+# the only lever left is reconnecting to the store. Appended as its own
+# ``·`` clause so the callout grammar ("what · why") is unchanged. It carries
+# no exception text (PR G's privacy rule).
+_REOPEN_RECOVERY = "reopen Chatbook to reconnect to the media database"
+# Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
+# (kept, unlike other exceptions -- see below), but that text can embed a
+# database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
+# (``~/a``), Windows drive (``C:\a``), and ``file:`` URI tokens so the shared
+# mapper can redact them before any of it reaches a screen.
+#
+# Re-review round 2: a real path segment can contain a space (macOS
+# "Application Support", Windows "Program Files"), so a segment is
+# "word( word)*" -- but only a segment immediately followed by another
+# ``/``/``\`` may absorb extra space-joined words (the trailing mandatory
+# separator in ``_SEGMENT`` is what lets ordinary backtracking find the
+# right boundary instead of running to end-of-string). The path's FINAL
+# segment never merges -- nothing bounds how far that would run -- so it
+# stops at the first space, which is exactly where a real path ends and
+# trailing prose ("... is missing") begins.
+# ponytail: a final segment that itself contains a space with nothing
+# after it (no closing quote/separator) still under-redacts -- there's no
+# way to bound that merge without a real tokenizer. Not hit by any known
+# OSError/sqlite3 message shape; revisit if one shows up.
+_SEGMENT = r"[^\s/\\'\"]*(?:[ ][^\s/\\'\"]+)*[/\\]"
+_PATH_TOKEN_PATTERN = re.compile(
+    r"""(?P<prefix>^|[\s'"])
+    (?:file:|[A-Za-z]:\\|~/|/)
+    (?:%s)*
+    [^\s/\\'"]+
+    """
+    % _SEGMENT,
+    re.VERBOSE,
+)
+
+
+def _redact_paths(text: str) -> str:
+    """Replace filesystem/database path tokens in ``text`` with ``<path>``.
+
+    Args:
+        text: Raw exception text that may embed a local path.
+
+    Returns:
+        ``text`` with every path-like token (see ``_PATH_TOKEN_PATTERN``)
+        replaced by the literal ``<path>``; text with no such token is
+        returned unchanged.
+    """
+    return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
+
+
+def _mapped_failure_reason(exc: BaseException) -> str:
+    """Name a failure kind for an exception with no usable message.
+
+    Args:
+        exc: The exception the failed request raised.
+
+    Returns:
+        The mapped reason for the first ``_CLASS_REASONS`` entry the
+        exception is an instance of, else ``_UNMAPPED_REASON``.
+    """
+    for kind, reason in _CLASS_REASONS:
+        if isinstance(exc, kind):
+            return reason
+    # Function-local: this UI controller must not import a DB module at
+    # module scope (mirrors the deferred import in
+    # ``Media/local_media_reading_service.py``). ``ConflictError`` is a
+    # ``DatabaseError`` subclass but means something else -- an
+    # optimistic-lock conflict, not "could not be read" -- so it is
+    # excluded here rather than added to ``_CLASS_REASONS``.
+    from ..DB.Client_Media_DB_v2 import ConflictError, DatabaseError
+
+    if isinstance(exc, DatabaseError) and not isinstance(exc, ConflictError):
+        return _DATABASE_UNREADABLE_REASON
+    return _UNMAPPED_REASON
+
+
+def _retry_failure_reason(exc: BaseException) -> str:
+    """Name a failed refresh in the reader's terms, never as a bare class.
+
+    Args:
+        exc: The exception the failed page request raised.
+
+    Returns:
+        A short human-readable reason for the failure, with any filesystem
+        or database path redacted to ``<path>``.
+    """
+    # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
+    # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
+    if isinstance(exc, TimeoutError):
+        return _TIMEOUT_REASON
+    if isinstance(exc, (OSError, sqlite3.OperationalError)):
+        # ``strerror`` (when set) is the human message without the
+        # "[Errno N] " wrapper ``str()`` adds. Redact BEFORE truncating --
+        # cutting a path in half at the 80-char bound would still leak its
+        # unredacted prefix.
+        raw = getattr(exc, "strerror", None) or str(exc)
+        message = " ".join(_redact_paths(raw).split())[:80]
+        if message:
+            return message
+    return _mapped_failure_reason(exc)
+
+
+def build_media_retry_failure_copy(exc: BaseException) -> str:
+    """Describe a failed attempt to recover an already stale Media page."""
+    return _RETRY_FAILED_PREFIX + _retry_failure_reason(exc)
+
+
+def build_media_load_failure_copy(
+    applied: MediaBrowseScope | None, failed_scope: MediaBrowseScope
+) -> str:
+    """Describe a failed initial load, page change, or filter change."""
+    if applied is None:
+        return LIBRARY_MEDIA_SERVICE_ERROR
+    if failed_scope.same_except_page(applied):
+        return f"Couldn't load page {failed_scope.page}."
+    return "Filter wasn't applied; showing previous results."
+
 
 # task-4025: the Trash view's honest empty state -- present tense, no
 # promise of anything beyond what the surface does (items land here on
