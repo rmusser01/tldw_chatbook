@@ -327,9 +327,7 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
                     str(screen.query_one("#library-media-status", Static).renderable)
                 )
 
-            assert painted == [
-                "Retry failed · Library took longer than 5 s to answer"
-            ] * 2
+            assert painted == ["Retry failed · timed out"] * 2
             # Recovery is never gated by what it recovers from.
             rows = screen.query(".library-media-row")
             assert len(rows) == 3

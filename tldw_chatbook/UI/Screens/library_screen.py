@@ -24,7 +24,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from enum import Enum
-from contextlib import closing
+from contextlib import closing, suppress
 from functools import partial
 import hashlib
 from pathlib import Path
@@ -15654,8 +15654,17 @@ class LibraryScreen(BaseAppScreen):
                 work, exclusive=True, group="library_media_bulk_delete"
             )
         except BaseException:
+            # Review M-3: a worker cancelled BEFORE its first step runs no
+            # ``finally``, so the flag would survive -- but nothing cancels
+            # this group (only node removal / app teardown does), and the
+            # flag dies with the screen. Do NOT "fix" that with a second
+            # flag; ADR-055's one-flag rule is what this seam exists for.
             work.close()
-            self._complete_library_media_mutation()
+            # Review M-1: the release already happened (the flag is cleared
+            # before any DOM work), so a failure repainting the canvas must
+            # not replace the fence/scheduling error the caller needs.
+            with suppress(Exception):
+                self._complete_library_media_mutation()
             raise
 
     def _begin_library_media_mutation(self) -> MediaBrowseScope:

@@ -2588,6 +2588,28 @@ async def test_rows_stay_gated_while_a_media_write_is_actually_in_flight():
             assert str(row.tooltip) == "Media change in progress."
 
 
+@pytest.mark.asyncio
+async def test_row_mutation_gate_survives_an_in_place_density_crossing():
+    """``apply_compact_presentation`` re-gates every mounted row IN PLACE.
+
+    Review I-1: the only test that ever crossed a density boundary asserted
+    the row was NOT gated, which passes identically if the re-gate call is
+    deleted outright. This crosses both directions with a write genuinely in
+    flight, so the load-bearing direction is covered.
+    """
+    async with _WriteGatedMediaCanvasApp().run_test() as pilot:
+        canvas = pilot.app.query_one("#library-media-canvas", LibraryMediaCanvas)
+        for compact in (True, False, True):
+            canvas.apply_compact_presentation(compact)
+            await pilot.pause()
+            rows = pilot.app.query(".library-media-row")
+            assert len(rows) == 2
+            for row in rows:
+                assert row.disabled is True, compact
+                assert str(row.label).startswith("○"), compact
+                assert str(row.tooltip) == "Media change in progress.", compact
+
+
 def _claim_fake(*, begin_raises=None, worker_raises=None):
     """A screen stub whose fence or worker scheduling refuses the claim."""
     fake = SimpleNamespace(_library_media_bulk_delete_in_flight=False)
@@ -2640,6 +2662,32 @@ def test_media_write_claim_releases_the_interlock_when_no_worker_ever_runs(
     assert fake._worker_calls == []
 
 
+def test_media_write_claim_surfaces_the_original_failure_not_a_repaint_error():
+    """Review M-1: the release must not swallow the caller's exception.
+
+    ``_complete_library_media_mutation`` clears the flag BEFORE it repaints,
+    so a repaint that then fails has already done the only job the release
+    path owes -- and must not replace the fence/scheduling error that is the
+    real diagnosis.
+    """
+    fake = _claim_fake(begin_raises=RuntimeError("fence refused"))
+
+    def _release_then_fail():
+        # Mirrors production order: flag cleared first, DOM work second.
+        fake._library_media_bulk_delete_in_flight = False
+        raise RuntimeError("canvas repaint failed")
+
+    fake._complete_library_media_mutation = _release_then_fail
+
+    async def _work():
+        return None
+
+    with pytest.raises(RuntimeError, match="fence refused"):
+        fake._claim_library_media_mutation(_work())
+
+    assert fake._library_media_bulk_delete_in_flight is False
+
+
 def test_media_write_claim_schedules_into_the_one_shared_exclusive_group():
     fake = _claim_fake()
 
@@ -2665,6 +2713,10 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
     """
     source = inspect.getsource(library_screen_module)
     assert source.count("_library_media_bulk_delete_in_flight = True") == 1
+    # Review M-2: the likelier future mistake is a seventh handler that
+    # schedules into the shared group WITHOUT claiming -- exactly the
+    # ADR-055 rule this seam exists to enforce.
+    assert source.count('group="library_media_bulk_delete"') == 1
     assert "_library_media_bulk_delete_in_flight = True" in inspect.getsource(
         LibraryScreen._claim_library_media_mutation
     )

@@ -463,8 +463,10 @@ async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> No
 @pytest.mark.parametrize(
     ("failure", "reason"),
     (
-        (TimeoutError(), "Library took longer than 5 s to answer"),
-        (asyncio.TimeoutError(), "Library took longer than 5 s to answer"),
+        # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+; the second
+        # case documents the alias the reason mapping's ordering depends on.
+        (TimeoutError(), "timed out"),
+        (asyncio.TimeoutError(), "timed out"),
         (OSError("database is locked"), "database is locked"),
         (sqlite3.OperationalError("database is locked"), "database is locked"),
         (RuntimeError("boom"), "RuntimeError"),

@@ -28,7 +28,11 @@ _FACET_ERROR = "Couldn't load media types. Retry."
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
 _RETRY_FAILED_PREFIX = "Retry failed · "
-_TIMEOUT_REASON = "Library took longer than 5 s to answer"
+# Review I-2: no number. This request path is a bare ``asyncio.to_thread``
+# with no ``wait_for`` and no deadline, so any bound quoted here would be
+# invented. (The 5 s figure belongs to the screen-level source snapshot,
+# a different path.)
+_TIMEOUT_REASON = "timed out"
 
 
 def _retry_failure_reason(exc: BaseException) -> str:
