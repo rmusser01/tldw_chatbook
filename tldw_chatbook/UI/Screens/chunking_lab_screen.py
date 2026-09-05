@@ -339,6 +339,7 @@ class ChunkingLabScreen(BaseAppScreen):
         self.local_media_id = media_id
 
     def on_mount(self) -> None:
+        """Configure layout and defer recovery initialization until after refresh."""
         # Textual 8 binds TextArea F6 to select_line. Release only this screen's
         # instance maps so ADR-031's app-global pane key can reach its delegate.
         for editor in self.query(TextArea):
