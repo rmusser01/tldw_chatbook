@@ -13,10 +13,40 @@ round-1 rereview closed four findings and found no new
 Critical/Important breakage in the intent fence. It left the durable exact-
 revision recovery evidence open; test-only fix `4ce7fc756f` now supplies that
 evidence. Independent round-2 rereview closed that final finding with no new
-Critical/Important breakage. Whole-branch review remains pending.
+Critical/Important breakage. The subsequent whole-branch review requires the
+corrections recorded below; the clean task gate does not close these new gaps.
 TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
+
+## Whole-branch review (`facd1e0fb0`): needs fixes
+
+The full shared-base-to-HEAD review identified five Important gaps: admission
+quotas bypassed by the production Console staging owner; DOM move/reinsert
+patches losing renderer identity; ordinary continuation content rewritten with
+Canvas disabled; transcript action discovery/dispatch compiling synchronously;
+and settlement publication resetting a historical pin. Minor corrections cover
+asset-limit argument validation and explicit Close versus pane Hide wording.
+One consolidated correction wave and scoped rereview are required. No Critical
+finding was established; this is not a security certification or merge approval.
+
+The reviewer authored Task 7.2a and the Task 7.4 continuation. Separate
+author-independent task reviews exist, but the final review is not wholly
+author-independent. Two narrow probes confirmed staging 11 Canvases despite
+the 10 limit and the virtual runtime's remove/append sequence; renderer failure
+and the remaining findings were established through static production paths,
+not a fresh browser run. All named deferred inputs were triaged with existing
+evidence limits retained.
+
+The coordinator probe imported ambient configuration rather than using the
+required isolated fixture. Its log reported loading the existing Chatbook
+configuration and ensuring `/Users/macbook-dev/.local/share/tldw_cli/default_user/chat_dicts`.
+Without a pre-probe snapshot, whether that directory was newly created is
+unknown. Static bootstrap inspection permits directory/security setup effects;
+no configuration-save evidence was observed. No database, provider or browser
+was launched. Further executable review probes were stopped; ambient state was
+not deleted or modified to conceal the deviation. Future tests must establish
+owned configuration/data before importing application modules.
 
 The stricter exact-reopen test subsequently reproduced a product defect: the
 child selects the historical root, but the existing served renderer remains on

@@ -584,6 +584,33 @@ quotas alone do not remove the scheduling requirement.
 
 ---
 
+## Final whole-branch correction wave (2026-09-05)
+
+ADR required: no new ADR; existing ADR-115 applies.
+ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+Reason: these corrections enforce the approved resource, runtime, disabled-mode,
+scheduling and historical-selection contracts; they do not introduce a new
+storage, permission, provider or runtime boundary.
+
+Final review of `e4652f9d37..facd1e0fb0` requires five Important corrections and
+two Minor corrections. Earlier task-level evidence remains historical evidence,
+not satisfaction of these newly identified production seams. TASK-31232 AC3 is
+reopened and AC10 records the corrective outcomes; AC9 remains unsatisfied.
+
+- [ ] Enforce count/revision/byte quotas in the actual Console mutation owner
+  before staging, including existing/concurrent history and failure release.
+- [ ] Preserve bounded DOM identity for move/reinsert and reject cycles atomically.
+- [ ] Preserve ordinary non-opt-in continuation bytes and assistant text while
+  retaining fail-closed sensitive Canvas projection in mixed rounds.
+- [ ] Discover transcript HTML-fence identity cheaply and compile compatibility
+  only through bounded off-loop validation, retaining stale-message fences.
+- [ ] Keep valid historical pins on ordinary publication; preserve explicit
+  selection and Follow semantics, including same-revision pin intent.
+- [ ] Validate asset helper arguments before iteration using safe-wire integers;
+  distinguish inner explicit Close from outer Hide and browser-tab closure.
+- [ ] Run exact RED/GREEN and affected targeted/statics checks, then one scoped
+  final rereview. No second broad review, unrelated baseline fix or full sweep.
+
 ## Execution Handoff
 
 The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.

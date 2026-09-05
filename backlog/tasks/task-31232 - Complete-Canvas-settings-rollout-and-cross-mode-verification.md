@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 15:02'
+updated_date: '2026-09-05 15:46'
 labels:
   - canvas
   - settings
@@ -29,13 +29,14 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 <!-- AC:BEGIN -->
 - [x] #1 The canonical Settings screen exposes the Canvas enable/auto-open controls and measured hard quotas with clear security and compatibility copy
 - [x] #2 One kill switch removes Canvas tools and HTML-block actions and makes browser routes/control connections fail closed in both modes
-- [x] #3 Conservative quota defaults are fixed from explicitly labeled synthetic assistant-authored page, compiler, virtual-engine, and browser-memory probes and enforced consistently across all boundaries; measured compilation work above 100 ms stays off interactive event loops without bypassing lifecycle or scope checks
+- [ ] #3 Conservative quota defaults are fixed from explicitly labeled synthetic assistant-authored page, compiler, virtual-engine, and browser-memory probes and enforced consistently across all boundaries; measured compilation work above 100 ms stays off interactive event loops without bypassing lifecycle or scope checks
 - [x] #4 User documentation explains preview-first workflow, temporary/durable history, revisions/branches, source safety, runtime compatibility, remote authentication, and recovery
 - [x] #5 Model/tool guidance uses Canvas only when the visual medium materially helps and generates against the supported V1 runtime profile
 - [x] #6 Native live verification covers create, update, submit draft, download, historical selection, undo, and temporary save/destruction
 - [x] #7 Served live verification covers split pane, hot reload, branch switch, exact transcript reopen, authenticated remote/proxy flow, and two-browser isolation
 - [x] #8 Archive 3.0 round-trip and zero-egress evidence are captured through the outermost user-visible paths
 - [ ] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
+- [ ] #10 Final review regressions demonstrate production staging count/byte admission, supported DOM move/reinsert behavior, byte-preserving ordinary disabled continuations, nonblocking transcript Canvas actions, and pin-preserving settlement publication; helper limit validation and close/hide copy match their actual contracts
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +55,5 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 6. Request independent code/security/UX review, check every Canvas task/design invariant, update ADR-115 and this task with evidence, and mark Done only after its Definition of Done is satisfied. TASK-31003 remains To Do as the explicit sync-contract follow-up.
 7. Repair the live-reproduced exact-card selection delivery gap: child authority selects the historical root but the already-open served renderer stays on the branch. Keep existing ADR-115 capability revocation, pin/follow semantics, shell ownership and stale-response fences. Add targeted gateway and real native/served browser regressions before claiming exact reopen complete; no authentication relaxation or unrelated production repair.
 8. Implement ADR-115 selection-intent amendment: fence original browser epoch and expected child conversation/Canvas/revision/generation before mutation; preserve generation through capability/bootstrap round trips and reject missing served expectations. Verify delayed old commands after different-revision and same-revision pin cannot mutate, while passive polling and explicit current navigation retain their distinct behavior.
+9. Apply one consolidated final-review correction wave under existing ADR-115: enforce production staging admission, preserve virtual DOM move identity, keep ordinary non-opt-in continuations byte-compatible, remove synchronous transcript compatibility compilation, and retain historical pins on ordinary publication. Correct helper limit validation and explicit Close versus Hide wording. Add exact failing regressions before each fix, run affected targeted checks/statics, and obtain one scoped rereview; do not fix unrelated baseline failures or weaken runtime/security contracts.
 <!-- SECTION:PLAN:END -->
