@@ -33,6 +33,7 @@ Reason: existing accepted decision covers the new private file lifecycle, retent
 - Five-second readiness/observation deadlines. Mutation timeouts: connection/pool 5 seconds, write 30 seconds, read inactivity and overall submission deadline 600 seconds.
 - No retry after possible submission; an unknown outcome keeps Save/Restore disabled for that launch until acknowledged completion or confirmed stop.
 - Profile-local storage, owner-only POSIX files/directories, no process-global umask changes, honest unverified Windows ACL posture.
+- V1 storage operations require POSIX descriptor-relative filesystem primitives. On unsupported platforms, return a fixed `unsupported_platform` reason before creating snapshot data; ordinary server launches remain available. Do not substitute weaker path-based mutations or claim verified Windows support.
 - Only a complete, compatible, acknowledged and committed save can prune. Failed or uncertain saves cannot remove earlier snapshots.
 - SHA-256 and byte-length verification precede every Restore POST. Working copies are cleaned only when no local/server operation may still use them.
 - Targeted tests only. No full suite without user authorization. Real-model evidence is required before marking the feature Done.
@@ -98,6 +99,7 @@ snapshot_admission.finalize_launch(descriptor: LaunchDescriptor,
 snapshot_admission.compatibility_matches(saved: CompatibilityEvidence,
     current: CompatibilityEvidence) -> bool
 SnapshotStore(root: Path)
+SnapshotStore.prepare_launch_directory(launch_id: str) -> Path
 SnapshotStore.reserve_save(launch_id: str, slot_id: int) -> WorkingFile
 SnapshotStore.commit_save(working: WorkingFile, receipt: SlotReceipt,
     evidence: CompatibilityEvidence, model_label: str, keep_count: int) -> SaveResult
@@ -105,6 +107,8 @@ SnapshotStore.stage_restore(snapshot_id: str, launch_id: str) -> WorkingFile
 SnapshotStore.list_records(offset: int = 0, limit: int = 50) -> CatalogPage
 SnapshotStore.delete(snapshot_id: str) -> tuple[str, ...]
 SnapshotStore.cleanup(working: WorkingFile) -> tuple[str, ...]
+SnapshotStore.set_operation_state(working: WorkingFile,
+    state: Literal["unknown", "acknowledged", "terminal"]) -> None
 SnapshotStore.reconcile(terminated_launch_ids: frozenset[str]) -> tuple[str, ...]
 SnapshotClient(descriptor: LaunchDescriptor, *, transport: httpx.AsyncBaseTransport | None = None)
 SnapshotClient.readiness() -> async ReadinessObservation
@@ -203,6 +207,7 @@ For split models, `model_sha256` is SHA-256 of a canonical ordered manifest of s
 ```text
 llamacpp_snapshots/
   catalog.lock                  # private cross-process lock
+  publication.json              # private durable monotonic sequence counter
   catalog/                      # committed .bin and schema-v1 .json pairs
   working/<launch_id>/           # only this directory is passed to llama-server
     <operation_id>.json          # owned operation reservation/state
@@ -211,7 +216,7 @@ llamacpp_snapshots/
 
 Use generated IDs and basename validation. Reservation manifests hold only the generated IDs, operation kind, expected member identity, and acknowledged/unknown/terminal state; never serialize credentials or request bodies. POSIX directory/file creation goes through the existing private-path primitives. Precreate child write targets as 0600 and use the POSIX `Popen(umask=0o077)` parameter for snapshot-enabled launches; do not call process-global `os.umask()` or `preexec_fn`.
 
-- [ ] Implement save publication: validate positive receipt counts and exact basename/slot; verify regular-file identity and receipt byte size; flush/fsync binary; hash off-thread; under `portalocker` assign `max(valid publication_sequence)+1`, move binary into catalog, then atomically write metadata as commit marker. Keep binary and metadata in the same committed directory and make its publication durable before deleting old records. If no records remain, resetting sequence to 1 is harmless because there is no older record to order against. Metadata-first tombstoning makes deletion crash-recoverable. A failed publication never runs pruning.
+- [ ] Implement save publication: validate positive receipt counts and exact basename/slot; verify regular-file identity and receipt byte size; flush/fsync binary; hash off-thread; under `portalocker` durably allocate `max(counter, observed valid publication_sequence)+1`, move binary into catalog, then atomically write metadata as commit marker. Initialize/recover a missing or invalid counter only after a complete safe catalog scan; otherwise fail publication with a fixed ordering-unavailable error and preserve earlier records. Allocation gaps after interrupted saves are harmless. Keep binary and metadata in the same committed directory and make its publication durable before deleting old records. Metadata-first tombstoning makes deletion crash-recoverable. A failed publication never runs pruning.
 - [ ] Bound metadata to 64 KiB and scans to 10,000 entries per pass; page visible results at 50. If a complete safe catalog scan cannot be obtained, publish without pruning and report cleanup incomplete; mark totals unknown. Do not silently prune only the first page. Foreign/malformed entries are untouched, not adopted or deleted.
 - [ ] Implement restore staging under the catalog lock, using chunked reads/writes through verified handles, checking length and SHA-256. No hard links. On short write, corrupt bytes, changed identity or full disk, close handles and clean only that owned partial file. Confirm the staged member's final identity/length before handing it to the service.
 
@@ -235,6 +240,8 @@ def test_corrupt_snapshot_never_produces_restore_staging(tmp_path):
 Define `commit_test_snapshot(store: SnapshotStore, *, payload: bytes, slot_id: int) -> SnapshotRecord` in `snapshot_fixtures.py`: reserve a save, write the supplied test bytes to its private file, build the matching positive `SlotReceipt`, and call the real `commit_save` with Task 1's complete evidence and `keep_count=10`. The fixture bypasses only llama-server, not validation/publication/retention.
 
 - [ ] Implement cleanup/reconciliation for the exact reservation states. Repeated successful restore cycles leave no staged binaries. Unknown writers stay untouched unless their launch is in `terminated_launch_ids`; after an app crash an unverifiable launch is not added merely because its PID is absent or old. Surface residual storage and never automatically promote an unacknowledged binary. Test pre-submission abort, empty acknowledged save, acknowledged failure, cleanup warning, and unknown operation retention separately.
+
+The service durably marks `unknown` before possible POST, `acknowledged` after a valid successful receipt, and `terminal` only after local file work settles and no server operation may use the member. Acknowledgement alone is not cleanup eligibility for another process: reconciliation cleans terminal reservations, or other reservations only after confirmed launch termination and settled local work. Store filesystem methods hold the catalog lock for their owned handle lifetimes; direct owner cleanup is allowed for safely settled reserved/acknowledged/terminal work. `commit_save` may acknowledge its supplied valid receipt internally. Failed state persistence prevents submission.
 - [ ] Run `python -m pytest Tests/LLM_Management/test_snapshot_store.py Tests/Utils/test_private_paths.py -q`; record RED/GREEN and mutation-check removal of the checksum/commit-before-prune guards. Commit only this unit: `feat: store private prompt-cache snapshots with safe retention`.
 
 ## Task 3: Loopback-only management transport
