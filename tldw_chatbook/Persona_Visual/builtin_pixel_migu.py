@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib.resources import files
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +14,7 @@ from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordi
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 from .assets import PersonaVisualAssetMetadata, load_persona_visual_asset
@@ -33,6 +34,21 @@ def ensure_builtin_pixel_migu_buddy(
 
     Run on the startup/readiness worker. Failed installations remain retryable;
     the Actor Pack coordinator compensates the Persona JSON on SQLite failure.
+
+    Args:
+        local_service: Profile-local character and Persona store.
+        coordinator: Recovery and transaction coordinator for that store.
+        profile_root: Profile directory receiving the immutable Buddy assets.
+
+    Returns:
+        The newly created or existing Persona record, including a retained
+        tombstone, or ``None`` when recovery or character availability prevents
+        installation.
+
+    Raises:
+        ValueError: If bundled assets, paths, or graph metadata are invalid.
+        OSError: If package resources or profile storage cannot be accessed.
+        PersonaActorPackCoordinatorError: If coordinated creation fails.
     """
     from tldw_chatbook.Character_Chat.builtin_pixel_migu import (
         ensure_builtin_pixel_migu,
@@ -94,12 +110,14 @@ def ensure_builtin_pixel_migu_buddy(
         relative = f"persona_visual/builtins/pixel_migu/{uuid4().hex}"
         repository = PersonaVisualRepository(local_service.db)
         try:
-            source = Path(
-                str(files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"))
+            source = files("tldw_chatbook").joinpath(
+                "assets", "persona_visual", "pixel_migu"
             )
-            manifest_bytes = (source / "manifest.json").read_bytes()
+            manifest_bytes = source.joinpath("manifest.json").read_bytes()
             manifest = json.loads(manifest_bytes)
-            declarations = json.loads((source / "assets.json").read_bytes())
+            declarations = json.loads(source.joinpath("assets.json").read_bytes())
+            # Share the strict wire-schema validator used by import, authoring,
+            # persistence and runtime instead of maintaining a second schema.
             validate_persona_visual_manifest(
                 manifest, known_assets={row["asset_key"] for row in declarations}
             )
@@ -115,12 +133,23 @@ def ensure_builtin_pixel_migu_buddy(
             for declaration in declarations:
                 metadata_fields = dict(declaration)
                 filename = metadata_fields.pop("filename")
+                publication_path = validate_path(filename, target, redact_paths=True)
+                if publication_path.name != filename:
+                    raise ValueError("pixel_migu_asset_path_invalid")
                 metadata = PersonaVisualAssetMetadata(**metadata_fields)
-                asset = load_persona_visual_asset(
-                    source, storage_key=filename, metadata=metadata
-                )
+                # as_file supports individual resources on Python 3.11 as well
+                # as 3.12, including ZIP-backed importlib Traversables.
+                with as_file(source.joinpath(filename)) as materialized:
+                    # Canonicalize temporary-directory aliases while leaving
+                    # the resource leaf for the loader's no-follow admission.
+                    source_parent = materialized.parent.resolve(strict=True)
+                    asset = load_persona_visual_asset(
+                        source_parent,
+                        storage_key=materialized.name,
+                        metadata=metadata,
+                    )
                 created = _publish_immutable(
-                    target / filename, asset.data, metadata.sha256
+                    publication_path, asset.data, metadata.sha256
                 )
                 if created is not None:
                     published.append(created)
@@ -132,7 +161,9 @@ def ensure_builtin_pixel_migu_buddy(
                     }
                 )
             created = _publish_immutable(
-                target / "manifest.json", manifest_bytes, digest
+                validate_path("manifest.json", target, redact_paths=True),
+                manifest_bytes,
+                digest,
             )
             if created is not None:
                 published.append(created)

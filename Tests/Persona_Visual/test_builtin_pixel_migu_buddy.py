@@ -242,3 +242,123 @@ def test_postcommit_interruption_keeps_committed_frames(
     )
     assert result.frames
     assert result.resolved_state == "idle"
+
+
+def test_buddy_seed_reads_resources_from_zip_traversable(components, monkeypatch):
+    """A ZIP-backed package must expose the same installed Buddy states."""
+    import zipfile
+
+    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
+
+    source = builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu")
+    archive_path = components[3] / "resources.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for resource in source.iterdir():
+            archive.writestr(
+                f"assets/persona_visual/pixel_migu/{resource.name}",
+                resource.read_bytes(),
+            )
+    with zipfile.ZipFile(archive_path) as archive:
+        monkeypatch.setattr(builtin, "files", lambda _package: zipfile.Path(archive))
+        persona = install(components)
+    db, _service, _coordinator, root = components
+    graph = PersonaVisualRepository(db).get_active_persona_pack(persona["id"])
+    assert len(graph.assets) == 64
+    for state in graph.version.manifest.states:
+        result = resolve_active_persona_visual(
+            PersonaVisualRepository(db),
+            persona["id"],
+            root,
+            state,
+        )
+        assert result.frames, state
+        assert result.resolved_state == state
+
+
+@pytest.mark.parametrize(
+    "filename", ["../escape.png", "/escape.png", "nested/escape.png"]
+)
+def test_buddy_seed_rejects_non_flat_asset_paths(components, monkeypatch, filename):
+    """A malformed resource filename never reaches immutable publication."""
+    import json
+    import shutil
+
+    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
+
+    root = components[3]
+    package_root = root / "modified-package"
+    resource_root = package_root / "assets/persona_visual/pixel_migu"
+    shutil.copytree(
+        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
+        resource_root,
+    )
+    declarations = json.loads((resource_root / "assets.json").read_bytes())
+    declarations[0]["filename"] = filename
+    (resource_root / "assets.json").write_text(json.dumps(declarations))
+    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
+    monkeypatch.setattr(
+        builtin,
+        "_publish_immutable",
+        lambda *args: pytest.fail("invalid asset reached publisher"),
+    )
+    with pytest.raises(ValueError):
+        install(components)
+    assert components[1].list_persona_profiles() == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("renderer_type", "html"), ("animations", {}), ("unknown_field", True)],
+)
+def test_buddy_seed_uses_canonical_manifest_validation(
+    components, monkeypatch, field, value
+):
+    """Canonical schema failures stop installation before any asset publication."""
+    import json
+    import shutil
+
+    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
+
+    package_root = components[3] / "modified-package"
+    resource_root = package_root / "assets/persona_visual/pixel_migu"
+    shutil.copytree(
+        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
+        resource_root,
+    )
+    manifest = json.loads((resource_root / "manifest.json").read_bytes())
+    manifest[field] = value
+    (resource_root / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
+    monkeypatch.setattr(
+        builtin,
+        "_publish_immutable",
+        lambda *args: pytest.fail("invalid manifest reached publisher"),
+    )
+    with pytest.raises(ValueError):
+        install(components)
+    assert components[1].list_persona_profiles() == []
+
+
+def test_buddy_seed_rejects_symlinked_resource_leaf(components, monkeypatch):
+    """Resource materialization preserves the loader's no-follow leaf check."""
+    import shutil
+
+    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
+
+    package_root = components[3] / "modified-package"
+    resource_root = package_root / "assets/persona_visual/pixel_migu"
+    shutil.copytree(
+        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
+        resource_root,
+    )
+    resource = resource_root / "alert-idle-1.png"
+    external = components[3] / "external.png"
+    resource.replace(external)
+    try:
+        resource.symlink_to(external)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
+    with pytest.raises(ValueError):
+        install(components)
+    assert components[1].list_persona_profiles() == []

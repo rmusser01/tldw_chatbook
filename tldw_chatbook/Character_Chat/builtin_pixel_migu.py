@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 BUILTIN_ID = "pixel-migu"
 PACK_ID = "pixel-migu.expressions"
+_BUNDLE_RESOURCE_MAX_BYTES = 2 * 1024 * 1024
 
 
 def find_builtin_pixel_migu_character(db: CharactersRAGDB) -> dict[str, Any] | None:
@@ -20,32 +21,34 @@ def find_builtin_pixel_migu_character(db: CharactersRAGDB) -> dict[str, Any] | N
     Returns:
         The earliest matching card's ID, name and deletion flag, or ``None``.
     """
-    row = db.execute_query(
-        """SELECT id, name, deleted FROM character_cards
+    with db.transaction() as cursor:
+        row = cursor.execute(
+            """SELECT id, name, deleted FROM character_cards
              WHERE CASE WHEN json_valid(extensions)
                         THEN json_extract(extensions, '$."tldw/builtin_id"')
                    END = ?
              ORDER BY id LIMIT 1""",
-        (BUILTIN_ID,),
-    ).fetchone()
-    return dict(row) if row is not None else None
+            (BUILTIN_ID,),
+        ).fetchone()
+        return dict(row) if row is not None else None
 
 
 def _already_seeded(db: CharactersRAGDB) -> bool:
-    if find_builtin_pixel_migu_character(db) is not None:
-        return True
-    # Retain a surviving pack's provenance even after a character was removed.
-    return (
-        db.execute_query(
-            """SELECT id FROM visual_identity_packs
+    with db.transaction() as cursor:
+        if find_builtin_pixel_migu_character(db) is not None:
+            return True
+        # Retain a surviving pack's provenance even after a character was removed.
+        return (
+            cursor.execute(
+                """SELECT id FROM visual_identity_packs
              WHERE owner_user_id = 0 AND source_kind = 'builtin'
                AND CASE WHEN json_valid(source_context_json)
                         THEN json_extract(source_context_json, '$.source_id')
                    END = ? LIMIT 1""",
-            (PACK_ID,),
-        ).fetchone()
-        is not None
-    )
+                (PACK_ID,),
+            ).fetchone()
+            is not None
+        )
 
 
 def ensure_builtin_pixel_migu(db: CharactersRAGDB) -> None:
@@ -126,8 +129,8 @@ def _load_bundle() -> tuple[dict[str, Any], dict[str, Any], Any, list[dict[str, 
 
     def read_resource(filename: str) -> bytes:
         with root.joinpath(filename).open("rb") as stream:
-            data = stream.read(2 * 1024 * 1024 + 1)
-        if len(data) > 2 * 1024 * 1024:
+            data = stream.read(_BUNDLE_RESOURCE_MAX_BYTES + 1)
+        if len(data) > _BUNDLE_RESOURCE_MAX_BYTES:
             raise ValueError("pixel_migu_resource_too_large")
         return data
 
