@@ -474,6 +474,8 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "agent_open": False,
         "character_open": False,
         "inspector_more_open": False,
+        "environment_open": True,
+        "tasks_open": True,
     }
 
 
@@ -907,9 +909,15 @@ def test_console_rail_section_defaults():
     assert prefs.details_open is False
     assert prefs.character_open is False
     assert prefs.inspector_more_open is False
+    # TASK-8: Environment and Tasks are Inspector-rail disclosures (not
+    # left-rail sections), and default open.
+    assert prefs.environment_open is True
+    assert prefs.tasks_open is True
     assert CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS == (
         *CONSOLE_RAIL_SECTION_IDS,
         "inspector_more",
+        "environment",
+        "tasks",
     )
 
 
@@ -1115,3 +1123,32 @@ def test_phone_width_explicit_left_open_collapsed():
     assert state.single_pane is True
     assert state.left_open is False
     assert state.left_forced_collapsed is True
+
+
+# --- task-8: persisted Environment/Tasks section-collapse booleans ---
+
+
+def test_environment_and_tasks_open_default_true_and_round_trip():
+    defaults = ConsoleRailPreferences()
+    assert defaults.environment_open is True
+    assert defaults.tasks_open is True
+    serialized = serialize_console_rail_preferences(defaults)
+    assert serialized["environment_open"] is True and serialized["tasks_open"] is True
+    coerced = coerce_console_rail_preferences(
+        {"environment_open": False, "tasks_open": False}
+    )
+    assert coerced.environment_open is False and coerced.tasks_open is False
+
+
+def test_disclosure_ids_accept_environment_and_tasks():
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
+    )
+
+    assert "environment" in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS
+    assert "tasks" in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS
+
+
+def test_coerce_garbage_falls_back_to_defaults():
+    coerced = coerce_console_rail_preferences({"environment_open": "banana"})
+    assert coerced.environment_open is True

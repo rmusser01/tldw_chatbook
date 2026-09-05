@@ -1373,6 +1373,7 @@ class ChangeReviewScreen(Screen):
         initial_path: str | None = None,
         initial_snapshot_id: int | None = None,
         workspace_roots: "Sequence[str] | None" = None,
+        initial_current_mode: bool = False,
     ) -> None:
         """Args are stored; all loading happens in ``on_mount``.
 
@@ -1403,6 +1404,14 @@ class ChangeReviewScreen(Screen):
                 detection candidates. ``None`` (every legacy caller) keeps
                 today's behavior exactly -- candidates are then the
                 recorded rows' roots alone.
+            initial_current_mode: One-shot request to open straight onto
+                the working tree (`current` mode) rather than the latest
+                turn. Consumed once git detection lands and the
+                pseudo-entry is present -- the screen then selects
+                ``CURRENT_MODE_SENTINEL`` and loads it. If detection never
+                offers the entry (no git repository among the candidate
+                roots), the flag is a silent no-op: the screen opens on
+                the latest turn exactly as ``False`` would.
         """
         super().__init__()
         self._provider = provider
@@ -1412,6 +1421,11 @@ class ChangeReviewScreen(Screen):
         self._workspace_roots: tuple[str, ...] = tuple(
             str(root) for root in (workspace_roots or ()) if str(root)
         )
+        #: One-shot request to land on `current` mode once git detection
+        #: offers it. Consumed (and cleared) by ``_land_git_detection``;
+        #: a no-git open just leaves it stuck True, harmlessly, since
+        #: detection never runs a second time.
+        self._initial_current_mode: bool = bool(initial_current_mode)
         self._turns: list[ReviewTurn] = []
         self._active_turn: ReviewTurn | None = None
         #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
@@ -1774,6 +1788,16 @@ class ChangeReviewScreen(Screen):
             value == previous for _label, value in self._select_options
         ):
             select.value = previous
+        if self._initial_current_mode:
+            self._initial_current_mode = False  # one-shot
+            # This posts `Select.Changed(CURRENT_MODE_SENTINEL)` (the
+            # `_watch_value` reactive on `Select.value`), which
+            # `_on_turn_changed` picks up to actually call
+            # `_load_current_mode()` once the message pump runs. Calling
+            # `_load_current_mode()` again here would double-load: the
+            # posted message still lands regardless of what this method
+            # does after setting `.value`.
+            select.value = CURRENT_MODE_SENTINEL
 
     @staticmethod
     def _current_mode_label(infos: "dict[str, GitWorkspaceInfo]") -> str:
