@@ -35,6 +35,8 @@ def test_helper_compiles_and_emits_frames(tmp_path):
             got.set()
 
     assert tap.start(on_frames)
-    assert got.wait(10.0), f"no frames; stderr: {tap.last_stderr}"
-    tap.stop()
+    try:
+        assert got.wait(10.0), f"no frames; stderr: {tap.last_stderr}"
+    finally:
+        tap.stop()
     assert tap.state == "stopped" and all(len(f) == 640 for f in frames)
