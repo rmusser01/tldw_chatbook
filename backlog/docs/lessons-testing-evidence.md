@@ -11990,3 +11990,19 @@ live-schema parity test caught all five missing tables.
 when moving DDL into a dedicated module. Register its source explicitly, keep
 real query-plan assertions, and verify a guard's name recognition before
 discarding evidence or weakening its inventory policy.
+
+## A stream wrapper is not its deferred dispatch boundary
+
+**TASK-31752, 2026-09-05.** Two durable-turn regressions replaced
+`_stream_assistant_response` but omitted its `before_provider_dispatch` callback.
+Their synthetic token was therefore issued outside an in-flight recovery owner,
+and their supposed unknown-delivery fault actually preceded dispatch. Invoking
+the supplied callback before the injected fault made all three original parameter
+cases pass without runtime changes. The final fixtures also assert the exact
+assistant, in-flight recovery, and `DISPATCH_STARTED` checkpoint; the complete
+25-test round-one file passed, including its 1,000-turn retention check.
+
+Inject faults after the actual boundary whose recovery semantics the test claims,
+and assert that boundary's state before throwing. Crossing this checkpoint does
+not prove gateway entry: the warned-retry regression still asserts zero gateway
+calls before explicit retry and one afterward.
