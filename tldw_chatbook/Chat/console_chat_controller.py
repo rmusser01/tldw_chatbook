@@ -240,12 +240,10 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     PIIRedactionSpan,
     CredentialSanitizer,
 )
-from tldw_chatbook.Chat.console_visual_transcript import (
-    count_semantic_images,
-    plan_visual_compaction,
-    render_visual_transcript,
-    resolve_effective_compaction_representation,
-)
+# `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
+# inside `_apply_conversation_memory_preflight`, its only user, so it stays
+# off the UI-ready module census (ADR-097): task-31384 spends that slot on
+# `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
@@ -348,14 +346,9 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     build_builtin_gate,
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
-from tldw_chatbook.Chat.console_interrupt_rounds import (
-    InterruptRoundHost,
-    head_payload_locked,
-    head_round_payload,
-    park_round_payload,
-    session_round_payloads,
-    unpark_round_payload,
-)
+# task-31384: `Chat.console_interrupt_rounds` is imported lazily (constructor
+# and shims) so the host module stays off the UI-ready census (ADR-097);
+# this module is boot-resident, the controller instance is not.
 
 # task-24458: same deferral as the raw-shell/virtual-CLI providers below --
 # `LocalToolProvider` is the third entry point into the workspace
@@ -3228,6 +3221,8 @@ class ConsoleChatController:
         #: and `ChatScreen._current_park_round_ids` read them -- never
         #: reassigned after this constructor. The lock is non-reentrant and
         #: shared: nesting any two of the five lock names self-deadlocks.
+        from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+
         self._interrupt_host = InterruptRoundHost(self)
         # ADR-090: every path that pushes an approval head (teardown
         # promotion, revocation, activation, attach) fires the summary.
@@ -10283,10 +10278,7 @@ class ConsoleChatController:
         # had shown (mirrors the approval re-derive immediately above).
         # task-31384: the four confirm/question kinds re-derive in one host
         # call; the approvals block above keeps its summary hook.
-        self._interrupt_host.remount_for_session(
-            session.id,
-            kinds=("skill_install", "skill_script", "worktree_merge", "question"),
-        )
+        self._remount_session_kinds(session.id)
         self._remount_task_panel(session.id)
         return session
 
@@ -10672,10 +10664,7 @@ class ConsoleChatController:
         # unconditionally on every switch.
         # task-31384: the four confirm/question kinds re-derive in one host
         # call; the approvals block above keeps its summary hook.
-        self._interrupt_host.remount_for_session(
-            session_id,
-            kinds=("skill_install", "skill_script", "worktree_merge", "question"),
-        )
+        self._remount_session_kinds(session_id)
         self._remount_task_panel(session_id)
         return session
 
@@ -10850,10 +10839,7 @@ class ConsoleChatController:
             # navigated to it.
             # task-31384: the four confirm/question kinds re-derive in one host
             # call; the approvals block above keeps its summary hook.
-            self._interrupt_host.remount_for_session(
-                new_active_id,
-                kinds=("skill_install", "skill_script", "worktree_merge", "question"),
-            )
+            self._remount_session_kinds(new_active_id)
         # Unconditional: closing the LAST session leaves no neighbour to
         # activate (`new_active_id` is None) and the screen's follow-up sync
         # creates the blank replacement straight through the store, so this
@@ -11675,30 +11661,40 @@ class ConsoleChatController:
         store: dict[str, dict[str, Any]], session_id: str | None
     ) -> dict[str, Any] | None:
         """The session's oldest-armed payload. Caller holds the lock."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import head_payload_locked
+
         return head_payload_locked(store, session_id)
 
     def _park_round_payload(
         self, store: dict[str, dict[str, Any]], round_id: str, payload: dict[str, Any]
     ) -> bool:
         """Retain ``payload``; return whether it is now its session's head."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import park_round_payload
+
         return park_round_payload(self._approval_state_lock, store, round_id, payload)
 
     def _head_round_payload(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> dict[str, Any] | None:
         """The payload whose card ``session_id`` should currently show (remaining-time snapshot)."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import head_round_payload
+
         return head_round_payload(self._approval_state_lock, store, session_id)
 
     def _session_round_payloads(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> list[dict[str, Any]]:
         """Every payload ``store`` retains for ``session_id``, arm order first."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import session_round_payloads
+
         return session_round_payloads(self._approval_state_lock, store, session_id)
 
     def _unpark_round_payload(
         self, store: dict[str, dict[str, Any]], round_id: str
     ) -> None:
         """Drop ``round_id``'s retained payload, if any."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import unpark_round_payload
+
         unpark_round_payload(self._approval_state_lock, store, round_id)
 
     def _remount_head(
@@ -11736,6 +11732,20 @@ class ConsoleChatController:
                 self._maybe_fire_permission_summary(payload)
 
         self.app.call_from_thread(_apply)
+
+    def _remount_session_kinds(self, session_id: str) -> None:
+        """Re-derive every non-approval kind's head card for ``session_id``.
+
+        The one call the three session-activation sites (new, switch,
+        close) share; the kinds come from the host module's
+        ``SESSION_REMOUNT_KINDS`` and approvals stay on the sites' own block.
+
+        Args:
+            session_id: The session being activated.
+        """
+        from tldw_chatbook.Chat.console_interrupt_rounds import SESSION_REMOUNT_KINDS
+
+        self._interrupt_host.remount_for_session(session_id, kinds=SESSION_REMOUNT_KINDS)
 
     def remount_pending_approval_for_active_session(self) -> bool:
         """Mount the ACTIVE session's still-armed approval round, if any.
@@ -19212,6 +19222,13 @@ class ConsoleChatController:
         thinking_policy: ThinkingHistoryPolicy = "auto",
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call."""
+        from tldw_chatbook.Chat.console_visual_transcript import (
+            count_semantic_images,
+            plan_visual_compaction,
+            render_visual_transcript,
+            resolve_effective_compaction_representation,
+        )
+
 
         def blocked(visible_copy: str) -> ConsoleSubmitResult:
             if manual_action:

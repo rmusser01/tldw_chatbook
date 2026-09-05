@@ -49,6 +49,16 @@ from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 #: (headless, or a kind not yet wired -- "question" until sub-project A);
 #: every read goes through ``getattr(..., None)`` and treats None as
 #: "no UI, no-op".
+#: The kinds every session-activation site re-derives together
+#: (`remount_for_session`); approvals are re-derived separately by the
+#: sites' own approval block, which also drives the attach path.
+SESSION_REMOUNT_KINDS: tuple[str, ...] = (
+    "skill_install",
+    "skill_script",
+    "worktree_merge",
+    "question",
+)
+
 KIND_SETTER_ATTRS: dict[str, str] = {
     "approval": "set_pending_approval",
     "skill_install": "set_pending_skill_install",
@@ -61,7 +71,15 @@ KIND_SETTER_ATTRS: dict[str, str] = {
 def head_payload_locked(
     store: dict[str, dict[str, Any]], session_id: str | None
 ) -> dict[str, Any] | None:
-    """The session's oldest-armed payload in ``store``. Caller holds the lock."""
+    """The session's oldest-armed payload in ``store``. Caller holds the lock.
+
+    Args:
+        store: A round-id -> payload dict.
+        session_id: The session to look up.
+
+    Returns:
+        The first payload armed for ``session_id``, or None.
+    """
     for payload in store.values():
         if payload.get("session_id") == session_id:
             return payload
@@ -74,7 +92,17 @@ def park_round_payload(
     round_id: str,
     payload: dict[str, Any],
 ) -> bool:
-    """Retain ``payload`` under ``round_id``; True when it is now its session's head."""
+    """Retain ``payload`` under ``round_id``.
+
+    Args:
+        lock: The lock guarding ``store``.
+        store: A round-id -> payload dict.
+        round_id: The round's id.
+        payload: The card payload; must carry ``session_id``.
+
+    Returns:
+        True when ``payload`` is now its session's head.
+    """
     with lock:
         store[round_id] = payload
         head = head_payload_locked(store, payload.get("session_id"))
@@ -90,6 +118,14 @@ def head_round_payload(
     payload with a live ``deadline_monotonic`` is returned as a shallow
     copy whose ``timeout_seconds`` is the remaining window; the retained
     payload is never mutated.
+
+    Args:
+        lock: The lock guarding ``store``.
+        store: A round-id -> payload dict.
+        session_id: The session whose head to return.
+
+    Returns:
+        The head payload (or its remaining-time snapshot), or None.
     """
     with lock:
         payload = head_payload_locked(store, session_id)
@@ -106,7 +142,16 @@ def head_round_payload(
 def session_round_payloads(
     lock: threading.Lock, store: dict[str, dict[str, Any]], session_id: str
 ) -> list[dict[str, Any]]:
-    """Every payload ``store`` retains for ``session_id``, arm order first."""
+    """Every payload ``store`` retains for ``session_id``, arm order first.
+
+    Args:
+        lock: The lock guarding ``store``.
+        store: A round-id -> payload dict.
+        session_id: The session to collect.
+
+    Returns:
+        The session's payloads in arm order.
+    """
     with lock:
         return [
             payload
@@ -118,7 +163,13 @@ def session_round_payloads(
 def unpark_round_payload(
     lock: threading.Lock, store: dict[str, dict[str, Any]], round_id: str
 ) -> None:
-    """Drop ``round_id``'s retained payload, if any."""
+    """Drop ``round_id``'s retained payload, if any.
+
+    Args:
+        lock: The lock guarding ``store``.
+        store: A round-id -> payload dict.
+        round_id: The round to forget.
+    """
     with lock:
         store.pop(round_id, None)
 
@@ -337,10 +388,45 @@ class InterruptRoundHost:
         returning True; ``before_wait`` runs once inside the wait mark
         before polling begins. The teardown head re-derive applies the
         kind's ``after_remount`` hook, like every other remount path.
+
+        Args:
+            kind: The round kind (a ``KIND_SETTER_ATTRS`` key).
+            round_id: The round's unique id.
+            payload: The card payload to park and mount.
+            state: The registry entry; must carry an ``event`` and may
+                carry ``cancel_event``/``visit_event``/``revoked``.
+            session_id: The owning session for badge and park bookkeeping,
+                or None for the legacy no-session shape.
+            owning_session_id: The session whose head is re-derived at
+                teardown.
+            deadline: ``time.monotonic()`` deadline, or None to wait
+                indefinitely.
+            is_parked: True when the round belongs to a non-viewed session.
+            announce_detached: Detached-view announcer; returns True when
+                it announced instead of mounting.
+            human_wait_run_id: Run id for ``use_human_input_wait``, or None.
+            on_cancelled: Runs once when the session cancel fires mid-wait.
+            on_timeout: Runs once when ``deadline`` passes.
+            check_revoked: Whether a ``revoked`` stamp wins over "decided".
+            on_teardown: Returns True to keep the payload parked.
+            before_wait: Runs once inside the wait mark before polling.
+            on_outcome: Receives the outcome before teardown.
+
+        Returns:
+            ``"decided"``, ``"cancelled"``, ``"timeout"`` or ``"revoked"``.
         """
         event: threading.Event = state["event"]
         with self.lock:
-            self.registries[kind][round_id] = state
+            # A bridge may pre-register its state before its timeout config
+            # read; a revocation sweep in that window pops and stamps it.
+            # Never write such a state back, park it, or mount its card.
+            revoked_early = check_revoked and bool(state.get("revoked"))
+            if not revoked_early:
+                self.registries[kind][round_id] = state
+        if revoked_early:
+            if on_outcome is not None:
+                on_outcome("revoked")
+            return "revoked"
         is_head = True
         if session_id is not None:
             add = getattr(self._seams, "add_pending_round", None)

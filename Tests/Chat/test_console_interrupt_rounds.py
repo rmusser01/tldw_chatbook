@@ -340,3 +340,21 @@ def test_announce_detached_true_skips_the_mount_and_false_mounts():
         )
         mounted = [p for p in seams.mounted["approval"] if p is not None]
         assert bool(mounted) is (not announced)
+
+
+def test_a_state_revoked_before_host_entry_is_never_resurrected():
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    outcomes = []
+    # The bridge pre-registered, a sweep popped and stamped it, then run_round runs.
+    state = {"event": threading.Event(), "session_id": "sess-A", "revoked": True}
+    state["event"].set()
+    result = host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False, on_outcome=outcomes.append,
+        before_wait=lambda: outcomes.append("before_wait"),
+    )
+    assert result == "revoked" and outcomes == ["revoked"]
+    assert host.registries["approval"] == {} and host.payloads["approval"] == {}
+    assert seams.mounted["approval"] == [] and seams.badges == []
