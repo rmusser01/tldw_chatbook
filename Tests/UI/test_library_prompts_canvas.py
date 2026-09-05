@@ -37,7 +37,7 @@ from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
@@ -5237,7 +5237,7 @@ def test_library_prompt_row_class_matches_notes_row_visual_parity():
     same width/height/border/background as ``.library-notes-row`` -- visual
     parity with the sibling notes list, not default auto-width Buttons."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert ".library-prompt-row {" in text
@@ -5259,7 +5259,7 @@ def test_library_prompts_header_filter_empty_have_css_blocks():
     must have stylesheet rules matching their ``#library-notes-*`` siblings,
     instead of silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompts-header {" in text
@@ -5299,7 +5299,7 @@ def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
     Inputs, system/user TextAreas, meta line, conflict/status Statics) must
     have stylesheet rules matching their ``#library-note-*`` siblings."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompt-name," in text
@@ -5346,7 +5346,7 @@ def test_library_prompt_field_hint_css_block_matches_field_label_parity():
     muted tier as its ``.library-prompt-field-label`` sibling -- instead of
     silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert ".library-prompt-field-hint {" in text
@@ -5362,7 +5362,7 @@ def test_library_prompts_import_row_css_blocks_match_filter_status_parity():
     ``#library-prompts-filter``/``#library-prompt-save-status`` siblings,
     instead of silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompts-import-path {" in text

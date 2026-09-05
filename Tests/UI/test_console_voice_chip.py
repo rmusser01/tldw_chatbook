@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from textual.app import App
 from textual.widgets import Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.console_voice_input import (
     STATE_ERROR,
     STATE_IDLE,
@@ -25,12 +24,7 @@ class ComposerApp(App):
 class ProductionCssComposerApp(ComposerApp):
     """Mount the composer with the generated production stylesheet."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _visible(widget) -> bool:

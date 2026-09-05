@@ -548,7 +548,7 @@ async def test_paged_tree_projection_renders_branch_controls_at_exact_boundaries
         assert [child.id for child in children] == [
             "library-notes-tree-folder-0",
             "library-notes-tree-pager-folder-776f726b-folders-earlier",
-            "library-notes-tree-note-2",
+            "library-notes-row-0",
             "library-notes-tree-pager-folder-776f726b-placements-more",
         ]
         earlier = children[1]

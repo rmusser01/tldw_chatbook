@@ -10,7 +10,11 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
@@ -280,12 +284,13 @@ def _assert_single_style_span(
 
 
 def test_console_session_surface_uses_flex_height_not_full_percent_height():
-    for stylesheet in (
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+    for source, css in (
+        ("generated app stylesheets", app_css_text()),
+        (
+            Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+            _repo_text(Path("tldw_chatbook/css/components/_agentic_terminal.tcss")),
+        ),
     ):
-        css = _repo_text(stylesheet)
-
         assert "#console-session-surface,\n#console-chat-tabs" not in css
         assert "#console-session-surface {\n    height: 1fr;" in css
         assert (
@@ -293,7 +298,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    padding: 0;\n"
             "    margin: 0;\n"
             "    border: none;"
-        ) in css
+        ) in css, source
         assert (
             "#console-transcript-title,\n"
             ".console-transcript-title {\n"
@@ -4842,7 +4847,7 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
     class _BundledConsoleHarness(ConsoleHarness):
         CSS_PATH = [
             str(screen_self),
-            str(css_dir / "tldw_cli_modular.tcss"),
+            *(str(path) for path in APP_STYLESHEETS),
             str(screen_scoped),
         ]
 

@@ -14,6 +14,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
+from Tests.UI.consolidated_css import app_css_text
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -275,14 +276,16 @@ _BUNDLE = (
     / "css"
     / "tldw_cli_modular.tcss"
 )
+_SETTINGS_SHEET = _BUNDLE.with_name("screen_agentic_settings.tcss")
+_SETTINGS_CSS_PATH = [str(_BUNDLE), str(_SETTINGS_SHEET)]
 
 
 class _StyledDestinationHarness(DestinationHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = _SETTINGS_CSS_PATH
 
 
 class _StyledPanelHarness(_PanelHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = _SETTINGS_CSS_PATH
 
 
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
@@ -3285,7 +3288,7 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 @pytest.mark.asyncio
 async def test_production_bundle_applies_speech_disclosure_styles() -> None:
-    bundled_css = _BUNDLE.read_text(encoding="utf-8")
+    bundled_css = app_css_text()
     for selector in (
         "#settings-speech-details,\n#settings-speech-scope-inspector",
         "#settings-speech-details > CollapsibleTitle,\n"
@@ -3296,7 +3299,10 @@ async def test_production_bundle_applies_speech_disclosure_styles() -> None:
         assert selector in bundled_css
 
     app = _StyledPanelHarness(configure_provider="audio_cpp")
-    assert Path(app.CSS_PATH).resolve() == _BUNDLE.resolve()
+    assert [Path(path).resolve() for path in app.CSS_PATH] == [
+        _BUNDLE.resolve(),
+        _SETTINGS_SHEET.resolve(),
+    ]
 
     async with app.run_test(size=(120, 40)):
         details = app.query_one("#settings-speech-details", Collapsible)
