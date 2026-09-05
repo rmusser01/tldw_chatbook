@@ -14,7 +14,7 @@ import time
 import tomllib
 import uuid
 import webbrowser
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from contextlib import closing
@@ -9729,7 +9729,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await lifecycle_worker.wait()
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     "Pending Library lifecycle write failed during unmount."
                 )
         if self._library_lifecycle_pending_persist is not None:

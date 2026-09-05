@@ -5836,19 +5836,33 @@ class ConsoleComposerBar(Horizontal):
             body = message or state
             width = min(width, len(body) + 2)
 
+        # The busy preparation row hides optional chrome. Reserve the actual
+        # stable action width plus the chip's three surrounding layout cells.
+        full_width_preparing = (
+            state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH
+        )
+        if full_width_preparing:
+            width = min(
+                width,
+                max(
+                    1,
+                    total_width - self._actions_row_width(attachment_visible=False) - 3,
+                ),
+            )
+            chip.tooltip = body
+            if (
+                cell_len(body) + 1 > width
+                and body == "Local transcription busy — dictation will run next."
+            ):
+                compact = "Local transcription busy — queued."
+                body = compact if cell_len(compact) + 1 <= width else "Queued"
+        else:
+            chip.tooltip = None
         chip.styles.display = "block"
         chip.styles.width = max(width, 1)
         chip.styles.min_width = 0
         chip.styles.height = 1
         chip.styles.min_height = 1
-        # Production CSS resolves the 53-cell ceiling to 52 cells here. The
-        # 51-cell executor-wait copy therefore gives back its trailing padding,
-        # keeps the normal one-cell right margin, and temporarily hides only
-        # presentation chrome; every ordinary repaint restores both padding
-        # and chrome without touching draft/editor state.
-        full_width_preparing = (
-            state == STATE_PREPARING and cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH
-        )
         self._sync_full_width_voice_presentation(full_width_preparing)
         if full_width_preparing:
             chip.styles.padding = (0, 0, 0, 1)

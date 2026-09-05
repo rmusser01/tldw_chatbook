@@ -296,3 +296,41 @@ class TestValidatePathAllowHidden:
 
         with pytest.raises(ValueError, match="outside"):
             validate_path("../escape", tmp_path, allow_hidden=True)
+
+
+class TestCanonicalDirectory:
+    def test_accepts_existing_hidden_canonical_directory(self, tmp_path):
+        from tldw_chatbook.Utils.path_validation import validate_canonical_directory
+
+        root = tmp_path.resolve() / ".private"
+        root.mkdir()
+        assert validate_canonical_directory(root) == root
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["relative", "dotdot", "symlink", "file", "missing", "null", "trailing-slash"],
+    )
+    def test_rejects_noncanonical_or_nondirectory_roots_without_path_content(
+        self, tmp_path, kind
+    ):
+        from tldw_chatbook.Utils.path_validation import validate_canonical_directory
+
+        root = tmp_path.resolve()
+        target = root / "private-token"
+        target.mkdir()
+        alias = root / "alias"
+        alias.symlink_to(target, target_is_directory=True)
+        file = root / "file"
+        file.write_text("fixture")
+        value = {
+            "relative": "private-token",
+            "dotdot": str(target) + "/../private-token",
+            "symlink": str(alias),
+            "file": str(file),
+            "missing": str(root / "missing-private-token"),
+            "null": "private-token\x00",
+            "trailing-slash": str(target) + "/",
+        }[kind]
+        with pytest.raises(ValueError) as error:
+            validate_canonical_directory(value)
+        assert "private-token" not in str(error.value)

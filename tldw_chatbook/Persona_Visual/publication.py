@@ -16,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+from tldw_chatbook.Utils.path_validation import validate_canonical_directory
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 from . import assets as asset_boundary
@@ -102,7 +103,7 @@ class PersonaVisualPublicationResult:
 @dataclass(frozen=True, slots=True)
 class _PinnedSource:
     parts: tuple[str, ...]
-    directory_identities: tuple[tuple[int, int, int, int, int], ...]
+    directory_identities: tuple[tuple[int, int], ...]
     identity: tuple[int, int, int, int, int]
     byte_count: int
     sha256: str
@@ -132,7 +133,8 @@ def publish_persona_visual(
     Args:
         repository: Idle Persona Visual repository that owns the activation.
         snapshot: Fully bounded manifest, provenance, asset, and authority snapshot.
-        source_root: Absolute root containing the snapshotted source assets.
+        source_root: Absolute root containing the snapshotted source assets;
+            may be the profile itself or its private import/workspace directory.
         profile_root: Absolute profile root receiving immutable pack storage.
         authority_guard: Side-effect-free callback checked before and inside the
             repository transaction.
@@ -442,7 +444,7 @@ def cleanup_persona_visual_publication_candidate(
     cleanup_path, cleanup_secret = capability
     _require_idle_repository(repository)
     try:
-        profile_path = _canonical_root(profile_root, must_exist=True)
+        profile_path = validate_canonical_directory(profile_root)
     except (OSError, TypeError, ValueError):
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
     candidate_path = profile_path / cleanup_path
@@ -776,35 +778,18 @@ def _publication_roots(
     profile_root: os.PathLike[str] | str,
 ) -> tuple[Path, Path]:
     try:
-        source = _canonical_root(source_root, must_exist=True)
-        profile = _canonical_root(profile_root, must_exist=True)
-        if (
-            source == profile
-            or source.is_relative_to(profile)
-            or profile.is_relative_to(source)
-        ):
+        source = validate_canonical_directory(source_root)
+        profile = validate_canonical_directory(profile_root)
+        # Authoring sources live inside the profile, including existing versions.
+        # Publication copies pinned files into a fresh immutable directory; it
+        # never renames or recursively copies the source root itself.
+        if source != profile and profile.is_relative_to(source):
             raise ValueError
         return source, profile
     except Exception:
         raise PersonaVisualPublicationError(
             "persona_visual_publication_denied"
         ) from None
-
-
-def _canonical_root(value: os.PathLike[str] | str, *, must_exist: bool) -> Path:
-    raw = os.fspath(value)
-    if type(raw) is not str or not raw or "\x00" in raw:
-        raise ValueError
-    path = Path(raw)
-    if not path.is_absolute() or str(path) != raw:
-        raise ValueError
-    resolved = path.resolve(strict=must_exist)
-    if resolved != path:
-        raise ValueError
-    metadata = os.lstat(path)
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError
-    return path
 
 
 def _open_absolute_directory_chain(path: Path) -> list[int]:
@@ -855,7 +840,7 @@ def _pin_source_asset(
     parts = tuple(source.split("/"))
     current = source_root_fd
     opened_directories: list[int] = []
-    directory_identities: list[tuple[int, int, int, int, int]] = []
+    directory_identities: list[tuple[int, int]] = []
     file_fd = -1
     try:
         for component in parts[:-1]:
@@ -867,8 +852,13 @@ def _pin_source_asset(
             opened_directories.append(child)
             named = os.stat(component, dir_fd=current, follow_symlinks=False)
             opened = os.fstat(child)
-            identity = _file_identity(opened)
-            if not stat.S_ISDIR(named.st_mode) or _file_identity(named) != identity:
+            # Publishing changes shared ancestors' timestamps and sizes. Pin
+            # directory identity; files retain full metadata and digest checks.
+            identity = (opened.st_dev, opened.st_ino)
+            if (
+                not stat.S_ISDIR(named.st_mode)
+                or (named.st_dev, named.st_ino) != identity
+            ):
                 raise ValueError
             directory_identities.append(identity)
             current = child
@@ -947,8 +937,8 @@ def _source_entry_current(source_root_fd: int, source: _PinnedSource) -> bool:
             opened = os.fstat(child)
             if (
                 not stat.S_ISDIR(named.st_mode)
-                or _file_identity(named) != expected
-                or _file_identity(opened) != expected
+                or (named.st_dev, named.st_ino) != expected
+                or (opened.st_dev, opened.st_ino) != expected
             ):
                 return False
             current = child

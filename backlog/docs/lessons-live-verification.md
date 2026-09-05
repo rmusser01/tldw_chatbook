@@ -2004,6 +2004,21 @@ app-tests with a stubbed resolver and generator instead, and the PR body says so
   or reboot; until then, substitute app-tests and state the gap in the PR — never report a
   live verification you could not run.
 
+## Playback cleanup does not prove the Buddy received playback state
+
+**PR #2404 / TASK-31585, 2026-09-05.** After rebasing onto dev, trusted
+readback lifecycle tests passed and real Kokoro drained 128,000 PCM bytes, but
+Migu stayed idle throughout. Manual Speak correctly tracked its own presentation
+while only the realtime loop published Buddy voice leases. Connecting the
+existing trusted playback callbacks to a unique request-owned lease produced
+idle → speaking → idle in the real replay; stale-session terminal tests also
+proved that cleanup preserves another voice owner.
+
+**What to do.** Observe the actual Buddy controller and rendered availability
+alongside audio completion. A successful sink and cleared speaking-message ID
+prove audio ownership, not delivery to a separate visual state consumer. Re-run
+from the current PR tree: older live evidence can exercise a superseded host.
+
 ## Two live assessments on one profile reproduce a wedge the app warned you about (media critique #5, 2026-09-04)
 
 **The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.

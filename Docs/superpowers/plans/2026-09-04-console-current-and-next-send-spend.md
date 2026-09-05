@@ -2,7 +2,7 @@
 
 The approved [design](../specs/2026-09-04-console-current-and-next-send-spend-design.md) shipped in [PR #2397](https://github.com/rmusser01/tldw_chatbook/pull/2397), merged into `dev` as `c418d4516c` on 2026-09-05 UTC.
 
-This record supersedes the unmerged local implementation checklist. [TASK-31585](../../../backlog/tasks/task-31585%20-%20Close-Console-context-spend-workstream-and-repair-context-control-tests.md) owns documentation reconciliation and the six pre-existing context-control test repairs. The original local TASK-31382 collided with dev's unrelated ask_user-attribution task; that existing task is unchanged. The closeout itself was renumbered from TASK-31568 after the older Library Reader task landed during CI; its task record preserves that provenance.
+This record supersedes the unmerged local implementation checklist. [TASK-31591](../../../backlog/tasks/task-31591%20-%20Close-Console-context-spend-workstream-and-repair-context-control-tests.md) owns documentation reconciliation and the six pre-existing context-control test repairs. The original local TASK-31382 collided with dev's unrelated ask_user-attribution task; that existing task is unchanged. The closeout itself was renumbered from TASK-31568 after the older Library Reader task landed during CI; its task record preserves that provenance.
 
 ## Completed scope
 
@@ -32,7 +32,7 @@ Reason: bug fixes and display/test refinements inside accepted ownership and pol
 - Scoped Ruff lint/format, compilation, CSS reproduction, and diff checks passed. Reviewed diagnostic changes were recorded in the generated inventory.
 - Qodo reported zero bugs and zero rule violations on final head `24bffc3f40`; all review threads were resolved.
 - GitHub fast-lane, derived-artifact, CSS, platform-import, and performance checks passed before merge.
-- The additional context-control suite had 25 passes and six failures identical to clean dev. Those stale fixtures/assertions are the follow-up work in TASK-31585, not a feature regression.
+- The additional context-control suite had 25 passes and six failures identical to clean dev. Those stale fixtures/assertions are the follow-up work in TASK-31591, not a feature regression.
 - The full repository suite was not run; repository policy requires explicit opt-in.
 
 ## Cleanup scope

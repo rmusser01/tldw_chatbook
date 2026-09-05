@@ -2,7 +2,7 @@
 
 Status: implemented in [PR #2397](https://github.com/rmusser01/tldw_chatbook/pull/2397), merged into `dev` as `c418d4516c`.
 
-Closeout: [TASK-31585](../../../backlog/tasks/task-31585%20-%20Close-Console-context-spend-workstream-and-repair-context-control-tests.md).
+Closeout: [TASK-31591](../../../backlog/tasks/task-31591%20-%20Close-Console-context-spend-workstream-and-repair-context-control-tests.md).
 
 ## User-facing contract
 

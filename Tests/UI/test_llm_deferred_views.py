@@ -272,3 +272,33 @@ async def test_inactive_view_compose_cannot_stall_models_navigation(monkeypatch)
         assert screen.query_one("#llamacpp-start-server-button").is_mounted
         assert gaps
         assert max(gaps) < 0.25, f"event loop stalled for {max(gaps):.3f}s"
+
+
+@pytest.mark.parametrize(
+    "view_name,expected", [("ollama", "ollama"), ("private-view-token", "unknown")]
+)
+async def test_lazy_mount_failure_logs_only_bounded_view_context(
+    monkeypatch, view_name, expected
+):
+    from loguru import logger
+
+    window = LLMManagementWindow(_build_test_app())
+    records = []
+
+    async def fail_mount(_view_name):
+        raise RuntimeError("private-provider-secret")
+
+    monkeypatch.setattr(window, "_mount_deferred_views", fail_mount)
+    sink = logger.add(lambda message: records.append(message.record))
+    try:
+        await window._activate_deferred_view(view_name)
+    finally:
+        logger.remove(sink)
+    failures = [
+        r for r in records if r["message"].startswith("Lazy LLM view mount failed")
+    ]
+    assert len(failures) == 1
+    assert failures[0]["message"].endswith("view=" + expected)
+    assert failures[0]["exception"] is None
+    assert "private-provider-secret" not in str(failures[0])
+    assert "private-view-token" not in str(failures[0])
