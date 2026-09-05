@@ -1,5 +1,5 @@
 ---
-id: task-22302
+id: TASK-22302
 title: Durable turns silently discard citation provenance
 status: To Do
 labels:
