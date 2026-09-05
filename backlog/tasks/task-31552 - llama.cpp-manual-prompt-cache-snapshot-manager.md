@@ -1,16 +1,18 @@
 ---
 id: TASK-31552
 title: llama.cpp manual prompt-cache snapshot manager
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 01:32'
+updated_date: '2026-09-05 01:43'
 labels: []
 dependencies: []
 references:
   - backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md
 documentation:
   - Docs/superpowers/specs/2026-09-04-llamacpp-slot-snapshots-design.md
+  - Docs/superpowers/plans/2026-09-04-llamacpp-slot-snapshots.md
 ---
 
 ## Description
@@ -57,3 +59,9 @@ Recheck allocation before integration.
 - [ ] #10 Five-second probe deadlines are separate from explicit ten-minute Save/Restore submission deadlines; preparation and elapsed operation status remain visible and slow valid operations are not failed at the probe deadline.
 - [ ] #11 The Save area visibly states the effective newest-N retention limit across all models, including count changes and narrow terminal layouts.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md. Reason: accepted snapshot ownership and retention contract; ADR-029 and ADR-036 also apply. Execute Docs/superpowers/plans/2026-09-04-llamacpp-slot-snapshots.md in six reviewed units: (1) strict settings and effective launch admission; (2) private transactional storage and integrity; (3) bounded loopback-only management HTTP; (4) app-owned operation and subprocess lifecycle; (5) manual Models widget and canonical F9 settings; (6) isolated real-server reuse evidence and closeout. Use targeted RED/GREEN tests per unit and keep all acceptance criteria open until their evidence exists. No application implementation has started.
+<!-- SECTION:PLAN:END -->
