@@ -128,20 +128,18 @@ what happens to a meeting once it's queued.
   `NSAudioCaptureUsageDescription` ("tldw_chatbook records what your
   computer plays so meetings can be transcribed.") so the OS prompt shows
   useful text.
-- **"System audio: Native (macOS tap)" during recording, with no visible
-  change when the tap actually fails.** On a host without the permission
-  above, starting a call-mode meeting spawns the native helper, which exits
-  immediately (permission denied), restarts once automatically, and then
-  gives up; per the design the session should continue as room-mode with a
-  degraded status ("System source lost"). In live testing on a host without
-  the permission granted, the rail's status line kept reading "System
-  audio: Native (macOS tap)" for the whole session with no visible change,
-  and `meeting.json` likewise recorded `"mode": "call"` /
-  `"system_source": "Native (macOS tap)"` even though no system audio was
-  actually captured (the system track was silent). The meeting itself
-  still finalizes correctly and the mic track is unaffected — this is a
-  cosmetic gap in the "source lost" indicator, flagged for the
-  whole-branch review rather than fixed here, not a data-loss issue.
+- **`meeting.json` records the system source you started with, not the one
+  you ended with.** On a host without the permission above, starting a
+  call-mode meeting spawns the native helper, which exits immediately
+  (permission denied), restarts once automatically, and then gives up. The
+  rail notices: its status line flips to "System audio: System source lost
+  — continuing from the microphone", and the meeting carries on mic-only.
+  What does *not* change is the metadata — `meeting.json` keeps the
+  `"mode": "call"` / `"system_source": "Native (macOS tap)"` it was opened
+  with, because those fields record the start-time choice. So a recording
+  whose system track is silent can still be labelled `call` in its
+  metadata. The meeting finalizes correctly and the mic track is
+  unaffected either way; this is a metadata nuance, not a data-loss issue.
 - **Virtual-device fallback.** On a host without native system-audio
   support (macOS below 14.2, or no `parec`/`pw-record` on Linux), install a
   loopback device — [BlackHole](https://existential.audio/blackhole/) on
@@ -186,4 +184,9 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against dev @ ac6c511cb6 — 2026-09-04*
+*Verified against feat/meeting-transcription @ 761590cb8f — 2026-09-05.
+The "System source lost" rail copy above was verified by pilot test
+(`Tests/UI/test_meetings_screen.py::test_lost_tap_updates_system_status`),
+not in a live session — this host has no System Audio Recording grant, so
+no real tap loss was observed. Everything else on this page carries the
+2026-09-04 live verification described in the Quirks section.*

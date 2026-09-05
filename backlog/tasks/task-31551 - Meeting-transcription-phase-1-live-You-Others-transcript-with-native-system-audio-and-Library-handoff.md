@@ -207,6 +207,21 @@ is deferred to a quiet machine or CI**, not claimed here.
   restarts once) is unverified end-to-end on this host; see the
   `TLDW_RUN_AUDIOTAP_HELPER_TEST=1` follow-up instructions in
   `Docs/User_Guide/meetings.md`.
+- **Spec §3.4 model warm-up is not implemented.** `prepare()` builds the
+  `TranscriptionService` facade but does not load the model; the first
+  segment loads it lazily, so the first transcript row of a meeting can lag
+  by the model-load time. Ruled out of this wave by the controller during
+  the final whole-branch review: provider-specific model loading on a mount
+  worker against the shared facade is a design change, and audio is never at
+  risk (capture is independent of the transcriber). Follow-up: **TASK-31636**.
+  The spec's §3.4 now carries the same note.
+- Device choices persist via `save_setting_to_cli_config` rather than the
+  screen's `save_state`/`restore_state`. Deliberate and better than the
+  plan: the choice survives an app restart, not just a tab switch.
+- The rail's "Building helper…" copy from spec §3.5 was never implemented.
+  The probe's own "probing…" state covers the same window (the helper
+  compile happens inside `probe()`), so a second transient string would
+  have added a state with no distinct meaning.
 
 **Files changed in task 13:** `tldw_chatbook/css/components/_agentic_terminal.tcss`,
 `tldw_chatbook/css/tldw_cli_modular.tcss` (rebuilt bundle),

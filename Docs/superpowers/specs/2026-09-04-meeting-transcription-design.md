@@ -193,6 +193,8 @@ screen. `app.meeting_session_owner: MeetingSessionOwner`:
   in-process `TranscriptionService(local_stt_dispatcher=None)` and loads the
   resolved model; the dictation factory hands that same instance to the
   session, so Start is immediate;
+  **Phase 1 deviation:** `prepare()` builds the facade but does not load the
+  model; the first segment loads it lazily (follow-up TASK-31636).
 - runs a 1 s **watchdog** while a session is active: if `capture.fault` is set,
   or `audio_position_s` has not advanced for 3 s while not paused (the recorder
   swallows device errors, so a dead mic is only visible as a stopped clock), it
