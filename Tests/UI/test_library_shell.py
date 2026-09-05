@@ -12428,7 +12428,13 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.error_copy and len(screen.query("#library-media-retry")) == 1
+                controller.error_copy
+                and len(screen.query("#library-media-retry")) == 1
+                # task-31632: the one Retry now mounts INSIDE the failure
+                # callout, which composes before the pager -- so the Retry
+                # no longer implies the pager's own children are mounted,
+                # and the page-status read below raced the mount.
+                and bool(screen.query("#library-media-page-status"))
             ),
             message="Initial Media error never exposed one Retry action.",
         )
