@@ -1243,31 +1243,63 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         assert "<svg" in svg and "</svg>" in svg
 
         window.active_view = "vllm"
+
+        def vllm_hydration_settled() -> bool:
+            current_view = screen._vllm_view()
+            model_inputs = list(window.query("#vllm-hf-model"))
+            return (
+                window.active_view == "vllm"
+                and screen._vllm_profiles_loaded
+                and current_view is not None
+                and current_view.is_attached
+                and current_view._draft == screen._vllm_draft
+                and len(model_inputs) == 1
+                and not model_inputs[0].disabled
+                and model_inputs[0].value == screen._vllm_draft.model_value
+            )
+
         await _settle_pilot_until(
             pilot,
-            lambda: (
-                len(window.query("#vllm-hf-model")) == 1
-                and screen._vllm_profiles_loaded
-            ),
+            vllm_hydration_settled,
             message="vLLM pane did not finish profile hydration",
         )
         vllm = window.query_one("#vllm-hf-model", Input)
+        vllm.value = "org/vllm"
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                screen._vllm_view() is not None
+                and screen._vllm_view()._draft.model_value == "org/vllm"
+                and screen._vllm_draft.model_value == "org/vllm"
+                and window.query_one("#vllm-hf-model", Input).value == "org/vllm"
+            ),
+            message="vLLM model edit did not reach the launch draft",
+        )
         window.active_view = "mlx-lm"
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#mlx-model-path")) == 1,
+            lambda: (
+                window.active_view == "mlx-lm"
+                and len(window.query("#mlx-model-path")) == 1
+            ),
             message="MLX pane did not populate on first selection",
         )
         mlx = window.query_one("#mlx-model-path", Input)
-        vllm.value = "org/vllm"
-        await pilot.pause()
         mlx.value = "org/mlx"
-        await pilot.pause()
+        await _settle_pilot_until(
+            pilot,
+            lambda: mlx.value == "org/mlx",
+            message="MLX model edit did not settle before leaving the pane",
+        )
         window.active_view = "llama-cpp"
         await pilot.pause()
         mode.value = "managed"
         await pilot.pause()
-        assert (vllm.value, mlx.value) == ("org/vllm", "org/mlx")
+        assert screen._vllm_draft.model_value == "org/vllm"
+        assert (
+            window.query_one("#vllm-hf-model", Input).value,
+            window.query_one("#mlx-model-path", Input).value,
+        ) == ("org/vllm", "org/mlx")
         assert not vllm.disabled and not mlx.disabled
 
         claim = reserve_server_launch(app, "llamacpp", authority="Managed GGUF")
