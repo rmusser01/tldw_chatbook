@@ -14878,6 +14878,9 @@ class TldwCli(
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
+        runtime = self.console_runtime
+        if runtime is not None:
+            runtime.start_async_lifecycles()
         self._start_served_canvas_control()
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
             local_service=self.local_watchlists_service,

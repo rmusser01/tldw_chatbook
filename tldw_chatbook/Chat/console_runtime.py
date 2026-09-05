@@ -975,6 +975,17 @@ class ConsoleRuntime:
 
         self._canvas_disabled_latched = True
 
+    def start_async_lifecycles(self) -> None:
+        """Start loop-bound runtime work after the Textual loop is running.
+
+        ``TldwCli`` is constructed synchronously before ``App.run`` creates
+        its event loop, so the constructor's best-effort watcher start cannot
+        cover the shipping CLI lifecycle by itself.  App mount calls this
+        idempotent handoff independently of Canvas preview creation.
+        """
+
+        self._start_canvas_policy_watcher()
+
     async def apply_canvas_policy(self) -> None:
         """Idempotently revoke all browser delivery after Canvas is disabled.
 
@@ -1002,6 +1013,8 @@ class ConsoleRuntime:
     def _start_canvas_policy_watcher(self) -> None:
         """Watch shared config while a native Canvas preview can be open."""
 
+        if self._disposed:
+            return
         task = self._canvas_policy_watch_task
         if task is not None and not task.done():
             return

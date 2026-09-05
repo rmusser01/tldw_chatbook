@@ -710,6 +710,57 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 
 @pytest.mark.unit
+def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
+    monkeypatch,
+):
+    """The real app loop observes disable even when no preview was opened."""
+    from tldw_chatbook import config as config_module
+
+    canvas_policy = {"enabled": True}
+    monkeypatch.setattr(
+        config_module,
+        "get_canvas_execution_enabled",
+        lambda: canvas_policy["enabled"],
+    )
+    # Shipping CLI construction happens before Textual creates its loop.
+    app = _build_test_app()
+    runtime = app.console_runtime
+    assert isinstance(runtime, ConsoleRuntime)
+    assert runtime._canvas_policy_watch_task is None
+
+    async def exercise_app_lifecycle() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            watcher = runtime._canvas_policy_watch_task
+            assert watcher is not None
+            assert not watcher.done()
+            assert runtime.canvas_gateway is None
+            assert runtime.canvas_controller is None
+
+            # Starting the lifecycle again must retain the sole watcher.
+            runtime.start_async_lifecycles()
+            runtime.start_async_lifecycles()
+            assert runtime._canvas_policy_watch_task is watcher
+
+            canvas_policy["enabled"] = False
+            # Await only the watcher: no gate read is allowed to latch the
+            # disabled interval on behalf of the lifecycle under test.
+            await asyncio.wait_for(asyncio.shield(watcher), timeout=1.0)
+            canvas_policy["enabled"] = True
+
+            assert runtime.canvas_enabled() is False
+
+        assert runtime._disposed is True
+        assert runtime._canvas_policy_watch_task is None
+        runtime.start_async_lifecycles()
+        assert runtime._canvas_policy_watch_task is None
+        await runtime.dispose()
+        assert runtime._canvas_policy_watch_task is None
+
+    asyncio.run(exercise_app_lifecycle())
+
+
+@pytest.mark.unit
 def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
     """The app owns one launch-local arm bit over its latest config object."""
     from tldw_chatbook.app import TldwCli
