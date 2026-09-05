@@ -3114,6 +3114,15 @@ async def test_every_click_on_a_media_row_toggles_it_in_select_mode():
         canvas = screen.query_one("#library-media-canvas")
         assert "1 selected" in _painted(host, canvas.region)
 
+        # The button's far right edge -- padding on a short title, not the
+        # marker or a letter -- toggles too; the target is the whole row.
+        edge_x = row.region.right - 2
+        assert edge_x > title_x, row.region
+        await pilot.click(offset=(edge_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 0, "right-edge click"
+
 
 @pytest.mark.asyncio
 async def test_media_row_title_click_still_opens_the_item_in_browse_mode():

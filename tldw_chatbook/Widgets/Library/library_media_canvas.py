@@ -1193,6 +1193,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         # critique #5 did) lost the second click, and the row
                         # read as a one-cell target. A list row has no use
                         # for a press flash; the marker flip is the feedback.
+                        # This applies in browse mode too (not just select
+                        # mode): dropping the flash there also stops a fast
+                        # double-click on a browse row from being swallowed,
+                        # and browse-mode feedback is the item loading into
+                        # the Reader, not the flash.
                         button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,

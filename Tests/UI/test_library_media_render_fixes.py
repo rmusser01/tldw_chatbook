@@ -49,8 +49,11 @@ from Tests.UI.test_library_shell import (
     LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
     _open_media_find,
+    _painted_cells,
+    _row_is_painted_focused,
     _seed_conversations,
     _submit_content_search_query,
+    _top_border_row,
     _two_conversations,
     _wait_for_condition,
     _wait_for_selector,
@@ -1982,26 +1985,6 @@ async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatc
 # ---------------------------------------------------------------------------
 
 
-def _painted_cells(host, region):
-    """Return (text, style) for every non-blank painted segment in ``region``."""
-    strips = list(host.screen._compositor.render_strips())
-    cells = []
-    for y in range(region.y, min(region.bottom, len(strips))):
-        for segment in strips[y].crop(region.x, region.right):
-            if segment.text.strip():
-                cells.append((segment.text, segment.style))
-    return cells
-
-
-def _row_is_painted_focused(host, screen) -> bool:
-    """Whether the focused media row really carries the focus cue on screen."""
-    focused = screen.focused
-    if focused is None or not focused.has_class("library-media-row"):
-        return False
-    cells = _painted_cells(host, focused.region)
-    return bool(cells) and all(style.underline for _text, style in cells)
-
-
 async def _enter_media_select_mode(screen, pilot):
     """Stand on the rail row, press "s", and wait for select mode to settle."""
     screen.set_focus(screen.query_one("#library-row-browse-media", Button))
@@ -2032,7 +2015,7 @@ async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
         assert focused.has_class("library-media-row"), (
             f"focus landed on {focused!r}, not a media row"
         )
-        assert _row_is_painted_focused(host, screen), _painted(host, focused.region)
+        assert _row_is_painted_focused(host, focused), _painted(host, focused.region)
         # The cue is the row's own, not something every row paints.
         other = screen.query_one("#library-media-row-1", Button)
         assert not any(
@@ -2047,9 +2030,12 @@ async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
         await pilot.pause()
         await pilot.pause()
         await pilot.pause()
-        assert _row_is_painted_focused(host, screen), (
-            f"focus was {screen.focused!r} after a background recompose"
-        )
+        focused_after = screen.focused
+        assert (
+            focused_after is not None
+            and focused_after.has_class("library-media-row")
+            and _row_is_painted_focused(host, focused_after)
+        ), f"focus was {focused_after!r} after a background recompose"
 
         # ...and the keys the footer promises work immediately.
         await pilot.press("down")
@@ -2119,13 +2105,6 @@ async def test_done_does_not_take_the_sort_slot(size):
 # glyphs, so a monochrome or colour-blind reader gets no signal that F6
 # landed. Buttons on the same screen already change glyphs (heavy outline).
 # ---------------------------------------------------------------------------
-
-
-def _top_border_row(host, box) -> str:
-    """Return the painted top-border row of one widget, glyphs included."""
-    region = box.region
-    strips = list(host.screen._compositor.render_strips())
-    return strips[region.y].crop(region.x, region.right).text
 
 
 @pytest.mark.asyncio
