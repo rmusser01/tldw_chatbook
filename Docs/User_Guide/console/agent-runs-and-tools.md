@@ -60,12 +60,14 @@ the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
 waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
-`Thinking…`; each child's full step list stays in the **Sub-agents** panel
-in the left rail. Once a tool call has run for five seconds the line grows
-a `✕ abandon call` link: clicking it abandons that one call (the model sees
-it fail as "tool call cancelled") and the turn continues, unlike **Stop**,
-which ends the run. A tool that must finish once started (a Watchlists
-mutation, for example) cannot be abandoned and shows no link.
+`Thinking…`; the running sub-agent list itself lives in the **Agents**
+section of the Inspect rail (**Alt+I**), and each child's full step list
+stays in the left rail's Agent drill-down. Once a tool call has run for
+five seconds the line grows a `✕ abandon call` link: clicking it abandons
+that one call (the model sees it fail as "tool call cancelled") and the
+turn continues, unlike **Stop**, which ends the run. A tool that must
+finish once started (a Watchlists mutation, for example) cannot be
+abandoned and shows no link.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
@@ -79,10 +81,9 @@ reply:
 
 - Status line: `Agent: idle`, or `Agent: running · step N` while working.
 - One `·`-prefixed line per step.
-- A **Sub-agents** panel appears once the reply has spawned at least one
-  sub-agent — see [The fleet panel](#the-fleet-panel--three-states) below
-  for its three states (collapsed summary, expanded rows, drilled into one
-  child), how to cancel a child, and how its token spend shows up.
+- The drilled-into view of a single sub-agent (`Sub-agent · <status>
+  (Back)`) and the **Cancel all agents** button, both reached from the
+  Inspect rail's **Agents** section — see below.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
   untruncated record ("what the model actually saw, before the Console's
   display cap trimmed it"). **Close** or **Esc** dismisses it.
@@ -90,7 +91,14 @@ reply:
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
-sources / tools / approvals for the next send.
+sources / tools / approvals for the next send. The **Agents** section near
+the top of this rail is the sub-agent list itself — it appears once the
+reply has spawned at least one sub-agent; see
+[The fleet panel](#the-fleet-panel--three-states) below for its three
+states (collapsed summary, expanded rows, drilled into one child), how to
+cancel a child, and how its token spend shows up. The list used to live in
+the left rail's Agent section; only the list moved, and everything about
+its rows and actions is unchanged.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
@@ -724,15 +732,17 @@ own task concurrently. The Agent rail shows this directly: several
 
 #### The fleet panel — three states
 
-The **Sub-agents** panel inside the Agent rail section has its own header
-(title + chevron), independent of the Agent section's own collapse state —
-it only appears once the reply has spawned at least one sub-agent, and it
+The **Agents** section near the top of the Inspect rail (**Alt+I**) has its
+own header (title + chevron), independent of the left rail's Agent section
+— it only appears once the reply has spawned at least one sub-agent, and it
 reaches a real terminal status (done/error/stuck/cancelled) for each child
 **while the turn is still running**, not only after the whole reply
-finishes.
+finishes. On terminals 150 columns and wider, the Inspect rail opens itself
+when the first row appears, so a fleet is never invisible behind a closed
+rail; close it and it stays closed for the rest of that busy window.
 
 1. **Collapsed** (its default state the first time it appears). Just the
-   header: "Sub-agents" plus a right-aligned summary — one status glyph per
+   header: "Agents" plus a right-aligned summary — one status glyph per
    child, in spawn order (e.g. `●●✓`), then "N working, M done". "Working"
    means still running; done/error/stuck/cancelled all count toward "done"
    here.
@@ -747,12 +757,13 @@ finishes.
      *Token spend*, below. Both are **transient**: they come from the live
      fleet, so when the whole turn ends every row falls back to the sparser
      historical rendering (name and task only). See *Known gaps*.
-3. **Drilled in** — click a specific row: the whole Agent section switches
-   to that one child's own view (`Sub-agent · <status> (Back)` plus its own
-   step lines), and the Sub-agents panel itself is hidden while you're
-   drilled in. **Back** returns to the overview. Each row resolves directly
-   to its own run — clicking never cycles you through other sub-agent runs
-   first.
+3. **Drilled in** — click a specific row: the **left rail's** Agent section
+   switches to that one child's own view (`Sub-agent · <status> (Back)`
+   plus its own step lines), and the Agents section in the Inspect rail
+   hides itself while you're drilled in — the detail is already on screen,
+   so the aggregate list beside it would be redundant. **Back** returns to
+   the overview. Each row resolves directly to its own run — clicking never
+   cycles you through other sub-agent runs first.
 
 **Cancel one child.** Focus a still-running row (Tab into the panel, or
 click a row then Tab) and press **Delete** — this cooperatively cancels
@@ -762,7 +773,8 @@ errored, or already-cancelled child — or any historical/resumed row —
 doesn't offer this gesture at all, since there's nothing left to stop.
 
 **Cancel all agents.** While at least one child of the conversation is
-live, the rail's Agent section also offers a **Cancel all agents** button
+live, the **left rail's** Agent section also offers a **Cancel all agents**
+button
 — one press cancels every live child of that conversation, including
 survivors of earlier replies, through the same per-child mechanism as the
 row's Delete (so each child's pending approval cards are withdrawn too).
@@ -906,7 +918,7 @@ What this means in practice:
   [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)
   below. The finished work itself is always durable in the sub-agent's
   own run record (**View full log**) and in any files it edited.
-- **It stays visible.** The **Sub-agents** panel keeps its row — glyph,
+- **It stays visible.** The **Agents** section keeps its row — glyph,
   name/task, elapsed — after the reply lands and across the turns that
   follow, and clicking that row still drills into that child. The summary
   keeps counting it under "N working". While only survivors are running,
@@ -2236,3 +2248,13 @@ databases. The rest of this page is unchanged from the prior stamp.*
 state refusal, and untrusted-result handling added for TASK-24309 — 2026-08-30.
 Architecture: [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Fleet-panel location updated for TASK-31450 — 2026-09-04
+(`feat/console-inspector-environment` @ 08ca0957b1): the sub-agent list moved
+out of the left rail's Agent section into the Inspect rail's **Agents**
+section (`ConsoleInspectorRail`, `UI/Console_Modules/right_rail.py`), which
+also auto-opens the rail on fleet activity at 150 columns and wider. The left
+rail keeps the run status/steps lines, the drilled-in single-child view, and
+**Cancel all agents**. Code-level pass against the shipped rail and controller;
+the live 80x24/200x50 run for this task exercised the sibling Environment and
+Tasks sections, not a real sub-agent fleet.*

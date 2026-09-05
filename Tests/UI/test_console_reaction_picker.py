@@ -33,9 +33,6 @@ from tldw_chatbook.UI.Console_Modules.reaction_preview import (
     get_console_reaction_preview_coordinator,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.Widgets.Console.console_inspector_section import (
-    ConsoleInspectorSectionState,
-)
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     FILTER_INPUT_ID,
     PREVIEW_ID,
@@ -757,7 +754,6 @@ class RailHarness(App[None]):
             fleet_line="",
             agent_status_line="Idle",
             agent_steps_text="",
-            agent_fleet_section_state=ConsoleInspectorSectionState(rows=(), summary=""),
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=True,

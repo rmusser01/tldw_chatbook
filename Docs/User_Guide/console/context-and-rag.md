@@ -32,11 +32,14 @@ Where this page's controls live:
   "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
-  summary (these two never scroll), then the scrolling body: the "Sources —
-  next send" tray, the Library search controls, the retrieval-scope row, the
-  "Prefill" rows when one is armed, the run/readiness groups, the "Selected
-  turn" block, "Session Settings", the "Live work sources" card, and the
-  "Chat Dictionaries" / "World Books" blocks at the bottom. Press **Alt+I**
+  summary (these two never scroll), then the scrolling body: the
+  **Environment**, **Tasks**, and **Agents** sections (see [The Environment
+  panel](#the-environment-panel-environment-tasks-agents) below), the
+  "Sources — next send" tray, the Library search controls, the
+  retrieval-scope row, the "Prefill" rows when one is armed, the
+  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  "Live work sources" card, and the "Chat Dictionaries" / "World Books"
+  blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
   close. That shortcut works at every terminal width, including narrow ones
   where the rail's edge handle is hidden.
@@ -172,6 +175,91 @@ shortens.
 
 The **Project** status row (for Project Instructions) and retrieval **Scope**
 remain compact rows; they do not expand into separate 20-line sections.
+
+### The Environment panel (Environment, Tasks, Agents)
+
+The top of the Inspect rail answers the questions you would otherwise flip
+to a terminal or GitHub for: *what has changed, is CI green, which task is
+this, what are my sub-agents doing?* Three collapsible sections sit above
+the "Sources — next send" tray:
+
+**Environment** — the git working tree behind the conversation. It reports
+on the **active workspace's change-review root** (the same tree the
+`Review changes` action opens), so the rail and Change Review can never
+describe different trees. Rows, top to bottom:
+
+| Row | Shows | Enter expands to | Actions |
+| --- | --- | --- | --- |
+| **Changes** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review** |
+| **Local** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` | none — remote execution is a placeholder, not a feature |
+| **branch** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path | none |
+| **Commit or push** | `Commit or push · N files` when the tree is dirty, `Push ↑n` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
+| **PR** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts | **Open in browser**, **Add to chat** (pastes a PR summary into the composer) |
+| **checks** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names | **Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
+
+Large counts compact rather than wrap: a seven-digit pair reads
+`+1.7M −278k` in the rail's 34-column budget, and the exact figures stay one
+Enter away in the expansion.
+
+Two honesty notes worth knowing:
+
+- **`↑↓` is measured against the last fetch.** The rail never runs
+  `git fetch` — a status panel that mutates remote-tracking refs would be a
+  surprise — so a branch that reads "in sync" is in sync *with whatever your
+  last fetch saw*. The branch expansion says "vs last fetch" out loud.
+- **The Environment "Changes" row and Change Review's agent diffs are
+  different things.** This row reads your real git working tree. What an
+  agent turn changed is still Change Review's job, one action away.
+
+**Tasks** — the `backlog/` directory in the same root. When the branch name
+carries a task id (`feat/task-3401-…`, and subtask ids like `task-3401.6`
+count) the collapsed line is that task: `task-3401 · In Progress`, with
+`4/9 ACs · <title>` beside it. With no branch-linked task it reports counts
+instead — `3 in progress · 12 to do`. Enter expands the full list,
+In-Progress first, capped with a "… N more" row; **Add task to chat** pastes
+the branch task's title and file path into the composer. The list is
+read-only — the rail never edits a task file. The scan runs off the UI
+thread and finishes in well under a second even on a cold cache, so the
+section simply appears with the git rows.
+
+**Agents** — the sub-agent fleet. This section **moved here from the left
+rail's Agent section**; the left rail keeps the viewed run's status line,
+per-step lines, drilldown, and **View full log**, and only the sub-agent
+list itself moved. Its rows and actions (including per-row cancel) are
+unchanged. Because this rail defaults closed, the rail now opens itself when
+a fleet starts producing rows — but only at 150 columns or wider, and only
+until you close it: dismissing it once keeps it closed for the rest of that
+busy window.
+
+**Refreshing.** The panel does no work at all while the rail is closed —
+opening it is what triggers the first fetch. While open it re-reads the
+local sources (git, backlog) about every 10 seconds, and also refreshes
+right after an agent turn finishes and when the terminal regains focus, so
+the numbers are freshest exactly when they just changed. PR and check data
+is cached for 60 seconds; the **Refresh** action on the Environment header
+forces a fresh fetch past that cache.
+
+**When things are missing.** Absence is quiet by design — an unavailable
+source never renders as an error:
+
+| Situation | What you see |
+| --- | --- |
+| No git repo behind the workspace (or none bound) | one muted **No git workspace** row; no Tasks, PR, or check rows |
+| `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
+| No open or recent PR for the branch | same: no PR row |
+| No `backlog/` directory | no Tasks section |
+| A source errors or times out after previously working | the last good data stays, with a quiet stale marker — no toast, no flashing |
+| A source fails three times running | it stops polling until you press **Refresh** or switch workspace, so a broken tool can't produce a 10-second flap loop |
+
+`gh` is optional throughout. Nothing about the Environment panel requires
+it; installing and authenticating it (`gh auth login`) is what makes the PR
+and check rows appear.
+
+**Collapse state.** Environment and Tasks each remember whether you left
+them open, saved alongside the rail's other layout preferences under
+whichever [layout scope](sessions-tabs-workspaces.md) is selected — one
+shared layout by default, or per workspace when you choose that scope. Both
+sections start open.
 
 ### Workspaces and conversation ownership
 
@@ -838,3 +926,33 @@ capture retention: text above matches `console_exchange_capture.py`'s
 Messages-title counts, and the v52→v53 one-time compaction in
 `ChaChaNotes_DB.py`; code-level pass backed by the pure, gateway, migration,
 and inspector test suites — not a live-provider walkthrough).*
+
+*Verified against `feat/console-inspector-environment` @ 08ca0957b1 —
+2026-09-04 (TASK-31450, Inspect rail Environment redesign): the Environment /
+Tasks / Agents sections above were driven live in tmux at 80x24 and 200x50
+against an isolated scratch profile bound to a real dirty git worktree.
+Confirmed live: the "No git workspace" empty state; real working-tree counts
+(`+121 -24`) matching `git diff --numstat`; the branch row's `up18 down112
+wt:<name>` divergence and worktree marker; `Commit or push - 3 files`; the
+`Refresh` action; per-file expansion via Enter (three files with their own
+counts, then "Review in Change Review"); the Tasks card (`61 doing - 543
+todo`, expanding to the in-progress-first list); collapse of both sections
+surviving an app restart; and — on a workspace with no `backlog/` — the Tasks
+card's silent absence. The PR and check rows were absent in every live
+capture because the isolated profile's `HOME`/`XDG_CONFIG_HOME` hide `gh`'s
+own credentials, which is the documented no-`gh` degradation; the `gh` path
+itself was verified out-of-app against a real open PR (number, state, +/-
+counts, and a 13-check rollup parsed correctly). The Agents section renders
+only once a reply has spawned sub-agents and was not exercised in this pass.*
+
+*Amended on the same branch — 2026-09-04 (TASK-31450 final review fixes): the
+Tasks paragraph previously promised a `Scanning backlog…` placeholder row.
+That row exists in the projection but nothing in production ever sets the
+flag that renders it, and the cold scan measured ~0.2s off-thread, so the
+claim is removed rather than restated. Also amended in the same pass: the
+Environment header summary is now column-budgeted (a long branch name used to
+squeeze the section title and collapse chevron off the header at every
+terminal size), expanding a row keeps keyboard focus on that row, an errored
+git tier now says "Environment unavailable — Refresh to retry" instead of
+"No git workspace", and the Refresh action revives a backed-off local tier —
+which is what "until manual refresh or scope change" above always promised.*

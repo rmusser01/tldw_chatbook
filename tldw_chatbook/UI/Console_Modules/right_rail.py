@@ -4,7 +4,13 @@ Extracted verbatim out of ``ChatScreen.compose_content`` (wave-1 console
 decomposition, task 4): the subtree that used to live inside
 ``with self._frame_console_region(right_rail):``. Its header is one full-width
 collapse Button (``#console-inspector-rail-collapse``), followed by the staged-
-Context tray, retrieval-Scope row, run inspector, and live-work card.
+Context tray, retrieval-Scope row, run inspector, and live-work card. task-9
+prepended two more scrollable-body sections ahead of the tray: Environment
+(``#console-environment-section``) and Tasks (``#console-tasks-section``).
+task-10 then moved the Agent rail's fleet mini-section
+(``#console-agent-section-subagents``) here from the left rail, directly
+below Tasks -- the left rail's Agent section keeps its status/steps/
+drilldown controls; only the sub-agent list moved.
 
 **Naming**: shell ids use the ``console-inspector-rail-*`` family
 (``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
@@ -72,6 +78,7 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
+from ...Chat.console_environment_state import ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
@@ -94,9 +101,14 @@ from ...Widgets.Console import (
     ConsoleStagedContextTray,
     ConsoleStagedSourceOpenRequested,
 )
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionState,
+)
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
+from .agent import CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 from .rail_section_layout import outer_hint_required
 
@@ -413,6 +425,11 @@ class ConsoleInspectorRail(Vertical):
         library_activity_retry: Callable[[], Awaitable[None]] | None = None,
         ownership_policy: InspectorOwnershipPolicy | None = None,
         inspector_more_open: bool = False,
+        environment_section_state: ConsoleInspectorSectionState | None = None,
+        tasks_section_state: ConsoleInspectorSectionState | None = None,
+        environment_open: bool = True,
+        tasks_open: bool = True,
+        agent_fleet_section_state: ConsoleInspectorSectionState | None = None,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -471,6 +488,30 @@ class ConsoleInspectorRail(Vertical):
             ownership_policy: Optional explicit Inspector ownership policy.
                 Production resolves the strict opt-in environment flag at
                 this composition boundary when omitted.
+            inspector_more_open: Whether the run inspector's "More" toggle
+                starts expanded.
+            environment_section_state: Rows/summary for the Environment
+                section (task-9), mounted at the top of the Inspector body.
+                ``None`` renders the empty-state projection (no rows), which
+                hides the section (``styles.display = "none"``).
+            tasks_section_state: Rows/summary for the Tasks section
+                (task-9), mounted directly below Environment. Same
+                empty-hides-the-section behavior as above.
+            environment_open: Initial collapse state for the Environment
+                section.
+            tasks_open: Initial collapse state for the Tasks section.
+            agent_fleet_section_state: Rows + header summary (task-10,
+                moved here from the left rail's Agent section) for the
+                ``ConsoleInspectorSection`` that renders the conversation's
+                own sub-agent fleet -- computed by
+                ``ConsoleAgentController._console_agent_fleet_section_
+                state``. Empty rows/summary hides the section entirely
+                (nothing to show, or a sub-agent drill-down is active and
+                the left rail's Agent status/steps Statics already carry
+                that one child's own detail -- state 3, unchanged). Mounted
+                directly after the Tasks section, always collapsed
+                (``open=False``) on first paint, matching the left rail's
+                prior behavior.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -498,6 +539,17 @@ class ConsoleInspectorRail(Vertical):
             ownership_policy or _resolve_inspector_ownership_policy()
         )
         self._inspector_more_open = inspector_more_open
+        self._environment_section_state = environment_section_state or (
+            ConsoleInspectorSectionState(rows=(), summary="")
+        )
+        self._tasks_section_state = tasks_section_state or (
+            ConsoleInspectorSectionState(rows=(), summary="")
+        )
+        self._environment_open = environment_open
+        self._tasks_open = tasks_open
+        self._agent_fleet_section_state = agent_fleet_section_state or (
+            ConsoleInspectorSectionState(rows=(), summary="")
+        )
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
         self._outer_reconcile_scheduled = False
         self._outer_reconcile_dirty = False
@@ -1485,6 +1537,67 @@ class ConsoleInspectorRail(Vertical):
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
         ):
+            # task-9: Environment and Tasks sections -- mounted FIRST, ahead
+            # of the staged-context tray, per the redesign spec's rail
+            # ordering. Pure display state supplied by the screen (a
+            # projection of the controller's current snapshot, or the
+            # empty-state projection of a default `EnvironmentSnapshot()`
+            # pre-wiring); this rail never gathers environment data itself.
+            # Each section hides itself (`styles.display = "none"`) when its
+            # projection has no rows -- the fleet pattern this rail already
+            # uses for the live-work header Statics above.
+            environment_section = ConsoleInspectorSection(
+                title="Environment",
+                section_id=ENVIRONMENT_SECTION_ID,
+                rows=self._environment_section_state.rows,
+                summary=self._environment_section_state.summary,
+                collapsible=True,
+                open=self._environment_open,
+                view_all_label="Refresh",
+                id="console-environment-section",
+            )
+            environment_section.styles.display = (
+                "block" if self._environment_section_state.rows else "none"
+            )
+            yield environment_section
+
+            tasks_section = ConsoleInspectorSection(
+                title="Tasks",
+                section_id=TASKS_SECTION_ID,
+                rows=self._tasks_section_state.rows,
+                summary=self._tasks_section_state.summary,
+                collapsible=True,
+                open=self._tasks_open,
+                id="console-tasks-section",
+            )
+            tasks_section.styles.display = (
+                "block" if self._tasks_section_state.rows else "none"
+            )
+            yield tasks_section
+
+            # task-10: the Agent rail's fleet mini-section, moved here from
+            # the left rail's Agent section (it stays ordinary content --
+            # its own `ConsoleInspectorSection` header/body handle its own
+            # collapse; no bounded viewport wraps it). Same unconditional-
+            # mount-hide-when-empty pattern as Environment/Tasks above; the
+            # widget id, section id, and default-collapsed `open=False`
+            # are all unchanged from the left rail so the sync path
+            # (`ChatScreen._sync_console_agent_section`) and existing tests
+            # keep querying by the same id without change.
+            fleet_section = ConsoleInspectorSection(
+                title="Agents",
+                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
+                rows=self._agent_fleet_section_state.rows,
+                summary=self._agent_fleet_section_state.summary,
+                collapsible=True,
+                open=False,
+                id="console-agent-section-subagents",
+            )
+            fleet_section.styles.display = (
+                "block" if self._agent_fleet_section_state.rows else "none"
+            )
+            yield fleet_section
+
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
             # is visible without scrolling and reads above the run
