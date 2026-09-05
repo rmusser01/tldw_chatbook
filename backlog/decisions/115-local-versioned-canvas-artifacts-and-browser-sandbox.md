@@ -494,6 +494,39 @@ ceilings ranged from 83.857 ms median/97.181 ms maximum in the initial run to
 sub-100-ms main-loop work: Task 7.2a is a required scheduling gate before
 rollout, preserving existing mutation ownership and lifecycle fencing.
 
+### Interactive compilation ownership
+
+Pure compilation and HTML title parsing run outside the application/server
+event loop and outside the controller lock. The existing controller owns one
+two-slot non-queueing admission helper shared by native preview, import, and
+tools; the existing served proxy owns one for browser delivery. Async work
+uses the existing default executor, while tool work already on a worker uses
+the same bounded synchronous admission. No extra executor, source cache,
+database owner, or revision writer is introduced.
+
+Admission is released only by the real worker's completion, not cancellation
+of its waiter. Late worker failures are observed without logging arbitrary
+exception representations. A completed prepared plan remains operation-local
+and must match the exact source bytes/digest and supported runtime profile.
+Service compatibility failures retain bounded, source-free errors.
+
+Tools repeat owner/state/replay/expected-parent checks under the controller
+lock after unlocked compilation. HTML imports additionally capture and
+revalidate session/conversation/path, selection, temporary-session incarnation,
+view generation, and mounted runtime ownership before applying through the
+existing controller. Already-imported parsed blocks replay before compilation.
+Served delivery compares source-free child scope before and after compilation;
+the gateway separately checks load identity so even a same-revision reload
+rejects the old plan response.
+
+Single-host near-limit measurements used five samples per path. Maximum
+observed loop gaps were 51.002 ms native, 59.746 ms served, and 52.096 ms HTML
+import, with compilation wall times reaching 154.804 ms. These qualify the
+scheduling boundary, not a universal latency guarantee: Python GIL contention
+and existing source reads/authority checks/mutations still use their existing
+owners. Task 7.2a fulfills the scheduling gate identified above; engine quotas
+and the stack-trap evidence limitation are unchanged.
+
 ## Context
 
 Chatbook's Console already persists a branching message tree, records one

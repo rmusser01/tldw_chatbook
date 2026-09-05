@@ -532,18 +532,19 @@ quotas alone do not remove the scheduling requirement.
 - Modify as needed: `tldw_chatbook/Web_Server/serve.py`
 - Create/modify: focused compiler-scheduling, lifecycle, and browser tests
 
-- [ ] Use the completed Task 7.2 evidence and final quotas to identify remaining interactive compilation costs; keep pure compilation off UI/server event loops and out of locks those loops must acquire.
-- [ ] Preserve captured conversation/message/branch identity across background work; revalidate lifecycle, expected-parent, and capability authority before publishing or mutating after an await. Cancellation, disable, branch switch, and disposal must not publish late results or revive authority.
-- [ ] Reuse existing worker/authority ownership where possible, bound admitted compilation work, and avoid a second mutation owner or an unbounded source cache. Any prepared result must remain bound to the exact validated source and runtime profile.
-- [ ] Add failing event-loop responsiveness and delayed-compile race tests for native/served previews and HTML-block import; also cover shared controller-lock behavior where the measured call path requires it.
-- [ ] Run focused tests plus a content-free near-limit responsiveness probe, preserving all strict-zero-egress and archive/source invariants. Document measured results and any remaining limits.
-- [ ] Commit: `fix(canvas): keep compilation off interactive event loops`
+- [x] Use the completed Task 7.2 evidence and final quotas to identify remaining interactive compilation costs; keep pure compilation off UI/server event loops and out of locks those loops must acquire.
+- [x] Preserve captured conversation/message/branch identity across background work; revalidate lifecycle, expected-parent, and capability authority before publishing or mutating after an await. Cancellation, disable, branch switch, and disposal must not publish late results or revive authority.
+- [x] Reuse existing worker/authority ownership where possible, bound admitted compilation work, and avoid a second mutation owner or an unbounded source cache. Any prepared result must remain bound to the exact validated source and runtime profile.
+- [x] Add failing event-loop responsiveness and delayed-compile race tests for native/served previews and HTML-block import; also cover shared controller-lock behavior where the measured call path requires it.
+- [x] Run focused tests plus a content-free near-limit responsiveness probe, preserving all strict-zero-egress and archive/source invariants. Document measured results and any remaining limits.
+- [x] Commit: `fix(canvas): keep compilation off interactive event loops`
 
 ### Task 7.3: Write user, model, operations, and recovery guidance
 
 **Files:**
 
 - Modify: relevant user documentation under `Docs/`
+- Modify: `tldw_chatbook/Web_Server/README.md` (remote-auth and privilege guidance)
 - Modify: Console model/tool guidance
 - Modify: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - Modify: TASK-31003 only if the implemented local archive boundary changes its assumptions

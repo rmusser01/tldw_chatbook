@@ -2,9 +2,10 @@
 id: TASK-31232
 title: Complete Canvas settings rollout and cross-mode verification
 status: In Progress
-assignee: []
+assignee:
+  - '@codex'
 created_date: '2026-09-03'
-updated_date: '2026-09-05 02:11'
+updated_date: '2026-09-05 04:58'
 labels:
   - canvas
   - settings
@@ -26,9 +27,9 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The canonical Settings screen exposes the Canvas enable/auto-open controls and measured hard quotas with clear security and compatibility copy
-- [ ] #2 One kill switch removes Canvas tools and HTML-block actions and makes browser routes/control connections fail closed in both modes
-- [ ] #3 Conservative quota defaults are fixed from explicitly labeled synthetic assistant-authored page, compiler, virtual-engine, and browser-memory probes and enforced consistently across all boundaries; measured compilation work above 100 ms stays off interactive event loops without bypassing lifecycle or scope checks
+- [x] #1 The canonical Settings screen exposes the Canvas enable/auto-open controls and measured hard quotas with clear security and compatibility copy
+- [x] #2 One kill switch removes Canvas tools and HTML-block actions and makes browser routes/control connections fail closed in both modes
+- [x] #3 Conservative quota defaults are fixed from explicitly labeled synthetic assistant-authored page, compiler, virtual-engine, and browser-memory probes and enforced consistently across all boundaries; measured compilation work above 100 ms stays off interactive event loops without bypassing lifecycle or scope checks
 - [ ] #4 User documentation explains preview-first workflow, temporary/durable history, revisions/branches, source safety, runtime compatibility, remote authentication, and recovery
 - [ ] #5 Model/tool guidance uses Canvas only when the visual medium materially helps and generates against the supported V1 runtime profile
 - [ ] #6 Native live verification covers create, update, submit draft, download, historical selection, undo, and temporary save/destruction
@@ -39,6 +40,7 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
 Reason: this delivery completes the long-lived Canvas product/security boundary already accepted by ADR-115: global enablement, effective ceilings, recovery/operations guidance, and cross-mode release evidence. The ADR will be amended with measured final values and verified operational behavior rather than duplicated.
@@ -50,3 +52,4 @@ Reason: this delivery completes the long-lived Canvas product/security boundary 
 4. Extend and run outermost native, served, archive, and zero-egress flows through user-visible paths, including branch/history, temporary lifecycle, confirmed actions, remote authentication, two-browser isolation, and archive restore.
 5. Run targeted Canvas/Agents/Console/database/Chatbooks/Web Server/packaging/browser checks and changed-file static analysis, then ask the user whether they want the optional full repository sweep.
 6. Request independent code/security/UX review, check every Canvas task/design invariant, update ADR-115 and this task with evidence, and mark Done only after its Definition of Done is satisfied. TASK-31003 remains To Do as the explicit sync-contract follow-up.
+<!-- SECTION:PLAN:END -->

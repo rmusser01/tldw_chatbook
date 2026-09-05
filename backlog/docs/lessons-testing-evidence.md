@@ -11513,6 +11513,7 @@ widget `display`. A mounted regression proved four unwanted dispatches. Its firs
 attempt also exposed that `Screen.is_current` includes background screens. Use
 `app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
 exercise real cover/return and retained-owner refresh, not a visibility mock.
+
 ## Stop must drain an offloaded dispatch CAS before terminal settlement
 
 **TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the
@@ -11589,3 +11590,20 @@ Keep recovery retention scoped to the exact owned dialog; actual navigation and
 unmount still need unconditional cleanup. Verify both choices through a mounted
 dialog, plus teardown before a late affirmative answer. The latter regression
 failed with an unwanted replay when the post-dialog session fence was removed.
+
+## Resource-limit probes must distinguish refusal from a broken engine
+
+Incident (TASK-31232, Canvas Task 7.2, 2026-09-04): the first direct QuickJS
+quota probe turned every native exception into a successful limit refusal.
+Injected API/disposal failures therefore produced apparently valid heap/stack
+evidence. Strict error classification and positive controls exposed that real
+deep recursion instead caused an exact native engine stack trap and poisoned
+that runtime; it did not return a normal guest stack-limit error. The corrected
+probe reports guest out-of-memory refusal separately from engine-trap
+containment, closes the trapped context, and explicitly does not claim that
+the configured stack ceiling caused the trap.
+
+Rule: demonstrate a successful positive control, identify the actual failure
+mechanism, and fail qualification on unexpected host/API/disposal errors.
+A generic exception or timeout is evidence of failure, not proof that the
+resource boundary under test enforced its configured limit.
