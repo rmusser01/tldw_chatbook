@@ -285,7 +285,21 @@ def test_file_excerpt_is_explicit_utf8_and_never_silently_truncated(tmp_path):
 @pytest.fixture
 def lab_app(tmp_path, monkeypatch):
     monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
-    return _build_test_app()
+    app = _build_test_app()
+    # This fixture mounts its own initial Lab screen during each test.
+    app._initial_screen_pushed = True
+    return app
+
+
+@pytest.mark.asyncio
+async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
+    async with lab_app.run_test():
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await lab_app._push_initial_screen()
+        assert lab_app.screen is screen
+        assert lab_app._initial_screen_pushed is True
 
 
 @pytest.mark.asyncio
