@@ -980,7 +980,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_copy = f"Analyzing {position} of {analyze_total}{failed_copy}"
             else:
                 # A run where NOTHING succeeded must not lead with a tick.
-                glyph = "✓" if analyze_done else "✕"
+                # ✗ (U+2717) is this repo's failure glyph (see
+                # UI/Evals/library_rail.py), paired with the ✓ it
+                # replaces here.
+                glyph = "✓" if analyze_done else "✗"
                 analyze_copy = (
                     f"{glyph} analyzed · {analyze_done} of {analyze_total}"
                     f"{failed_copy}"

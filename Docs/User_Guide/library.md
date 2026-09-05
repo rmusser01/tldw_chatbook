@@ -608,7 +608,7 @@ behave exactly as before.)*
 Media ▸ Select mode gained an **Analyze** bulk action on its own row under
 Clear/Export/Review. It generates an analysis for every checked item in
 one run, in list order, and reports progress in place ("Analyzing 3 of 40 ·
-2 failed", then "✓ analyzed · 38 of 40 · 2 failed", or "✕ analyzed · 0 of 3
+2 failed", then "✓ analyzed · 38 of 40 · 2 failed", or "✗ analyzed · 0 of 3
 · 3 failed" when nothing succeeded) with **Retry failed** and **Dismiss**.
 Items that already have an analysis are never overwritten silently: the
 first press offers "N of M already analysed" with **Skip them** /

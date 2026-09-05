@@ -82,7 +82,7 @@ item in one run, in list order, on its own row under Clear/Export/Review:
 
 - Pressing it leaves select mode and reports progress **in the list**:
   "Analyzing 3 of 40 · 2 failed" while it runs, then "✓ analyzed · 38 of 40
-  · 2 failed" when it settles ("✕ analyzed · 0 of 3 · 3 failed" if nothing
+  · 2 failed" when it settles ("✗ analyzed · 0 of 3 · 3 failed" if nothing
   succeeded). **Retry failed** re-runs only the items that failed;
   **Dismiss** clears the receipt. A clean run says just "✓ analyzed · 40 of
   40" with no failure count and no Retry.

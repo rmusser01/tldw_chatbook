@@ -500,7 +500,7 @@ async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
         await pilot.pause()
         await pilot.pause()
         painted = _painted(host, receipt.region)
-        assert "\u2715 analyzed \u00b7 0 of 3 \u00b7 3 failed" in painted, painted
+        assert "\u2717 analyzed \u00b7 0 of 3 \u00b7 3 failed" in painted, painted
         assert "\u2713" not in painted, painted
         assert "Retry failed" in painted, painted
 
