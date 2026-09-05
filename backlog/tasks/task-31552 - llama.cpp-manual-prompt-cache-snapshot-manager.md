@@ -102,6 +102,16 @@ ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapsho
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Subsequent Scheduling/Meetings rebases: 279 targeted Scheduling/snapshot tests
+and exact Scheduling-head live vision UAT271.62s passed. Meetings' only conflict
+was diagnostic summary accounting; both features are retained and six artifact
+checks pass. All18 boot/import guards pass at495modules/366623LOC, unchanged
+tightened limits. Three snapshot shutdown doubles needed the new real-app unused
+meeting-owner field; one shared fixture line restores fidelity without changing
+production logic/assertions. Complete affected service/Meetings recheck87passed;
+Models/F9 passed in the initial117pass/3fixture-failure run. Existing ADR-097 and
+ADR-119 apply; no new ADR. Current UAT report preserves exact provenance.
+
 Owner-approved inherited pre-import repair supersedes the historical pause below.
 Deferred Library runtime controllers/note-import helpers and Settings RAG/Tool
 Pack services at existing use sites; patch seams and Textual event classes remain

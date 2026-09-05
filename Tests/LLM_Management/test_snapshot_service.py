@@ -860,6 +860,7 @@ def _stub_other_app_lifecycles(app):
         pass
 
     app.audio_cpp_model_install_owner = Noop()
+    app._meeting_session_owner = None
     app._shutdown_console_image_edits = no_op
     app._shutdown_console_runtime = no_op
     app._shutdown_file_notes_session_owner = no_op

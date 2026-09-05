@@ -1,5 +1,37 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Subsequent dev integration: Scheduling and Meetings
+
+After the approved repair, dev advanced twice while CI ran. Scheduling
+`da2fbdbc2` rebased cleanly; **279 targeted Scheduling/snapshot service/UI tests**
+passed (232.17s), plus **18 boot/import guards** and all six artifact checks.
+Exact head `eaa30045c03eab84099edb972601e1f0f3f9c31a` passed a new real Models
+b10816/Gemma vision UAT in **271.62s**: text22/23, sameimage105/106,
+changedimage19/106, retention/Delete. Final capture was visually checked and
+test-owned children exited. Another validation server using the shared binary
+was identified by its different parent/runtime path and left untouched.
+
+Meetings `c14dadd77080be929d47e3acef41be790ee5d8d1` then required one diagnostic
+summary conflict resolution: preserve 12 sink files and Meetings' 30 classified
+calls. Source-derived verification passes all six checks. Snapshot production
+code and Library/Settings repair remain unchanged. All **18 boot/import guards**
+pass: **495 modules / 366623 LOC**, Library113319, UI-ready972. Existing tightened
+limits are unchanged; the new Meetings route is included in the complete census.
+
+Targeted Meetings/snapshot integration initially passed117 and failed3: shutdown
+test doubles lacked `_meeting_session_owner`, newly initialized by the real app.
+The shared fixture now mirrors the real unused-owner value (`None`); no production
+logic or shutdown assertions changed. Complete affected service/Meetings recheck:
+**87 passed**, 4.27s; lint/format/whitespace pass. Models/F9 tests were among the
+117 passing checks and were not modified. The live result above is explicitly
+pre-Meetings, not relabeled as an exact Meetings-base execution.
+
+Evidence: `paydown-schedules-rebase-{guards,ui,preflight}.log`,
+`paydown-rebase-live.{log,xml}`, `paydown-rebase-live-final.png`,
+`paydown-meetings-rebase-{guards,ui,preflight}.log`, and
+`paydown-meetings-fixture-green.log` in the task scratch directory below.
+Prior-head required CI passed; current-head CI/Qodo remain merge gates.
+
 ## Owner-approved pre-import repair — ready for current-head CI
 
 The owner approved the inherited budget repair, superseding the pause below.
