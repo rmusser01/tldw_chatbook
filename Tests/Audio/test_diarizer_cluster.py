@@ -9,19 +9,29 @@ def test_two_distinct_voices_get_two_stable_ids():
     a2 = c.assign(_v(0.95, 0.05, 0)); b2 = c.assign(_v(0.02, 0.98, 0))
     assert a1 == a2 and b1 == b2 and a1 != b1
 
-def test_cap_folds_extra_speaker_into_nearest():
+def test_cap_fold_goes_to_the_nearest_cluster():
     c = OnlineClusterer(threshold=0.01, max_speakers=2)
-    c.assign(_v(1, 0, 0)); c.assign(_v(0, 1, 0))
-    third = c.assign(_v(0, 0, 1))
-    assert third in {"S1", "S2"}  # folded, no S3
+    s1 = c.assign(_v(1, 0, 0)); c.assign(_v(0, 1, 0))
+    assert c.assign(_v(0.9, 0.2, 0)) == s1  # clearly nearer s1
 
-def test_pinned_cluster_is_never_merged_away():
-    c = OnlineClusterer(threshold=0.9, max_speakers=8)
-    a = c.assign(_v(1, 0, 0)); c.pin(a)
-    # a near-identical later vector must still resolve to the pinned id
-    assert c.assign(_v(0.99, 0.01, 0)) == a
+def test_pinned_cluster_centroid_survives_a_distinct_fold_at_cap():
+    c = OnlineClusterer(threshold=0.2, max_speakers=2)
+    a = c.assign(_v(1, 0, 0)); b = c.assign(_v(0, 1, 0))
+    c.pin(a)
+    before = c.centroids()[a].copy()
+    folded = c.assign(_v(0.6, 0.1, 0.79))  # distinct 3rd voice, nearest to a, at cap
+    assert np.allclose(before, c.centroids()[a])  # pinned centroid untouched
+    assert folded == b  # folded into the non-pinned cluster instead
+
+def test_pinned_cluster_still_joined_by_a_similar_voice():
+    c = OnlineClusterer(threshold=0.3, max_speakers=2)
+    a = c.assign(_v(1, 0, 0)); c.assign(_v(0, 1, 0)); c.pin(a)
+    assert c.assign(_v(0.98, 0.02, 0)) == a  # a near-match still joins the pinned cluster
 
 def test_reconcile_maps_final_to_live_by_nearest_centroid():
     live = {"S1": _v(1, 0, 0), "S2": _v(0, 1, 0)}
     final = [("F0", _v(0, 0.9, 0)), ("F1", _v(0.9, 0, 0))]
     assert reconcile(live, final) == {"F0": "S2", "F1": "S1"}
+
+def test_reconcile_with_no_live_clusters_returns_empty():
+    assert reconcile({}, [("F0", _v(1, 0, 0))]) == {}
