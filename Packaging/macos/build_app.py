@@ -206,7 +206,28 @@ fi
         launcher_path = macos_dir / "tldw_chatbook"
         launcher_path.write_text(launcher_content)
         os.chmod(launcher_path, 0o755)
-    
+
+    def build_audiotap_helper(self):
+        """Compile the Core Audio tap helper into Contents/MacOS (meeting transcription)."""
+        source = self.project_root / "tldw_chatbook" / "Audio" / "audiotap" / "main.swift"
+        app_path = self.dist_dir / f"{self.app_name}.app"
+        target = app_path / "Contents" / "MacOS" / "tldw-audiotap"
+        if not source.exists():
+            print("audiotap source missing; skipping helper")
+            return
+        try:
+            result = subprocess.run(
+                ["swiftc", "-O", "-o", str(target), str(source), "-framework", "CoreAudio", "-framework", "AVFoundation"],
+                cwd=self.project_root,
+            )
+        except FileNotFoundError:
+            # No Swift toolchain on this build host. The runtime already
+            # treats a missing compiler as "no native route", so the bundle
+            # must still build rather than aborting the whole DMG.
+            print("swiftc not found; meetings fall back to a virtual device")
+            return
+        print("audiotap helper built" if result.returncode == 0 else "audiotap helper build FAILED (meetings fall back to a virtual device)")
+
     def create_info_plist_additions(self):
         """Add custom Info.plist entries"""
         app_path = self.dist_dir / f"{self.app_name}.app"
@@ -228,7 +249,14 @@ fi
                 'CFBundleTypeRole': 'Editor',
                 'LSItemContentTypes': ['public.plain-text', 'public.text'],
             }]
-            
+
+            plist_data['NSAudioCaptureUsageDescription'] = (
+                'tldw_chatbook records what your computer plays so meetings can be transcribed.'
+            )
+            plist_data['NSMicrophoneUsageDescription'] = (
+                'tldw_chatbook records your microphone for dictation and meetings.'
+            )
+
             with open(plist_path, 'wb') as f:
                 plistlib.dump(plist_data, f)
     
@@ -244,6 +272,7 @@ fi
         
         if success:
             self.create_launcher_script()
+            self.build_audiotap_helper()
             self.create_info_plist_additions()
             print(f"\nBuild complete! App bundle in: {self.dist_dir}")
         else:
