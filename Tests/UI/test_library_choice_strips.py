@@ -254,10 +254,10 @@ async def test_media_type_strip_works_in_both_layouts():
 
         async with host.run_test(size=size) as pilot:
             screen = await _open_media_list(host, pilot)
-            host_pane = screen.query_one("#library-canvas")
+            shell_grid = screen.query_one("#library-shell-grid")
             await _wait_for_condition(
                 pilot,
-                lambda: host_pane.has_class("library-notes-compact") is compact,
+                lambda: shell_grid.has_class("library-adaptive-compact") is compact,
                 message=f"compact class never reached {compact} at {size}",
             )
 

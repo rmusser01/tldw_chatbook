@@ -25,7 +25,7 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -1153,7 +1153,11 @@ class _LibraryEvidenceGates:
                 ),
             )
         app.collections_capture_scope_service = SimpleNamespace(
-            get_library_user_content_evidence=self._sync_call
+            get_library_user_content_evidence=self._sync_call,
+            # The collections controller adopts the app-owned authority
+            # before deciding whether the capture reader is available.
+            # This evidence-only fake intentionally has no active backend.
+            active_authority=None,
         )
 
     def _async_call(self, owner):
@@ -10693,8 +10697,43 @@ async def _open_media_viewer(screen, pilot):
     """
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
-    screen.query_one("#library-media-row-1").press()
-    await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+    row = screen.query_one("#library-media-row-1")
+    expected_id = str(getattr(row, "media_id", "") or "")
+    row.press()
+    await _wait_for_media_reader_loaded(
+        screen,
+        pilot,
+        expected_id=expected_id,
+    )
+
+
+async def _wait_for_media_reader_loaded(
+    screen,
+    pilot,
+    *,
+    expected_id: str | None = None,
+):
+    """Wait for real Reader detail, not its permanently mounted body shell."""
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_reader_session.pending_request is None
+            and screen._library_media_reader_session.loaded_id is not None
+            and (
+                expected_id is None
+                or screen._library_media_reader_session.loaded_id == expected_id
+            )
+        ),
+        message=(
+            "Media Reader detail never settled"
+            + (f" for {expected_id}." if expected_id else ".")
+        ),
+    )
+    return await _wait_for_selector(
+        screen,
+        pilot,
+        "#library-media-viewer-title",
+    )
 
 
 async def _open_media_find(screen, pilot):
@@ -11130,10 +11169,13 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
 
         screen_before = screen
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        await _submit_content_search_query(screen, pilot, "setup")
+        # Opening the collapsed Find bar is a deliberate viewer-scoped
+        # structural recompose. Capture the persistent document after that
+        # one-time mount; submitting and walking matches must preserve it.
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
         )
-        await _submit_content_search_query(screen, pilot, "setup")
         parse_count_before_navigation = len(markdown_updates)
         next_button = screen.query_one("#library-media-content-search-next", Button)
         previous_button = screen.query_one("#library-media-content-search-prev", Button)
@@ -11781,9 +11823,11 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
-        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
 
         await _submit_content_search_query(screen, pilot, "budget")
+        # Find's collapsed -> mounted transition may rebuild viewer children;
+        # match navigation after the bar is open must not rebuild the document.
+        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -17567,7 +17611,7 @@ async def test_library_shell_workspaces_body_lives_under_details():
 def test_generated_stylesheet_includes_library_shell_rules():
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
-    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    generated_css = app_css_text()
     for selector in (
         "#library-shell-grid",
         "#library-header-line",
@@ -17590,7 +17634,7 @@ def test_generated_stylesheet_includes_library_shell_rules():
 def test_generated_stylesheet_includes_library_media_rules():
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
-    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    generated_css = app_css_text()
     for selector in (
         "#library-media-title",
         ".library-media-row",
@@ -17640,14 +17684,17 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
     task-1712 fix for this same bug class on ``#settings-category-list``.
     """
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
-    for css_path in (
-        root / "components" / "_agentic_terminal.tcss",
-        root / "tldw_cli_modular.tcss",
+    for source, css in (
+        (
+            root / "components" / "_agentic_terminal.tcss",
+            (root / "components" / "_agentic_terminal.tcss").read_text(),
+        ),
+        ("generated app stylesheets", app_css_text()),
     ):
-        body = _css_rule_body(css_path.read_text(), "#library-rail")
-        assert "overflow-y: auto" in body, css_path
-        assert "scrollbar-background: $ds-surface-panel" in body, css_path
-        assert "scrollbar-color: $ds-text-muted" in body, css_path
+        body = _css_rule_body(css, "#library-rail")
+        assert "overflow-y: auto" in body, source
+        assert "scrollbar-background: $ds-surface-panel" in body, source
+        assert "scrollbar-color: $ds-text-muted" in body, source
 
 
 @pytest.mark.asyncio
@@ -22136,9 +22183,7 @@ def test_library_note_css_bounds_editor_body_and_mutes_meta():
     source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
         encoding="utf-8"
     )
-    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(
-        encoding="utf-8"
-    )
+    bundled_css = app_css_text()
     for css in (source_css, bundled_css):
         assert "#library-note-body {" in css
         body_block = css[css.index("#library-note-body {") :]

@@ -91,7 +91,7 @@ DESTINATION_CONTRACT = {
     "notes": (
         "#library-row-browse-notes",
         "#library-notes-reader-shell",
-        "#library-notes-tree-note-2",
+        "#library-notes-row-0",
         "_library_notes_reader_preferences",
         "_library_notes_reader_layout",
     ),

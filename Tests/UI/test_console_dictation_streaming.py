@@ -9,18 +9,17 @@ that arrive mid-capture rather than out of a blocking call.
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
@@ -48,17 +47,10 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 # established for this in `test_console_composer_collapse.py`: a minimal App
 # mounting `ConsoleComposerBar` directly with `CSS_PATH` pointed at the
 # generated bundle.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-
-
 class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
-    CSS_PATH = [
-        str(_BUNDLED_STYLESHEET),
-        str(_REPO_ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"),
-    ]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(id="console-native-composer")
@@ -358,7 +350,9 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
     service.start_gate = threading.Event()
     _patch_availability(monkeypatch, provider="parakeet-onnx")
     _install_streaming_session(monkeypatch, service)
-    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    monkeypatch.setattr(
+        ConsoleHarness, "CSS_PATH", [str(path) for path in APP_STYLESHEETS]
+    )
     _, host = _ready_host()
 
     try:
@@ -432,7 +426,9 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
     service.start_gate = threading.Event()
     _patch_availability(monkeypatch, provider="parakeet-onnx")
     _install_streaming_session(monkeypatch, service)
-    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    monkeypatch.setattr(
+        ConsoleHarness, "CSS_PATH", [str(path) for path in APP_STYLESHEETS]
+    )
     _, host = _ready_host()
 
     try:
