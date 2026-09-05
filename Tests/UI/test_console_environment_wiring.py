@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.app import App
 from textual.events import AppFocus
+from textual.screen import Screen
 
 from Tests.UI.test_console_fleet_panel import _FleetBridge
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -94,6 +95,36 @@ def _row_ids(section: ConsoleInspectorSection) -> list[str]:
 # ---------------------------------------------------------------------------
 # Row actions
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
+    """A covered reusable screen is still displayed but must not collect."""
+    async with _console_screen() as (pilot, screen):
+        owner = screen._console_environment
+        owner._workspace_root_accessor = lambda: "/w"
+        dispatches = []
+        owner._dispatch_local = lambda root: dispatches.append(("local", root))
+        owner._dispatch_net = lambda root, **kwargs: dispatches.append(("net", root))
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert dispatches
+        await pilot.app.push_screen(Screen())
+        await pilot.pause()
+        assert screen.is_mounted and _right_rail_open(screen)
+        assert pilot.app.screen is not screen
+        dispatches.clear()
+        screen._poll_console_environment()
+        screen.notify_terminal_focus_regained()
+        owner.request_refresh(include_net=True)
+        assert dispatches == []
+        assert not owner._rail_open_accessor()
+        await pilot.app.pop_screen()
+        await pilot.pause()
+        assert pilot.app.screen is screen
+        assert screen._console_environment is owner
+        assert ("local", "/w") in dispatches
+        assert ("net", "/w") in dispatches
 
 
 @pytest.mark.asyncio

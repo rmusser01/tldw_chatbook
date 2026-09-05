@@ -11401,3 +11401,12 @@ the shared authority does not repair local hosts that continue to bypass it.
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
 
 **What to do.** When a change flips what an existing pin asserts (a gate, a disabled state, a focus target), the gate for that change is the WHOLE files that pin the gate — here `test_library_shell.py` and `test_library_media_side_by_side.py` — compared as failing-name sets against the base, not a `-k` subset named after the action. The 80-minute whole-file shell run is the price; run it once per PR at the review boundary, not per task. `-k` stays fine for iterating, never for the parity claim.
+
+## Covered reusable screens can still report visible
+
+PR2419 reuse integration (2026-09-05): after Console became reusable, Environment
+collectors still dispatched while covered because Textual suspension preserves
+widget `display`. A mounted regression proved four unwanted dispatches. Its first
+attempt also exposed that `Screen.is_current` includes background screens. Use
+`app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
+exercise real cover/return and retained-owner refresh, not a visibility mock.

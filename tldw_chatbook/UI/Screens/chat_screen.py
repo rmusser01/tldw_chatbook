@@ -7993,7 +7993,8 @@ class ChatScreen(BaseAppScreen):
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
                 workspace_root_accessor=self._console_environment_root,
                 rail_open_accessor=(
-                    lambda: self._is_console_widget_displayed("console-right-rail")
+                    lambda: self.app.screen is self
+                    and self._is_console_widget_displayed("console-right-rail")
                 ),
                 on_snapshot=self._land_console_environment,
             )
@@ -8002,6 +8003,8 @@ class ChatScreen(BaseAppScreen):
 
     def _poll_console_environment(self) -> None:
         """Keep hidden-panel ticks cold; preserve the owner's existing cadence."""
+        if self.app.screen is not self:
+            return
         if (
             self._console_environment_owner is not None
             or self._is_console_widget_displayed("console-right-rail")
@@ -15261,8 +15264,8 @@ class ChatScreen(BaseAppScreen):
         # task-13: the Environment panel's local-tier poll. Same audited
         # create/stop pairing as the cost-TTL and transcript-sync timers
         # above it. `poll_tick` is a cheap no-op while the Inspect rail is
-        # closed or the workspace has no root, so this runs for the screen's
-        # whole life rather than being armed and disarmed.
+        # closed, the screen is covered, or the workspace has no root, so
+        # this runs for the screen's whole life rather than being re-armed.
         self._console_environment_poll_timer = self.set_interval(
             CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
@@ -21402,6 +21405,11 @@ class ChatScreen(BaseAppScreen):
                 )
         if not ordered_resume_active:
             self._session.consume_pending_console_first_chat_intent()
+            if (
+                not mount_already_refreshed
+                and self._console_environment_owner is not None
+            ):
+                self._console_environment_owner.notify_rail_opened()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
