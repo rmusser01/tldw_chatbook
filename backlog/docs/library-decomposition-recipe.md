@@ -5327,3 +5327,18 @@ compositor before reading geometry. Every original screen-bound, visibility,
 keyboard-order and painted-copy assertion remains in place. No production timing,
 DOM or CSS changed; 21 Starter/graduation checks and an independent two-size
 geometry rerun pass.
+
+## 24. Re-query test controls after yielding to the Pilot (task 31689)
+
+The shared selector helper captured a widget, awaited `pilot.pause()`, then
+returned the old owner even when a same-ID replacement had mounted during that
+await. Prompt history retry could therefore press an orphaned button. A real
+remove/mount regression proves the stale return before the fix; the helper now
+requires the post-pause query to resolve to the same attached owner before it
+returns. `is_mounted` alone is insufficient: Textual keeps it true after removal.
+
+The stale-search caret test also began its newer action while loading recompose
+had cleared focus. It now gates that real recompose and waits for the current
+filter's loading-phase caret before editing. Final stale-request, caret, retry,
+collapse and no-change assertions remain unchanged. A conflict restore waits for
+detail adoption and notification, not merely the earlier SQLite version write.

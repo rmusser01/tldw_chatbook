@@ -4960,6 +4960,14 @@ async def test_library_prompts_settlement_keeps_newer_surviving_focus():
                 await pilot.pause(0.02)
             assert service.started.is_set()
 
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is screen.query_one("#library-prompts-filter", Input)
+                    and screen.focused.cursor_position == 4
+                ),
+                message="loading search did not restore its current filter",
+            )
             sort = screen.query_one("#library-prompts-sort", Button)
             sort.focus()
             await pilot.pause()
@@ -5078,10 +5086,14 @@ async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback(
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret():
+async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret(
+    monkeypatch,
+):
     """A superseded settlement cannot overwrite the latest filter caret."""
     old_started = threading.Event()
     old_release = threading.Event()
+    loading_recompose_started = asyncio.Event()
+    loading_recompose_release = asyncio.Event()
 
     class HeldOldPromptService(_FakePromptScopeServiceWithList):
         async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
@@ -5107,21 +5119,37 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
             await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
+            canvas = screen.query_one("#library-prompts-canvas")
+            recompose = canvas.recompose
+
+            async def delayed_recompose():
+                loading_recompose_started.set()
+                await loading_recompose_release.wait()
+                await recompose()
+
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
             prompt_filter.focus()
             await pilot.pause()
             with prompt_filter.prevent(Input.Changed):
                 prompt_filter.value = "old prompt"
             prompt_filter.cursor_position = 3
+            monkeypatch.setattr(canvas, "recompose", delayed_recompose)
             old_scope = PromptBrowseScope(query="old prompt")
             screen._request_library_prompts_browse(old_scope)
-            for _ in range(100):
-                if old_started.is_set():
-                    break
-                await pilot.pause(0.02)
-            assert old_started.is_set()
+            assert await asyncio.to_thread(old_started.wait, 2)
 
+            await asyncio.wait_for(loading_recompose_started.wait(), 2)
+            loading_recompose_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is screen.query_one("#library-prompts-filter", Input)
+                    and screen.focused.cursor_position == 3
+                ),
+                message="old search did not restore its mounted filter caret",
+            )
             loading_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is loading_filter
             with loading_filter.prevent(Input.Changed):
                 loading_filter.value = "new prompt"
             loading_filter.cursor_position = 4
@@ -5140,6 +5168,7 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
             assert screen.focused is current_filter
             assert current_filter.cursor_position == 7
     finally:
+        loading_recompose_release.set()
         old_release.set()
 
 
@@ -8104,6 +8133,8 @@ async def test_library_prompt_history_retries_count_and_page_errors(tmp_path):
         retry_page = await _wait_for_selector(
             screen, pilot, "#library-prompt-history-retry-page"
         )
+        assert retry_page.is_attached
+        assert retry_page is screen.query_one("#library-prompt-history-retry-page")
         retry_page.press()
         for _ in range(150):
             if len(screen.query(".library-prompt-history-row")) == 1:
@@ -8572,8 +8603,8 @@ async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays
             assert persisted is not None and persisted["version"] == 3
             assert screen._prompts_state.version == 2
 
-            disclosure = screen.query_one(
-                "#library-prompt-history-collapsible", Collapsible
+            disclosure = await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-collapsible"
             )
             disclosure.collapsed = True
             for _ in range(100):
@@ -8671,10 +8702,10 @@ async def test_library_prompt_history_no_change_keeps_selection_and_retry_availa
         )
         assert state.selected is not None
         assert state.selected.source_version == 1
-        assert (
-            screen.query_one("#library-prompt-history-restore", Button).disabled
-            is False
+        restore = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-restore"
         )
+        assert restore.disabled is False
         assert db.fetch_prompt_details(prompt_id)["version"] == 1
 
 
@@ -9120,7 +9151,12 @@ async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_re
         host.screen.query_one("#confirm-button", Button).press()
         for _ in range(200):
             detail = db.fetch_prompt_details(prompt_id)
-            if detail is not None and detail["version"] == 4:
+            if (
+                detail is not None
+                and detail["version"] == 4
+                and screen._library_prompt_version == 4
+                and host._notifications
+            ):
                 break
             await pilot.pause(0.02)
 

@@ -3704,7 +3704,9 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
         matches = list(screen.query(selector))
         if matches:
             await pilot.pause()
-            return matches[0]
+            current = list(screen.query(selector))
+            if current and current[0] is matches[0] and current[0].is_attached:
+                return current[0]
         if time.monotonic() >= deadline:
             break
         await pilot.pause(0.02)
