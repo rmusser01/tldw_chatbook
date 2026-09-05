@@ -24,6 +24,12 @@ from tldw_chatbook.Chunking.lab_models import (
     canonical_json,
     validate_session_references,
 )
+from tldw_chatbook.Chunking.lab_recovery import (
+    export_recovery,
+    parse_recovery,
+    rebase_recovery,
+    validate_active,
+)
 from tldw_chatbook.Chunking.lab_state import accept_result, new_session
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -80,6 +86,7 @@ class CheckpointStore:
         self._conn: sqlite3.Connection | None = None
         self._captured: dict[int, _CapturedBlob] = {}
         self._fallback: tuple[int, int] | None = None
+        self._measurements: dict = {}
 
     def _connection(self) -> sqlite3.Connection:
         if self._conn is not None:
@@ -196,6 +203,7 @@ class CheckpointStore:
                     "profile_key": session.profile_key,
                     "epoch": session.epoch,
                     "revision": session.revision,
+                    "content_revision": session.content_revision,
                     "candidates": session.candidates,
                     "view": session.view,
                 }
@@ -257,6 +265,9 @@ class CheckpointStore:
             }
         )
         validate_session_references(graph)
+        object.__setattr__(graph, "_recovery_measurements", self._measurements)
+        validate_active(graph, reuse=True)
+        self._measurements = graph._recovery_measurements
         return (
             canonical_json({"schema_version": SCHEMA_VERSION, "session": small}),
             pending,
@@ -337,6 +348,7 @@ class CheckpointStore:
         # Reload acquires fresh durable authority. Another instance may have
         # cleared/pruned payloads since this store last published them.
         self._captured.clear()
+        self._measurements.clear()
         conn.execute("BEGIN")
         try:
             state = self._state(conn)
@@ -443,11 +455,21 @@ class CheckpointStore:
                 previous = state[3]
                 if self._fallback is not None and self._fallback[0] == state[2]:
                     previous = self._fallback[1]
+                restore_undo = state[5]
+                if restore_undo is not None:
+                    old_document = conn.execute(
+                        "SELECT document FROM lab_checkpoints WHERE id=?", (previous,)
+                    ).fetchone()[0]
+                    if self._content_document(old_document) != self._content_document(
+                        document
+                    ):
+                        restore_undo = None
                 conn.execute(
-                    "UPDATE lab_state SET current_checkpoint=?, previous_checkpoint=?, epoch=?, generation=generation+1 WHERE singleton=1 AND epoch=? AND generation=?",
+                    "UPDATE lab_state SET current_checkpoint=?, previous_checkpoint=?, restore_undo_checkpoint=?, epoch=?, generation=generation+1 WHERE singleton=1 AND epoch=? AND generation=?",
                     (
                         checkpoint_id,
                         previous,
+                        restore_undo,
                         session.epoch,
                         expected.epoch,
                         expected.generation,
@@ -461,6 +483,7 @@ class CheckpointStore:
             # Failed insertions cannot leave cache entries pretending the blob
             # exists durably. A retry captures the latest identities afresh.
             self._captured.clear()
+            self._measurements.clear()
             raise
         self._captured = {
             key: value for key, value in self._captured.items() if key in used
@@ -474,6 +497,108 @@ class CheckpointStore:
             pass
         return CheckpointToken(
             self.profile_key, session.epoch, session.revision, generation
+        )
+
+    @staticmethod
+    def _content_document(document: str) -> dict:
+        """View navigation preserves restore undo; changing the sample does not."""
+        value = json.loads(document)["session"]
+        value.setdefault("content_revision", 0)
+        value.pop("revision")
+        value["view"] = {"sample_hash": value["view"]["sample_hash"]}
+        return value
+
+    def replace(
+        self, imported: LabSession, displaced: LabSession, *, expected: CheckpointToken
+    ) -> tuple[LabSession, CheckpointToken]:
+        """Atomically preserve in-memory content and install new recovery authority.
+
+        The coordinator must first quiesce execution. The caller must serialize
+        this through AutosaveWriter; epochs are returned only after real COMMIT.
+        """
+        if (displaced.profile_key, displaced.epoch) != (
+            self.profile_key,
+            expected.epoch,
+        ) or displaced.revision < expected.revision:
+            raise CheckpointConflict("Displaced session does not own current authority")
+        imported = parse_recovery(export_recovery(imported))
+        return self._replace_transaction(imported, displaced, expected=expected)
+
+    def undo_restore(
+        self, *, expected: CheckpointToken
+    ) -> tuple[LabSession, CheckpointToken]:
+        """Consume the explicit displaced checkpoint using a fresh epoch."""
+        return self._replace_transaction(None, None, expected=expected)
+
+    def _replace_transaction(
+        self,
+        imported: LabSession | None,
+        displaced: LabSession | None,
+        *,
+        expected: CheckpointToken,
+    ) -> tuple[LabSession, CheckpointToken]:
+        conn = self._connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            state = self._state(conn)
+            self._check_expected(state, expected)
+            undoing = imported is None
+            if undoing:
+                if state[5] is None:
+                    raise ValueError("There is no recovery restore to undo")
+                imported = self._unpack(conn, state[5])
+                displaced = self._unpack(conn, state[3])
+            epoch = str(uuid.uuid4())
+            replacement = rebase_recovery(imported, self.profile_key, epoch)
+            fallback = rebase_recovery(displaced, self.profile_key, epoch)
+            # Three bounded checkpoints: exact displaced undo, same-epoch previous
+            # fallback, and current. All referenced new blobs share this COMMIT.
+            sessions = (
+                [fallback, replacement]
+                if undoing
+                else [displaced, fallback, replacement]
+            )
+            checkpoint_ids, all_used = [], set()
+            for session in sessions:
+                document, pending, used = self._pack(session)
+                all_used.update(used)
+                for digest, (kind, payload) in pending.items():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO lab_blobs(digest,kind,payload) VALUES(?,?,?)",
+                        (digest, kind, payload),
+                    )
+                checkpoint_ids.append(
+                    conn.execute(
+                        "INSERT INTO lab_checkpoints(revision,document) VALUES(?,?)",
+                        (session.revision, document),
+                    ).lastrowid
+                )
+            conn.execute(
+                "UPDATE lab_state SET epoch=?, generation=generation+1, current_checkpoint=?, previous_checkpoint=?, restore_undo_checkpoint=? WHERE singleton=1",
+                (
+                    epoch,
+                    checkpoint_ids[-1],
+                    checkpoint_ids[-2],
+                    None if undoing else checkpoint_ids[0],
+                ),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            self._captured.clear()
+            self._measurements.clear()
+            raise
+        self._captured = {
+            key: value for key, value in self._captured.items() if key in all_used
+        }
+        self._fallback = None
+        try:
+            self._collect(conn)
+        except (sqlite3.Error, ValueError, KeyError, TypeError, RecoverySchemaError):
+            pass
+        return replacement, CheckpointToken(
+            self.profile_key, epoch, replacement.revision, state[2] + 1
         )
 
     def _collect(self, conn: sqlite3.Connection) -> None:
@@ -529,6 +654,7 @@ class CheckpointStore:
             conn.execute("DELETE FROM lab_blobs")
             conn.execute("COMMIT")
             self._captured.clear()
+            self._measurements.clear()
             return CheckpointToken(self.profile_key, epoch, 0, generation)
         except Exception:
             if conn.in_transaction:
@@ -541,3 +667,4 @@ class CheckpointStore:
             self._conn.close()
             self._conn = None
         self._captured.clear()
+        self._measurements.clear()

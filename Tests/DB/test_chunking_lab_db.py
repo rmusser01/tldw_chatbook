@@ -59,6 +59,135 @@ def completed_session():
     return accept_result(session, result)
 
 
+def test_replace_preserves_unsaved_displaced_content_and_undo_across_views(tmp_path):
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = new_session("profile")
+    token = store.save(old, expected=None)
+    displaced = edit_json(old, next(iter(old.candidates)), '{"unsaved":')
+    restored, replacement_token = store.replace(
+        new_session("other"), displaced, expected=token
+    )
+    assert restored.profile_key == "profile"
+    assert restored.epoch != old.epoch
+    with pytest.raises(CheckpointConflict):
+        store.save(displaced, expected=token)
+    for index in range(4):
+        restored = update_view(restored, {"tab": str(index)})
+        replacement_token = store.save(restored, expected=replacement_token)
+    undone, undo_token = store.undo_restore(expected=replacement_token)
+    assert undone.candidates == displaced.candidates
+    assert undone.epoch not in {old.epoch, restored.epoch}
+    assert store.load()[1] == undo_token
+    with pytest.raises(ValueError, match="undo"):
+        store.undo_restore(expected=undo_token)
+    store.close()
+
+
+def test_failed_replace_rolls_back_both_checkpoints_and_keeps_retry_authority(tmp_path):
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = new_session("profile")
+    token = store.save(old, expected=None)
+    conn = store._connection()
+    conn.execute(
+        "CREATE TRIGGER refuse_replace BEFORE UPDATE OF epoch ON lab_state WHEN NEW.epoch != OLD.epoch BEGIN SELECT RAISE(ABORT, 'replacement refused'); END"
+    )
+    displaced = edit_json(old, next(iter(old.candidates)), '{"unsaved":')
+    with pytest.raises(sqlite3.IntegrityError):
+        store.replace(
+            replace_sample(
+                new_session("other"), "new imported blob", {"kind": "paste"}
+            ),
+            displaced,
+            expected=token,
+        )
+    assert store.load() == (old, token)
+    assert conn.execute("SELECT COUNT(*) FROM lab_checkpoints").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM lab_blobs").fetchone()[0] == 1
+    conn.execute("DROP TRIGGER refuse_replace")
+    retry = store.save(displaced, expected=token)
+    assert store.load() == (displaced, retry)
+    store.close()
+
+
+def test_content_save_releases_restore_undo_and_clear_removes_all_refs(tmp_path):
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = completed_session()
+    token = store.save(old, expected=None)
+    restored, token = store.replace(new_session("other"), old, expected=token)
+    restored = edit_json(restored, next(iter(restored.candidates)), '{"changed":')
+    token = store.save(restored, expected=token)
+    with pytest.raises(ValueError, match="undo"):
+        store.undo_restore(expected=token)
+    restored, token = store.replace(new_session("third"), restored, expected=token)
+    store.clear(expected=token)
+    assert (
+        store._connection().execute("SELECT COUNT(*) FROM lab_blobs").fetchone()[0] == 0
+    )
+    assert (
+        store._connection()
+        .execute("SELECT COUNT(*) FROM lab_checkpoints")
+        .fetchone()[0]
+        == 0
+    )
+    with pytest.raises(CheckpointConflict):
+        store.save(restored, expected=token)
+    store.close()
+
+
+def test_coalesced_edit_and_undo_still_consume_restore_undo(tmp_path):
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = new_session("profile")
+    token = store.save(old, expected=None)
+    restored, token = store.replace(new_session("other"), old, expected=token)
+    changed = undo_edit(
+        edit_json(restored, next(iter(restored.candidates)), '{"temporary":')
+    )
+    assert changed.candidates == restored.candidates and changed.undo == restored.undo
+    token = store.save(changed, expected=token)
+    with pytest.raises(ValueError, match="undo"):
+        store.undo_restore(expected=token)
+    store.close()
+
+
+def test_replacement_retires_manifest_without_rewriting_run_provenance(tmp_path):
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = completed_session()
+    old_results = old.results
+    token = store.save(old, expected=None)
+    restored, token = store.replace(completed_session(), old, expected=token)
+    assert restored.batch is None
+    assert all(
+        result["request"]["epoch"] != restored.epoch
+        for result in restored.results.values()
+    )
+    undone, _ = store.undo_restore(expected=token)
+    assert undone.results == old_results
+    assert undone.batch is None
+    store.close()
+
+
+def test_old_checkpoint_without_content_revision_loads_with_zero(tmp_path):
+    import json
+
+    store = CheckpointStore(tmp_path / "lab.sqlite3", "profile")
+    old = new_session("profile")
+    store.save(old, expected=None)
+    conn = store._connection()
+    checkpoint_id, raw = conn.execute(
+        "SELECT id,document FROM lab_checkpoints"
+    ).fetchone()
+    document = json.loads(raw)
+    del document["session"]["content_revision"]
+    conn.execute(
+        "UPDATE lab_checkpoints SET document=? WHERE id=?",
+        (json.dumps(document), checkpoint_id),
+    )
+    loaded, token = store.load()
+    assert loaded.content_revision == 0
+    store.save(update_view(loaded, {"tab": "Draft"}), expected=token)
+    store.close()
+
+
 def test_invalid_draft_survives_store_reopen(tmp_path):
     session = new_session("test-profile")
     candidate_id = next(iter(session.candidates))
@@ -368,12 +497,7 @@ def test_gc_retains_restore_undo_across_view_checkpoints_then_clear_removes_it(
     original = completed_session()
     token = store.save(original, expected=None)
     conn = store._connection()
-    # Task 4 owns replacement; reserve its explicit retained reference here to
-    # exercise the GC contract without implementing replacement in this task.
-    conn.execute("UPDATE lab_state SET restore_undo_checkpoint=current_checkpoint")
-    fresh = new_session("profile").model_copy(
-        update={"epoch": token.epoch, "revision": original.revision + 1}
-    )
+    fresh, token = store.replace(new_session("profile"), original, expected=token)
     for index in range(4):
         fresh = update_view(fresh, {"selected_chunk": index})
         token = store.save(fresh, expected=token)

@@ -29,6 +29,24 @@ and persisted IDs, and verify both request-context and settled-spend ownership.
 
 ---
 
+## Coalesced state equality does not prove that no content mutation occurred
+
+**TASK-31424, 2026-09-04.** Chunking Lab initially expired Undo restore by
+comparing the next durable content with the current checkpoint. A regression
+test edited a restored draft and immediately used application Undo before
+autosave ran. The resulting draft and undo tuple were byte-identical to the
+restored state, so the comparison incorrectly retained Undo restore despite
+the intervening content mutation. A persisted content-only revision counter,
+incremented by edits and Undo but preserved by view navigation, made the
+same real-store regression pass.
+
+**What to do.** When a policy depends on whether an event happened, preserve
+an event counter or explicit marker through coalescing. Test an edit followed
+by its inverse before the next save; testing only distinct final values cannot
+prove first-mutation expiration or equivalent event-sensitive behavior.
+
+---
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker

@@ -55,6 +55,109 @@ class ObservedStore(CheckpointStore):
 
 
 @pytest.mark.asyncio
+async def test_replace_fences_pending_writes_and_uses_existing_owner(tmp_path):
+    store = ObservedStore(tmp_path / "lab.sqlite3", "profile")
+    writer = AutosaveWriter(store)
+    old = new_session("profile")
+    writer.submit(old)
+    await writer.flush()
+    changed = edit_json(old, next(iter(old.candidates)), '{"unsaved":')
+    writer.submit(changed)
+    restored, token = await writer.replace(new_session("other"), changed)
+    assert writer.status.acknowledged == token
+    assert writer.status.state == "saved"
+    with pytest.raises(CheckpointConflict):
+        writer.submit(changed)
+    writer.submit(update_view(restored, {"tab": "result"}))
+    await writer.flush()
+    undone, undo_token = await writer.undo_restore()
+    assert undone.candidates == changed.candidates
+    assert writer.status.acknowledged == undo_token
+    await writer.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_writer_replace_preserves_old_retry_authority(tmp_path):
+    class FailingReplace(ObservedStore):
+        def replace(self, *args, **kwargs):
+            raise OSError("replacement unavailable")
+
+    store = FailingReplace(tmp_path / "lab.sqlite3", "profile")
+    writer = AutosaveWriter(store)
+    old = new_session("profile")
+    writer.submit(old)
+    token = await writer.flush()
+    changed = edit_json(old, next(iter(old.candidates)), '{"unsaved":')
+    writer.submit(changed)
+    with pytest.raises(OSError):
+        await writer.replace(new_session("other"), changed)
+    assert writer.status.acknowledged == token
+    assert writer.status.state == "failed"
+    retried = await writer.flush()
+    assert retried.epoch == token.epoch and retried.revision == changed.revision
+    await writer.close()
+
+
+@pytest.mark.asyncio
+async def test_canceled_replace_await_keeps_fence_until_real_owner_finishes(tmp_path):
+    class GatedReplace(ObservedStore):
+        def replace(self, *args, **kwargs):
+            self.threads.append(threading.get_ident())
+            self.entered.set()
+            if not self.release.wait(4):
+                raise RuntimeError("Test replacement gate timed out")
+            return super().replace(*args, **kwargs)
+
+    store = GatedReplace(tmp_path / "lab.sqlite3", "profile")
+    writer = AutosaveWriter(store)
+    old = new_session("profile")
+    writer.submit(old)
+    token = await writer.flush()
+    store.entered.clear()
+    store.release.clear()
+    task = asyncio.create_task(writer.replace(new_session("other"), old))
+    await wait_until(store.entered.is_set)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(CheckpointConflict):
+        writer.submit(old)
+    assert writer.status.acknowledged == token
+    store.release.set()
+    await wait_until(lambda: writer.status.acknowledged.epoch != token.epoch)
+    assert len(set(store.threads)) == 1
+    await writer.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_drains_inflight_save_and_preserves_newer_memory(tmp_path):
+    store = ObservedStore(tmp_path / "lab.sqlite3", "profile")
+    writer = AutosaveWriter(store)
+    session = new_session("profile")
+    writer.submit(session)
+    token = await writer.flush()
+    store.entered.clear()
+    store.release.clear()
+    inflight = edit_json(session, next(iter(session.candidates)), '{"older":')
+    writer.submit(inflight, immediate=True)
+    await wait_until(store.entered.is_set)
+    displaced = edit_json(inflight, next(iter(session.candidates)), '{"latest":')
+    writer.submit(displaced)
+    task = asyncio.create_task(writer.replace(new_session("other"), displaced))
+    await asyncio.sleep(0)
+    assert not task.done() and writer.status.acknowledged == token
+    with pytest.raises(CheckpointConflict):
+        writer.submit(displaced)
+    store.release.set()
+    restored, replaced = await task
+    assert replaced.generation == token.generation + 2
+    assert writer.status.latest_revision == restored.revision
+    undone, _ = await writer.undo_restore()
+    assert undone.candidates == displaced.candidates
+    await writer.close()
+
+
+@pytest.mark.asyncio
 async def test_writer_lazily_loads_and_commits_off_ui_thread(tmp_path):
     path = tmp_path / "lab.sqlite3"
     store = ObservedStore(path, "profile")

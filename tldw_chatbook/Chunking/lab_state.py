@@ -24,6 +24,16 @@ _MAX_DRAFT_BYTES = 2 * 1024 * 1024
 _MAX_SAMPLE_BYTES = 2 * 1024 * 1024
 
 
+def _publish(session: LabSession, *, update: dict, content: bool = True) -> LabSession:
+    from .lab_recovery import prune_session, validate_active
+
+    if content:
+        update = {**update, "content_revision": session.content_revision + 1}
+    changed = prune_session(session.model_copy(update=update))
+    validate_active(changed, reuse=True)
+    return changed
+
+
 def _require_b(session: LabSession, candidate_id: str) -> dict:
     try:
         candidate = session.candidates[candidate_id]
@@ -52,12 +62,13 @@ def _with_candidate_draft(
     candidate = session.candidates[candidate_id]
     candidates = dict(session.candidates)
     candidates[candidate_id] = {**candidate, "draft": draft.model_dump(mode="json")}
-    return session.model_copy(
+    return _publish(
+        session,
         update={
             "revision": session.revision + 1,
             "candidates": candidates,
-            "undo": session.undo + (_candidate_undo(candidate_id, undo_draft),),
-        }
+            "undo": (_candidate_undo(candidate_id, undo_draft),),
+        },
     )
 
 
@@ -427,20 +438,20 @@ def replace_sample(session: LabSession, text: str, source: dict) -> LabSession:
     previous_hash = view["sample_hash"]
     previous_sample = session.samples[previous_hash]
     view["sample_hash"] = snapshot.sample_hash
-    return session.model_copy(
+    return _publish(
+        session,
         update={
             "revision": session.revision + 1,
             "samples": samples,
             "view": view,
-            "undo": session.undo
-            + (
+            "undo": (
                 {
                     "kind": "sample",
                     "sample_hash": previous_hash,
                     "sample": previous_sample,
                 },
             ),
-        }
+        },
     )
 
 
@@ -460,7 +471,11 @@ def update_view(session: LabSession, changes: dict) -> LabSession:
     view.update(json.loads(canonical_json(changes)))
     if view.get("sample_hash") not in session.samples:
         raise ValueError("View must reference a retained sample")
-    return session.model_copy(update={"revision": session.revision + 1, "view": view})
+    return _publish(
+        session,
+        update={"revision": session.revision + 1, "view": view},
+        content=view["sample_hash"] != session.view["sample_hash"],
+    )
 
 
 def _current_sample(session: LabSession) -> SampleSnapshot:
@@ -609,8 +624,8 @@ def install_batch(session: LabSession, requests: tuple[RunRequest, ...]) -> LabS
         },
         "outcomes": {},
     }
-    return session.model_copy(
-        update={"revision": session.revision + 1, "batch": manifest}
+    return _publish(
+        session, update={"revision": session.revision + 1, "batch": manifest}
     )
 
 
@@ -653,13 +668,14 @@ def accept_result(session: LabSession, result: RunResult) -> LabSession:
     outcomes = dict(batch.get("outcomes", {}))
     outcomes[request.run_id] = result.status
     batch["outcomes"] = outcomes
-    return session.model_copy(
+    return _publish(
+        session,
         update={
             "revision": session.revision + 1,
             "candidates": candidates,
             "results": results,
             "batch": batch,
-        }
+        },
     )
 
 
@@ -742,12 +758,13 @@ def pin_baseline(session: LabSession, *, replace: bool = False) -> LabSession:
         "candidate_id": baseline_id,
         "candidate": None if existing is None else existing[1],
     }
-    return session.model_copy(
+    return _publish(
+        session,
         update={
             "revision": session.revision + 1,
             "candidates": candidates,
-            "undo": session.undo + (undo,),
-        }
+            "undo": (undo,),
+        },
     )
 
 
@@ -802,4 +819,4 @@ def undo_edit(session: LabSession) -> LabSession:
         update["candidates"] = candidates
     else:
         raise ValueError("Unknown Lab undo transition")
-    return session.model_copy(update=update)
+    return _publish(session, update=update)

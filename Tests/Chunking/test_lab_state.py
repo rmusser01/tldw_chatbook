@@ -74,6 +74,75 @@ def _run_b(session: LabSession) -> tuple[LabSession, RunRequest]:
     return accept_result(installed, _completed(request)), request
 
 
+def test_many_edits_keep_only_one_content_undo():
+    session = new_session("profile")
+    candidate_id = _candidate_b(session)
+    for index in range(100):
+        session = edit_json(session, candidate_id, '{"unfinished":' + str(index))
+    assert len(session.undo) == 1
+    viewed = update_view(session, {"tab": "results"})
+    assert viewed.undo is session.undo
+    reverted = undo_edit(viewed)
+    assert reverted.candidates[candidate_id]["draft"]["raw_json"] == '{"unfinished":98'
+    assert reverted.undo == ()
+
+
+def test_repeated_runs_and_samples_prune_unused_payloads():
+    session = new_session("profile")
+    for index in range(25):
+        session = replace_sample(session, str(index), {"kind": "paste"})
+        session, request = _run_b(session)
+    candidate = session.candidates[_candidate_b(session)]
+    assert set(session.results) == {
+        candidate["current_run_id"],
+        candidate["previous_run_id"],
+    }
+    assert len(session.samples) <= 3
+    retained = session.results[request.run_id]
+    edited = edit_json(session, _candidate_b(session), '{"bad":')
+    assert edited.results[request.run_id] is retained
+
+
+def test_over_limit_view_refuses_transition_without_losing_prior_value():
+    session = new_session("profile")
+    with pytest.raises(ValueError, match="checkpoint"):
+        update_view(session, {"oversized": "x" * (8 * 1024 * 1024)})
+    assert "oversized" not in session.view
+
+
+def test_large_draft_edits_reuse_result_measurements_and_prune_dead_cache(monkeypatch):
+    from tldw_chatbook.Chunking import lab_recovery
+
+    session, _ = _run_b(new_session("profile"))
+    original_measure = lab_recovery._measure
+
+    def no_retained_result_serialization(value, kind):
+        if kind == "result":
+            raise AssertionError("Draft editing reserialized a retained result")
+        return original_measure(value, kind)
+
+    monkeypatch.setattr(lab_recovery, "_measure", no_retained_result_serialization)
+    for index in range(20):
+        session = edit_json(
+            session, _candidate_b(session), "x" * (1024 * 1024) + str(index)
+        )
+        assert len(session.undo) == 1
+        assert len(session._recovery_measurements) <= 3
+    monkeypatch.setattr(lab_recovery, "_measure", original_measure)
+    session = edit_json(
+        session, _candidate_b(session), '{"chunking":{"method":"words"}}'
+    )
+    for index in range(20):
+        session = replace_sample(session, str(index), {"kind": "paste"})
+        session, _ = _run_b(session)
+        measured_result_ids = {
+            key for (kind, key) in session._recovery_measurements if kind == "result"
+        }
+        assert measured_result_ids == set(session.results)
+        assert len(session._recovery_measurements) <= 6
+    assert "_recovery_measurements" not in session.model_dump()
+
+
 def test_invalid_json_keeps_last_valid_document_until_explicit_discard():
     session = new_session("profile")
     candidate_id = _candidate_b(session)

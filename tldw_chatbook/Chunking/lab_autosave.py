@@ -309,6 +309,94 @@ class AutosaveWriter:
 
         return await asyncio.shield(operation())
 
+    async def replace(
+        self, imported: LabSession, displaced: LabSession
+    ) -> tuple[LabSession, CheckpointToken]:
+        """Fence old submissions and atomically preserve displaced in-memory state.
+
+        The coordinator must quiesce preview processes and suspend content edits
+        before calling. Failure keeps the old epoch and latest draft retryable.
+        """
+        return await self._replace(imported, displaced)
+
+    async def undo_restore(self) -> tuple[LabSession, CheckpointToken]:
+        """Consume restore undo through the same serialized storage owner."""
+        return await self._replace(None, None)
+
+    async def _replace(
+        self, imported: LabSession | None, displaced: LabSession | None
+    ) -> tuple[LabSession, CheckpointToken]:
+        if self._closed or self._closing:
+            raise RuntimeError("Autosave writer is closed")
+        if self._clearing:
+            raise CheckpointConflict("Recovery replacement or Clear is in progress")
+        if displaced is not None:
+            if displaced.profile_key != self._store.profile_key or (
+                self._latest is not None
+                and (
+                    displaced.epoch != self._latest.epoch
+                    or displaced.revision < self._latest.revision
+                )
+            ):
+                raise CheckpointConflict(
+                    "Displaced session is not the latest active session"
+                )
+            self._latest = displaced
+        self._clearing = True
+        self._wake.set()
+
+        async def operation():
+            try:
+                async with self._lock:
+                    await self._ensure_loaded()
+                    if self._token is None:
+                        if displaced is None:
+                            raise ValueError("There is no recovery restore to undo")
+                        self._token = await self._io(
+                            self._store.save, displaced, expected=None
+                        )
+                    if imported is None:
+                        # A pending content edit consumes undo even if its debounce
+                        # has not fired. Persist it before inspecting availability.
+                        if self._pending is not None:
+                            self._token = await self._io(
+                                self._store.save, self._pending, expected=self._token
+                            )
+                        session, token = await self._io(
+                            self._store.undo_restore, expected=self._token
+                        )
+                    else:
+                        session, token = await self._io(
+                            self._store.replace,
+                            imported,
+                            displaced,
+                            expected=self._token,
+                        )
+                    self._latest = session
+                    self._pending = None
+                    self._first_pending = None
+                    self._immediate = False
+                    self._token = token
+                    self._initial = (session, token)
+                    self._error = self._blocked = None
+                    self._error_revision = -1
+                    self._status = SaveStatus("saved", token, session.revision, None)
+                    return session, token
+            except Exception as exc:
+                self._pending = self._latest
+                if self._token is not None:
+                    self._status = replace(self._status, acknowledged=self._token)
+                if self._latest is not None:
+                    self._status = replace(
+                        self._status, latest_revision=self._latest.revision
+                    )
+                self._failed(exc, self._status.latest_revision)
+                raise
+            finally:
+                self._clearing = False
+
+        return await asyncio.shield(operation())
+
     async def close(self) -> None:
         """Flush orderly exit, always close the worker-owned connection, then stop."""
         if self._closed:

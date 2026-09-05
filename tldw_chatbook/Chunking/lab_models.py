@@ -251,6 +251,7 @@ class LabSession(_Snapshot):
     profile_key: str
     epoch: str
     revision: int
+    content_revision: int = 0
     candidates: dict
     samples: dict
     results: dict
@@ -284,6 +285,8 @@ def validate_session_references(
         raise ValueError("Session profile and epoch must be nonempty")
     if session.revision < 0:
         raise ValueError("Session revision must be nonnegative")
+    if not 0 <= session.content_revision <= session.revision:
+        raise ValueError("Content revision must be within the session revision")
     if not 1 <= len(session.candidates) <= 2:
         raise ValueError("Lab v1 supports at most two candidates")
 
