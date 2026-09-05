@@ -41,6 +41,7 @@ TAB_MCP = "mcp"
 TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
+TAB_MEETINGS = "meetings"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
@@ -126,6 +127,7 @@ TAB_DISPLAY_LABELS = {
     TAB_ACP: "ACP",
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
+    TAB_MEETINGS: "Meetings",
 }
 
 

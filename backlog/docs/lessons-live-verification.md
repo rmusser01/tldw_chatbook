@@ -1935,6 +1935,49 @@ edit used to test code provenance MUST be verified to have landed
 (`assert old in s` before replace) — an unverified no-op replace produced a
 false "app runs foreign code" scare mid-hunt.
 
+---
+
+## `Tab` walks the ENTIRE nav bar before reaching screen content, and "clicks don't reach Buttons/Selects" can itself be a symptom of a rendering bug, not a platform limit (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** Driving the Meetings screen for live verification, `tmux send-keys
+... Tab` was sent repeatedly to reach the Start button, per the standard
+"Tab through the rail, verify focus by capture, press Enter" recipe. 17
+consecutive Tab presses never left the nav bar: diffing full-pane ANSI captures
+before/after each press showed only the underlined nav-bar destination moving
+(Home → ... → wrapping back around), never any change inside the screen's own
+content. `MainNavigationBar` is composed BEFORE `Container(id="screen-content")`
+in `BaseAppScreen.compose()` (see that file), so Tab's DOM-order focus chain
+visits every one of the ~14 nav-bar destinations before it ever reaches a
+screen's own Select/Button/Input — on a screen with this many nav items, that is
+a lot of wasted Tab presses and diff-reading before concluding anything about
+the screen itself. `F6` ("next pane") does NOT help either: on a screen that
+never registers a workbench pane focus target (Meetings did not), it only shows
+"No workbench pane focus target is available." and changes nothing.
+
+Separately, this same session initially trusted a controller note claiming "SGR
+mouse clicks do NOT reach Textual Buttons or Selects" on this screen. That note
+had been written against the screen while it was suffering the CSS-collapse bug
+in the entry above ("the shared UI harness never loads the app stylesheet")
+— every visible control was squeezed into zero rows, so of course a click at
+any coordinate hit nothing. Once the CSS bug was fixed and the rail actually
+painted, an SGR click at the real character coordinates of both a `Select` (`\
+x1b[<0;COL;ROWM\x1b[<0;COL;ROWm` via `tmux load-buffer`/`paste-buffer`) and a
+`Button` worked immediately and reliably for the rest of the session (Start,
+Stop, Recover, Open in Library, a queued Library-import row) — no Tab
+navigation was needed at all once the geometry was real.
+
+**What to do.** To reach a specific screen's own control from a cold launch,
+prefer a direct SGR mouse click at freshly-recomputed coordinates (recompute
+the row/column from the CURRENT capture, per the existing "re-locate every
+control in the same capture you click from" entry) over counting Tab presses
+through the nav bar — it is faster and does not depend on knowing the nav bar's
+current item count. If a click appears not to land, before concluding the
+platform/widget cannot be clicked, first suspect that the target genuinely has
+no paintable area (check with a plain `tmux capture-pane -p` for an empty
+bordered box, per the CSS-collapse entry above) rather than trusting a prior
+session's negative claim about clickability — a screen that cannot render its
+own controls will fail every click for a reason that has nothing to do with
+mouse-event routing.
 ## A live report names a SYMPTOM — re-derive the mechanism from code before you fix it (schedules-handoff PR-6 rounds 1-2, 2026-09-02)
 
 **What happened.** A live run is expensive, so its findings arrive with authority: you

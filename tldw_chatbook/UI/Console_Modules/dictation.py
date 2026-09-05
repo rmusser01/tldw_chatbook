@@ -1950,6 +1950,15 @@ class ConsoleDictationController:
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
             return
+        owner = getattr(self.app_instance, "meeting_session_owner", None)
+        if owner is not None and getattr(owner, "is_active", False):
+            # Meetings hold the mic in-process, so the executor's "local STT
+            # busy" signal never fires for them (meeting spec §3.4).
+            self.app_instance.notify(
+                "Meeting in progress: stop it in Meetings before using Console dictation.",
+                severity="warning",
+            )
+            return
         # Re-probe on every activation attempt (TASK-15): refreshes the mic
         # tooltip so an extra installed or a microphone plugged in mid-run is
         # reflected without a remount. Cosmetic only -- see

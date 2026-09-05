@@ -70,6 +70,13 @@ TASK_492_PREFIXES = (
 TASK_492_FILES = {
     "tldw_chatbook/Agents/mcp_tool_provider.py",
 }
+TASK_31551_FILES = {
+    "tldw_chatbook/Audio/meeting_capture.py",
+    "tldw_chatbook/Audio/meeting_owner.py",
+    "tldw_chatbook/Audio/meeting_session.py",
+    "tldw_chatbook/Audio/system_audio_tap.py",
+    "tldw_chatbook/UI/Screens/meetings_screen.py",
+}
 SINK_CALL_NAMES = {
     "FileHandler",
     "PrivateRotatingFileHandler",
@@ -456,6 +463,11 @@ def _owner(path_text: str) -> tuple[str, str]:
         return (
             "TASK-492",
             "high-risk Chat/provider/summarization/tool/MCP diagnostic owner",
+        )
+    if path_text in TASK_31551_FILES:
+        return (
+            "TASK-31551",
+            "meeting transcription (Audio capture/session/owner + Meetings screen)",
         )
     return (
         "TASK-494",
@@ -1069,6 +1081,9 @@ def build_inventory() -> dict[str, Any]:
     task_492_calls = sum(
         entry["call_count"] for entry in owners if entry["owner"] == "TASK-492"
     )
+    task_31551_calls = sum(
+        entry["call_count"] for entry in owners if entry["owner"] == "TASK-31551"
+    )
     task_494_calls = sum(
         entry["call_count"] for entry in owners if entry["owner"] == "TASK-494"
     )
@@ -1082,6 +1097,10 @@ def build_inventory() -> dict[str, Any]:
                 "prefixes": list(TASK_492_PREFIXES),
                 "files": sorted(TASK_492_FILES),
                 "reason": "Chat, provider, summarization, tool, and MCP paths",
+            },
+            "TASK-31551": {
+                "files": sorted(TASK_31551_FILES),
+                "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)",
             },
             "TASK-494": {
                 "rule": "all other production diagnostic owners",
@@ -1102,6 +1121,7 @@ def build_inventory() -> dict[str, Any]:
         "summary": {
             "owner_files": len(owners),
             "task_492_calls": task_492_calls,
+            "task_31551_calls": task_31551_calls,
             "task_494_calls": task_494_calls,
             "persistent_sink_files": len(topology),
             "path_privacy_candidate_calls": sum(
@@ -1770,6 +1790,7 @@ def main() -> int:
         "diagnostic inventory verified: "
         f"{summary['owner_files']} owners, "
         f"{summary['task_492_calls']} TASK-492 calls, "
+        f"{summary['task_31551_calls']} TASK-31551 calls, "
         f"{summary['task_494_calls']} TASK-494 calls, "
         f"{summary['persistent_sink_files']} sink files"
     )

@@ -3679,7 +3679,8 @@ ChatScreen.-focus #console-workbench-header {
 #acp-workbench,
 #skills-workbench,
 #settings-workbench,
-#evals-workbench {
+#evals-workbench,
+#meetings-workbench {
     height: 1fr;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
