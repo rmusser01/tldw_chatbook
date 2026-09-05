@@ -4187,12 +4187,22 @@ def _default_specs(
         # callback (the todo_* pattern -- absent in headless runs, A10),
         # exempt from the permission layer (A12), imported lazily so the
         # module stays off the boot path (ADR-097).
+        from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
         from .ask_user_questions import ASK_USER_DESCRIPTION, ASK_USER_PARAMETERS
 
+        # task-31420: the description is a registry prompt (its catalog
+        # default is byte-identical to ASK_USER_DESCRIPTION) so a user can
+        # inspect and override the restraint text like any other prompt the
+        # app puts in front of a model. The resolver never raises for a bad
+        # override; an empty result falls back to the constant.
+        description = (
+            get_internal_prompt("agents.ask_user_tool_description") or ASK_USER_DESCRIPTION
+        )
         specs.append(
             LocalToolSpec(
                 name="ask_user",
-                description=ASK_USER_DESCRIPTION,
+                description=description,
                 parameters=ASK_USER_PARAMETERS,
                 handler=_make_ask_user_handler(ask_user),
                 exposure=LocalToolExposure.CONSOLE_ONLY,

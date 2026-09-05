@@ -78,3 +78,39 @@ register(
         ),
     )
 )
+
+register(
+    PromptSpec(
+        id="agents.ask_user_tool_description",
+        subsystem="agents",
+        title="ask_user tool description",
+        description=(
+            "The description the ask_user tool presents to the model; most of "
+            "its words say when NOT to ask."
+        ),
+        used_in="Agents/local_tool_provider.py (_default_specs, via ASK_USER_DESCRIPTION)",
+        default=(
+            "Ask the user up to 4 multiple-choice questions and wait for the "
+            "answers. Use it ONLY for a decision that is genuinely the user's to "
+            "make: a preference, a trade-off between valid designs, or something "
+            "neither the code nor the conversation can tell you. Do not ask when a "
+            "conventional default exists, when the answer is discoverable by "
+            "reading the code or running a tool, when you can proceed and state "
+            "your assumption, or to confirm a plan you already have. Batch related "
+            "questions into ONE call instead of asking several times. Each question "
+            "offers 2-4 options; the user can always type a free-text 'Other' "
+            "answer instead. The result lists the selected labels per question; "
+            "'unanswered' marks questions the user skipped, and 'answered': false "
+            "with a reason means no answer will come. If the reason is 'busy', "
+            "another question is already waiting for the user: proceed without "
+            "asking again this turn."
+        ),
+        contract_note=(
+            "task-31420: the [tools] ask_user_enabled gate defaults ON, so every "
+            "user gets whatever this text says -- it is the restraint guidance "
+            "(PRD A13). No placeholders. Keep the 'busy' sentence: the tool's "
+            "busy result tells the model not to retry, and this is where it "
+            "learns what that means."
+        ),
+    )
+)

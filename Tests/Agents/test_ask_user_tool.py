@@ -163,3 +163,34 @@ def test_gate_row_is_enumerated_and_defaults_on():
     assert (gate.section, gate.key, gate.group) == ("tools", "ask_user_enabled", "local")
     assert gate.enabled is True
     assert [(g.section, g.key) for g in all_tool_gates()] == _gate_key_pairs()
+
+
+# --- task-31420: the description is a registry prompt ---------------------------
+
+
+def _spec(provider):
+    return next(
+        s
+        for s in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+        if s.name == "ask_user"
+    )
+
+
+def test_description_defaults_to_the_catalog_text(tmp_path):
+    from tldw_chatbook.Agents.ask_user_questions import ASK_USER_DESCRIPTION
+
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == ASK_USER_DESCRIPTION
+
+
+def test_a_registry_override_reaches_the_built_spec(tmp_path, monkeypatch):
+    import tldw_chatbook.config as config_module
+
+    def fake_setting(section, key=None, default=None):
+        if (section, key) == ("internal_prompts.agents", "ask_user_tool_description"):
+            return "Ask only about deployment targets."
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_setting)
+    provider = make_provider(root=tmp_path, ask_user=lambda questions: {})
+    assert _spec(provider).description == "Ask only about deployment targets."
