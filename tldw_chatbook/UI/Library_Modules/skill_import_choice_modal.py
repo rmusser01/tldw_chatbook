@@ -80,7 +80,6 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
                 yield Button("Cancel", id="skill-import-choice-cancel")
 
     def on_mount(self) -> None:
-        super().on_mount()
         choices = self.query_one("#skill-import-choice-list", OptionList)
         choices.highlighted = 0
         choices.focus()

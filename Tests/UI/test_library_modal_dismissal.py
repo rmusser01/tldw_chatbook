@@ -42,6 +42,9 @@ from tldw_chatbook.UI.Library_Modules.prompt_collections import (
 from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
     PromptCollectionManagerModal,
 )
+from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
+    SkillImportChoiceModal,
+)
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.UI.Screens.skills_screen import (
     SkillTrustBootstrapModal,
@@ -50,6 +53,9 @@ from tldw_chatbook.UI.Screens.skills_screen import (
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
+)
+from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+    LibraryReviewSetPickerDialog,
 )
 from tldw_chatbook.Notes.file_notes_conflict_compare import (
     ConflictSide,
@@ -281,6 +287,32 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         str,
         _assert_exact("secret"),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        SkillImportChoiceModal,
+        lambda: SkillImportChoiceModal(("skill-a", "skill-b")),
+        "#skill-import-choice",
+        "#skill-import-choice-cancel",
+        _assert_none,
+        str,
+        _assert_exact("skill-a"),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        LibraryReviewSetPickerDialog,
+        lambda: LibraryReviewSetPickerDialog(
+            (("set-1", "Set one", "1 of 2", False),)
+        ),
+        "#library-review-set-picker-dialog",
+        "#library-review-set-picker-close",
+        _assert_none,
+        tuple,
+        _assert_exact(("open", "set-1")),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -585,6 +617,18 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         SkillTrustBootstrapModal,
     ),
     _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_present_library_skills_import_choice_if_needed",
+        SkillImportChoiceModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_push_review_set_picker",
+        LibraryReviewSetPickerDialog,
+    ),
+    _edge(
         _PROMPTS_CONTROLLER_FILE,
         "LibraryPromptsController",
         "handle_library_prompts_import_browse",
@@ -655,12 +699,6 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "LibraryScreen",
         "_apply_library_external_preparation",
         ModelInstallModal,
-    ),
-    _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
-        "handle_library_export_choose_destination",
-        FileSave,
     ),
     _edge(
         _LIBRARY_SCREEN_FILE,
@@ -872,6 +910,8 @@ def _assert_exact_library_modal_inventory(
 ORDINARY_LIBRARY_MODAL_CONTRACTS = (
     (SkillTrustPassphraseModal, "#skill-trust-passphrase-modal"),
     (SkillTrustBootstrapModal, "#skill-trust-bootstrap-modal"),
+    (SkillImportChoiceModal, "#skill-import-choice"),
+    (LibraryReviewSetPickerDialog, "#library-review-set-picker-dialog"),
     (ModelInstallModal, ".model-install-modal"),
     (PromptDeleteConfirmationModal, "#prompt-delete-modal"),
     (LibraryNoteFolderNameDialog, "#library-note-folder-name-dialog"),
@@ -1128,7 +1168,7 @@ async def test_authorization_endpoint_details_nested_modal_dismissal_restores_fo
 
 
 def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
-    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 7
+    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 9
     for modal_type, content_selector in ORDINARY_LIBRARY_MODAL_CONTRACTS:
         assert issubclass(modal_type, SafeModalDismissMixin)
         assert modal_type.SAFE_MODAL_CONTENT == content_selector
@@ -1549,7 +1589,7 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
     contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
     edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
 
-    assert len(contract_types) == len(set(contract_types)) == 19
+    assert len(contract_types) == len(set(contract_types)) == 21
     assert edge_types == set(contract_types)
     assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
     assert {SessionGitTrustDialog}.issubset(contract_types)
@@ -1606,7 +1646,7 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     discovered = _discover_library_modal_edges(_production_owner_sources())
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
-    assert len(discovered) == len(declared) == 33
+    assert len(discovered) == len(declared) == 34
     _assert_exact_library_modal_inventory(discovered, declared)
 
 
@@ -1765,6 +1805,10 @@ async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
         modal.query_one("#skill-trust-bootstrap-input", Input).value = "secret"
         modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "secret"
         await pilot.click("#skill-trust-bootstrap-submit")
+    elif isinstance(modal, SkillImportChoiceModal):
+        await pilot.click("#skill-import-choice-import")
+    elif isinstance(modal, LibraryReviewSetPickerDialog):
+        await pilot.click("#library-review-set-open-0")
     elif isinstance(modal, ModelInstallModal):
         await pilot.click("#model-install-confirm")
     elif isinstance(modal, (FileOpen, FileSave, SelectDirectory)):
