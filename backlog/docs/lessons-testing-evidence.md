@@ -12017,3 +12017,17 @@ the premature write; a normal post-dispatch provider-error control passed. The
 repair tracks the local callback outcome across that sanitization boundary,
 resetting it on each attempt and success, while leaving normal provider failure,
 typed exceptions, cancellation, and cleanup paths intact.
+
+## A tier-specific work counter can pass without observing any work
+
+**TASK-31776, 2026-09-05 dev review.** The cache-clear test spied only on
+`_chars_estimate`, so it failed after bundled tiktoken became the normal path.
+The neighboring growing-history guard was worse: its `count < 500` assertion
+passed with zero observations. Both now select and exercise each real tier and
+require positive, exact work (204 distinct inputs for the growing fixture).
+A process-local cache-bypass mutation made all four variants fail, with 20,400
+growing-history computations. Independent review caught a second loophole:
+`count_tokens_tiktoken` itself can silently fall back to characters. The tiktoken
+fixture now makes that fallback fail explicitly. To prove a fast path, measure
+the path that actually executes and make both no-work and fallback outcomes
+visible; an upper bound alone cannot distinguish caching from a disconnected spy.

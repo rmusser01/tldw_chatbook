@@ -14,7 +14,6 @@ cumulative CPU across a simulated 400-turn run.
 from __future__ import annotations
 
 import gc
-import re
 import threading
 import weakref
 
@@ -197,31 +196,44 @@ def test_concurrent_estimation_is_safe_and_consistent():
         assert got == expected
 
 
-def test_clear_estimate_cache_forces_recomputation():
+@pytest.fixture(params=["characters", "tiktoken"])
+def estimator_calls(request, monkeypatch):
+    """Observe real tier work, independent of optional custom tokenizer setup."""
+    use_tiktoken = request.param == "tiktoken"
+    if use_tiktoken:
+        assert token_counter.TIKTOKEN_AVAILABLE, "tiktoken is a core dependency"
+
+        def reject_character_fallback(*_args):
+            pytest.fail("tiktoken tier must encode, not use character fallback")
+
+        monkeypatch.setattr(token_counter, "_chars_estimate", reject_character_fallback)
+    monkeypatch.setattr(token_counter, "CUSTOM_TOKENIZERS_AVAILABLE", False)
+    monkeypatch.setattr(token_counter, "TIKTOKEN_AVAILABLE", use_tiktoken)
+    name = "count_tokens_tiktoken" if use_tiktoken else "_chars_estimate"
     calls = []
-    real = token_counter._chars_estimate
+    real = getattr(token_counter, name)
 
-    def counting(text, provider):
+    def counting(text, identity):
         calls.append(text)
-        return real(text, provider)
+        return real(text, identity)
 
-    token_counter._chars_estimate = counting
-    try:
-        clear_estimate_cache()
-        estimate_tokens("some text", "m", "openai")
-        estimate_tokens("some text", "m", "openai")
-        assert len(calls) == 1, "second call should have been memoized"
-        clear_estimate_cache()
-        estimate_tokens("some text", "m", "openai")
-        assert len(calls) == 2, "clear() should force a recompute"
-    finally:
-        token_counter._chars_estimate = real
+    monkeypatch.setattr(token_counter, name, counting)
+    return calls
+
+
+def test_clear_estimate_cache_forces_recomputation(estimator_calls):
+    estimate_tokens("some text", "m", "openai")
+    estimate_tokens("some text", "m", "openai")
+    assert len(estimator_calls) == 1, "second call should have been memoized"
+    clear_estimate_cache()
+    estimate_tokens("some text", "m", "openai")
+    assert len(estimator_calls) == 2, "clear() should force a recompute"
 
 
 # -- the shape that motivated the work --------------------------------------
 
 
-def test_estimating_a_growing_conversation_stays_cheap():
+def test_estimating_a_growing_conversation_stays_cheap(estimator_calls):
     """The regression guard: re-estimating an append-only history must cost
     O(new text), not O(whole history), per turn.
 
@@ -229,28 +241,16 @@ def test_estimating_a_growing_conversation_stays_cheap():
     on a loaded machine: across 100 turns the estimator may only be invoked
     once per distinct message, not once per message per turn.
     """
-    clear_estimate_cache()
-    computed = []
-    real = token_counter._chars_estimate
-
-    def counting(text, provider):
-        computed.append(text)
-        return real(text, provider)
-
-    token_counter._chars_estimate = counting
-    try:
-        msgs = [{"role": "system", "content": "s" * 500}]
-        for turn in range(100):
-            msgs.append({"role": "assistant", "content": f"turn {turn} " * 60})
-            msgs.append({"role": "user", "content": f"reply {turn} " * 60})
-            count_tokens_messages(msgs, "gpt-4o-mini", provider="openai")
-    finally:
-        token_counter._chars_estimate = real
+    msgs = [{"role": "system", "content": "s" * 500}]
+    for turn in range(100):
+        msgs.append({"role": "assistant", "content": f"turn {turn} " * 60})
+        msgs.append({"role": "user", "content": f"reply {turn} " * 60})
+        count_tokens_messages(msgs, "gpt-4o-mini", provider="openai")
 
     # 1 system + 200 turn messages + the distinct role strings, each counted
     # once. The pre-fix behaviour recomputed every message every turn, which
     # is >10,000 invocations for the same 201 messages.
-    assert len(computed) < 500, (
-        f"{len(computed)} estimator invocations for 201 distinct messages "
+    assert len(estimator_calls) == 204, (
+        f"{len(estimator_calls)} estimator invocations for 201 messages + 3 roles "
         "-- the per-turn re-count is back"
     )

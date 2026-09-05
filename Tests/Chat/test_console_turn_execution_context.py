@@ -761,8 +761,39 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
 
 
 @pytest.mark.asyncio
-async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
-    store = ConsoleChatStore()
+async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_path):
+    from Tests.Chat.test_console_rewind_summarize import SummaryGateway
+    from Tests.console_provider_doubles import with_destination
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    class CapturedSummaryGateway(SummaryGateway):
+        def __init__(self):
+            super().__init__()
+            self.selections = []
+
+        async def resolve_for_send(self, selection):
+            self.selections.append(selection)
+            return with_destination(
+                ConsoleProviderResolution(
+                    ready=True,
+                    provider=selection.provider,
+                    model=selection.explicit_model or selection.configured_model,
+                    base_url=selection.base_url,
+                    max_tokens=selection.max_tokens,
+                )
+            )
+
+    db = CharactersRAGDB(tmp_path / "owning-turn.sqlite", "owning-turn")
+    workspace_db = WorkspaceDB(tmp_path / "workspaces.sqlite", "owning-turn")
+    registry = LocalWorkspaceRegistryService(workspace_db)
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db, workspace_registry=registry)
+    )
     session = store.create_session(
         title="Summary",
         workspace_id="workspace-a",
@@ -771,17 +802,26 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
-        content="first question",
+        content="first question " * 40,
+        persist=True,
     )
     store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
-        content="first answer",
+        content="first answer " * 40,
+        persist=True,
     )
     boundary = store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
         content="second question",
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        persist=True,
     )
     context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
@@ -797,8 +837,7 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         rag_defaults={"auto_retrieve_on_send": False},
         tool_configuration={"agent_runtime_enabled": False},
     )
-    gateway = _PausedGateway()
-    gateway.release_resolve.set()
+    gateway = CapturedSummaryGateway()
     rag_contexts: list[ConsoleTurnExecutionContext | None] = []
 
     async def capture_rag(
@@ -815,18 +854,25 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         rag_capture_provider=capture_rag,
     )
 
-    summarize_result = await controller.summarize_up_to(boundary.id)
-    submit_result = await controller.submit_draft("third", session_id=session.id)
+    try:
+        summarize_result = await controller.summarize_up_to(boundary.id)
+        submit_result = await controller.submit_draft("third", session_id=session.id)
 
-    assert summarize_result.accepted is True
-    assert submit_result.accepted is True
-    assert gateway.selections == [
-        context.provider_selection,
-        context.provider_selection,
-    ]
-    assert len(rag_contexts) == 1
-    assert rag_contexts[0] is not None
-    assert rag_contexts[0].configuration == context
+        assert summarize_result.accepted is True
+        assert submit_result.accepted is True
+        assert gateway.selections == [
+            context.provider_selection,
+            context.provider_selection,
+        ]
+        assert gateway.captured_auxiliary.resolution.model == "captured-model"
+        assert len(rag_contexts) == 1
+        assert rag_contexts[0] is not None
+        assert rag_contexts[0].configuration == context
+    finally:
+        await controller.shutdown()
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        workspace_db.close()
 
 
 @pytest.mark.asyncio
