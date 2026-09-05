@@ -154,7 +154,6 @@ SCHEMAS: tuple[SchemaSources, ...] = (
         sql_globs=("chachanotes_*.sql",),
         python_files=(
             REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py",
-            REPO_ROOT / "tldw_chatbook" / "DB" / "character_conversation_search.py",
         ),
     ),
     # TASK-19867 owns adding "media" and "prompts" here; see the module

@@ -18,6 +18,7 @@ from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterKeywordIndexStatus,
     CharacterKeywordSnapshot,
     CharacterRepairCandidate,
+    CharacterRepairPage,
     CharacterRepairRequest,
     CharacterRepairResult,
     EligibleConversationDocument,
@@ -31,256 +32,15 @@ if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
-CHARACTER_CONVERSATION_SEARCH_SCHEMA_SQL = """
-CREATE TABLE character_conversation_search_generations(
-  generation_id TEXT PRIMARY KEY NOT NULL,
-  data_authority_id TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('building', 'ready', 'failed')),
-  policy_version INTEGER NOT NULL CHECK(policy_version > 0),
-  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
-  processed_conversations INTEGER NOT NULL DEFAULT 0 CHECK(processed_conversations >= 0),
-  error_code TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  completed_at TEXT,
-  lease_expires_at TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX character_conversation_search_generations_authority_status
-  ON character_conversation_search_generations(data_authority_id, status);
-CREATE UNIQUE INDEX character_conversation_search_one_ready_generation
-  ON character_conversation_search_generations(data_authority_id)
-  WHERE status = 'ready';
-
-CREATE TABLE character_conversation_search_revision(
-  singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
-  data_revision INTEGER NOT NULL CHECK(data_revision >= 0),
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-INSERT INTO character_conversation_search_revision(singleton_id, data_revision)
-VALUES(1, 0);
-CREATE TRIGGER character_conversation_search_revision_no_delete
-BEFORE DELETE ON character_conversation_search_revision
-BEGIN
-  SELECT RAISE(ABORT, 'character conversation search revision is required');
-END;
-
-CREATE TABLE character_conversation_search_state(
-  singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
-  data_authority_id TEXT,
-  active_policy_version INTEGER,
-  activated INTEGER NOT NULL DEFAULT 0 CHECK(activated IN (0, 1)),
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-INSERT INTO character_conversation_search_state(singleton_id) VALUES(1);
-
-CREATE TABLE character_conversation_search_dirty(
-  conversation_id TEXT PRIMARY KEY NOT NULL,
-  data_authority_id TEXT NOT NULL,
-  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
-  enqueued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX character_conversation_search_dirty_authority_revision
-  ON character_conversation_search_dirty(data_authority_id, source_revision);
-
-CREATE TABLE character_conversation_search_documents(
-  document_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  data_authority_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,
-  character_label TEXT NOT NULL,
-  title TEXT NOT NULL,
-  body TEXT NOT NULL,
-  eligibility_digest TEXT NOT NULL,
-  validated_eligibility_digest TEXT NOT NULL,
-  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
-  generation_id TEXT NOT NULL
-    REFERENCES character_conversation_search_generations(generation_id) ON DELETE CASCADE,
-  UNIQUE(data_authority_id, generation_id, conversation_id)
-);
-CREATE INDEX character_conversation_search_documents_character
-  ON character_conversation_search_documents(
-    data_authority_id, character_id, generation_id, conversation_id
-  );
-CREATE INDEX character_conversation_search_documents_revision
-  ON character_conversation_search_documents(data_authority_id, source_revision);
-
-CREATE VIRTUAL TABLE character_conversation_fts USING fts5(
-  character_label,
-  title,
-  body,
-  content='character_conversation_search_documents',
-  content_rowid='document_id'
-);
-CREATE TRIGGER character_conversation_search_documents_ai
-AFTER INSERT ON character_conversation_search_documents BEGIN
-  INSERT INTO character_conversation_fts(rowid, character_label, title, body)
-  VALUES(new.document_id, new.character_label, new.title, new.body);
-END;
-CREATE TRIGGER character_conversation_search_documents_au
-AFTER UPDATE ON character_conversation_search_documents
-WHEN old.character_label IS NOT new.character_label
-  OR old.title IS NOT new.title OR old.body IS NOT new.body
-BEGIN
-  INSERT INTO character_conversation_fts(
-    character_conversation_fts, rowid, character_label, title, body
-  ) VALUES('delete', old.document_id, old.character_label, old.title, old.body);
-  INSERT INTO character_conversation_fts(rowid, character_label, title, body)
-  VALUES(new.document_id, new.character_label, new.title, new.body);
-END;
-CREATE TRIGGER character_conversation_search_documents_ad
-AFTER DELETE ON character_conversation_search_documents BEGIN
-  INSERT INTO character_conversation_fts(
-    character_conversation_fts, rowid, character_label, title, body
-  ) VALUES('delete', old.document_id, old.character_label, old.title, old.body);
-END;
-
-CREATE TRIGGER character_conversation_search_messages_ai
-AFTER INSERT ON messages BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT new.conversation_id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_messages_au
-AFTER UPDATE ON messages BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT new.conversation_id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_messages_ad
-AFTER DELETE ON messages BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT old.conversation_id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_conversations_ai
-AFTER INSERT ON conversations BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT new.id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_conversations_au
-AFTER UPDATE ON conversations BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT new.id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_conversations_ad
-AFTER DELETE ON conversations BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT old.id, state.data_authority_id, revision.data_revision
-    FROM character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_characters_au
-AFTER UPDATE ON character_cards BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT c.id, state.data_authority_id, revision.data_revision
-    FROM conversations AS c,
-         character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE c.character_id = new.id
-     AND state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-CREATE TRIGGER character_conversation_search_characters_ad
-AFTER DELETE ON character_cards BEGIN
-  UPDATE character_conversation_search_revision
-     SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
-   WHERE singleton_id = 1;
-  INSERT INTO character_conversation_search_dirty(
-    conversation_id, data_authority_id, source_revision
-  )
-  SELECT c.id, state.data_authority_id, revision.data_revision
-    FROM conversations AS c,
-         character_conversation_search_state AS state,
-         character_conversation_search_revision AS revision
-   WHERE c.character_id = old.id
-     AND state.singleton_id = 1 AND state.activated = 1
-  ON CONFLICT(conversation_id) DO UPDATE SET
-    data_authority_id = excluded.data_authority_id,
-    source_revision = excluded.source_revision,
-    enqueued_at = CURRENT_TIMESTAMP;
-END;
-"""
-
-
 class SelectedBranchEligibilityProjector:
     """Build the one canonical eligible document from one SQLite snapshot."""
 
     def __init__(self, database: CharactersRAGDB) -> None:
+        """Capture the selected database's local authority without indexing.
+
+        Args:
+            database: Authoritative local conversation database.
+        """
         self._database = database
         self._authority = database.get_local_authority_id()
 
@@ -290,7 +50,18 @@ class SelectedBranchEligibilityProjector:
         *,
         connection: sqlite3.Connection | None = None,
     ) -> EligibleConversationDocument | None:
-        """Return selected visible user/assistant text, failing closed on bad graphs."""
+        """Return selected visible user/assistant text, failing closed on bad graphs.
+
+        Args:
+            conversation_id: Exact local conversation ID to project.
+            connection: Optional caller-owned SQLite snapshot. Otherwise this
+                method opens its own transaction on the selected database.
+
+        Returns:
+            Eligible content and the live revision read through that connection,
+            or None for foreign/nonlocal/unresolved/deleted content or invalid
+            branch graphs. The revision is not a stored search-document revision.
+        """
 
         if connection is not None:
             return self._project(connection, conversation_id)
@@ -444,6 +215,15 @@ class CharacterConversationSearchRepository:
         current_character: ResolvedLocalCharacterKey | None = None,
         progress_callback: Callable[[int], None] | None = None,
     ) -> None:
+        """Capture read-model dependencies without activating any index.
+
+        Args:
+            database: Authoritative selected local conversation database.
+            current_character: Optional current card; foreign authority is ignored.
+            progress_callback: Optional processed-count callback during explicit
+                builds; callback failures produce a failed build, not partial READY.
+        """
+
         self._database = database
         self._authority = database.get_local_authority_id()
         if (
@@ -458,7 +238,18 @@ class CharacterConversationSearchRepository:
     def recent_groups(
         self, *, group_limit: int = 4, row_limit: int = 5
     ) -> tuple[CharacterConversationGroup, ...]:
-        """Return section-first recent groups, force-including the current card."""
+        """Return section-first recent groups, including the current live card.
+
+        Args:
+            group_limit: Integer section bound 1..4 (booleans rejected).
+            row_limit: Integer rows-per-section bound 1..5 (booleans rejected).
+
+        Returns:
+            Bounded groups with exact totals and complete descending date order.
+            An unavailable section is reserved when space permits.
+
+        Raises:
+            ValueError: Either bound is outside its supported range."""
 
         group_limit = self._bounded_limit(group_limit, maximum=4)
         row_limit = self._bounded_limit(row_limit, maximum=5)
@@ -518,12 +309,28 @@ class CharacterConversationSearchRepository:
         limit: int = 20,
         query: str = "",
     ) -> CharacterConversationPage:
-        """Return one explicit page containing only unresolved local chats."""
+        """Return a bounded metadata-filtered page of unresolved local chats.
+
+        Args:
+            offset: Nonnegative integer row offset (booleans rejected).
+            limit: Integer result bound 1..50 (booleans rejected).
+            query: Text of at most 200 characters before stripping whitespace.
+                Empty/whitespace text selects ordinary date browsing; LIKE
+                metacharacters remain literal, never SQL or FTS instructions.
+
+        Returns:
+            Newest-first unresolved rows, exact filtered total and live revision.
+            Continue with offset plus row count while below total; no keyset
+            cursor is returned. Restart after source mutations.
+
+        Raises:
+            TypeError: Query is not text; objects are never coerced.
+            ValueError: Query is overlong, or offset/limit is invalid."""
 
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         limit = self._bounded_limit(limit, maximum=50)
-        normalized_query = str(query or "").strip()[:200]
+        normalized_query = self._validated_query(query)
         with self._database.transaction() as connection:
             revision = self._revision(connection)
             total = self._unavailable_total(connection, query=normalized_query)
@@ -547,7 +354,20 @@ class CharacterConversationSearchRepository:
         cursor: CharacterConversationCursor | None = None,
         limit: int = 20,
     ) -> CharacterConversationPage:
-        """Return one stable descending keyset page for an exact local character."""
+        """Return a complete descending date-keyset page for one exact character.
+
+        Args:
+            key: Resolved local character identity; foreign keys return empty.
+            cursor: Previous page's complete (last_modified, created_at, ID)
+                boundary for this character, or None to start/restart.
+            limit: Integer result bound 1..20 (booleans rejected).
+
+        Returns:
+            Rows, total, next cursor and live revision from one SQLite snapshot.
+            Restart after mutations to discover rows moved before the boundary.
+
+        Raises:
+            ValueError: Limit is invalid."""
 
         limit = self._bounded_limit(limit, maximum=20)
         if key.data_authority_id != self._authority:
@@ -617,7 +437,22 @@ class CharacterConversationSearchRepository:
         offset: int = 0,
         limit: int = 50,
     ) -> CharacterConversationPage:
-        """Search one read snapshot and fence it against a final source revision."""
+        """Search a retained ready corpus and revalidate against live source state.
+
+        Args:
+            query: Literal phrase text; blank or nontext input returns no rows.
+            character: Optional exact character filter; foreign keys return empty.
+            offset: Nonnegative integer result offset, not a date cursor.
+            limit: Integer result bound 1..50 (booleans rejected).
+
+        Returns:
+            Relevance-ordered rows, exact eligible total and live data_revision.
+            keyword_snapshot identifies the possibly older retained ready corpus.
+            Changed/ineligible candidates are excluded before paging; a concurrent
+            source change retries once, then fails closed with an absent page.
+
+        Raises:
+            ValueError: Offset or limit is invalid."""
 
         limit = self._bounded_limit(limit, maximum=50)
         if character is not None and character.data_authority_id != self._authority:
@@ -809,12 +644,30 @@ class CharacterConversationSearchRepository:
         ).fetchall()
 
     def repair_candidates(
-        self, key: UnresolvedConversationKey
-    ) -> tuple[CharacterRepairCandidate, ...]:
-        """Enumerate only live cards owned by the unresolved key's authority."""
+        self, key: UnresolvedConversationKey, *, offset: int = 0, limit: int = 20
+    ) -> CharacterRepairPage:
+        """Page live cards admitted by the unresolved key's exact authority.
 
+        Args:
+            key: Unresolved local conversation to revalidate before enumeration.
+            offset: Nonnegative row offset; use the previous page's next_offset.
+            limit: Integer page size from 1 through 50 (booleans rejected).
+
+        Returns:
+            Candidates ordered by SQLite NOCASE name then ID, exact total and
+            next offset, or an empty page if the key is foreign or no longer
+            unresolved. Pages are independent snapshots: restart after a card
+            rename, insertion, deletion, or repair. Names never confer identity.
+
+        Raises:
+            ValueError: Offset or limit is invalid.
+        """
+
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        limit = self._bounded_limit(limit, maximum=50)
         if key.data_authority_id != self._authority:
-            return ()
+            return CharacterRepairPage((), 0, None)
         with self._database.transaction() as connection:
             conversation = connection.execute(
                 "SELECT c.character_id, c.assistant_authority_id, "
@@ -826,12 +679,16 @@ class CharacterConversationSearchRepository:
                 (key.conversation_id,),
             ).fetchone()
             if conversation is None or self._is_resolved_conversation(conversation):
-                return ()
+                return CharacterRepairPage((), 0, None)
+            total = connection.execute(
+                "SELECT COUNT(*) FROM character_cards WHERE deleted = 0"
+            ).fetchone()[0]
             rows = connection.execute(
                 "SELECT id, name, version FROM character_cards "
-                "WHERE deleted = 0 ORDER BY name COLLATE NOCASE, id"
+                "WHERE deleted = 0 ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?",
+                (limit, offset),
             ).fetchall()
-        return tuple(
+        candidates = tuple(
             CharacterRepairCandidate(
                 ResolvedLocalCharacterKey(self._authority, int(row["id"])),
                 str(row["name"]),
@@ -839,11 +696,23 @@ class CharacterConversationSearchRepository:
             )
             for row in rows
         )
+        next_offset = offset + len(candidates)
+        return CharacterRepairPage(
+            candidates, total, next_offset if next_offset < total else None
+        )
 
     def refresh_unresolved_evidence(
         self, key: UnresolvedConversationKey
     ) -> tuple[int, str] | None:
-        """Read the current unresolved identity evidence and CAS version atomically."""
+        """Read current unresolved evidence and its compare-and-set version.
+
+        Args:
+            key: Exact unresolved identity from the selected local authority.
+
+        Returns:
+            (conversation version, historical identity display text), or None
+            if foreign, missing, deleted, nonlocal, or now resolved. Historical
+            text is evidence only and must never select a replacement card."""
 
         if key.data_authority_id != self._authority:
             return None
@@ -869,7 +738,20 @@ class CharacterConversationSearchRepository:
         data_revision: int,
         limit: int = 200,
     ) -> tuple[dict[str, Any], ...] | None:
-        """Atomically fence a preview read by revision and exact authority."""
+        """Read a transcript only while its exact live identity remains valid.
+
+        Args:
+            target: Exact resolved local character conversation.
+            data_revision: Live page revision, not a retained corpus revision.
+            limit: Integer message bound 1..200 (booleans rejected).
+
+        Returns:
+            Oldest-first nondeleted message dictionaries, or None if revision,
+            authority, card or conversation eligibility changed. This is a
+            transcript preview, not the selected-branch Keyword document.
+
+        Raises:
+            ValueError: Limit is invalid."""
 
         limit = self._bounded_limit(limit, maximum=200)
         if target.character.data_authority_id != self._authority:
@@ -906,7 +788,15 @@ class CharacterConversationSearchRepository:
         return tuple(dict(row) for row in rows)
 
     def repair(self, request: CharacterRepairRequest) -> CharacterRepairResult:
-        """Compare-and-set one exact unresolved local conversation identity."""
+        """Compare-and-set one exact unresolved local conversation identity.
+
+        Args:
+            request: Explicitly confirmed replacement and conversation version.
+
+        Returns:
+            APPLIED after source update and derived-document invalidation;
+            STALE_VERSION, NOT_FOUND or INVALID_CANDIDATE without a repair when
+            validation fails. A resolved conversation cannot be repaired again."""
 
         if (
             request.unresolved.data_authority_id != self._authority
@@ -964,7 +854,13 @@ class CharacterConversationSearchRepository:
         return CharacterRepairResult.APPLIED
 
     def ensure_keyword_index(self) -> CharacterKeywordIndexStatus:
-        """Activate and build or reconcile the local Keyword generation."""
+        """Explicitly activate and build or maintain the local Keyword corpus.
+
+        Returns:
+            READY after complete fenced promotion/maintenance, BUILDING when
+            another lease owns a build, or FAILED on a handled build/maintenance
+            failure. Prior ready snapshots survive failed replacement builds.
+            Construction alone never starts work; call from an owning worker."""
 
         with self._database.transaction(immediate=True) as connection:
             revision = self._revision(connection)
@@ -1181,7 +1077,11 @@ class CharacterConversationSearchRepository:
             raise RuntimeError("Keyword ready generation was superseded")
 
     def keyword_index_status(self) -> CharacterKeywordIndexStatus:
-        """Return status for the current authority, policy, and source revision."""
+        """Read maintenance status for the current source revision and policy.
+
+        Returns:
+            Current status without starting work. ABSENT/FAILED can coexist with
+            an older ready snapshot that keyword_search can still safely query."""
 
         with self._database.transaction() as connection:
             revision = self._revision(connection)
@@ -1212,7 +1112,12 @@ class CharacterConversationSearchRepository:
         return CharacterKeywordIndexStatus.ABSENT
 
     def reconcile_keyword_index(self) -> CharacterKeywordIndexStatus:
-        """Rebuild the activated ready generation from authoritative SQLite."""
+        """Reconcile an already activated ready corpus against authoritative SQLite.
+
+        Returns:
+            ABSENT when dormant or without a compatible ready generation;
+            otherwise the fenced reconciliation result. This never activates a
+            dormant index or publishes partially processed content."""
 
         with self._database.transaction() as connection:
             state = connection.execute(
@@ -1720,6 +1625,14 @@ class CharacterConversationSearchRepository:
             and source["character_id"] > 0
             and source["live_card_id"] is not None
         )
+
+    @staticmethod
+    def _validated_query(value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("query must be text")
+        if len(value) > 200:
+            raise ValueError("query must not exceed 200 characters")
+        return value.strip()
 
     @staticmethod
     def _bounded_limit(value: int, *, maximum: int) -> int:

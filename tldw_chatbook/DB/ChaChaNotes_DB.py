@@ -7740,15 +7740,17 @@ UPDATE db_schema_version
         """Install the dormant selected-branch character Keyword projection."""
 
         self._require_migration_entry_version(conn, 65, "V65→V66")
-        from tldw_chatbook.DB.character_conversation_search import (
-            CHARACTER_CONVERSATION_SEARCH_SCHEMA_SQL,
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v65_to_v66_character_conversation_search.sql"
         )
 
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
                     cursor,
-                    CHARACTER_CONVERSATION_SEARCH_SCHEMA_SQL,
+                    migration_path.read_text(encoding="utf-8"),
                     "V65→V66",
                 )
                 self.backfill_character_conversation_legacy_links()

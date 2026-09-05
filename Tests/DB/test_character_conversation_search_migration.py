@@ -15,6 +15,29 @@ OWNED_OBJECTS = {
 }
 
 
+def test_v66_dispatches_versioned_sql_artifact(monkeypatch, tmp_path: Path) -> None:
+    artifact = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "DB"
+        / "migrations"
+        / "chachanotes_v65_to_v66_character_conversation_search.sql"
+    )
+    assert artifact.is_file()
+    reads = []
+    read_text = Path.read_text
+
+    def tracked_read(path, *args, **kwargs):
+        if path == artifact:
+            reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracked_read)
+    db = CharactersRAGDB(tmp_path / "artifact.sqlite", client_id="artifact")
+    assert reads == [artifact]
+    assert db._get_db_version(db.get_connection()) == 66
+
+
 def _owned_schema(db: CharactersRAGDB) -> dict[str, tuple[tuple[object, ...], ...]]:
     connection = db.get_connection()
     result: dict[str, tuple[tuple[object, ...], ...]] = {}

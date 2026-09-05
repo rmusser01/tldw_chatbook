@@ -24,6 +24,171 @@ def _card(db: CharactersRAGDB, name: str) -> int:
     return card_id
 
 
+@pytest.mark.parametrize("query", [None, False, 0, [], object(), "x" * 201, " " * 201])
+def test_unavailable_query_rejects_invalid_text(tmp_path: Path, query: object) -> None:
+    db = CharactersRAGDB(tmp_path / "query.sqlite", client_id="query")
+    with pytest.raises((TypeError, ValueError)):
+        CharacterConversationNavigationService(db).unavailable_page(query=query)
+
+
+def test_repair_candidate_pages_are_bounded_and_complete(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "repair-pages.sqlite", client_id="pages")
+    for index in range(53):
+        _card(db, ("same", "SAME", "Same")[index % 3] + str(index // 3))
+    _chat(
+        db,
+        conversation_id="unresolved",
+        character_id=1,
+        title="Unresolved",
+        content="body",
+        modified="2026-09-03T10:00:00Z",
+    )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET assistant_authority_id = NULL WHERE id = 'unresolved'"
+        )
+        expected = [
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM character_cards WHERE deleted = 0 ORDER BY name COLLATE NOCASE, id"
+            )
+        ]
+    service = CharacterConversationNavigationService(db)
+    key = UnresolvedConversationKey(db.get_local_authority_id(), "unresolved")
+    first = service.repair_candidates(key)
+    assert len(first.candidates) == 20
+    assert first.total == len(expected)
+    assert first.next_offset == 20
+    seen = []
+    offset = 0
+    while True:
+        page = service.repair_candidates(key, offset=offset, limit=7)
+        assert len(page.candidates) <= 7
+        assert page.total == len(expected)
+        seen.extend(candidate.key.character_id for candidate in page.candidates)
+        if page.next_offset is None:
+            break
+        assert page.next_offset == offset + len(page.candidates)
+        offset = page.next_offset
+    assert seen == expected
+    exhausted = service.repair_candidates(key, offset=len(expected) + 10)
+    assert (exhausted.candidates, exhausted.total, exhausted.next_offset) == (
+        (),
+        len(expected),
+        None,
+    )
+    foreign = service.repair_candidates(
+        UnresolvedConversationKey("other", "unresolved")
+    )
+    assert (foreign.candidates, foreign.total, foreign.next_offset) == ((), 0, None)
+    assert len(service.repair_candidates(key, limit=50).candidates) == 50
+    for kwargs in (
+        {"offset": -1},
+        {"offset": True},
+        {"offset": "1"},
+        {"limit": 0},
+        {"limit": True},
+        {"limit": "2"},
+        {"limit": 51},
+    ):
+        with pytest.raises(ValueError):
+            service.repair_candidates(key, **kwargs)
+
+
+def test_unavailable_query_normalizes_only_valid_bounded_text(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "valid-query.sqlite", client_id="query")
+    _chat(
+        db,
+        conversation_id="unresolved",
+        character_id=1,
+        title="Literal%_text",
+        content="body",
+        modified="2026-09-03T10:00:00Z",
+    )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET assistant_authority_id = NULL WHERE id = 'unresolved'"
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.unavailable_page(query=" " * 200).total == 1
+    assert service.unavailable_page(query="  Literal%_text  ").total == 1
+    assert service.unavailable_page(query="x" * 200).total == 0
+
+
+@pytest.mark.parametrize("during_build", [False, True])
+def test_explicit_card_insert_invalidates_missing_card_chats(
+    tmp_path: Path, monkeypatch, during_build: bool
+) -> None:
+    db = CharactersRAGDB(tmp_path / "insert-card.sqlite", client_id="insert")
+    # Model a historical import containing dangling card IDs, then restore
+    # normal FK enforcement before the insertion under test.
+    db.get_connection().execute("PRAGMA foreign_keys = OFF")
+    for name, character_id in (
+        ("A-missing", 99001),
+        ("B-wrong", 99001),
+        ("C-name", 99002),
+        ("Z-live", 1),
+    ):
+        _chat(
+            db,
+            conversation_id=name,
+            character_id=character_id,
+            title=name,
+            content="INSERT_TERM",
+            modified="2026-09-03T10:00:00Z",
+        )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET assistant_authority_id = 'other' WHERE id = 'B-wrong'"
+        )
+        connection.execute(
+            "UPDATE conversations SET assistant_id = 'Inserted' WHERE id = 'C-name'"
+        )
+    db.get_connection().execute("PRAGMA foreign_keys = ON")
+    service = CharacterConversationNavigationService(db)
+    repository = service._repository
+    before = repository._revision()
+
+    def insert_card():
+        with db.transaction() as connection:
+            connection.execute(
+                "INSERT INTO character_cards(id, name, client_id) VALUES(99001, 'Inserted', 'insert')"
+            )
+
+    if during_build:
+        store = repository._replace_documents
+        inserted = False
+
+        def insert_after_scan(*args, **kwargs):
+            nonlocal inserted
+            if not inserted:
+                insert_card()
+                inserted = True
+            return store(*args, **kwargs)
+
+        monkeypatch.setattr(repository, "_replace_documents", insert_after_scan)
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.FAILED
+        assert service.keyword_search("INSERT_TERM").total == 0
+    else:
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        assert service.keyword_search("INSERT_TERM").total == 1
+        insert_card()
+    assert repository._revision() > before
+    dirty = (
+        db.get_connection()
+        .execute(
+            "SELECT data_authority_id FROM character_conversation_search_dirty WHERE conversation_id = 'A-missing'"
+        )
+        .fetchone()
+    )
+    assert dirty[0] == db.get_local_authority_id()
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert {row.title for row in service.keyword_search("INSERT_TERM").rows} == {
+        "A-missing",
+        "Z-live",
+    }
+
+
 def _chat(
     db: CharactersRAGDB,
     *,
@@ -1078,17 +1243,17 @@ def test_repair_candidates_stay_in_authority_and_repair_uses_expected_version(
     assert (
         service.repair_candidates(
             UnresolvedConversationKey(authority, "already-resolved")
-        )
+        ).candidates
         == ()
     )
 
-    candidates = service.repair_candidates(unresolved)
+    candidates = service.repair_candidates(unresolved).candidates
     assert candidates
     assert {candidate.key.data_authority_id for candidate in candidates} == {authority}
     assert (
         service.repair_candidates(
             UnresolvedConversationKey("different-authority", "repair-me")
-        )
+        ).candidates
         == ()
     )
     assert (

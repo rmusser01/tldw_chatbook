@@ -1,11 +1,11 @@
 ---
 id: TASK-31242
 title: Build character conversation projection and Keyword index
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:05'
-updated_date: '2026-09-05 21:49'
+updated_date: '2026-09-05 22:16'
 labels:
   - database
   - search
@@ -57,6 +57,7 @@ ADR path: backlog/decisions/120-character-conversation-navigation-and-local-sema
 Reason: faithful existing authority/storage/pagination contract.
 Final schema version: 66; current origin/dev 7aa048790 is schema 65, preserving shipped migrations.
 5. Fix round1: TDD prior-ready snapshot metadata/availability, atomic SQLite build claims and fenced finalization, indexed-text-only FTS trigger; keep v66 fresh/upgrade parity, capture compact raw logs and rerun exact scope without rebase.
+6. External Qodo round1: reproduce bounded repair paging, strict unavailable query validation and card-insert invalidation with real SQLite RED tests; relocate unshipped v66 DDL to a packaged versioned artifact, document public contracts and independently verify retained snapshot fencing. Run focused GREEN then the nine-file covering gate, migration packaging and scoped static/guards. ADR120 applies; no new ADR. Keep In Progress pending independent review; no rebase/push.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -74,4 +75,7 @@ Compatibility review: CharacterConversationPage appends keyword_snapshot with a 
 Final merged-base closeout (2026-09-05): PR1 merged at 4e904f54db74497950eb31594fb37c8cd48568f3. Preserved approved 7dead4898 in codex/task-31242-pre-final-base-7dead4898, then rebased only the six Task2 commits from documentation ancestor304d7cc45 onto that latest dev. All six range-diff entries are equivalent; no conflicts or Task2 runtime overlap. Both Buddy Stop and Task2 index-guard lessons remain. Verified runtime head29a80b9a8861fe7da419b0bb325d4f1056c77f91 retains complete-date-key paging and independently approved I1/I2/I3 corrections (pr-31242-rereview-1.md:3 addressed,0 open Important/Critical,0 new findings).
 Actual merged-base nine-file gate:135 passed,1 inherited RequestsDependencyWarning in31.92s. Raw log:/private/tmp/character-keyword-final-base.gZ5RTQ/final-gate.log. Resource subset:76 owners,51 handles drained,0 remaining; process FD delta+13 remains disclosed. All scoped Ruff/format and fatal legacy checks passed; fresh diagnostic code/message multisets equal merged base (588/6/1/1/0/0). Schema110 tables,index275/275/62 pins,Backlog3330 files,CSS,profile and diagnostic inventories and full PR-range whitespace passed; compact logs in the same directory. No source edit during tests, no full suite/native app/dependency/cap changes. Schema66 remains unshipped after upstream65, ADR120 applies with no new ADR.
 All Task2 ACs and scoped review/qualification gates are complete, so status is Done under the final-base brief. Earlier In Progress/pending-review paragraphs are historical. PR2 has not been published or merged by this worker. Snapshot-label propagation, cancellation/Data Profile/activation/live-navigation integration remain assigned to owning Tasks3–5; no such UI gate is claimed complete. Controller owns remote publication and subsequent review/merge.
+
+PR2434 external Qodo round1 (FIX_BASE cb68308cf): reopened In Progress pending independent review. Moved unshipped v66 DDL to chachanotes_v65_to_v66_character_conversation_search.sql and existing file-backed dispatcher/package/guard discovery. Added capped repair_candidates(key, *, offset=0, limit=20) returning CharacterRepairPage(candidates,total,next_offset), limit1..50, deterministic SQLite NOCASE name then ID; callers must follow continuation and restart after mutations. Unavailable metadata query rejects nontext or >200 characters before stripping; empty date browsing preserved. Documented public navigation/repository contracts. Card INSERT now advances revision and enqueues exact-ID affected chats under activated ownership, preventing an incomplete in-flight READY promotion. Wrong-authority and name-only cases remain excluded. Retained-snapshot revision fence independently verified and unchanged.
+TDD raw logs: /private/tmp/character-keyword-qodo1.3RcKio/. Initial RED7 query cases and missing artifact; corrected fixtures reproduce unbounded tuple and both card-insert defects (three failures). Focused GREEN artifact8,paging/query12,insert2. Covering nine-file gate plus4 real wheel/sdist migration checks:151 passed,1 inherited warning in39.67s, final-gate.log. Owners88,handles drained63,remaining0; process FD delta+13 remains subset-only. Scoped Ruff/format and fatal legacy rules pass; legacy code/message Counters equal FIX_BASE588/6/1/1/0/0. Schema110,index275/275/62pins,task3330 and whitespace pass. ADR120 applies, no new ADR/schema version, no UI/native/Meaning/dependency changes or full suite. Task3 Library/Context callers must adopt explicit pages; no silent first-page slicing. Prior Done paragraphs are historical; controller gates independent review before completion and owns remote writes/rebase.
 <!-- SECTION:NOTES:END -->
