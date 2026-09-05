@@ -8623,8 +8623,18 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError()
 
         def provider_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            # History annotations identify saved owners, but are not provider
+            # values. Match and freeze the same visible shape that serialization
+            # sends; otherwise the agent bridge cannot reuse its saved descriptor.
             return {
-                key: value for key, value in row.items() if key != NATIVE_MESSAGE_ID_KEY
+                key: value
+                for key, value in row.items()
+                if key
+                not in {
+                    NATIVE_MESSAGE_ID_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                }
             }
 
         source_by_owner = {
