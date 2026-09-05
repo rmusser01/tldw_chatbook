@@ -22,6 +22,10 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     NO_PROVIDER_CONTENT_COPY,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -231,7 +235,18 @@ class _SignalGateway:
     async def resolve_for_send(self, _selection):
         return self.resolution
 
-    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+    async def stream_chat(
+        self,
+        resolution,
+        messages,
+        tools=None,
+        signals=None,
+        *,
+        route=None,
+        route_actor_id=None,
+        route_chain_id=None,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+    ):
         system = str(messages[0].get("content", "")) if messages else ""
         is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
         self.calls.append(
@@ -240,6 +255,10 @@ class _SignalGateway:
                 "messages": messages,
                 "tools": tools,
                 "signals": signals,
+                "route": route,
+                "route_actor_id": route_actor_id,
+                "route_chain_id": route_chain_id,
+                "capture_mode": capture_mode,
             }
         )
         if is_child:
@@ -468,6 +487,14 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
     # The repair turn (the last parent script) is bypassed, which is the
     # whole point -- so the run stops one parent turn short.
     assert len(gateway.calls) == expected_calls
+    assert gateway.calls[0]["route"] is ConsoleRequestRoute.AGENT_FIRST
+    assert all(
+        call["route_actor_id"] and call["route_chain_id"] for call in gateway.calls
+    )
+    assert all(
+        call["capture_mode"] is ConsoleTraceCaptureMode.CAPTURE_OFF
+        for call in gateway.calls
+    )
     signals = [call["signals"] for call in gateway.calls]
     assert signals[0] is not None
     assert all(signal is signals[0] for signal in signals)
@@ -494,6 +521,14 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
     )
     assert result.visible_copy == assistant.content == repaired
     assert len(gateway.calls) == 2
+    assert [call["route"] for call in gateway.calls] == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.CITATION_REPAIR,
+    ]
+    assert gateway.calls[0]["route_actor_id"]
+    assert gateway.calls[0]["route_chain_id"]
+    assert gateway.calls[1]["route_actor_id"] is None
+    assert gateway.calls[1]["route_chain_id"] is None
     assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
     assert gateway.calls[0]["signals"].synthetic_fallback_emitted is False
 
@@ -1312,7 +1347,11 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp_path):
+@pytest.mark.parametrize("partial_reply", ["", "a bad partial regenerate"])
+async def test_run_error_via_regenerate_preserves_original_answer_and_status(
+    tmp_path,
+    partial_reply,
+):
     controller, store, _db = _controller(tmp_path, [["unused"]])
 
     def good_run_reply(*, assistant_message_id, **_kwargs):
@@ -1337,7 +1376,8 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     assert assistant.status == "complete"
 
     def erroring_run_reply(*, assistant_message_id, **_kwargs):
-        store.append_stream_chunk(assistant_message_id, "a bad partial regenerate")
+        if partial_reply:
+            store.append_stream_chunk(assistant_message_id, partial_reply)
         return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="regenerate exploded")],
@@ -1358,7 +1398,31 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.SYSTEM
     ]
-    assert system_rows and "regenerate exploded" in system_rows[-1].content
+    assert len(system_rows) == 1
+    assert system_rows[0].content == "Agent run failed: regenerate exploded."
+    assert system_rows[0].persisted_message_id is None
+    assert store.active_leaf(session_id) == system_rows[0].id
+    assert store.active_path_message_ids(session_id)[-2:] == [
+        assistant.id,
+        system_rows[0].id,
+    ]
+    siblings, _index, count = store.siblings_at(assistant.id)
+    assert count == 2
+    failed_sibling = next(row for row in siblings if row.id != assistant.id)
+    assert failed_sibling.status == "failed"
+    assert failed_sibling.content == partial_reply
+    if partial_reply:
+        _assert_durable_row(store, failed_sibling.persisted_message_id)
+    else:
+        # Empty assistants retain their native retry node; durable creation
+        # is deferred until there is terminal content to persist.
+        assert failed_sibling.persisted_message_id is None
+    provider_messages = controller._provider_messages_for_session(session_id)
+    assert provider_messages[-1] == {
+        "role": "assistant",
+        "content": "good original answer.",
+    }
+    assert not any("regenerate exploded" in str(row) for row in provider_messages)
 
 
 # -- Blind spot: retry/continue/regenerate must also run through the agent path --
@@ -1697,14 +1761,19 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
 
     sentinel = _SentinelBuiltinGate()
-    monkeypatch.setattr(
-        controller_module, "build_builtin_gate", lambda service=None: sentinel
-    )
+    gate_calls = []
+
+    def build_gate(service=None, *, profile_id):
+        gate_calls.append((service, profile_id))
+        return sentinel
+
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
 
     result = await controller.submit_draft("hi")
 
     assert result.accepted is True
     assert captured[0]["builtin_gate"] is sentinel
+    assert gate_calls == [(None, "default")]
 
     review_hook = captured[0]["review_tool_calls"]
     assert sentinel.begin_turn_calls == 0
@@ -1760,14 +1829,21 @@ async def test_review_precheck_and_dispatch_share_captured_scratch(
         row.call_id or row.llm_name: "approve_once" for row in pending
     }
     gate = ScratchReviewGate()
+    gate_calls = []
+
+    def build_gate(service=None, *, profile_id):
+        gate_calls.append((service, profile_id))
+        return gate
+
     monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
-    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None: gate)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
     monkeypatch.setattr(controller_module, "path_precheck_failed", record_precheck)
 
     result = await controller.submit_draft("hi")
 
     assert result.accepted is True
     dispatch_root = captured[0]["scratch_root"]
+    assert gate_calls == [(None, "default")]
     dispatch_lease = captured[0]["scratch_lease"]
     with dispatch_lease() as leased_root:
         assert leased_root == dispatch_root

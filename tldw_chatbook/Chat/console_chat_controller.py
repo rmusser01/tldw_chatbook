@@ -15013,10 +15013,13 @@ class ConsoleChatController:
         if persisted_sibling is not None and persisted_sibling.status == "failed":
             active_messages = self.store.messages_for_session(session_id)
             failure_row = active_messages[-1] if active_messages else None
+            # Agent results carry partial answer text, whereas the owning
+            # session's terminal state carries the displayed failure notice.
+            failure_copy = self.run_state_for(session_id).visible_copy
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.content == failure_copy
             ):
                 # Provider failure rows are transcript-only. Re-home the row
                 # from beneath the failed sibling onto the restored original
@@ -15027,9 +15030,9 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.content == failure_copy
             ):
-                self._append_failure_system_row(session_id, result.visible_copy)
+                self._append_failure_system_row(session_id, failure_copy)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
