@@ -15319,12 +15319,24 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(copy, severity="information")
 
     async def confirm_navigation(self) -> bool:
-        """Delegate revision-pinned Console loss confirmation."""
+        """Allow tab switches: leaving Console no longer cancels anything.
 
-        controller = self._console_chat_controller
-        if controller is None:
-            return True
-        return await self._session.confirm_navigation(controller)
+        TASK-31520 reconciles the TASK-1143 F5 gate with screen reuse: the
+        chat route is reusable, so navigating away SUSPENDS this screen --
+        live runs, queued prompts, and parked approvals all keep running
+        and are exactly as the user left them on return. The busy-fleet
+        confirmation this used to delegate warned "Leaving Console will
+        cancel or discard ..."; under reuse that claim is false, and a
+        dialog gating a lossless action is friction, not protection.
+        ``confirm_quit`` below is unchanged -- app exit still cancels
+        everything via ``dispose_console_runtime``, so its warning stays
+        true.
+
+        Returns:
+            ``True`` always: navigation is lossless for the reusable
+            Console route, so there is nothing to confirm.
+        """
+        return True
 
     async def confirm_quit(self) -> bool:
         """Delegate revision-pinned Console loss confirmation for app quit."""
@@ -21210,14 +21222,78 @@ class ChatScreen(BaseAppScreen):
             logger.debug("No compact model bar available for reverse sync")
         self._sync_console_control_bar()
 
-    # NOTE (task-247, perf): there used to be an on_screen_suspend() override
-    # here that called self.save_state() again and discarded the result.
-    # app.py already calls save_state() explicitly before switching screens
-    # away from Console and offers that return value to ScreenStateStore; the
-    # second call here was pure waste (a full O(sessions x messages)
-    # native-console serialization) on every tab switch away from Console.
-    # Removed rather than left as a no-op so it doesn't shadow a future
-    # base-class implementation.
+    # NOTE (task-247, perf): an earlier on_screen_suspend() override here
+    # called self.save_state() again and discarded the result -- pure waste,
+    # removed. TASK-31520 reintroduces the hook with a different job: the
+    # chat route is now reusable, so navigation SUSPENDS this screen
+    # instead of unmounting it, and Textual only auto-cancels timers on a
+    # real removal. save_state() still deliberately does NOT run here
+    # (app.py's navigation seam owns that call).
+
+    def on_screen_suspend(self) -> None:
+        """Quiesce visit-scoped Console work while this screen is covered.
+
+        TASK-31520 (audit 2026-09-04, 19-step on_unmount disposition).
+        What runs here: the per-visit timers stop, live audio abandons
+        (mic capture and TTS must not continue against a hidden screen --
+        today's leave behavior, preserved), the handoff-channel claim
+        releases (its store starves every future claim while one is held),
+        and the sidebar-state debounce flushes.
+
+        What deliberately does NOT run here, unlike ``on_unmount`` (each
+        was audited; wiring them to suspend breaks the feature):
+
+        * ``leave_console_runtime`` / fleet teardown -- runs and parked
+          approvals now SURVIVE navigation (the reuse-era contract;
+          ``confirm_navigation`` reflects it). A suspend-time detach would
+          permanently kill the prompt queue: ``begin_visit`` never
+          re-fires for a reused screen.
+        * ``_drain_pending_console_videos`` -- its closed-flag has no
+          reset path; calling it here would disable video generation for
+          the rest of the app run after the first tab switch.
+        * the H3 image-edit screen pointer -- clearing it strands any
+          completion that lands while hidden; the suspended screen is
+          still THE Console screen.
+        * roleplay-persistence abandon, the hands-free store tap (its
+          install is idempotent), and the previews cache -- all correct to
+          leave running/installed across a suspend.
+        """
+        self._release_claimed_conversation_settings_return()
+        # The debounced sidebar write is async and its read-modify-write of
+        # ui_state.toml is unlocked, so consecutive suspends must SERIALIZE
+        # (Qodo #2420 finding 6: a rapid leave/return/leave could let the
+        # OLDER snapshot finish last and clobber the newer). Each suspend's
+        # flush awaits the previous one; the task is held so asyncio cannot
+        # GC it mid-write (same rationale as _retain_unfinished_flush).
+        previous_flush = getattr(self, "_console_suspend_sidebar_flush", None)
+
+        async def _serialized_sidebar_flush() -> None:
+            if previous_flush is not None and not previous_flush.done():
+                with contextlib.suppress(Exception):
+                    await previous_flush
+            await self._flush_sidebar_state_now()
+
+        self._console_suspend_sidebar_flush = asyncio.ensure_future(
+            _serialized_sidebar_flush()
+        )
+        # Qodo #2420 finding 4: resume schedules 0.15s handoff-consumption
+        # callbacks; a switch-away inside that window would let them consume
+        # prompt/provider/fleet handoffs against the hidden screen. They are
+        # tracked (see on_screen_resume) and stopped here.
+        for timer in getattr(self, "_console_resume_handoff_timers", ()):
+            timer.stop()
+        self._console_resume_handoff_timers = []
+        self._message.invalidate_console_speech_context()
+        self._console_auto_speak.unmount()
+        self._stop_console_transcript_sync_timer()
+        self._fleet._stop_console_fleet_survivor_tick()
+        self._stop_console_cost_ttl_timer()
+        self._console_draft_spend_refresh.stop()
+        self._hands_free.teardown()
+        self._console_suspend_flush_tasks = [
+            asyncio.ensure_future(self._realtime.teardown()),
+            asyncio.ensure_future(self._dictation.teardown()),
+        ]
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
@@ -21225,6 +21301,25 @@ class ChatScreen(BaseAppScreen):
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)
+        # TASK-31520: re-arm what on_screen_suspend quiesced. mount() is
+        # idempotency-guarded, so the first visit's mount+resume pair does
+        # the wiring once. A run left active while the user was away needs
+        # its 0.2s sync poll back (no other path restarts it -- the timer's
+        # own starters are all user-action-triggered), and the survivor
+        # hedge is the same self-gating call on_mount schedules.
+        self._console_auto_speak.mount()
+        controller_for_timer = self._console_chat_controller
+        if (
+            controller_for_timer is not None
+            and controller_for_timer.in_flight_run_count() > 0
+        ):
+            self._start_console_transcript_sync_timer()
+        self._fleet._maybe_start_console_fleet_survivor_tick()
+        # Cost/cache chip: suspend stopped the 10s TTL repaint timer, and a
+        # WARM cache may have expired while away -- this sync repaints from
+        # fresh state and self-arms the timer again only when still WARM
+        # (Qodo #2420 finding 5).
+        self._sync_console_cost_chip()
         # task-15475: consume the mount's one-shot token. On the FIRST visit
         # this resume is the mount's own, and on_mount already dispatched the
         # skill-candidate worker and scheduled the task-resume sync; running
@@ -21281,15 +21376,23 @@ class ChatScreen(BaseAppScreen):
         # immediately before inserting, so the insert is self-guarding
         # regardless of which lifecycle hook scheduled it.
         if not ordered_resume_active:
-            self.set_timer(0.15, self._consume_pending_console_prompt_insert)
-            self.set_timer(0.15, self.consume_pending_console_provider_intent)
-            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
-            # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
-            # while the user was on another screen is claimed on resume too.
-            self.set_timer(
-                0.15,
-                self._fleet.consume_pending_console_fleet_completion,
-            )
+            # Tracked so on_screen_suspend can stop them: a switch-away
+            # inside the 0.15s window must not consume handoffs against the
+            # hidden screen (Qodo #2420 finding 4).
+            self._console_resume_handoff_timers = [
+                self.set_timer(0.15, self._consume_pending_console_prompt_insert),
+                self.set_timer(0.15, self.consume_pending_console_provider_intent),
+                self.set_timer(
+                    0.15, self._consume_pending_conversation_settings_return
+                ),
+                # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
+                # staged while the user was on another screen is claimed on
+                # resume too.
+                self.set_timer(
+                    0.15,
+                    self._fleet.consume_pending_console_fleet_completion,
+                ),
+            ]
             self.call_after_refresh(self._restore_console_workbench_focus)
         if not ordered_resume_active:
             repair_dispatched = self._consume_pending_console_roleplay_repair()
