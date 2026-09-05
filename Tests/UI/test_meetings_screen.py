@@ -29,6 +29,7 @@ class FakeSession:
         self.failed_segments = 0
         self.listeners: list[Any] = []
         self.capture = SimpleNamespace(levels=lambda: (0.5, 0.25), audio_position_s=65.0, mode=mode)
+        self._result = None
 
     def subscribe(self, listener):
         self.listeners.append(listener)
@@ -45,6 +46,11 @@ class FakeSession:
         self.segments.append(seg)
         self.emit("segment", seg)
         return seg
+
+    def stop(self, reason="user"):
+        # Mirrors the real MeetingSession.stop(): idempotent, returns the
+        # cached result.
+        return self._result
 
 
 class FakeOwner:
@@ -83,12 +89,21 @@ class FakeOwner:
         self.session.emit("state", "recording")
 
     def stop(self, reason="user"):
+        # Mirrors the real MeetingSessionOwner.stop() -> MeetingSession.stop()
+        # lifecycle: the session emits "stopping" then "stopped" itself,
+        # SYNCHRONOUSLY, before this call returns to its caller.
         self.stop_reasons.append(reason)
-        self.session.state = "stopped"
+        session = self.session
+        session.state = "stopping"
+        session.emit("state", "stopping")
         self.local_sink.job_id = "ingest-job-3"
-        return MeetingResult(meta=self.session.meta, ended_at="2026-09-04T15:35:00", duration_s=65.0,
-                             segment_count=len(self.session.segments), transcription_complete=False,
-                             failed_segments=1, stop_reason=reason)
+        result = MeetingResult(meta=session.meta, ended_at="2026-09-04T15:35:00", duration_s=65.0,
+                               segment_count=len(session.segments), transcription_complete=False,
+                               failed_segments=1, stop_reason=reason)
+        session._result = result
+        session.state = "stopped"
+        session.emit("state", "stopped")
+        return result
 
     def apply_device_choice(self, kind, value):
         self.choices.append((kind, value))
@@ -167,6 +182,59 @@ async def test_start_pause_stop_flow_renders_transcript_and_footer(tmp_path):
         assert "ingest-job-3" in footer and str(tmp_path) in footer
         assert screen.query_one("#meetings-open-library", Button).disabled is False
         assert owner.stop_reasons == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_user_stop_finalises_exactly_once(tmp_path, monkeypatch):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        calls = []
+        real = screen._on_stopped
+        monkeypatch.setattr(screen, "_on_stopped", lambda result: calls.append(result) or real(result))
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        assert len(calls) == 1 and calls[0].stop_reason == "user"
+        assert "Library ingest queued: ingest-job-3" in _text(screen.query_one("#meetings-footer", Static))
+
+
+@pytest.mark.asyncio
+async def test_external_stop_finalises_via_state_event(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.local_sink.job_id = "ingest-job-4"
+        result = MeetingResult(meta=owner.session.meta, ended_at="2026-09-04T15:00:00", duration_s=12.0,
+                               segment_count=0, transcription_complete=True, failed_segments=0, stop_reason="mic_lost")
+        owner.session._result = result
+        owner.session.state = "stopped"
+        owner.session.emit("state", "stopped")      # watchdog ended it; no button press
+        await pilot.pause(0.2)
+        footer = _text(screen.query_one("#meetings-footer", Static))
+        assert "ingest-job-4" in footer and "00:00:12" in footer
+        assert screen.query_one("#meetings-start", Button).disabled is False
+        assert owner.stop_reasons == []              # the screen never called owner.stop()
+
+
+@pytest.mark.asyncio
+async def test_stopping_state_disables_all_three_buttons(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.state = "stopping"
+        owner.session.emit("state", "stopping")
+        await pilot.pause(0.1)
+        for wid in ("#meetings-start", "#meetings-pause", "#meetings-stop"):
+            assert screen.query_one(wid, Button).disabled is True, wid
 
 
 @pytest.mark.asyncio

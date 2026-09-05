@@ -38,6 +38,13 @@ class MeetingsScreen(BaseAppScreen):
         self._attached: Any | None = None
         self._level_timer = None
         self._transcribing = False
+        # True while a user-initiated Stop is in flight: `owner.stop()`
+        # synchronously emits a "state","stopped" event to listeners (from
+        # inside `MeetingSession.stop()`) before it even returns to
+        # `_stop_worker` -- without this, the "stopped" state event's own
+        # finalisation path in `_apply_event` would race `_stop_worker`'s
+        # `call_from_thread(self._on_stopped, result)`, finalising twice.
+        self._stop_requested = False
         # Starts True, not False: a `Select(..., value=X, allow_blank=False)`
         # only stores X on the private `_value` in `__init__` -- its FIRST
         # real `Select.Changed` fires from `Select._on_mount`'s own
@@ -214,6 +221,7 @@ class MeetingsScreen(BaseAppScreen):
     # ---- start / pause / stop ---------------------------------------------
     @on(Button.Pressed, "#meetings-start")
     def _start_pressed(self) -> None:
+        self._stop_requested = False
         self.query_one("#meetings-start", Button).disabled = True
         self.rendered_lines.clear()
         self.query_one("#meetings-transcript", RichLog).clear()
@@ -251,6 +259,7 @@ class MeetingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#meetings-stop")
     def _stop_pressed(self) -> None:
+        self._stop_requested = True
         self.query_one("#meetings-stop", Button).disabled = True
         self.query_one("#meetings-pause", Button).disabled = True
         self._stop_worker()
@@ -263,6 +272,7 @@ class MeetingsScreen(BaseAppScreen):
     def _on_stopped(self, result: MeetingResult | None) -> None:
         self._detach()
         self._set_buttons("stopped")
+        self._stop_requested = False
         if result is None:
             return
         sink = getattr(self._owner, "local_sink", None)
@@ -314,8 +324,14 @@ class MeetingsScreen(BaseAppScreen):
                 partial.update("")
         elif kind == "state":
             self._set_buttons(str(payload))
-            if payload == "stopped" and self._attached is not None:
-                # Ended by the watchdog or shutdown, not by our Stop button.
+            if payload == "stopped" and self._attached is not None and not self._stop_requested:
+                # Ended by the watchdog or shutdown, not by our Stop button
+                # (a user-initiated stop is already being finalised by
+                # `_stop_worker`'s own `call_from_thread(self._on_stopped,
+                # result)` once `owner.stop()` returns -- `session.stop()`
+                # emits this same "stopped" event synchronously from
+                # INSIDE that call, so without the `_stop_requested` guard
+                # this branch would finalise the same stop a second time).
                 # `session.stop()` is idempotent and returns the cached
                 # result -- never read `owner.last_result` here, it may not
                 # be assigned yet.
