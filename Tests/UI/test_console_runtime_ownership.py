@@ -1216,6 +1216,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
+    app._meeting_session_owner = None
     app._shutdown_notes_sync_runtime = no_op_lifecycle
     app._shutdown_raw_cli_runtime = no_op_lifecycle
     app._shutdown_terminal_session_manager = shutdown_terminal_manager

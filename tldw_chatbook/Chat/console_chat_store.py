@@ -173,15 +173,6 @@ from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
 )
-from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
-from tldw_chatbook.Chat.console_generation_settings_metadata import (
-    ConsoleGenerationSettingsReadStatus,
-    ConsoleGenerationSettingsSnapshot,
-    ConsoleGenerationSettingsWriteResult,
-    ConsoleGenerationSettingsWriteStatus,
-    merge_console_generation_settings,
-    snapshot_from_session_settings,
-)
 from tldw_chatbook.Chat.console_session_endpoint_policy import (
     ConsoleEndpointAdoptionReceipt,
     ConsoleEndpointPolicyState,

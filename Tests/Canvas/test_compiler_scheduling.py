@@ -162,6 +162,7 @@ async def test_served_preview_yields_during_compilation(monkeypatch):
                 "active_message_ids": ["message"],
                 "selected_canvas_id": "canvas",
                 "selected_revision_id": "revision",
+                "selection_generation": "intent-a",
             }
         )
 
@@ -365,6 +366,7 @@ async def test_served_preview_rechecks_child_branch_after_compilation(monkeypatc
                 "active_message_ids": list(branch),
                 "selected_canvas_id": "canvas",
                 "selected_revision_id": "revision",
+                "selection_generation": "intent-a",
             }
         )
 
@@ -492,6 +494,7 @@ async def test_near_limit_operations_preserve_source_and_allow_loop_progress(
                 "active_message_ids": ["message"],
                 "selected_canvas_id": scope.canvas_id,
                 "selected_revision_id": scope.revision_id,
+                "selection_generation": "intent-a",
             }
         )
 
