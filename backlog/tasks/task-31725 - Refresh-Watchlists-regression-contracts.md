@@ -1,5 +1,5 @@
 ---
-id: TASK-31567
+id: TASK-31725
 title: Refresh Watchlists regression contracts
 status: Done
 assignee: []

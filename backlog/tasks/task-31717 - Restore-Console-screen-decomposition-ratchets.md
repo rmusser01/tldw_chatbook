@@ -1,5 +1,5 @@
 ---
-id: TASK-31642
+id: TASK-31717
 title: Restore Console screen decomposition ratchets
 status: In Progress
 assignee:
@@ -41,6 +41,6 @@ Extracted seven cohesive owners through the existing wiring graph: settings dura
 
 The screen fell from 21,882 lines / 677 direct AST methods to 16,873 / 559, below the unchanged 16,966 / 563 ceilings. The method delta is 64 net ownership moves plus 54 exact redundant getter/setter methods replaced by the existing writable controller-state descriptor. No mixins, generic screen proxies, raised caps or code compression were used. Constructor/lifecycle reads preserve the wired contract; bare fixtures were explicitly migrated.
 
-Final focused evidence: 48 row-action/persistence/export tests, 54 parallel-run/draft-snapshot tests, 141 command/raw/question tests, 246 state-owner tests, 81 context/cost tests (two independently reproduced baseline failures excluded), and 42 size/worker/bare-shell guards passed in their respective runs. Full Ruff checks on the changed production ownership graph and affected row/worker tests passed, as did the ten-file formatter check. Earlier stage evidence and ownership details are recorded in `backlog/docs/console-decomposition-repair-31642.md`.
+Final focused evidence: 48 row-action/persistence/export tests, 54 parallel-run/draft-snapshot tests, 141 command/raw/question tests, 246 state-owner tests, 81 context/cost tests (two independently reproduced baseline failures excluded), and 42 size/worker/bare-shell guards passed in their respective runs. Full Ruff checks on the changed production ownership graph and affected row/worker tests passed, as did the ten-file formatter check. Earlier stage evidence and ownership details are recorded in `backlog/docs/console-decomposition-repair-31717.md`.
 
 The worker source guard now follows the existing conditional summary alias and both summary targets, with explicit local-table handling and fail-loud unknown aliases. Star-row and rewind fixtures were corrected at their real input/scheduler boundaries after reproducing queued-refresh races. The coordinating task owns baseline style/cost-cache repairs, shared inventory reconciliation and the full suite. AC #3 and Done remain pending that integrated evidence; this record does not claim a clean full sweep.
