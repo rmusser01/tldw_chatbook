@@ -170,15 +170,26 @@ def test_stop_submits_through_call_from_thread(tmp_path, monkeypatch):
     assert owner.local_sink.job_id == "ingest-job-1"
 
 
+def _wait_for_result(owner: mo.MeetingSessionOwner, timeout: float = 2.0) -> None:
+    """Poll for the stop outcome, not for `is_active` to flip.
+
+    `is_active` can read False for a brief window before `last_result` is
+    assigned (MeetingSession.stop() flips state to "stopping" well before it
+    finishes computing the result) -- polling on it here raced the watchdog
+    thread. Waiting on the actual outcome is deterministic instead.
+    """
+    deadline = time.monotonic() + timeout
+    while owner.last_result is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 def test_watchdog_stops_on_fault(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
     owner.prepare()
     session = owner.start()
     session.capture.fault = OSError("disk full")
-    deadline = time.monotonic() + 2
-    while owner.is_active and time.monotonic() < deadline:
-        time.sleep(0.01)
+    _wait_for_result(owner)
     assert not owner.is_active and owner.last_result.stop_reason == "disk_error"
 
 
@@ -191,9 +202,7 @@ def test_watchdog_stops_on_stalled_clock_but_not_while_paused(tmp_path, monkeypa
     time.sleep(0.15)
     assert owner.is_active            # paused: no stall verdict
     session.resume()
-    deadline = time.monotonic() + 2   # no mic frames ever arrive -> stall
-    while owner.is_active and time.monotonic() < deadline:
-        time.sleep(0.01)
+    _wait_for_result(owner)           # no mic frames ever arrive -> stall
     assert not owner.is_active and owner.last_result.stop_reason == "mic_lost"
 
 
