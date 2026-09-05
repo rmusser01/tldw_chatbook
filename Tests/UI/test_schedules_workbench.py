@@ -4349,6 +4349,64 @@ async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
 
 
 @pytest.mark.asyncio
+async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
+    """Finding 6/Major 10 (root-causes.md, task-3): root-causes' own
+    verdict already REFUTES "clicks don't work" (a real synthesized
+    mouse click lands fine). It also proposed a residual worth-fixing
+    claim -- the buttons are "1 row tall... a 1-row-tall target at a
+    screen edge" (`btn.size == Size(16, 1)`, and its own report also
+    states `region: height=1`) -- and recommended widening via
+    `min-height: 3`.
+
+    Direct measurement against the CURRENT real bundle REFUTES that
+    residual claim too: `.size.height` is indeed 1 (content box only),
+    but `.region.height` -- the compositor's actual laid-out click
+    target, the attribute that matters for "does a click land" -- is
+    ALREADY 3 at every screen size probed (80x24, 120x40, 235x52,
+    verified interactively). The reason: Textual's own `Button.-style-
+    default` DEFAULT_CSS sets `border-top: tall` + `border-bottom: tall`
+    (1 row each) around the 1-row content, giving 3 laid-out rows
+    regardless of this app's CSS. Adding `min-height: 3` here was
+    therefore a no-op (confirmed by toggling it and rebuilding the CSS
+    bundle both ways -- `.region.height` stayed 3 either way), so no
+    source change was made; this test pins the ACTUAL state (a
+    comfortable click target) as a regression guard, not a fix."""
+    app = _RailTestApp(
+        _RailService(
+            conflicts=[{"id": "c1", "local_state": {"title": "Digest"}}]
+        )
+    )
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
+        badge.press()
+        await pilot.pause()
+
+        overlay_tab = pilot.app.screen.query_one(
+            "#scheduling-conflicts-overlay", ConflictsTab
+        )
+        use_server = overlay_tab.query_one("#scheduling-use-server", Button)
+        use_local = overlay_tab.query_one("#scheduling-use-local", Button)
+
+        # `.region`, not `.size`: a click's screen coordinates land in
+        # `.region` (the laid-out box including border chrome), which is
+        # what actually determines "does this click hit the button".
+        assert use_server.region.height >= 3, f"got {use_server.region.height}"
+        assert use_local.region.height >= 3, f"got {use_local.region.height}"
+
+        # Post-compositor confirmation (root-causes.md's own oracle): both
+        # buttons' labels are actually painted, not merely sized on paper.
+        strips = pilot.app.screen._compositor.render_strips()
+        painted = "\n".join(
+            "".join(seg.text for seg in strip) for strip in strips
+        )
+        assert "Use server" in painted
+        assert "Use local" in painted
+
+
+@pytest.mark.asyncio
 async def test_conflicts_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
     async with app.run_test() as pilot:
@@ -4593,6 +4651,15 @@ class _FakeConnectedServerClient:
     def __init__(self) -> None:
         self.notifications_service = object()
 
+    async def get_capabilities(self):
+        """task-3 (ruling 4/5): `SchedulesWorkbench.on_mount` kicks a real
+        `refresh_server_reachability` probe, which calls this -- without
+        it, the mount-time worker's `AttributeError` gets caught as
+        "unreachable" and silently overwrites this fixture's whole
+        "looks connected" premise (`_server_reachable` back to `False`)
+        moments after `_connected_service` pre-seeds it `True`."""
+        return {}
+
 
 def _connected_service(tmp_path, app):
     """A real `ScheduledTasksDB` + `SchedulingService`, wired to LOOK
@@ -4614,6 +4681,12 @@ def _connected_service(tmp_path, app):
         runtime_source="local",
         app_getter=lambda: app,
     )
+    # task-3 (ruling 4): `transfer_refusal`/`_server_available` now also
+    # gate on a real `refresh_server_reachability` probe (default
+    # `False`) -- this fixture's whole point is "look connected", so
+    # pre-seed the same verdict a probe would reach (same precedent as
+    # `test_scheduling_service.py`'s `_transfer_service`).
+    service._server_reachable = True
     app.scheduling_service = service
     return db, service
 

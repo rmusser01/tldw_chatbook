@@ -170,12 +170,91 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
+    def _settle_orphaned_transfer_mutations(self, target_owner: str) -> None:
+        """Settle a `transfer_to_server` mutation whose scope no longer
+        matches the active server (task-3, root-causes.md #5 / ruling 4).
+
+        `_network_phase`'s mutation query is deliberately scoped to
+        `target_owner` (`get_pending_mutations(target_owner, ...)`), so a
+        mutation recorded under a PRIOR server scope -- the configured
+        server's address changed underneath it -- is never selected,
+        never attempted, and the row hangs `to_server_pending` forever
+        with no route to Retry/Cancel (the UAT's permanent "Moving to
+        server..."). This is the one place that looks ACROSS every owner
+        scope (`get_pending_mutations(owner_id=None, ...)`, the same
+        all-owners mode `cancel_transfer`'s own lookup already relies on)
+        to find one -- mirrors `recover_inflight_transfers`'s per-row,
+        per-primitive exception-guarded shape, run once per sync cycle
+        (not startup-only) so a mid-session reconfiguration settles on
+        the very next sync rather than waiting for a restart.
+
+        Only a still-unattempted mutation (`to_server_pending`) is
+        touched -- an ambiguous `to_server_sent` row belongs to
+        `recover_inflight_transfers`, not this sweep (same division of
+        labor that method's own docstring draws for other stuck states).
+        The CAS's own `expected=` guard makes the read-and-write atomic;
+        no separate row fetch is needed first.
+        """
+        for primitive in (_REMINDER_PRIMITIVE, _DEFINITION_PRIMITIVE):
+            try:
+                mutations = self.db.get_pending_mutations(
+                    owner_id=None, primitive=primitive
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    f"Orphaned-transfer sweep failed to list mutations "
+                    f"for {primitive}"
+                )
+                continue
+            for mutation in mutations:
+                payload = mutation.get("payload") or {}
+                if payload.get("action") != "transfer_to_server":
+                    continue
+                if payload.get("transfer_errors"):
+                    continue  # already settled
+                mutation_owner = mutation.get("owner_id")
+                if mutation_owner == target_owner:
+                    continue  # still valid for the active server
+                local_id = mutation.get("local_id")
+                try:
+                    settled = self.db.set_transfer_state(
+                        primitive,
+                        local_id,
+                        "to_server_failed",
+                        expected=("to_server_pending",),
+                        pending_mutation={
+                            "primitive": primitive,
+                            "owner_id": mutation_owner,
+                            "payload": {
+                                **payload,
+                                "transfer_errors": [
+                                    "The server this move was queued for "
+                                    "is no longer configured."
+                                ],
+                            },
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to settle orphaned transfer mutation for "
+                        f"{primitive} {local_id}"
+                    )
+                    continue
+                if settled:
+                    logger.warning(
+                        f"Orphaned transfer_to_server mutation settled to "
+                        f"to_server_failed for {primitive} {local_id} "
+                        f"(queued for {mutation_owner!r}; active server "
+                        f"is {target_owner!r})"
+                    )
+
     async def pull(self, owner_id: str | None = None) -> None:
         """Public entry point to pull server reminders for the given owner."""
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
             return
 
+        self._settle_orphaned_transfer_mutations(target_owner)
         await self._pull_reminders(target_owner)
 
         # Automation mirrors run regardless of reminder-phase health (review
@@ -257,6 +336,7 @@ class SyncEngine:
         if self.server_client is None:
             return SyncOutcome("not_applicable")
 
+        self._settle_orphaned_transfer_mutations(target_owner)
         reminder_outcome = await self._sync_reminders(target_owner)
 
         # Automation mirrors, appended after the reminder phase (task 4) and
@@ -389,6 +469,28 @@ class SyncEngine:
 
         try:
             with self.db.transaction() as conn:
+                # UAT finding 4 / root-causes.md #4 (ghost row): `_network_
+                # phase` pulls BEFORE it pushes, so a reminder released THIS
+                # cycle is still listed in `pulled_items` from the
+                # pre-release snapshot. Applying that stale item would
+                # re-insert the mirror `_push_reminder_release` just tore
+                # down, with a brand-new local id no tombstone can remove --
+                # it then reads as "deleted on server" forever. Exact twin
+                # of the `adopted_server_id` seen-set guard below (this
+                # method, further down): filter what this cycle just
+                # released out of the stale payload before applying it.
+                released_server_ids = {
+                    outcome["released_server_id"]
+                    for outcome in staged_outcomes
+                    if outcome.get("released_server_id")
+                }
+                if released_server_ids:
+                    pulled_items = [
+                        item
+                        for item in pulled_items
+                        if item.get("id") not in released_server_ids
+                    ]
+
                 # Ensure pulled items have safe defaults before the DB helper
                 # copies fields verbatim.
                 for item in pulled_items:
@@ -1211,6 +1313,30 @@ class SyncEngine:
         )
         self.db.delete_pending_mutation(mutation_id)
 
+    async def _automation_capabilities_available(self) -> bool:
+        """Whether the server still exposes Scheduled Tasks automation at all.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities
+        handshake: `SchedulingServerClient.get_capabilities` returns
+        ``None`` only for a definitive "the capabilities route itself
+        does not exist" answer (a server old enough to predate Scheduled
+        Tasks automation entirely) -- that is the ONE case this returns
+        ``False`` for, so `_pull_definitions`/`_pull_results` can skip
+        outright rather than let every page 404 (root-causes.md #7).
+        Fails OPEN on any other outcome (a transient probe failure must
+        not silently stop pulling automations that otherwise work fine --
+        the per-call `ServerClientNotFoundError` handling below is what
+        catches the narrower "capabilities exist, this ONE route doesn't
+        yet" case a probe alone cannot distinguish).
+        """
+        assert self.server_client is not None
+        try:
+            return await self.server_client.get_capabilities() is not None
+        except ServerClientError:
+            return True
+        except Exception:  # noqa: BLE001
+            return True
+
     async def _pull_definitions(
         self,
         owner_id: str,
@@ -1229,8 +1355,14 @@ class SyncEngine:
         forwarded unchanged to every page's upsert call -- see the design
         comment on
         `ScheduledTasksDB.upsert_automation_definitions_from_server`.
+
+        task-3 capabilities handshake: returns an empty (no-op) result
+        outright when the server does not expose Scheduled Tasks
+        automation at all, rather than paging into a guaranteed 404.
         """
         assert self.server_client is not None
+        if not await self._automation_capabilities_available():
+            return {}
         totals: dict[str, int] = {}
         offset = 0
         for _page_num in range(_SYNC_MAX_PAGES):
@@ -1271,14 +1403,34 @@ class SyncEngine:
         ``skip_review_server_ids`` (Task 5 same-cycle echo) is forwarded
         unchanged to every page's upsert call -- see the design comment on
         `ScheduledTasksDB.upsert_automation_results_from_server`.
+
+        task-3 capabilities handshake: returns an empty (no-op) result
+        outright when the server does not expose Scheduled Tasks
+        automation at all (rather than paging into a guaranteed 404). A
+        server whose capabilities probe DOES succeed but whose `/results`
+        route specifically is missing (root-causes.md #7's actual UAT
+        repro -- a mid-rollout server new enough for capabilities, too
+        old for the results-inbox surface) cannot be told apart by that
+        probe alone; the `ServerClientNotFoundError` below is what turns
+        THAT case into the same honest copy instead of a raw
+        ``scheduled_task_not_found`` poisoning the sync verdict (UAT
+        Minor 24 / Major 7).
         """
         assert self.server_client is not None
+        if not await self._automation_capabilities_available():
+            return {}
         totals: dict[str, int] = {}
         offset = 0
         for _page_num in range(_SYNC_MAX_PAGES):
-            response = await self.server_client.list_automation_results(
-                limit=_RESULTS_PAGE_SIZE, offset=offset
-            )
+            try:
+                response = await self.server_client.list_automation_results(
+                    limit=_RESULTS_PAGE_SIZE, offset=offset
+                )
+            except ServerClientNotFoundError as exc:
+                raise ServerClientNotFoundError(
+                    "This server does not provide the results inbox "
+                    "(server too old)."
+                ) from exc
             if not isinstance(response, dict):
                 response = {}
             page = list(response.get("items") or [])
@@ -1594,10 +1746,18 @@ class SyncEngine:
         genuine double execution. Deleting the mirror on the ack is what
         makes the ADR's "the mirror is torn down" claim true.
 
-        Returns a plain ``{"local_id": ...}`` outcome, same shape and same
-        reasoning as `_push_reminder_transfer`'s: this action does its own
-        DB writes immediately, so `_sync_reminders`'s batched apply has
-        nothing left to do with it.
+        Returns ``{"local_id": ..., "released_server_id": ...}`` once the
+        mirror is actually torn down (no ``server_id``/``delete_local``/
+        ``mutation_id`` keys, same shape family as `_push_reminder_transfer`'s
+        `adopted_server_id`): this action does its own DB writes
+        immediately, so `_sync_reminders`'s batched apply has nothing left
+        to do with it. ``released_server_id`` exists so `_sync_reminders`
+        can filter this cycle's already-stale `pulled_items` (`_network_
+        phase` pulls BEFORE it pushes) -- otherwise the pre-release pull
+        payload re-inserts the mirror this call just deleted, with a new
+        local id no tombstone can remove (root-causes.md #4 / UAT finding
+        4). Exact twin of `adopted_server_id`'s seen-set guard 12 lines
+        below `_sync_reminders`'s own apply call.
         """
         server_task_id = payload.get("server_task_id")
         local_copy_id = payload.get("local_copy_id")
@@ -1649,7 +1809,7 @@ class SyncEngine:
         self.db.delete_reminder_task(local_id)
         self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
         self.db.delete_pending_mutation(mutation_id)
-        return {"local_id": local_id}
+        return {"local_id": local_id, "released_server_id": server_task_id}
 
     async def _push_tombstone(
         self, tombstone: dict, owner_id: str

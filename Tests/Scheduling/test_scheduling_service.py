@@ -2066,12 +2066,25 @@ def _connected_server_client():
 def _transfer_service(db, *, server_client=None, active_server_id="1", **kwargs):
     app = _FakeApp(active_server_id) if active_server_id is not None else None
     kwargs.setdefault("runtime_source", "local")
-    return SchedulingService(
+    svc = SchedulingService(
         db=db,
         server_client=server_client,
         app_getter=(lambda: app) if app is not None else None,
         **kwargs,
     )
+    # task-3 (ruling 4): `transfer_refusal` now also gates on
+    # `server_reachable`, which only a real `refresh_server_reachability`
+    # probe sets -- these tests exercise everything ELSE `transfer_
+    # refusal` checks against an assumed-connected server, so pre-seed the
+    # same "a probe already succeeded" state `_connected_server_client()`
+    # implies, rather than making every caller await a probe just to
+    # reach the check it actually wants to test. A test that wants the
+    # unreachable-but-configured case instead sets `svc._server_reachable
+    # = False` back after calling this helper (see
+    # `test_transfer_refusal_configured_but_unreachable` below).
+    if server_client is not None:
+        svc._server_reachable = True
+    return svc
 
 
 def _make_reminder(db, **overrides):
@@ -2115,6 +2128,24 @@ def test_transfer_refusal_no_server_connection(db):
     for direction in ("to_server", "to_local"):
         reason = svc.transfer_refusal(row, direction)
         assert reason == "No server connection is configured."
+
+
+def test_transfer_refusal_configured_but_unreachable(db):
+    """task-3 (ruling 4, root-causes.md #5): a server IDENTITY being
+    configured is not proof anything ever answered it -- the three old
+    checks `_server_available`/`transfer_refusal` stopped at (client
+    object exists, an id string is set, `notifications_service` was
+    constructed) never contacted anything. `server_reachable` defaults
+    `False` until `refresh_server_reachability` actually probes and
+    succeeds; a configured-but-unreachable server must refuse with its
+    OWN reason, distinct from "not configured at all" (the UX-grammar
+    split ruling 4 calls for)."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    svc._server_reachable = False  # no probe has succeeded (yet)
+    row = db.get_reminder_task(_make_reminder(db))
+    for direction in ("to_server", "to_local"):
+        reason = svc.transfer_refusal(row, direction)
+        assert reason == "The configured server is not reachable right now."
 
 
 def test_transfer_refusal_to_server_already_server_owned(db):
@@ -2210,6 +2241,56 @@ def test_transfer_refusal_allows_happy_path_both_directions(db, monkeypatch):
     to_local_def = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
     to_local_row = db.get_automation_definition(to_local_def)
     assert svc.transfer_refusal(to_local_row, "to_local") is None
+
+
+# -- refresh_server_reachability (task-3, ruling 4) ------------------------
+
+
+def test_refresh_server_reachability_defaults_false_until_probed(db):
+    """`server_reachable` starts `False` -- ruling 4: "until a probe has
+    succeeded, the option must not be offered"."""
+    svc = SchedulingService(db=db, server_client=None)
+    assert svc.server_reachable is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_no_client_stays_false(db):
+    svc = SchedulingService(db=db, server_client=None)
+    result = await svc.refresh_server_reachability()
+    assert result is False
+    assert svc.server_reachable is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_succeeds_when_capabilities_probe_lands(db):
+    """Reuses the capabilities handshake's own round trip (ruling 5) as
+    the reachability probe -- any successful response, present or absent
+    capabilities alike, proves the server actually answered."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.return_value = {"items": []}
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True
+    assert svc.server_reachable is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_false_when_probe_raises(db):
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = RuntimeError("connection refused")
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = True  # a prior probe had succeeded
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is False
+    assert svc.server_reachable is False, (
+        "a failed re-probe must not leave the stale 'reachable' verdict standing"
+    )
 
 
 # -- transfer_warnings -----------------------------------------------------

@@ -156,6 +156,13 @@ class TransferInvariantMachine(RuleBasedStateMachine):
             runtime_source="local",
             app_getter=lambda: _FakeApp(),
         )
+        # task-3 (ruling 4): `transfer_refusal` now also gates on a real
+        # `refresh_server_reachability` probe (default `False`) -- this
+        # fake models an always-connected server, so pre-seed the same
+        # verdict a probe would reach, or every `begin_to_server`/
+        # `begin_to_local` rule below silently refuses and the invariant
+        # stops exercising the transfer machinery it exists to stress.
+        self.service._server_reachable = True
         self.row_id = self.db.create_reminder_task(
             owner_id="local",
             title="t",
