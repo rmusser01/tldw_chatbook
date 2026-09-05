@@ -6198,15 +6198,17 @@ async def test_high_stakes_file_notes_states_are_legible_in_shipped_themes(
     async with _CssTrueWorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("state.md")
+        # Theme characterization seeds states directly; a real filesystem poll
+        # must not replace them while the complete shipped-theme census runs.
+        assert workspace._poll_timer is not None
+        workspace._poll_timer.stop()
         workspace._narrow_view = "editor"
         workspace._apply_responsive_layout(workspace.size.width)
         root_status = workspace.query_one("#file-notes-root-status")
         save_status = workspace.query_one("#file-notes-save-status")
 
-        for theme_name in (
-            "textual-dark",
-            "textual-light",
-            "high_contrast_yellow_black",
+        for theme_name in dict.fromkeys(
+            ("textual-dark", "textual-light", *(theme.name for theme in ALL_THEMES))
         ):
             pilot.app.theme = theme_name
             workspace._root_offline = True

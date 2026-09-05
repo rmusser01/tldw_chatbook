@@ -2901,12 +2901,18 @@ LibraryFileNotesGitPanel Button:disabled {
     background: $surface-darken-1;
 }
 
-.file-notes-git-commit-error,
-#file-notes-save-status.-error {
+.file-notes-git-commit-error {
     opacity: 100%;
     text-opacity: 100%;
     color: $ds-status-error-readable;
     background: $error-darken-3;
+}
+
+#file-notes-save-status.-error {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $ds-text-primary;
+    background: $surface;
 }
 
 /* TASK-15509: Session Git previously redeclared a fixed focus palette inside
