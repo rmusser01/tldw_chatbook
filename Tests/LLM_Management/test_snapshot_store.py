@@ -595,3 +595,82 @@ def test_cleanup_is_idempotent_after_successful_owner_release(store):
     working = store.reserve_save("launch-a", 0)
     assert store.cleanup(working) == ()
     assert store.cleanup(working) == ()
+
+
+def _pending_tombstone(store):
+    """Represent a real record after its deletion intent replaced its commit marker."""
+    import json
+
+    from tldw_chatbook.Utils.private_paths import atomic_private_write_text
+
+    record = _save(store).record
+    binary = store.catalog / record.filename
+    info = binary.stat()
+    envelope = {
+        "record": record.model_dump(mode="json"),
+        "device": info.st_dev,
+        "inode": info.st_ino,
+    }
+    tombstone = store.catalog / f"{record.snapshot_id}.deleting"
+    atomic_private_write_text(tombstone, json.dumps(envelope))
+    (store.catalog / f"{record.snapshot_id}.json").unlink()
+    return binary, tombstone, envelope
+
+
+@pytest.mark.parametrize("payload", ["null", "1", '[{"x":1}]', "true", '"text"', "[]"])
+def test_nonobject_tombstone_is_preserved_and_reconciliation_continues(
+    store, monkeypatch, payload
+):
+    from tldw_chatbook.Utils.private_paths import atomic_private_write_text
+
+    malformed = store.catalog / ("0" * 32 + ".deleting")
+    atomic_private_write_text(malformed, payload)
+    binary, valid_tombstone, _ = _pending_tombstone(store)
+    original = store._entries
+
+    def malformed_first(directory):
+        entries, complete = original(directory)
+        return sorted(entries, key=lambda entry: entry != malformed), complete
+
+    monkeypatch.setattr(store, "_entries", malformed_first)
+
+    store.reconcile(frozenset())
+
+    assert malformed.read_text() == payload
+    assert not binary.exists()
+    assert not valid_tombstone.exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": 2},
+        {"tokens": 0},
+        {"bytes": 0},
+        {"publication_sequence": 0},
+        {"source_slot": 99},
+        {"created_utc": "invalid timestamp"},
+        {"snapshot_id": "not-the-owned-id"},
+        {"incomplete_compatibility": True},
+    ],
+)
+def test_malformed_tombstone_record_never_authorizes_deletion(store, change):
+    import json
+
+    from tldw_chatbook.Utils.private_paths import atomic_private_write_text
+
+    binary, tombstone, envelope = _pending_tombstone(store)
+    if "incomplete_compatibility" in change:
+        envelope["record"]["compatibility"]["state_settings"] = [["ctx-size", "4096"]]
+    else:
+        envelope["record"].update(change)
+    payload = json.dumps(envelope)
+    atomic_private_write_text(tombstone, payload)
+    original_bytes = binary.read_bytes()
+    original_inode = binary.stat().st_ino
+
+    store.reconcile(frozenset())
+
+    assert binary.read_bytes() == original_bytes
+    assert binary.stat().st_ino == original_inode
+    assert tombstone.read_text() == payload
