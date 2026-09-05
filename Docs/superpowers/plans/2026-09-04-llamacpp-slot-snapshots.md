@@ -12,7 +12,7 @@
 
 **Backlog:** [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
-**Status:** Implementation in progress. Units 1–5 are implemented and reviewed; Task6 adds the opt-in harness and [evidence closeout](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md). The integrated final review's I1/I2/I3/M1/M2 findings are addressed in one bounded fix wave (156 affected tests passed); its scoped re-review remains pending. Live AC5 remains open because no eligible asset set or measured counters was supplied. See TASK-31552 for feature completion status.
+**Status:** Implementation in progress. Units 1–6 have passed their scoped implementation reviews; Task6 adds the opt-in harness and [evidence closeout](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md). The integrated final review's I1/I2/I3/M1/M2 findings are addressed in one bounded fix wave (156 affected tests passed); its scoped re-review closed all five with no new breakage. Live AC5 remains open because no eligible asset set or measured counters was supplied. See TASK-31552 for feature completion status.
 
 ADR required: yes
 

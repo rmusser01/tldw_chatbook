@@ -97,5 +97,6 @@ policies and unexpected reconciliation failure cannot bypass Stop teardown.
 Details now shows absolute observation time, and the aggregate-deadline test no
 longer depends on a narrow scheduling margin. Final affected verification:
 156 passed, 1 existing RequestsDependencyWarning; scoped lint/format/compile/diff
-checks pass. Scoped re-review remains pending. Live AC5 and status In Progress
+checks pass. Independent scoped re-review closed all five findings at `a5268225df`
+with no new breakage. Live AC5 and status In Progress
 are unchanged; no real-model or audio reuse evidence was added.
