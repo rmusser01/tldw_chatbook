@@ -31,7 +31,7 @@ and persisted IDs, and verify both request-context and settled-spend ownership.
 
 ## Measure child lifetime RSS after final serialization, not before it
 
-**TASK-31425, 2026-09-04.** The first Chunking Lab worker diagnostic sampled
+**TASK-31642, 2026-09-04.** The first Chunking Lab worker diagnostic sampled
 `getrusage(RUSAGE_SELF).ru_maxrss` immediately after the engine returned. Its
 repeated-format stress run still had to validate, copy, and serialize the complete
 RunResult afterward, so that diagnostic omitted the expensive publication path.
@@ -51,7 +51,7 @@ distinguish payload estimates, measured RSS, and successfully applied OS limits.
 
 ## Coalesced state equality does not prove that no content mutation occurred
 
-**TASK-31424, 2026-09-04.** Chunking Lab initially expired Undo restore by
+**TASK-31641, 2026-09-04.** Chunking Lab initially expired Undo restore by
 comparing the next durable content with the current checkpoint. A regression
 test edited a restored draft and immediately used application Undo before
 autosave ran. The resulting draft and undo tuple were byte-identical to the

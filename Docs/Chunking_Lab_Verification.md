@@ -6,6 +6,80 @@ Branch: `codex/chunking-lab`, based on `origin/dev` commit
 [Workflow and limits](Chunking_Lab.md),
 [implementation plan](superpowers/plans/2026-09-04-chunking-lab.md).
 
+## Pre-push bookkeeping correction (2026-09-05)
+
+The user selected push/create PR, then explicitly approved correcting task-ID
+collisions and the diagnostic inventory before publication. No implementation
+behavior changed in this correction. ADR-118 remains applicable; no new ADR is
+required for task identities or regeneration of an existing inventory.
+
+Fresh verification at `11232f8d3a`: **473 passed, 2 known warnings in 95.47s**;
+genuine XML is `pre-push-targeted.xml` in the follow-up evidence directory below.
+The full repository suite was not run. Initial preflight passed five of six
+checks; only the production diagnostic inventory was stale.
+
+Review against inventory pin commit `b7f8efde73` found exactly one added diagnostic
+in `app.py`: `Chunking Lab writer cleanup failed: {}` interpolates only
+`type(cleanup_error).__name__`, not exception text, sample content, a path, URL,
+or secret. The new persistent sink is `_write_selected_file` in
+`chunking_lab_screen.py`: an explicit user-selected template/recovery export,
+with path validation, absolute-path requirement, explicit overwrite choice,
+private opening and an identity precondition passed to the existing atomic
+private writer. Export payloads intentionally include authored/sample/result
+data as documented in the privacy limits; this is not a new diagnostic log.
+The regenerated inventory changes only that app call count/digest, the export
+sink row, and their aggregate counts. No logger, export behavior, or guard was
+changed to make the inventory pass.
+
+Remote `dev` owns unrelated tasks 31421–31424. Its 31421/31422 records have
+created_date `2026-09-04 00:00`; 31423/31424 have `2026-09-05 01:07`.
+Their add commits are `6c71826b11` and `4bf1187f8a`; the Lab chain was introduced
+by `147d7476dd` with creation dates starting `2026-09-04 23:10`. Thus the usual
+older-created-date keeper rule would split ownership across the two slices.
+For this user-approved branch-only correction, the entire unpublished Lab chain
+voluntarily relocates, avoiding edits to upstream tasks and preserving its
+dependency order. A sweep of 333 local/remote refs and 65 worktrees observed a
+maximum of 31637 before allocating these replacement IDs:
+
+| Original Lab task | Current Lab task |
+| --- | --- |
+| 31421 | 31638 |
+| 31422 | 31639 |
+| 31423 | 31640 |
+| 31424 | 31641 |
+| 31425 | 31642 |
+| 31426 | 31643 |
+| 31427 | 31644 |
+| 31428 | 31645 |
+
+Task filenames, frontmatter, dependencies, plans, ADR references and lessons
+use the current IDs. Each task retains a Renumbering provenance section.
+Historical commits and ignored review artifacts retain their original IDs;
+use this mapping when following that evidence. Upstream files are untouched.
+Publication status is reported in the PR; no merge is authorized or implied.
+
+After regeneration, all six `scripts/preflight.sh` checks passed. Targeted
+`Tests/Architecture/test_derived_artifact_checkers.py`: 74 passed, one existing
+Requests warning in 0.75s. All eight replacement records are unique, Done with
+checked ACs, and have lower-numbered dependencies; no replacement ID exists on
+the checked `origin/dev`. Whitespace checks passed; production and test sources
+are unchanged by this bookkeeping correction.
+
+The additional `Tests/Architecture/test_persistent_diagnostic_inventory.py` run
+was **64 passed, 2 failed, 1 skipped, 10 warnings in 177.83s**, not green. The
+regenerated-inventory/topology test passed. The failures are
+`test_reviewed_diagnostic_changes_are_metadata_only` (three expected old Library
+diagnostic labels are absent) and
+`test_task_15743_exception_types_survive_loguru_forwarding` (the existing Console
+activity-receipt diagnostic is not positional metadata). Both source assertions
+were replayed against an exact `git archive` export of the feature BASE
+`1a82db60ce` and produced identical complete failure lists. The test module itself
+is unchanged from BASE. This is a two-assertion source replay, not a full BASE
+pytest run. The skip concerns unavailable historical TASK-15743 commits; warnings
+include existing Requests compatibility and invalid-escape syntax warnings.
+No unrelated diagnostic repairs were made or guards suppressed. The PR must not
+claim that every architecture check or the full repository suite is green.
+
 ## Review and targeted evidence
 
 All eight tasks received independent specification and quality reviews. Task8
@@ -14,10 +88,10 @@ screen integration is `c1b320d11b`; its reviewed edit-drain correction is
 five bounded refinements. The single final correction commit `5d0df113ff` received
 scoped independent re-review: all twelve findings addressed, no new breakage in
 that fix diff. The user-requested runtime-boundary and test-fixture follow-up
-also passed independent task and final review. TASK-31428 is complete with AC1–15
+also passed independent task and final review. TASK-31645 is complete with AC1–15
 verified; the final targeted gate is **473 passed, 2 known warnings in 106.29s**.
-No merge or push
-has been performed. The original working checkout was not used for implementation.
+At that acceptance checkpoint, no merge or push had been performed. The original
+working checkout was not used for implementation.
 
 Verification used the existing Python3.12.11 virtual environment with Textual8.2.8
 and Pydantic2.12.5. Only targeted selections were run, not the repository-wide
@@ -63,9 +137,9 @@ passed; legacy interop lint uses its existing narrowed rule selection.
 
 This is targeted correction evidence, not a replacement for the original non-green
 integration run or a new startup/platform qualification. Earlier task notes that say
-In Progress/pending review are chronological records; tasks 31421–31427 have since
+In Progress/pending review are chronological records; tasks 31638–31644 have since
 received their task-level reviews and remain Done. Final targeted acceptance is
-recorded below; integration into dev still requires the user's choice.
+recorded below; the subsequent publishing choice is recorded above.
 
 ## Final acceptance after the requested follow-up
 
@@ -121,9 +195,9 @@ at that checkpoint; the later follow-up resolved it without widening the allowli
 The final scoped reviewer recorded this outside its correction diff, without
 waiving branch readiness. The original single final correction wave was exhausted;
 no second wave was dispatched in that pass and no source fix was made by the
-controller. TASK-31428 remained In Progress until the user requested continuation
+controller. TASK-31645 remained In Progress until the user requested continuation
 and the separately reviewed follow-up above completed AC15. The failed evidence
-and branch/worktree are preserved; no merge or push has occurred.
+and branch/worktree were preserved; no merge or push had occurred at that checkpoint.
 
 Genuine XML: `controller-final-targeted.xml` and
 `controller-final-guard-repro.xml`; exact commands and diagnosis:

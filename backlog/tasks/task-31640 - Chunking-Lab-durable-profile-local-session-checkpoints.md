@@ -1,5 +1,5 @@
 ---
-id: TASK-31423
+id: TASK-31640
 title: Chunking Lab - durable profile-local session checkpoints
 status: Done
 assignee:
@@ -10,7 +10,7 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31422
+  - TASK-31639
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -57,3 +57,13 @@ Evidence includes real child-process kills synchronized immediately before/after
 
 Final combined verification (DB, autosave, private SQLite, owner inventory, state, execution): 367 passed, 2 platform skips, 2 known warnings, and the same 3 baseline-only census failures. Self-review fixed cache entries surviving a rejected publication, fallback incorrectly retaining a corrupt predecessor, cache assumptions after another instance clears, malformed state masquerading as empty recovery, and typing delaying an already-immediate checkpoint. The private-path seam may fail closed if two processes race first-file creation; this is surfaced without bypassing protection. Status remains In Progress for independent review.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31423; moved to TASK-31640 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

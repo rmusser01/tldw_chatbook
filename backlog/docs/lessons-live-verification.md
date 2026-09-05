@@ -2,7 +2,7 @@
 
 ## Send synthetic Paste through the app, not directly to TextArea
 
-**TASK-31428, 2026-09-04.** The Chunking Lab viewport harness posted an
+**TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
 unforwarded `events.Paste` directly to TextArea. Textual inserted it, bubbled
 the event to `App.on_event`, then forwarded it back to the focused TextArea,
 inserting it again. Depending on scheduling, Run captured the first insertion
@@ -2046,7 +2046,7 @@ from the current PR tree: older live evidence can exercise a superseded host.
 
 **What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
 
-## A manually mounted test screen must claim initial-screen ownership (TASK-31428)
+## A manually mounted test screen must claim initial-screen ownership (TASK-31645)
 
 **Incident, 2026-09-04.** Chunking Lab's combined verification passed 470 tests but
 failed its narrow workflow after `pilot.click` found ChatScreen instead of the Lab.

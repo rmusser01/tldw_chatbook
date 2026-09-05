@@ -1,5 +1,5 @@
 ---
-id: TASK-31425
+id: TASK-31642
 title: Chunking Lab - bounded local A-B execution lifecycle
 status: Done
 assignee:
@@ -10,10 +10,10 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31421
-  - TASK-31422
-  - TASK-31423
-  - TASK-31424
+  - TASK-31638
+  - TASK-31639
+  - TASK-31640
+  - TASK-31641
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -94,3 +94,13 @@ storage, resource-policy, or public-interface changes; ADR-118 still applies.
 
 Independent Task5 review found caller-task lifetime ownership; fix 391997ecd3 uses a Run completion future and closes idempotently after joining an active transition. Four RED regressions and 22 passing coordinator tests; scoped re-review approved with no new Important/Critical findings. ADR-118 and plan linked above; resource/platform qualifications remain explicit.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31425; moved to TASK-31642 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

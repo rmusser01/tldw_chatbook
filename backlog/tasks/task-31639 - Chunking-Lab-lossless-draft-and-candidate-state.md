@@ -1,5 +1,5 @@
 ---
-id: TASK-31422
+id: TASK-31639
 title: Chunking Lab - lossless draft and candidate state
 status: Done
 assignee:
@@ -10,7 +10,7 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31421
+  - TASK-31638
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -58,3 +58,13 @@ ADR required: yes. ADR path: `backlog/decisions/118-chunking-lab-local-execution
 
 Review fix: undoing a newly pinned A now invalidates any retained batch manifest that captured that candidate before removing it. This keeps the returned session publishable, fences both subsequent A/B completions as inactive, and preserves Undo even after a completed manifest remains retained. The later worker coordinator must observe this batch-to-`None` transition as a cancellation request and terminate active work/queued members; the pure state boundary already prevents their late results from being accepted.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31422; moved to TASK-31639 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

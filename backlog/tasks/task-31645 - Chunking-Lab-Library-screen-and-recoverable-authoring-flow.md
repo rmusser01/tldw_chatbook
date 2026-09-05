@@ -1,5 +1,5 @@
 ---
-id: TASK-31428
+id: TASK-31645
 title: Chunking Lab - Library screen and recoverable authoring flow
 status: Done
 assignee:
@@ -11,10 +11,10 @@ labels:
   - chunking-lab
   - ui
 dependencies:
-  - TASK-31424
-  - TASK-31425
-  - TASK-31426
-  - TASK-31427
+  - TASK-31641
+  - TASK-31642
+  - TASK-31643
+  - TASK-31644
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -90,3 +90,27 @@ Final scoped re-review at 5d0df113ff accepted all seven Important and five Minor
 
 Final acceptance: runtime admission now calls narrow template_runtime preprocessing/sanitation adapters (9c3f69bd98) without vendor imports in the runner, widened guards, changed budgets or new policy. Independent Task1 review approved. The combined gate then exposed a separate local test-fixture startup-ownership race; measured enabled-splash Lab-to-Chat takeover was corrected only in the two manual-screen fixtures with real callback RED2/GREEN2 regressions (a89f14d6d3), independently reviewed. Final combined targeted feature/compatibility gate: 473 passed, zero failures/errors/skips, 2 known warnings in106.29s. Complete follow-up final review approved with no issues. Scoped lint/format/compile and whole-branch whitespace checks passed; legacy runtime lint debt and Requests/vendor warnings remain explicitly qualified. ADR078 and ADR118 apply; no new ADR for test-only setup. Docs/Chunking_Lab_Verification.md and follow-up plan record exact evidence/history/limits; lessons-live-verification.md records the measured manual-screen ownership incident. AC1-15 complete. No full sweep, production startup/shared factory change, vendor/dependency edit, merge or push. Historical pending notes above are superseded by this acceptance; earlier failures and privacy/platform/resource qualifications remain retained.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31428; moved to TASK-31645 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.
+
+## Publication bookkeeping notes (2026-09-05)
+
+User-approved branch-only task renumbering and diagnostic-inventory correction;
+no new ADR or implementation change (ADR-118 remains applicable). Reviewed the
+new app cleanup diagnostic's exception-class-only argument and the explicit
+private export sink before regenerating Docs/security/production-diagnostic-inventory.json.
+All six preflight checks pass; artifact-checker tests pass74; source and test
+files are unchanged. The prior fresh feature selection passed473. Additional
+diagnostic-architecture coverage passed64/failed2/skipped1; both failures have
+identical source-assertion failures on the exact feature BASE and remain
+disclosed, not repaired or waived as passing. Exact scope, mapping and evidence
+are in Docs/Chunking_Lab_Verification.md. PR publication is authorized; merge,
+unrelated repairs, and a full-suite sweep are not.

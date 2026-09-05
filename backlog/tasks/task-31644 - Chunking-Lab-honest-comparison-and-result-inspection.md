@@ -1,5 +1,5 @@
 ---
-id: TASK-31427
+id: TASK-31644
 title: Chunking Lab - honest comparison and result inspection
 status: Done
 assignee:
@@ -10,8 +10,8 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31421
-  - TASK-31422
+  - TASK-31638
+  - TASK-31639
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -60,3 +60,13 @@ ADR check: direct implementation of [ADR-118](../decisions/118-chunking-lab-loca
 
 Independent Task7 review approved spec compliance and quality; no blocking findings. Final24 feature tests pass, scoped static checks clean; two inherited CSS guards reproduce identically on BASE and remain explicitly disclosed. Controller accepted two bounded viewport rounds, with80x24 table-height fix. Task8 owns complete screen routing, missing-member selection, view-state persistence and global keys. ADR-118 applies.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31427; moved to TASK-31644 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

@@ -1,5 +1,5 @@
 ---
-id: TASK-31426
+id: TASK-31643
 title: Chunking Lab - conflict-safe local template saving
 status: Done
 assignee:
@@ -10,8 +10,8 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31421
-  - TASK-31422
+  - TASK-31638
+  - TASK-31639
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -54,3 +54,13 @@ Implemented the headless Lab save adapter over the canonical Media DB catalog an
 
 Independent Task6 review approved spec compliance and quality; no blocking findings. Final focused14 tests passed after a test-only addition to the earlier aggregate90 run; production unchanged. Existing Requests warning retained. Cross-task Save A/B dialogs, ingest refresh and import/export behavior remain explicit Task8 integration obligations, not headless service omissions. ADR-118 governs this implementation.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31426; moved to TASK-31643 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

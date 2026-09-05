@@ -1,5 +1,5 @@
 ---
-id: TASK-31424
+id: TASK-31641
 title: Chunking Lab - recovery export restore and undo
 status: Done
 assignee:
@@ -10,7 +10,7 @@ labels:
   - chunking
   - chunking-lab
 dependencies:
-  - TASK-31423
+  - TASK-31640
 references:
   - backlog/decisions/118-chunking-lab-local-execution-and-recovery.md
 documentation:
@@ -58,3 +58,13 @@ Additional evidence: `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.
 - Verification: 144 targeted recovery/state/DB/autosave/execution tests passed, with only existing Requests and vendored `datetime.utcnow` warnings. Ruff check and formatter check passed on all nine scoped Python files; `git diff --check` passed. Independent review remains pending, so status remains In Progress.
 - Review correction: centralized unfinished-member interruption in one recovery helper used by import, authority rebase, and DB load. A partial A/B regression covers all three boundaries, preserving completed output, captured provenance, and caller-specific manifest/authority semantics. The focused recovery/DB/autosave/state selection passed 117 tests with the existing Requests warning; independent re-review remains pending.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31424; moved to TASK-31641 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

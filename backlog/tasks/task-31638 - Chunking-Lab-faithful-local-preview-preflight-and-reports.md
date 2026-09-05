@@ -1,5 +1,5 @@
 ---
-id: TASK-31421
+id: TASK-31638
 title: Chunking Lab - faithful local preview preflight and reports
 status: Done
 assignee:
@@ -108,3 +108,13 @@ Ruff checks and modified-range formatting pass using the same documented
 baseline runtime lint exclusions. `git diff --check` passes. Still In Progress
 pending re-review; no unisolated application imports were used in this fix round.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Formerly TASK-31421; moved to TASK-31638 during the user-approved
+2026-09-05 pre-push bookkeeping correction. Upstream dev independently uses
+31421–31424; the complete Lab chain moved together to preserve dependency
+ordering without changing upstream tasks. Original creation dates, acceptance
+and implementation history are retained. Historical commits and ignored review
+artifacts retain the old IDs; current references use the new IDs. See
+Docs/Chunking_Lab_Verification.md for the complete mapping and provenance.

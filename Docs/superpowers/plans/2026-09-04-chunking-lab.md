@@ -6,11 +6,27 @@ board. The single final correction wave passed scoped independent re-review;
 AC9–14 are verified. The user-requested runtime-boundary follow-up resolved AC15,
 including a separately diagnosed test-fixture ownership race; final targeted
 verification passed473 tests and independent follow-up review found no issues.
-TASK-31421–31428 are Done. The separate
+TASK-31638–31645 are Done. The separate
 [follow-up plan](2026-09-04-chunking-lab-runtime-boundary-followup.md) preserves
 that work and its evidence. See [verification](../../Chunking_Lab_Verification.md)
 and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md` for the correction
-evidence. No merge or push is authorized by this handoff.
+evidence. The subsequent user-approved publication bookkeeping is recorded in
+that verification document; merge remains unauthorized.
+
+## Publication bookkeeping addendum (2026-09-05)
+
+The user approved resolving task collisions and diagnostic-inventory drift, then
+pushing this branch and opening a PR against dev. Scope: move the unpublished
+eight-task Lab chain together, update its inbound references and preserve old-ID
+provenance; review the exact diagnostic/sink changes before regenerating the pin;
+run preflight and a fresh upstream identity check; publish without merging or
+modifying upstream task files. No feature code or tests change in this addendum.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md.
+Reason: direct bookkeeping under the existing design; no runtime, storage,
+privacy or UX contract changes. Verification and ID mapping are recorded in
+Docs/Chunking_Lab_Verification.md.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -86,14 +102,14 @@ to their first task, not separate scaffold tasks.
 
 | Task | Deliverable | Dependencies |
 | --- | --- | --- |
-| TASK-31421 | Local preflight + faithful execution reports | Existing ADR-078 implementation |
-| TASK-31422 | Lossless authoring and candidate state | 31421 |
-| TASK-31423 | Durable checkpoints and autosave | 31422 |
-| TASK-31424 | Recovery export/restore/undo | 31423 |
-| TASK-31425 | Bounded run lifecycle and batch coordinator | 31421–31424 |
-| TASK-31426 | Conflict-safe template saves | 31421–31422 |
-| TASK-31427 | Comparison model and result widgets | 31421–31422 |
-| TASK-31428 | Library screen and complete user flow | 31424–31427 |
+| TASK-31638 | Local preflight + faithful execution reports | Existing ADR-078 implementation |
+| TASK-31639 | Lossless authoring and candidate state | 31638 |
+| TASK-31640 | Durable checkpoints and autosave | 31639 |
+| TASK-31641 | Recovery export/restore/undo | 31640 |
+| TASK-31642 | Bounded run lifecycle and batch coordinator | 31638–31641 |
+| TASK-31643 | Conflict-safe template saves | 31638–31639 |
+| TASK-31644 | Comparison model and result widgets | 31638–31639 |
+| TASK-31645 | Library screen and complete user flow | 31641–31644 |
 
 `Chunking/lab_models.py` owns serializable domain values; `lab_preflight.py` owns
 capabilities; `template_runtime.py` remains the only processor seam. `lab_state.py`
@@ -104,7 +120,7 @@ owns pure editing transitions, `lab_autosave.py` writer/status scheduling,
 owns Lab save validation, using `ChunkingInteropService` for writes.
 `UI/Chunking_Lab_Modules/` contains presentation regions and dialogs only.
 
-### Task 1 / TASK-31421: Faithful local preview preflight and reports
+### Task 1 / TASK-31638: Faithful local preview preflight and reports
 
 **Files**
 
@@ -154,7 +170,7 @@ if not verdict["valid"]:
 - [ ] Run `pytest Tests/Chunking/test_lab_preflight.py Tests/Chunking/test_lab_execution.py Tests/Chunking/test_template_runtime.py Tests/RAG_Admin/test_template_validation.py -q`. Real fixtures must include saved-vs-draft equivalence and socket/download guards. Record skipped optional methods as unavailable, not as passing evidence.
 - [ ] Review diff, update task notes/ACs, and commit only task files: `feat(chunking): add faithful local Lab execution reports`.
 
-### Task 2 / TASK-31422: Lossless draft and candidate state
+### Task 2 / TASK-31639: Lossless draft and candidate state
 
 **Files**
 
@@ -210,7 +226,7 @@ draft = DraftState(raw_json=raw, parsed_json=parsed_json,
 - [ ] Run `pytest Tests/Chunking/test_lab_state.py Tests/Chunking/test_lab_preflight.py -q`; include Hypothesis round-trip assertions and same-sample/different-config identities.
 - [ ] Review and commit only task files: `feat(chunking): model lossless Lab drafts and candidates`.
 
-### Task 3 / TASK-31423: Durable session checkpoints and autosave
+### Task 3 / TASK-31640: Durable session checkpoints and autosave
 
 **Files**
 
@@ -263,7 +279,7 @@ WHERE singleton = 1 AND epoch = ? AND generation = ?;
 - [ ] Run `pytest Tests/DB/test_chunking_lab_db.py Tests/Chunking/test_lab_autosave.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py -q`; test invalid controls, deleted source, disk failure, newer schema, malformed checkpoints, two profiles, old acknowledgments, and late writes after Clear.
 - [ ] Review and commit only task files: `feat(chunking): persist recoverable Lab checkpoints`.
 
-### Task 4 / TASK-31424: Recovery transfer and replacement undo
+### Task 4 / TASK-31641: Recovery transfer and replacement undo
 
 **Files**
 
@@ -315,7 +331,7 @@ def export_recovery(session: LabSession) -> bytes:
 - [ ] Run `pytest Tests/Chunking/test_lab_recovery.py Tests/DB/test_chunking_lab_db.py Tests/Chunking/test_lab_autosave.py -q`, including export without DB access and restore into another profile. Verify a later view-only save cannot garbage-collect the displaced checkpoint.
 - [ ] Review and commit only task files: `feat(chunking): add safe Lab recovery export and restore`.
 
-### Task 5 / TASK-31425: Bounded process and immutable A/B lifecycle
+### Task 5 / TASK-31642: Bounded process and immutable A/B lifecycle
 
 **Files**
 
@@ -369,7 +385,7 @@ async def test_sample_limit_reports_failure_without_clipping():
 - [ ] Run `pytest Tests/Chunking/test_lab_runner.py Tests/Chunking/test_lab_coordinator.py Tests/Chunking/test_lab_recovery.py Tests/Chunking/test_lab_autosave.py -q`. Include mutated catalog while A runs, save failure before launch, A-fail/B-success, stale completion, concurrent Run clicks, restore failure, and quit during a non-cooperative run.
 - [ ] Review and commit only task files: `feat(chunking): supervise immutable local Lab comparisons`.
 
-### Task 6 / TASK-31426: Conflict-safe template saving
+### Task 6 / TASK-31643: Conflict-safe template saving
 
 **Files**
 
@@ -413,7 +429,7 @@ WHERE id = ? AND uuid = ? AND version = ? AND deleted = 0 AND is_builtin = 0;
 - [ ] Run `pytest Tests/RAG_Admin/test_chunking_lab_service.py Tests/RAG_Admin/test_local_rag_admin_service.py Tests/RAG_Admin/test_template_validation.py Tests/Chunking/test_chunking_interop_v7.py -q`. Prove no source chunk/default mutation; reserved `auto` spelling variants fail; builtins can be copied but not updated; valid advanced metadata/tags round-trip.
 - [ ] Review and commit only task files: `feat(chunking): save Lab templates with atomic conflict checks`.
 
-### Task 7 / TASK-31427: Honest comparison and bounded inspection
+### Task 7 / TASK-31644: Honest comparison and bounded inspection
 
 **Files**
 
@@ -463,7 +479,7 @@ right = json.loads(b.request.recipe.authored_json if authored else b.request.rec
 - [ ] Run `pytest Tests/Chunking/test_lab_comparison.py Tests/UI/test_chunking_lab_results.py -q`. Include genuinely different methods/options and chunking tokenizers, same-old-version results, old/new version mismatch, stale draft badges, and authored metadata/classifier diffs.
 - [ ] Review and commit only task files: `feat(chunking): inspect Lab results with honest comparisons`.
 
-### Task 8 / TASK-31428: Library-owned recoverable authoring screen
+### Task 8 / TASK-31645: Library-owned recoverable authoring screen
 
 **Files**
 
@@ -487,7 +503,7 @@ right = json.loads(b.request.recipe.authored_json if authored else b.request.rec
 - Successful template save emits a local `ChunkingTemplatesChanged` Textual message carrying record ID/version only; the ingest canvas invalidates `_chunk_template_names` and refreshes on next display/currently mounted use.
 - `edit_record_fields` preserves invalid/pending authority and undo; `associate_saved_record` captures and reconciles draft lineage without replacing newer authored content or fabricating unsaved catalog identity. `LabCoordinator.recovery_warning` passes through the writer's existing fallback warning for visible recovery explanation, with no storage or lifecycle policy change.
 
-- [ ] Re-read the current TASK-24404 and ADR-003/078/118. Archive its superseded Settings proposal with a CLI note linking ADR-118 and the design (do not mark implementation Done). Keep the reverse task reference in TASK-31428; do not add a higher-ID task reference to TASK-24404. If someone has implemented it since planning, stop duplication, inspect the landed UI, and amend this integration task's AC/plan before moving it. Keep the newer work intact.
+- [ ] Re-read the current TASK-24404 and ADR-003/078/118. Archive its superseded Settings proposal with a CLI note linking ADR-118 and the design (do not mark implementation Done). Keep the reverse task reference in TASK-31645; do not add a higher-ID task reference to TASK-24404. If someone has implemented it since planning, stop duplication, inspect the landed UI, and amend this integration task's AC/plan before moving it. Keep the newer work intact.
 - [ ] Write the failing route/editor Pilot tests and recovery integration test. Use the normal test app fixture pattern and temp profile helpers; do not launch the user's real data.
 
 ```python
@@ -538,16 +554,16 @@ pytest Tests/UI/test_chunking_lab_screen.py Tests/UI/test_chunking_lab_recovery_
 
 | Spec acceptance outcomes | Primary task(s) |
 | --- | --- |
-| 1–3: navigation, sample sources, core A/B/save flow | 31428, supported by 31422/31425/31426 |
-| 4–5: lossless/invalid authoring round trips | 31422, 31423, 31428 |
-| 6–9: full execution, refusal, snapshots, backend provenance | 31421, 31422, 31425 |
-| 10: staleness and compatibility | 31422, 31427 |
-| 11–13: restart, atomic crash recovery, failed/conflicting writes | 31423, 31424, 31428 |
-| 14–15: trustworthy maps, limits, usable inspection | 31421, 31425, 31427 |
-| 16–17: protection/Clear/keys/layout | 31423, 31425, 31426, 31428 |
-| 18–20: canonical flat shape, metadata, atomic saves | 31421, 31422, 31426 |
-| 21–23: immutable batches, unlike units, invalid-edit authority | 31425, 31427, 31422 |
-| 24–26: restore, snapshot diffs, saved-status ordering/undo | 31424, 31427, 31423 |
+| 1–3: navigation, sample sources, core A/B/save flow | 31645, supported by 31639/31642/31643 |
+| 4–5: lossless/invalid authoring round trips | 31639, 31640, 31645 |
+| 6–9: full execution, refusal, snapshots, backend provenance | 31638, 31639, 31642 |
+| 10: staleness and compatibility | 31639, 31644 |
+| 11–13: restart, atomic crash recovery, failed/conflicting writes | 31640, 31641, 31645 |
+| 14–15: trustworthy maps, limits, usable inspection | 31638, 31642, 31644 |
+| 16–17: protection/Clear/keys/layout | 31640, 31642, 31643, 31645 |
+| 18–20: canonical flat shape, metadata, atomic saves | 31638, 31639, 31643 |
+| 21–23: immutable batches, unlike units, invalid-edit authority | 31642, 31644, 31639 |
+| 24–26: restore, snapshot diffs, saved-status ordering/undo | 31641, 31644, 31640 |
 
 - [ ] No requirements rely on a skipped/nonexistent-module test as evidence.
 - [ ] No vendored edits, second template store, new Settings editor, or server/Evals stubs.

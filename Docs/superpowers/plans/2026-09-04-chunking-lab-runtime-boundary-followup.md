@@ -1,19 +1,19 @@
 # Chunking Lab Runtime Boundary Follow-up Implementation Plan
 
 Status: Both tasks implemented and independently reviewed; final combined gate
-473 passed, 2 known warnings in106.29s. TASK-31428 AC15 is complete. Checklists
+473 passed, 2 known warnings in106.29s. TASK-31645 AC15 is complete. Checklists
 below retain planning history; current evidence and limits are in
 [verification](../../Chunking_Lab_Verification.md). No merge or push performed.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 
-**Goal:** Resolve TASK-31428 AC15's two reproducible architecture-guard failures without changing Lab execution or resource-admission semantics.
+**Goal:** Resolve TASK-31645 AC15's two reproducible architecture-guard failures without changing Lab execution or resource-admission semantics.
 
 **Architecture:** Keep vendored processor and sanitation access inside the existing `template_runtime` seam. The runner continues to own pre-operation admission checks, cumulative payload accounting, process supervision and limits; it calls narrow runtime operations instead of importing vendor types or the private reporting chunker.
 
 **Tech Stack:** Existing Python 3.12 environment, pytest, vendored Python chunker; no dependencies added.
 
-**Spec:** `Docs/superpowers/specs/2026-09-04-chunking-lab-design.md`, runtime ownership under ADR-078 and ADR-118, and TASK-31428 AC15. This is the user-requested continuation after the prior final-pass handoff, not a restart of completed tasks or another broad feature audit.
+**Spec:** `Docs/superpowers/specs/2026-09-04-chunking-lab-design.md`, runtime ownership under ADR-078 and ADR-118, and TASK-31645 AC15. This is the user-requested continuation after the prior final-pass handoff, not a restart of completed tasks or another broad feature audit.
 
 ADR required: yes (existing decisions apply).
 ADR path: `backlog/decisions/078-chunking-template-convergence.md` and `backlog/decisions/118-chunking-lab-local-execution-and-recovery.md`.
@@ -36,7 +36,7 @@ Reason: implement the existing runtime boundary; no new ownership or policy.
 - Modify: `tldw_chatbook/Chunking/lab_runner.py`
 - Test: `Tests/Chunking/test_template_runtime.py`
 - Test: `Tests/Chunking/test_lab_runner.py`
-- Controller final bookkeeping: TASK-31428, existing design/plan/ADR status, `Docs/Chunking_Lab_Verification.md`.
+- Controller final bookkeeping: TASK-31645, existing design/plan/ADR status, `Docs/Chunking_Lab_Verification.md`.
 
 **Interfaces:**
 - Existing `_child_admission(request: RunRequest, limits: PreviewLimits) -> int` keeps its signature and accounting.
@@ -82,7 +82,7 @@ sanitized = sanitize_template_input(text)
 
 - [ ] Run the amended runtime/runner/preflight/execution/coordinator selection and static/format/whitespace checks. Existing legacy runtime lint exclusions may be retained only with the documented baseline comparison. Record exact command/output and warnings.
 - [ ] Commit the scoped code/test change and write an implementation report with cause, RED/GREEN evidence, changed interfaces and limitations. Release the index. Controller gets a fresh independent spec/quality review, then reruns the prior 468-case targeted gate plus new tests on stable code.
-- [ ] After independent review and a green targeted gate, controller checks AC15, reconciles documentation status and marks TASK-31428 Done via CLI. No blanket full-suite/cross-platform claim or merge/push.
+- [ ] After independent review and a green targeted gate, controller checks AC15, reconciles documentation status and marks TASK-31645 Done via CLI. No blanket full-suite/cross-platform claim or merge/push.
 
 ### Task 2: Make the manually mounted Lab test fixtures own their initial screen
 

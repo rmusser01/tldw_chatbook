@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 Status: Implemented and reviewed under ADR-118; final targeted acceptance passed473 tests. Qualifications and historical failures are documented in Docs/Chunking_Lab_Verification.md.
-Scope: v1. Task-level implementation/review is recorded in completed TASK-31421–TASK-31428; no merge or push is implied.
+Scope: v1. Task-level implementation/review is recorded in completed TASK-31638–TASK-31645; no merge or push is implied.
 
 ## 1. Purpose and confirmed decisions
 
@@ -626,7 +626,7 @@ reconciled to this Library-owned authoring workflow before the UI lands.
 Historical planning handoff: the [implementation plan](../plans/2026-09-04-chunking-lab.md)
 was subsequently executed in the isolated `codex/chunking-lab` worktree.
 TASK-24404 was archived as superseded. Final review found seven integration gaps
-and five bounded refinements; the single correction wave is tracked in TASK-31428
+and five bounded refinements; the single correction wave is tracked in TASK-31645
 and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md`.
 Final acceptance awaits the controller's scoped re-review. The original integration
 gate remains non-green; see [verification and limitations](../../Chunking_Lab_Verification.md).

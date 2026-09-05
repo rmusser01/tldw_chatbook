@@ -3974,8 +3974,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 382,
-      "diagnostic_digest": "ee12d5a2c7bb5094fe92",
+      "call_count": 383,
+      "diagnostic_digest": "276b38a112b210d35a3e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11285,6 +11285,17 @@
       ]
     },
     {
+      "path": "tldw_chatbook/UI/Screens/chunking_lab_screen.py",
+      "sinks": [
+        {
+          "digest": "c07922469b801c65",
+          "kind": "atomic_private_write_bytes",
+          "method": "atomic_private_write_bytes",
+          "scope": "_write_selected_file"
+        }
+      ]
+    },
+    {
       "path": "tldw_chatbook/Utils/private_paths.py",
       "sinks": [
         {
@@ -11358,8 +11369,8 @@
   "summary": {
     "owner_files": 574,
     "path_privacy_candidate_calls": 715,
-    "persistent_sink_files": 10,
+    "persistent_sink_files": 11,
     "task_492_calls": 1336,
-    "task_494_calls": 7603
+    "task_494_calls": 7604
   }
 }

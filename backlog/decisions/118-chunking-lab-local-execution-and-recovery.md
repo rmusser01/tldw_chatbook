@@ -117,7 +117,7 @@ unavailable, never guessed. Preserve global server-validator tests and vendor sy
 checks while adding real execution fixtures, temporary-SQLite crash/concurrency
 tests, and Textual keyboard/resizing tests under an isolated profile.
 
-Implementation records: TASK-31421–TASK-31428 (created in dependency order; see plan).
+Implementation records: TASK-31638–TASK-31645 (created in dependency order; see plan).
 TASK-24404 was archived as superseded. The final correction wave directly implements
 this ADR: exact in-transaction catalog acknowledgments, validated replacement
 inspection, readable historical evidence, explicit Previous selection, and lossless
@@ -126,6 +126,6 @@ Scoped independent re-review accepted all twelve corrections. The user-requested
 follow-up reconciled runtime admission with ADR-078 without widening guards, and
 corrected only the local Lab fixtures' manual initial-screen ownership. Final
 targeted verification passed473 tests; independent follow-up review found no issues.
-TASK-31428 is complete. The original
+TASK-31645 is complete. The original
 non-green integration evidence and platform/privacy limits remain in
 [Chunking Lab verification](../../Docs/Chunking_Lab_Verification.md).
