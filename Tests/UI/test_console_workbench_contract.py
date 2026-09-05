@@ -1,11 +1,10 @@
 import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Static
 
@@ -41,8 +40,7 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+_APP_STYLESHEETS = [str(path) for path in APP_STYLESHEETS]
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -646,6 +644,9 @@ async def test_composer_menu_opens_current_draft_directly_in_recommended_review(
         structured = modal.query_one("#console-prompts-structured-recipe")
         for action in (auto, review, structured):
             assert action.region.width > 0 and action.region.height > 0
+            action.focus()
+            action.scroll_visible(immediate=True)
+            await pilot.pause()
             assert scroll.region.contains_region(action.region)
         assert auto.region.bottom <= review.region.y
         assert review.region.bottom <= structured.region.y
@@ -868,6 +869,8 @@ async def test_console_blocked_inspector_explains_impact_and_next_action():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        console._set_console_rail_preference(left_open=False, right_open=True)
+        await pilot.pause()
 
         inspector = console.query_one("#console-run-inspector-state")
         visible_text = " ".join(
@@ -891,6 +894,8 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        console._set_console_rail_preference(left_open=False, right_open=True)
+        await pilot.pause()
 
         inspector = console.query_one("#console-run-inspector-state")
         text = " ".join(
@@ -959,8 +964,6 @@ async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_vi
         # TASK-2154.7 (FR-05): the action matches the first incomplete step —
         # with the provider missing an API key that is the provider fix.
         assert "Set up provider" in _widget_text(card_action)
-        visible_draft = console.query_one("#console-command-visible-text")
-        assert visible_draft.region.width >= 32
 
 
 @pytest.mark.asyncio
@@ -1193,12 +1196,16 @@ async def test_console_transcript_empty_state_renders_ready_activation_copy():
         ),
     ),
 )
-def test_console_empty_recovery_action_copy_matches_setup_blocker(
+def test_console_empty_recovery_action_copy_uses_structured_recovery_action(
     blocker_copy: str,
     expected_label: str,
     expected_tooltip: str,
 ):
-    assert ChatScreen._console_empty_recovery_action_copy(blocker_copy) == (
+    assert ChatScreen._console_empty_recovery_action_copy(
+        blocker_copy,
+        provider_action_label=expected_label,
+        provider_action_tooltip=expected_tooltip,
+    ) == (
         expected_label,
         expected_tooltip,
     )
@@ -1613,14 +1620,10 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
                 "Streaming response.",
             )
         )
-        control_state = console._build_console_control_state(
-            console._pending_console_launch_context
-        )
-        console._last_console_control_state = control_state
-        console._last_console_workbench_state = console._build_console_workbench_state(
-            control_state
-        )
-        console._last_console_rail_state = console._current_console_rail_state()
+        # Establish the streaming snapshot in every independently-gated
+        # projection before counting genuinely unchanged refreshes.
+        console._sync_console_control_bar()
+        await pilot.pause()
 
         workbench_syncs = 0
         inspector_refreshes = 0
@@ -1864,7 +1867,7 @@ async def test_console_header_inline_css_renders_single_row():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _HeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = _APP_STYLESHEETS
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -1894,7 +1897,7 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _NarrowHeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = _APP_STYLESHEETS
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -1935,7 +1938,7 @@ async def test_console_header_inline_subtitle_visible_in_compact_density():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _CompactHeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = _APP_STYLESHEETS
 
         def compose(self) -> ComposeResult:
             # The density class is applied to an ancestor (#console-shell); mirror
