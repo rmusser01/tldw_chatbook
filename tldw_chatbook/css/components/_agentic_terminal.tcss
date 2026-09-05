@@ -3654,7 +3654,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
    Rendered focuses this container itself (Textual's ``has_focus_within``
    is true for the node itself as well as its descendants). */
 #library-media-viewer-content:focus-within {
-    border: solid $accent;
+    /* task-31634: HEAVY, not a recoloured solid. Critique #5 measured the
+       old cue as colour-only -- 1.01:1 -> 6.96:1 on byte-identical ``┌──┐``
+       glyphs -- so a monochrome or colour-blind reader got no signal that
+       F6 had landed, while buttons on the same screen change glyphs. Heavy
+       swaps the glyphs (``┏━━┓``) at the same one-cell border cost, so the
+       state is visible in a plain-text capture and no reading row moves. */
+    border: heavy $accent;
 }
 
 #library-media-viewer-content:focus,

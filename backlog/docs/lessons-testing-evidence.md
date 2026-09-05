@@ -11371,3 +11371,9 @@ both resolved to white. Switching this local host to the existing
 `APP_STYLESHEETS` authority made the exact two compositor assertions pass in4.53s;
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
+
+## A `-k` name filter is not a gate for a behaviour change that flips an existing pin (media wave 5 PR E, 2026-09-05)
+
+**The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
+
+**What to do.** When a change flips what an existing pin asserts (a gate, a disabled state, a focus target), the gate for that change is the WHOLE files that pin the gate — here `test_library_shell.py` and `test_library_media_side_by_side.py` — compared as failing-name sets against the base, not a `-k` subset named after the action. The 80-minute whole-file shell run is the price; run it once per PR at the review boundary, not per task. `-k` stays fine for iterating, never for the parity claim.
