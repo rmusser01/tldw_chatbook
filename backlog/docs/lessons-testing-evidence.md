@@ -11596,6 +11596,18 @@ session FD warning by splitting test files, classifying descriptors with
 `lsof`, and inspecting live owners after finalizers; GC or a higher threshold
 cannot establish ownership or fix a registered worker handle.
 
+**TASK-31737, 2026-09-05.** The complete agent-swap file retained 205
+descriptors. An own-process `F_GETPATH` probe attributed five per real send to
+ChaChaNotes (two database handles, two WAL handles, one SHM handle). Explicit
+controller shutdown followed by exact-file quiescence reduced that case to zero;
+the regeneration-persistence fixture similarly fell from four to zero. The new
+async ownership fixture also had to finish before the existing cleanup fixture:
+otherwise its tracking references survived that already-scheduled collection
+pass. Express this ordering as a fixture dependency and release tracking lists
+after explicit cleanup. Assert `registered_connection_count() == 0` before the
+existing pass, so GC cannot conceal the database defect. No additional GC call or
+threshold change was needed; all 47 agent-swap tests passed without the FD warning.
+
 ## Lifecycle relocation tests must include production change notifications
 
 **TASK-21123, 2026-09-04.** Moving Buddy ownership to the app initially passed

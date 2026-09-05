@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -117,6 +118,54 @@ def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
 
     assert events[:3] == ["scratch-close", "authority-forget", "store-close"]
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
+
+
+@pytest.fixture(autouse=True)
+async def _close_owned_agent_swap_resources(
+    monkeypatch, tmp_path, cleanup_file_descriptors
+):
+    """Retire fixture owners before the existing test-wide cleanup pass.
+
+    Keep canonical classes and constructors; collect only instances created
+    during this test, and only database files beneath its own temporary root.
+    The cleanup dependency orders teardown, without requesting another GC pass.
+    """
+    controllers, chat_databases, run_databases = [], [], []
+    for cls, instances in (
+        (ConsoleChatController, controllers),
+        (CharactersRAGDB, chat_databases),
+        (AgentRunsDB, run_databases),
+    ):
+        original_init = cls.__init__
+
+        def record_instance(
+            instance, *args, _initialize=original_init, _instances=instances, **kwargs
+        ):
+            _initialize(instance, *args, **kwargs)
+            if _instances is controllers or Path(str(instance.db_path)).is_relative_to(
+                tmp_path
+            ):
+                _instances.append(instance)
+
+        monkeypatch.setattr(cls, "__init__", record_instance)
+
+    yield
+
+    try:
+        for controller in reversed(controllers):
+            await controller.shutdown()
+        for database in reversed(chat_databases):
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+            # Prove closure before the existing collection fixture runs:
+            # close() alone misses the agent worker's registered connection.
+            assert database.registered_connection_count() == 0
+        for database in reversed(run_databases):
+            database.close()
+    finally:
+        controllers.clear()
+        chat_databases.clear()
+        run_databases.clear()
 
 
 @pytest.fixture(autouse=True)
