@@ -494,7 +494,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # debounce_timer` silently no-ops on this branch -- that field lives in
     # `LibraryIngestState` now -- so the name leaves the tuple and the timer
     # gets an explicit state-object stop).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41393, 1321),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41359, 1321),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

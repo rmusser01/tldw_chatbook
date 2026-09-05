@@ -536,6 +536,10 @@ from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionPhase,
     reduce_notes_work_session,
 )
+from ..Library_Modules.library_prompts_state import (
+    LibraryPromptsState,
+    prompt_state_shim_attr,
+)
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
 from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
@@ -2198,6 +2202,12 @@ class LibraryScreen(BaseAppScreen):
         # `reader_mode`'s own original lines, both of which keep running
         # untouched and route through the generated shim into this object.
         self._skills_state = LibrarySkillsState()
+        # Constructed early -- see LibraryPromptsState's own module docstring
+        # (forced-early-construction paragraph): must exist before the shared
+        # reader-preferences tuple-unpack below AND before `editor_mode`'s own
+        # original line, all of which keep running untouched and route through
+        # the generated shim into this object.
+        self._prompts_state = LibraryPromptsState()
         self._conversation_reader_controller = LibraryConversationReaderController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
@@ -3112,26 +3122,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_lasting_sync_snapshot = (
             self._library_notes_sync_controller.snapshot
         )
-        self._library_prompts_debounce_timer: Timer | None = None
-        self._library_prompts_filter_cursor_context: tuple[int, int] | None = None
-        self._library_prompt_select_mode = False
-        self._library_prompt_selection = PromptSelectionBasket()
-        self._selected_prompt_id: int | None = None
-        self._library_prompts_view: str = "list"
-        # task-14902: True while the prompts sort chooser's direct-pick
-        # strip replaces the list toolbar row (the Notes Sort pattern).
-        self._library_prompts_sort_choices_visible: bool = False
-        self._library_prompt_detail: Mapping[str, Any] | None = None
-        self._library_prompt_loaded_id: int | None = None
-        self._library_prompt_detail_generation: int = 0
-        self._library_prompt_detail_loading: bool = False
-        self._library_prompt_detail_selected_name: str = ""
-        self._library_prompt_detail_error: str = ""
-        self._library_prompt_detail_retryable: bool = False
-        self._library_prompt_original_name: str = ""
-        self._library_prompt_version: int | None = None
-        self._library_prompt_dirty: bool = False
-        self._library_prompt_status: str = ""
+        # Prompts list/detail/editor/delete-batch canvas state now lives in
+        # LibraryPromptsState -- see that module's own docstring/field
+        # comments for the per-field detail that used to live here.
         self._library_prompt_history_controller = LibraryPromptHistoryController(
             screen=self,
             run_service_call=lambda *args, **kwargs: self._run_library_service_call(
@@ -3211,8 +3204,6 @@ class LibraryScreen(BaseAppScreen):
                 self._refresh_library_prompt_after_membership_apply
             ),
         )
-        self._library_prompt_conflict_snapshot: PromptEditorState | None = None
-        self._library_prompt_block_state: PromptBlockEditorState | None = None
         library_config = getattr(app_instance, "app_config", {}).get("library", {})
         self._library_prompt_editor_mode = coerce_prompt_editor_mode(
             library_config.get("prompt_editor_mode")
@@ -3224,52 +3215,6 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(library_config, Mapping)
             else None
         )
-        # Explicit provenance for an unsaved canonical structured copy.
-        # Legacy block edits can clear both lane origins, so origins cannot
-        # truthfully distinguish conversion/duplication from ordinary edits.
-        self._library_prompt_detached_structured: bool = False
-        self._library_prompt_capabilities: PromptSourceCapabilities = (
-            local_prompt_capabilities()
-        )
-        self._library_prompt_include_starter_content: bool = False
-        self._library_prompt_delete_pending_fingerprint: str | None = None
-        self._library_prompt_delete_inflight_fingerprint: str | None = None
-        self._library_prompt_mutation_generation: int = 0
-        self._library_prompt_delete_pending_targets: (
-            tuple[PromptBatchTarget, ...] | None
-        ) = None
-        self._library_prompt_delete_pending_entries: (
-            tuple[PromptSelectionEntry, ...] | None
-        ) = None
-        self._library_prompt_delete_pending_selection_generation: int | None = None
-        self._library_prompt_delete_pending_editor_prompt_id: int | None = None
-        # TASK-15101 / ADR-055: delete and Undo both mutate the exact Prompt
-        # browse result, rail count, and receipt. Admission is shared so the
-        # two directions cannot interleave through separate worker groups.
-        self._library_prompts_mutation_in_flight: bool = False
-        self._library_prompt_mutation_status: str = ""
-        self._library_prompt_delete_receipt: PromptBatchDeleteResult | None = None
-        self._library_prompt_mutation_disabled_states: dict[Widget, bool] = {}
-        # Task 8b Fix wave 1 (Minor): the exact name that triggered the
-        # current "name-in-use" status, captured at the moment that status
-        # is set -- NOT re-derived from the live Name field at "Open
-        # existing" time, which can have drifted (the user can keep typing
-        # after a failed Save without re-saving) from the name that
-        # actually collided. See ``_open_library_prompt_colliding_with_current_name``.
-        self._library_prompt_name_in_use: str = ""
-        # Toolbar Import… state (Task 5): a path Input (file OR folder)
-        # inlined below the sort/Import…/Export… toolbar, worker-executed
-        # on Run/Enter. See ``_run_library_prompts_import``.
-        self._library_prompts_import_open: bool = False
-        self._library_prompts_import_path: str = ""
-        self._library_prompts_import_status: str = ""
-        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
-        # Textual fires when a widget mounts with a non-empty initial value
-        # -- without this, opening a prompt would immediately mark it dirty
-        # even though the user never typed anything. Re-armed via
-        # ``call_after_refresh`` after every prompt-editor (re)compose,
-        # mirroring ``_library_note_editor_armed``.
-        self._library_prompt_editor_armed: bool = False
         # Skills list/detail/trust-editor canvas state now lives in
         # LibrarySkillsState -- see that module's own docstring/field
         # comments for the per-field detail that used to live here.
@@ -41391,3 +41336,24 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # own generated shim loop (installed by task 2) for where the SAME shape
 # now lives permanently, one layer down, exactly mirroring the collections/
 # search+RAG/skills precedents immediately above.
+
+# --- BEGIN generated prompts-state shims (delete wholesale at cleanup) ---
+# wave-6 task 1: keeps every original `_library_prompt_<field>`/
+# `_library_prompts_<field>`/`_selected_prompt_id` name working as a
+# property over `self._prompts_state`. The three-way prefix mapping is
+# resolved by `prompt_state_shim_attr()` -- the single authoritative copy,
+# shared with this subsystem's wiring test (see LibraryPromptsState's own
+# module docstring).
+for _lps_field in dataclasses.fields(LibraryPromptsState):
+    setattr(
+        LibraryScreen,
+        prompt_state_shim_attr(_lps_field.name),
+        property(
+            lambda self, _n=_lps_field.name: getattr(self._prompts_state, _n),
+            lambda self, value, _n=_lps_field.name: setattr(
+                self._prompts_state, _n, value
+            ),
+        ),
+    )
+del _lps_field
+# --- END generated prompts-state shims ---

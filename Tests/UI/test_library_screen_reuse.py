@@ -210,10 +210,17 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     """
     from tldw_chatbook.UI.Screens.library_screen import (
         LibraryIngestState,
+        LibraryPromptsState,
         LibraryScreen,
     )
 
     screen = LibraryScreen.__new__(LibraryScreen)
+    # (wave-6 task 1) `_library_prompts_debounce_timer` below is now a
+    # generated `LibraryPromptsState` shim property, so setting it invokes a
+    # setter that routes into `self._prompts_state` -- an attribute this
+    # `__new__` bypass never constructed. Seeded here, exactly as the ingest
+    # state object below already is (recipe §3's seventh bypass shape).
+    screen._prompts_state = LibraryPromptsState()
     timer_attrs = (
         "_library_list_entry_focus_timer",
         "_library_media_selection_timer",
