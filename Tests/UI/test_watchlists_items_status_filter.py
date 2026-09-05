@@ -486,13 +486,8 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
 
 
 @pytest.mark.asyncio
-async def test_a_search_keystroke_does_not_re_page():
-    """The reload is gated on the STATUS moving, not on any filter message.
-
-    `ItemsFilterChanged` also fires per keystroke in the search box, which is
-    a purely in-memory filter; a query per character would be a new defect
-    paying for the fix above.
-    """
+async def test_search_re_pages_once_after_debounce_and_status_re_pages_immediately():
+    """Search reaches the corpus after a debounce; status reloads immediately."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
     _seed_one_item_per_status(db)
@@ -504,21 +499,28 @@ async def test_a_search_keystroke_does_not_re_page():
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         calls: list[str | None] = []
-        real_list_items = screen._controller.list_items
+        real_list_reader_items_page = screen._controller.list_reader_items_page
 
         async def _counting(*, runtime_backend=None, status=None, **kwargs):
             calls.append(status)
-            return await real_list_items(
+            return await real_list_reader_items_page(
                 runtime_backend=runtime_backend, status=status, **kwargs
             )
 
-        screen._controller.list_items = _counting
+        screen._controller.list_reader_items_page = _counting
 
         pane.search_query = "fresh"
-        await pilot.pause()
-        await pilot.pause()
-        assert calls == [], "a search keystroke must not re-query"
+        await pilot.pause(0.1)
+        assert calls == [], "a search keystroke must not query before the debounce"
 
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if calls:
+                break
+        assert calls == [None], "the settled search must issue exactly one corpus query"
+
+        calls.clear()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         pane.status_filter = "unread"
         for _ in range(40):
             await pilot.pause(0.05)
@@ -619,7 +621,7 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
         )
 
         # Any deliberate action reloads. Force exactly that.
-        await screen._load_items()
+        await screen._replace_items_snapshot(reason="refresh")
         await pilot.pause()
 
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
@@ -659,16 +661,8 @@ async def test_the_carried_open_item_keeps_the_pages_ordering():
             "status": "ignored",
             "created_at": "2000-01-01T00:00:00+00:00",
         }
-        # The pre-reader per-status value, poked directly: TASK-3072's
-        # `_normalize_items_status_filter` maps it to "unread", so this also
-        # pins the legacy-value path -- the query below is `status="new"`.
-        screen._items_status_filter = "new"
-        screen._items_committed_page_key = screen._items_page_key(0)
-        # Production selection records this provenance alongside the item.
-        screen._selected_content_page_key = screen._items_committed_page_key
-        await screen._load_items()
-
-        titles = [row["title"] for row in screen._loaded_items]
+        carried = screen._with_open_item(list(screen._loaded_items))
+        titles = [row["title"] for row in carried]
         assert titles[-1] == "The oldest thing here", (
             f"the carried item must sort by created_at, not jump; got {titles!r}"
         )

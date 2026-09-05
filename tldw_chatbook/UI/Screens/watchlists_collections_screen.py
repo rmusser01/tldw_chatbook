@@ -11983,7 +11983,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend_rows = list(page.items)
             first_page_rows = backend_rows
             displaced_rows: list[dict[str, Any]] = []
-            if reason in {"filter", "search"}:
+            if reason in {"refresh", "filter", "search"}:
                 first_page_rows = self._with_open_item(
                     first_page_rows, max_items=_ITEMS_PAGE_SIZE
                 )
