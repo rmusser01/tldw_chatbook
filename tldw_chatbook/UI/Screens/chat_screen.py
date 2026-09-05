@@ -14125,7 +14125,6 @@ class ChatScreen(BaseAppScreen):
                     fleet_line=fleet_line,
                     agent_status_line=agent_status_line,
                     agent_steps_text=agent_steps_text,
-                    agent_fleet_section_state=agent_fleet_section_state,
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
@@ -14253,6 +14252,7 @@ class ChatScreen(BaseAppScreen):
                     tasks_section_state=self._console_tasks_section_state(),
                     environment_open=rail_state.environment_open,
                     tasks_open=rail_state.tasks_open,
+                    agent_fleet_section_state=agent_fleet_section_state,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"

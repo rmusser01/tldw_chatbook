@@ -133,6 +133,14 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
     `ConsoleRailState` than just `agent_open` (e.g. `_sync_console_rail_
     visibility` reads `left_label`/`left_badge`); a minimal fake namespace
     crashes there with an `AttributeError` the moment a test drills in.
+
+    task-10: the fleet mini-section itself now lives in the right
+    (Inspector) rail, closed by default (`CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
+    = False`) -- unlike the left (Context) rail this file used to rely on,
+    which stays open by default. `right_open=True` is passed alongside the
+    existing `agent` section toggle (still real: the Agent status/steps
+    Statics and the drilldown controls stay in the left rail) so the fleet
+    section's own ancestor chain is genuinely displayed too.
     """
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
@@ -141,7 +149,9 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
     console._character._current_console_rail_conversation_id = lambda: conversation_id
     console._agent._console_agent_drilldown_conversation_id = conversation_id
     console._set_console_rail_preference(
-        section_updates={"agent": True}, notify_on_failure=False
+        right_open=True,
+        section_updates={"agent": True},
+        notify_on_failure=False,
     )
     console._sync_console_agent_section()
     await pilot.pause()
@@ -150,17 +160,17 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
 
 
 async def _scroll_into_view(pilot, console, selector: str) -> None:
-    """Scroll a widget inside the rail's `VerticalScroll` into view before
+    """Scroll a widget inside its rail's `VerticalScroll` into view before
     a geometry assertion or a real click.
 
-    `#console-left-rail-body` is a `VerticalScroll`; the Agent section (6th
-    of 7 peer sections: Sessions/Workspaces/Conversations/Model/Agent/
-    Details/Character) sits well past a 48-row terminal's fold, and
+    task-10: the fleet mini-section now lives in `#console-inspector-rail-
+    body` (the right/Inspector rail), not `#console-left-rail-body` as
+    before -- `Widget.scroll_visible()` walks whichever scrollable
+    ancestor actually contains it, so this helper needed no code change,
+    only this note. It can sit well past a short terminal's fold, and
     `Widget.region` is reported UNCLIPPED (a below-the-fold widget still
     has a non-empty region) -- `pilot.click` and the compositor hit-test
     both need the widget's OWN screen offset to be genuinely on-screen.
-    Mirrors `test_console_left_rail.py`'s own `_click_rail_toggle` helper
-    exactly (same rail, same scrollable ancestor, same reason).
     """
     widget = console.query_one(selector)
     widget.scroll_visible(animate=False)

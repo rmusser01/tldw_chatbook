@@ -44,9 +44,6 @@ from tldw_chatbook.Widgets.Console.console_settings_summary import (
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
-from tldw_chatbook.Widgets.Console.console_inspector_section import (
-    ConsoleInspectorSectionState,
-)
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
     console_rail_section_height_budget,
@@ -233,7 +230,6 @@ class _RailHarness(App[None]):
             fleet_line="2 agents running",
             agent_status_line="Running",
             agent_steps_text="one\ntwo\nthree",
-            agent_fleet_section_state=ConsoleInspectorSectionState(rows=(), summary=""),
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=self.show_character,

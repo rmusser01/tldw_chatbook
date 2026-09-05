@@ -138,6 +138,9 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     # redesign spec's rail ordering.
     ("console-environment-section", "Environment"),
     ("console-tasks-section", "Tasks"),
+    # task-10: the Agent rail's fleet mini-section, moved here from the
+    # left rail's Agent section -- directly below Tasks, ahead of Sources.
+    ("console-agent-section-subagents", "Agents"),
     ("console-staged-context-tray", "Sources — next send"),
     # TASK-24611: the Library search controls, moved out of the live-work
     # readiness card to sit beside the empty state that names them. It is a
@@ -219,20 +222,25 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     # `styles.display = "none"` when their projection has no rows, never
     # omitted from the DOM), so they always occupy these two slots.
     #
+    # task-10: the Agent rail's fleet mini-section moved here from the left
+    # rail's Agent section, directly below Tasks -- same unconditional-
+    # mount/hide-when-empty pattern.
+    #
     # TASK-24611: the Library search region sits directly beneath the Sources
     # tray, because the tray's empty state ("Stage sources from Library.") is
     # the sentence it answers. It used to be the first three children of the
     # readiness card at the very bottom, ~25 rows further down. The readiness
     # card itself still anchors last, which is task-400's placement.
-    assert direct_children[:6] == (
+    assert direct_children[:7] == (
         "console-environment-section",
         "console-tasks-section",
+        "console-agent-section-subagents",
         "console-staged-context-tray",
         "console-library-search-region",
         "console-retrieval-scope-row",
         "console-run-inspector",
     )
-    assert len(direct_children) == 7
+    assert len(direct_children) == 8
     assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
@@ -262,11 +270,12 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     return (
         "console-project-instruction-status",
         "console-send-authority-summary",
-        # task-9: five pre-run boundaries now, not three -- Environment and
+        # task-9: five pre-run boundaries, not three -- Environment and
         # Tasks were prepended ahead of the Sources tray/Library
         # search/Scope trio (TASK-24611 added the middle one, "three ...
-        # not two", to that trio).
-        *direct_children[:5],
+        # not two", to that trio). task-10 then prepended the Agent
+        # fleet mini-section after Tasks, making six.
+        *direct_children[:6],
         *inspector_boundaries,
         run_wrapper_children[-1],
         next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
@@ -281,6 +290,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Next send authority",
         "Environment",
         "Tasks",
+        "Agents",
         "Sources — next send",
         "Library search",
         "Scope",
@@ -298,13 +308,14 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:7]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:8]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
         "console-send-authority-summary": "Next send authority",
         "console-environment-section": "Environment",
         "console-tasks-section": "Tasks",
+        "console-agent-section-subagents": "Agents",
         "console-staged-context-tray": "Sources — next send",
         "console-library-search-region": "Library search",
         "console-retrieval-scope-row": "Scope",
@@ -435,6 +446,24 @@ async def test_new_specialized_sibling_fails_mounted_production_census():
             with pytest.raises(AssertionError):
                 _mounted_boundary_ids(rail)
             await sibling.remove()
+
+
+@pytest.mark.asyncio
+async def test_agent_fleet_section_lives_in_the_right_rail():
+    """task-10: the agent-fleet mini-section moved out of the left rail.
+
+    ``#console-agent-section-subagents`` (id unchanged) must now be a
+    descendant of the Inspector rail's own scrollable body rather than the
+    left (Context) rail's -- the move this task exists to make.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        section = screen.query_one("#console-agent-section-subagents")
+        body = screen.query_one("#console-inspector-rail-body")
+        node = section
+        while node is not None and node is not body:
+            node = node.parent
+        assert node is body, "fleet section must be a descendant of the Inspect rail body"
 
 
 @pytest.mark.asyncio
