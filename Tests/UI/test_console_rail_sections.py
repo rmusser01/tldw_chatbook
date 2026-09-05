@@ -44,6 +44,7 @@ from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
 )
 from tldw_chatbook.Widgets.Console.console_context_controls import (
+    ConsoleContextControlState,
     build_console_context_control_state,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
@@ -919,6 +920,7 @@ def _test_popover(
     *,
     overrides: ConsoleContextPolicyOverrides | None = None,
     global_overrides: ConsoleContextPolicyOverrides | None = None,
+    context_state: ConsoleContextControlState | None = None,
 ) -> ConsoleModelPopover:
     origin = ConsoleSettingsOrigin("popover-session", None, 0)
     draft = ConsoleSettingsDraftState(
@@ -971,7 +973,8 @@ def _test_popover(
         },
         initial_draft=draft,
         providers_models=providers_models,
-        context_state=build_console_context_control_state(
+        context_state=context_state
+        or build_console_context_control_state(
             settings=settings,
             estimate=ConsoleSettingsContextEstimate(
                 used_tokens=None, token_limit=None, label="unavailable"
