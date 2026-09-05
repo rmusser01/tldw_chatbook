@@ -354,7 +354,14 @@ async def test_runs_pane_paints_busy_rerun_and_check_now_in_place():
     app = RunsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(RunsPane)
-        pane.runs = [{"id": "run-1", "source_id": "source-1"}]
+        pane.runs = [
+            {
+                "id": "run-1",
+                "source_id": "source-1",
+                "status": "failed",
+                "stats": {"failure_category": "connection_failure"},
+            }
+        ]
         pane.select_run_by_id("run-1")
         await pilot.pause()
         table = pane.query_one("#runs-table", DataTable)
@@ -386,7 +393,14 @@ async def test_runs_pane_busy_state_for_another_target_does_not_disable_selectio
     app = RunsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(RunsPane)
-        pane.runs = [{"id": "run-1", "source_id": "source-1"}]
+        pane.runs = [
+            {
+                "id": "run-1",
+                "source_id": "source-1",
+                "status": "failed",
+                "stats": {"failure_category": "connection_failure"},
+            }
+        ]
         pane.select_run_by_id("run-1")
         await pilot.pause()
 
