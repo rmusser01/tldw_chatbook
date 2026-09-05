@@ -27,6 +27,18 @@ def test_you_channel_renders_the_user_display_name():
     seg = _seg(label="you", speaker_id=None)
     assert render_label(seg, {}, "Me") == "Me"
 
+def test_others_without_cluster_renders_others():
+    seg = _seg(label="others", speaker_id=None)
+    assert render_label(seg, {}, "Me") == "Others"
+
+def test_both_channel_without_cluster_renders_others():
+    seg = _seg(label="both", speaker_id=None)
+    assert render_label(seg, {}, "Me") == "Others"
+
+def test_room_mode_segment_without_speaker_renders_none():
+    seg = _seg(label=None, speaker_id=None)
+    assert render_label(seg, {}, "Me") is None
+
 def test_old_meeting_json_backfills_speaker_fields(tmp_path):
     write_meeting_json(tmp_path, {"mode": "call", "format_version": 1})
     payload = read_meeting_json(tmp_path)
