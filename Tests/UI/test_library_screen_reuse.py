@@ -108,7 +108,6 @@ async def test_library_reuse_and_suspend_timer_quiescence(
             "_library_media_selection_timer",
             "_library_prompts_debounce_timer",
             "_library_notes_autosave_timer",
-            "_library_ingest_path_debounce_timer",
             "_library_source_snapshot_timeout_timer",
             "_library_list_entry_focus_timer",
         ):
@@ -117,6 +116,15 @@ async def test_library_reuse_and_suspend_timer_quiescence(
                 "does not auto-cancel a suspended installed screen's "
                 "timers, so suspend must"
             )
+        # (wave-5 merge) The ingest path-debounce timer is a
+        # `LibraryIngestState` field, not a flat screen attribute -- the
+        # screen's generated shim block was deleted in the ingest cleanup
+        # PR, so a `getattr` on the old flat name passes VACUOUSLY.
+        assert library._ingest_state.path_debounce_timer is None, (
+            "the ingest path-debounce timer is still armed on the "
+            "suspended screen -- Textual does not auto-cancel a suspended "
+            "installed screen's timers, so suspend must"
+        )
 
         # The resume seam: revisits must re-kick the visit surfaces.
         kicks: list[str] = []
@@ -200,7 +208,10 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     the suspended flag. Enumerating them HERE too means a new timer added
     to the hook without updating this table fails loudly.
     """
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LibraryIngestState,
+        LibraryScreen,
+    )
 
     screen = LibraryScreen.__new__(LibraryScreen)
     timer_attrs = (
@@ -209,13 +220,21 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
         "_library_media_filter_timer",
         "_library_prompts_debounce_timer",
         "_library_notes_autosave_timer",
-        "_library_ingest_path_debounce_timer",
         "_library_source_snapshot_timeout_timer",
     )
     timers = {}
     for attr in timer_attrs:
         timers[attr] = _RecordingTimer()
         setattr(screen, attr, timers[attr])
+    # (wave-5 merge) The seventh timer is a `LibraryIngestState` field, not
+    # a flat screen attribute -- the screen's generated shim block was
+    # deleted in the ingest cleanup PR, so `setattr`/`getattr` on the old
+    # flat name would arm and assert a field the hook never reads. An
+    # `object.__new__` screen also skips `__init__`'s state construction,
+    # hence the explicit seed.
+    screen._ingest_state = LibraryIngestState()
+    ingest_timer = _RecordingTimer()
+    screen._ingest_state.path_debounce_timer = ingest_timer
     # State the focus-disarm helper resets alongside its timer.
     screen._library_screen_suspended = False
     screen._library_list_entry_focus_generation = 0
@@ -232,3 +251,7 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     for attr in timer_attrs:
         assert timers[attr].stopped, f"{attr} was not stopped"
         assert getattr(screen, attr) is None, f"{attr} was not cleared"
+    assert ingest_timer.stopped, "the ingest path-debounce timer was not stopped"
+    assert screen._ingest_state.path_debounce_timer is None, (
+        "the ingest path-debounce timer was not cleared"
+    )

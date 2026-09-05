@@ -922,8 +922,8 @@ async def _shipped_ingest_screen(host, pilot, *, warning_count: int = 11):
     await _wait_for_selector(screen, pilot, "#library-ingest-path")
     await pilot.pause()
     screen.app_instance.media_db = object()
-    screen._library_ingest_form.path = "/tmp/mixed"
-    screen._library_ingest_form.preflight = _four_group_selection(warning_count)
+    screen._ingest_state.form.path = "/tmp/mixed"
+    screen._ingest_state.form.preflight = _four_group_selection(warning_count)
     screen._update_library_ingest_dynamic_regions()
     await pilot.pause()
     await pilot.pause()

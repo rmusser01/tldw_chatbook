@@ -39,6 +39,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
+    wire_bypass_ingest_controller,
 )
 
 
@@ -120,9 +121,14 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     generic toggles, and a per-group copy of the options."""
     from unittest.mock import MagicMock
 
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LibraryIngestState,
+        LibraryScreen,
+    )
 
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     form = LibraryIngestFormState(path="/tmp/talk.mp3")
     form.title = "My title"
     form.author = "An author"
@@ -133,13 +139,13 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     form.type_options = {
         "audio_video": {"transcription_provider": "faster-whisper"}
     }
-    screen._library_ingest_form = form
-    screen._library_ingest_preflight_worker = None
-    screen._library_ingest_preflight_generation = 0
+    screen._ingest_state.form = form
+    screen._ingest_state.preflight_worker = None
+    screen._ingest_state.preflight_generation = 0
     screen._library_selected_row_id = ""
     screen._library_ingest_start_confirm_armed = False
     screen._library_ingest_start_confirm_warnings = []
-    screen._library_ingest_last_submission = None
+    screen._ingest_state.last_submission = None
     screen._notify_library_ingest_warning = MagicMock()
     screen.refresh = MagicMock()
     screen.call_after_refresh = MagicMock()
@@ -154,7 +160,7 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     screen._save_library_ingest_options = lambda *_a, **_k: True
     screen._do_submit_ingest("/tmp/talk.mp3")
 
-    snapshot = screen._library_ingest_last_submission
+    snapshot = screen._ingest_state.last_submission
     assert snapshot is not None
     assert snapshot.source == "/tmp/talk.mp3"
     assert snapshot.title == "My title"
@@ -199,7 +205,7 @@ def test_check_action_gates_retry_last_to_ingest_with_a_snapshot():
     assert screen.check_action("library_ingest_retry_last", ()) is False
 
     # Ingest canvas with a snapshot — active.
-    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+    screen._ingest_state.last_submission = LibraryIngestLastSubmission(
         source="/tmp/talk.mp3"
     )
     assert screen.check_action("library_ingest_retry_last", ()) is True
@@ -223,7 +229,7 @@ def test_ingest_shortcuts_advertise_retry_only_when_the_queue_is_settled():
 
     assert ("r", "retry") not in screen._library_ingest_shortcuts_for_current_state()
 
-    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+    screen._ingest_state.last_submission = LibraryIngestLastSubmission(
         source="/tmp/talk.mp3"
     )
     registry.restore([_job(state=IngestJobState.PARSING)], next_id=2)
@@ -268,7 +274,7 @@ async def test_registry_ticks_only_reflow_footer_when_retry_availability_changes
         screen._handle_library_ingest_registry_changed()
         assert registrations == []
 
-        screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+        screen._ingest_state.last_submission = LibraryIngestLastSubmission(
             source="/tmp/talk.mp3"
         )
         screen._handle_library_ingest_registry_changed()
@@ -313,7 +319,7 @@ async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
         lambda path, scan_limit=1000, **_kwargs: results["current"],
     )
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.title = "My talk"
     form.author = "A speaker"
     form.keywords = "alpha, beta"
@@ -325,7 +331,7 @@ async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
     screen._trigger_library_ingest_preflight(str(source))
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_ingest_form.preflight is not None,
+        lambda: screen._ingest_state.form.preflight is not None,
         message="pre-flight never landed",
     )
     await pilot.pause()
@@ -337,16 +343,16 @@ async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
     # (caught by the mutation check: the debounce re-ran the analysis the
     # mutant no longer requested). Stop it so the only trigger left is
     # the one under test.
-    debounce = screen._library_ingest_path_debounce_timer
+    debounce = screen._ingest_state.path_debounce_timer
     if debounce is not None:
         debounce.stop()
-        screen._library_ingest_path_debounce_timer = None
+        screen._ingest_state.path_debounce_timer = None
 
     screen._submit_library_ingest_form()
     await pilot.pause()
     assert [k.get("source_path") for k in submitted] == [str(source)]
-    assert screen._library_ingest_form.path == ""
-    assert screen._library_ingest_form.title == ""
+    assert screen._ingest_state.form.path == ""
+    assert screen._ingest_state.form.title == ""
     return str(source), results
 
 
@@ -386,7 +392,7 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         # mutation the restore assertions below would be vacuously true
         # (caught by the drop-the-options-restore mutation check: the
         # never-cleared form satisfied them).
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         form.type_options["audio_video"]["transcription_provider"] = (
             "parakeet-onnx"
         )
@@ -418,16 +424,16 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         # ``test_retry_over_a_pristine_form_re_stages_on_one_press``.
         screen.query_one("#library-ingest-retry-last", Button).press()
         await pilot.pause()
-        assert screen._library_ingest_retry_confirm_armed is True
-        assert screen._library_ingest_form.author == "Somebody Else", (
+        assert screen._ingest_state.retry_confirm_armed is True
+        assert screen._ingest_state.form.author == "Somebody Else", (
             "the arming press must change nothing"
         )
-        screen._library_ingest_retry_confirm_armed_at -= 1.0
+        screen._ingest_state.retry_confirm_armed_at -= 1.0
         screen.query_one("#library-ingest-retry-last", Button).press()
         await pilot.pause()
 
         # Options + metadata restored to the form...
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         assert (
             form.type_options["audio_video"]["transcription_provider"]
             == "faster-whisper"
@@ -450,7 +456,7 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         # was not reused.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_ingest_form.preflight is warned,
+            lambda: screen._ingest_state.form.preflight is warned,
             message="fresh pre-flight never ran after re-stage",
         )
         tooling = await _wait_for_selector(
@@ -580,7 +586,7 @@ def test_check_action_and_state_builder_share_one_retry_predicate():
     app.library_ingest_jobs = LibraryIngestJobRegistry()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
-    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+    screen._ingest_state.last_submission = LibraryIngestLastSubmission(
         source="/tmp/talk.mp3"
     )
 
@@ -637,7 +643,7 @@ async def test_retry_over_an_edited_form_takes_two_presses(
         )
 
         # The user is mid-way through staging something ELSE.
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         path_input = screen.query_one("#library-ingest-path", Input)
         path_input.value = "/tmp/half-typed-other"
         await pilot.pause()
@@ -649,11 +655,11 @@ async def test_retry_over_an_edited_form_takes_two_presses(
         await pilot.press("r")
         await pilot.pause()
 
-        assert screen._library_ingest_form.path == "/tmp/half-typed-other", (
+        assert screen._ingest_state.form.path == "/tmp/half-typed-other", (
             "the first `r` destroyed in-progress form content with no "
             "confirmation"
         )
-        assert screen._library_ingest_form.title == "Half-typed title"
+        assert screen._ingest_state.form.title == "Half-typed title"
         retry = screen.query_one("#library-ingest-retry-last", Button)
         assert "again" in str(retry.label).casefold(), (
             f"the pending consent is not visible on the affordance "
@@ -661,15 +667,15 @@ async def test_retry_over_an_edited_form_takes_two_presses(
         )
 
         # Second press (past the repeat-gesture dead zone) replaces it.
-        screen._library_ingest_retry_confirm_armed_at -= 1.0
+        screen._ingest_state.retry_confirm_armed_at -= 1.0
         await pilot.press("r")
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_ingest_form.path == source,
+            lambda: screen._ingest_state.form.path == source,
             message="the confirmed retry never re-staged",
         )
-        assert screen._library_ingest_form.title == "My talk"
+        assert screen._ingest_state.form.title == "My talk"
         assert (
             "again"
             not in str(
@@ -707,7 +713,7 @@ async def test_retry_over_a_pristine_form_re_stages_on_one_press(
 
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_ingest_form.path == source,
+            lambda: screen._ingest_state.form.path == source,
             message="a pristine form should re-stage on a single press",
         )
-        assert screen._library_ingest_retry_confirm_armed is False
+        assert screen._ingest_state.retry_confirm_armed is False
