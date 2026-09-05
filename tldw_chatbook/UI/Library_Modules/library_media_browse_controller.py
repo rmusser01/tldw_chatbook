@@ -20,11 +20,22 @@ from ...Library.library_pager_state import (
     PageFreshness,
     build_library_pager_display,
 )
+from ..destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_recovery_state,
+)
 
 _PAGE_WORKER_GROUP = "library-media-browse"
 _FACET_WORKER_GROUP = "library-media-types"
 _SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
+_SERVICE_WHAT = "Couldn't load media"
 _FACET_ERROR = "Couldn't load media types. Retry."
+_FACET_WHAT = "Couldn't load media types"
+# task-31632: the single Media Retry, rendered INSIDE the failure callout,
+# and the callout's own selector -- both failure fences publish one state
+# through ``failure`` because the canvas paints one callout.
+_RETRY_ID = "library-media-retry"
+_FAILURE_SELECTOR = "#library-media-load-failure"
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
 # Final review I-2: not "Retry failed · " -- the Analyze receipt on this
@@ -60,6 +71,28 @@ def _retry_failure_reason(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def _load_failure(
+    what: str, reason: str, *, timed_out: bool
+) -> DestinationRecoveryState:
+    """Build the Media callout state for one failed load."""
+    return load_failure_recovery_state(
+        what=what,
+        reason=reason,
+        retry_id=_RETRY_ID,
+        stable_selector=_FAILURE_SELECTOR,
+        kind="timeout" if timed_out else "error",
+    )
+
+
+def _raised_failure(what: str, exc: BaseException) -> DestinationRecoveryState:
+    """Name a raised load failure through the shared reason mapping."""
+    return _load_failure(
+        what,
+        _retry_failure_reason(exc),
+        timed_out=isinstance(exc, TimeoutError),
+    )
+
+
 class LibraryMediaBrowseController:
     """Own requested/applied Media pages and an independently fenced facet list."""
 
@@ -92,6 +125,13 @@ class LibraryMediaBrowseController:
         # action's tooltip reads this one instead, so it keeps explaining
         # why the action is off across repeated failed retries.
         self.stale_reason = ""
+        # task-31632: the recovery state behind ``error_copy``/
+        # ``facet_error_copy`` -- same event, with the reason and a Retry
+        # target. Each is cleared by its OWN success, so a page failure
+        # never outlives a facet reload (or the reverse); ``failure`` is
+        # the one the canvas paints.
+        self.page_failure: DestinationRecoveryState | None = None
+        self.facet_failure: DestinationRecoveryState | None = None
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -99,6 +139,11 @@ class LibraryMediaBrowseController:
         self.facet_error_copy = ""
         self.facet_fingerprint = ""
         self._facet_generation = 0
+
+    @property
+    def failure(self) -> DestinationRecoveryState | None:
+        """Return the load failure to show: the page's, else the facets'."""
+        return self.page_failure or self.facet_failure
 
     @property
     def _run_worker(self) -> Callable[..., Any]:
@@ -151,6 +196,7 @@ class LibraryMediaBrowseController:
         self.inflight_scope = scope
         self.loading = True
         self.error_copy = ""
+        self.page_failure = None
         return self._page_generation
 
     def request(
@@ -167,6 +213,11 @@ class LibraryMediaBrowseController:
         )
 
     def retry(self, *, focus_identity: str | None) -> Any | None:
+        # task-31632: the callout advertises ONE Retry for whichever load
+        # failed, so a facet failure it names has to be one this button can
+        # clear -- the type list has no retry control of its own.
+        if self.facet_error_copy:
+            self.request_facets(fingerprint=self.requested_scope.fingerprint)
         return self.request(self.requested_scope, focus_identity=focus_identity)
 
     async def _search(self, scope: MediaBrowseScope) -> MediaBrowseResult:
@@ -217,10 +268,19 @@ class LibraryMediaBrowseController:
                     if self.applied_result is not None:
                         self.freshness = "stale"
                         self.error_copy = ""
+                        self.page_failure = None
                         self.stale_copy = _SHRINK_COPY
                         self.stale_reason = _SHRINK_COPY
                     else:
                         self.error_copy = _SERVICE_ERROR
+                        # No exception here: the clamped page came back
+                        # out of range too, so the reason is the shrink
+                        # itself rather than anything raised.
+                        self.page_failure = _load_failure(
+                            _SERVICE_WHAT,
+                            "the list changed while loading",
+                            timed_out=False,
+                        )
                     self._sync(focus_identity)
                     return
                 clamped = True
@@ -239,7 +299,8 @@ class LibraryMediaBrowseController:
             self.loading = False
             self.inflight_scope = None
             if self.freshness != "stale":
-                self.error_copy = self._failure_copy(scope)
+                self.error_copy, failure_what = self._failure_copy(scope)
+                self.page_failure = _raised_failure(failure_what, exc)
             else:
                 # task-31220: on a stale page the stale copy is the ONLY
                 # thing shown, and leaving it untouched is what made Retry
@@ -265,18 +326,34 @@ class LibraryMediaBrowseController:
         self.loading = False
         self.inflight_scope = None
         self.error_copy = ""
+        self.page_failure = None
         self.stale_copy = ""
         self.stale_reason = ""
         self._sync(focus_identity)
         return True
 
-    def _failure_copy(self, failed_scope: MediaBrowseScope) -> str:
+    def _failure_copy(self, failed_scope: MediaBrowseScope) -> tuple[str, str]:
+        """Return the pager sentence and the callout's "what failed" clause.
+
+        Args:
+            failed_scope: Scope of the request that failed.
+
+        Returns:
+            The existing plain sentence and the same failure as a clause, so
+            the two can never describe different failures.
+        """
         applied = self.applied_scope
         if applied is None:
-            return _SERVICE_ERROR
+            return _SERVICE_ERROR, _SERVICE_WHAT
         if failed_scope.same_except_page(applied):
-            return f"Couldn't load page {failed_scope.page}."
-        return "Filter wasn't applied; showing previous results."
+            return (
+                f"Couldn't load page {failed_scope.page}.",
+                f"Couldn't load page {failed_scope.page}",
+            )
+        return (
+            "Filter wasn't applied; showing previous results.",
+            "Filter wasn't applied",
+        )
 
     def retain_stale_items(
         self,
@@ -293,6 +370,7 @@ class LibraryMediaBrowseController:
         self.retained_items = validate_media_browse_items(items)
         self.freshness = "stale"
         self.error_copy = ""
+        self.page_failure = None
         self.stale_copy = stale_copy.strip()
         self.stale_reason = self.stale_copy
 
@@ -356,6 +434,7 @@ class LibraryMediaBrowseController:
         self.facet_fingerprint = fingerprint
         self.facet_loading = True
         self.facet_error_copy = ""
+        self.facet_failure = None
         if not self._request_is_active():
             return None
         self._sync(None)
@@ -390,6 +469,7 @@ class LibraryMediaBrowseController:
             )
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
+            self.facet_failure = _raised_failure(_FACET_WHAT, exc)
             self._sync(None)
             return
         if (
@@ -401,6 +481,7 @@ class LibraryMediaBrowseController:
         self.type_options = normalized
         self.facet_loading = False
         self.facet_error_copy = ""
+        self.facet_failure = None
         self._sync(None)
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:

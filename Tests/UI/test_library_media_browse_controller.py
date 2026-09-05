@@ -566,3 +566,117 @@ async def test_shrink_and_first_load_failure_copies_are_untouched() -> None:
     await shrink_screen.pending.pop()
 
     assert shrink.stale_copy == "List changed while paging; retry to load a current page."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "reason", "severity"),
+    (
+        (TimeoutError(), "timed out", "warning"),
+        (sqlite3.OperationalError("database is locked"), "database is locked", "error"),
+        (RuntimeError("boom"), "RuntimeError", "error"),
+    ),
+)
+async def test_page_failure_publishes_a_recovery_state_with_the_reason(
+    failure: Exception, reason: str, severity: str
+) -> None:
+    """task-31632 AC#1: the callout names what failed, why, and Retry."""
+    screen = _Screen()
+    service = _Service(_page(1, 20), failure, _page(1, 20))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    assert controller.failure is None
+
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert state.message == f"Couldn't load page 1 · {reason}"
+    assert state.severity == severity
+    assert state.retry_id == "library-media-retry"
+    assert state.stable_selector == "#library-media-load-failure"
+    # Existing consumers keep the plain sentence.
+    assert controller.error_copy == "Couldn't load page 1."
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.failure is None
+
+
+@pytest.mark.asyncio
+async def test_first_load_failure_recovery_state_names_the_service() -> None:
+    screen = _Screen()
+    controller = _controller(screen, _Service(OSError("unable to open database file")))
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert state.message == "Couldn't load media · unable to open database file"
+    assert state.severity == "error"
+    assert controller.error_copy == (
+        "Couldn't load media. Check the local Library and retry."
+    )
+
+
+@pytest.mark.asyncio
+async def test_exhausted_clamp_without_an_applied_page_still_has_a_reason() -> None:
+    screen = _Screen()
+    controller = _controller(screen, _Service(_page(99, 45), _page(3, 0)))
+    controller.request(MediaBrowseScope(page=99), focus_identity=None)
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert state.message == "Couldn't load media · the list changed while loading"
+    assert controller.error_copy == (
+        "Couldn't load media. Check the local Library and retry."
+    )
+
+
+@pytest.mark.asyncio
+async def test_facet_failure_publishes_its_own_recovery_state_and_clears_on_success() -> (
+    None
+):
+    screen = _Screen()
+    service = _Service(types=RuntimeError("boom"))
+    controller = _controller(screen, service)
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert state.message == "Couldn't load media types · RuntimeError"
+    assert state.severity == "error"
+    assert state.retry_id == "library-media-retry"
+    assert controller.facet_error_copy == "Couldn't load media types. Retry."
+
+    service.types = ("video",)
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+
+    assert controller.failure is None
+
+
+@pytest.mark.asyncio
+async def test_retry_reloads_the_type_facets_that_failed() -> None:
+    """The callout's only Retry owns the facet failure it advertises."""
+    screen = _Screen()
+    service = _Service(_page(1, 20), _page(1, 20), types=RuntimeError("boom"))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    assert controller.failure is not None
+
+    service.types = ("video",)
+    controller.retry(focus_identity=None)
+    while screen.pending:
+        await screen.pending.pop()
+
+    assert controller.type_options == ("video",)
+    assert controller.failure is None
