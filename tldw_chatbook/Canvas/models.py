@@ -66,6 +66,15 @@ class CanvasScope:
 
 
 @dataclass(frozen=True, slots=True)
+class CanvasQuotaUsage:
+    """Source-free durable resource totals used by staging admission."""
+
+    canvas_ids: tuple[str, ...]
+    revision_counts: tuple[tuple[str, int], ...]
+    source_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class CanvasOrigin:
     """Compact source-free origin metadata for one reachable revision."""
 

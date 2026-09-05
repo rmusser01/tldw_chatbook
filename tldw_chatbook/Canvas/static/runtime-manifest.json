@@ -29,12 +29,12 @@
       "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
     },
     "canvas_renderer.js": {
-      "bytes": 53523,
-      "sha256": "5f43d2fc55e284e1e88f1c144fe41696e41edf57f4a9cfc07e0ddd8583a32ef3"
+      "bytes": 53675,
+      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
     },
     "canvas_runtime_worker.js": {
-      "bytes": 50199,
-      "sha256": "60f9d9c35d75b32069ee4d517e44a941d709d0dd5bdf1774e881a9ce95ff6a3e"
+      "bytes": 52788,
+      "sha256": "ff1540b9e72430c5386826fbc15921073a4a7ce5f1dba8418b48328a29698f9c"
     },
     "quickjs-runtime.js": {
       "bytes": 737944,

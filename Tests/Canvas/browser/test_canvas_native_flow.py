@@ -710,6 +710,107 @@ async def test_native_temporary_promotion_reopens_and_unsaved_close_destroys(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+async def test_real_tool_publication_keeps_same_revision_pin_until_follow() -> None:
+    session_id = "native-pinned-publication"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    scopes = {
+        session_id: CanvasScope(
+            session_id=session_id,
+            conversation_id=session_id,
+            active_message_ids=("assistant-root",),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="interactive-root",
+        )
+    }
+    root = controller.interactive_create_canvas(
+        scopes[session_id],
+        origin_message_id="assistant-root",
+        title="Pinned publication",
+        html="<!doctype html><h1>root revision</h1>",
+        temporary=True,
+    )
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda requested: scopes[requested],
+        canvas_controller=controller,
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    gateway = CanvasGateway(authority=authority)
+    browser_scope = authority.gateway_scope(
+        session_id=session_id,
+        browser_session_id="native-pinned-browser",
+        canvas_id=root.revision.canvas_id,
+        revision_id=root.revision.revision_id,
+    )
+    launch = await gateway.open_shell(browser_scope)
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page()
+            await page.goto(launch.browser_url)
+            frame = page.frame_locator("#canvas-preview")
+            await expect(page.locator("#connection-state")).to_have_text("Connected")
+            await expect(
+                frame.get_by_role("heading", name="root revision")
+            ).to_be_visible()
+            await page.get_by_role("button", name="Pin revision").click()
+            await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
+
+            update_scope = replace(
+                scopes[session_id],
+                active_message_ids=("assistant-root", "assistant-update"),
+                selected_canvas_id=root.revision.canvas_id,
+                selected_revision_id=root.revision.revision_id,
+                run_id="tool-update",
+            )
+            scopes[session_id] = update_scope
+            run = controller.register_run(
+                update_scope,
+                assistant_message_id="assistant-update",
+                temporary=True,
+            )
+            updated = run.update_canvas(
+                update_scope,
+                tool_call_id="canvas-update",
+                canvas_id=root.revision.canvas_id,
+                expected_parent_revision_id=root.revision.revision_id,
+                html="<!doctype html><h1>updated revision</h1>",
+            )
+            settlement = run.finish_assistant_run(
+                "assistant-update",
+                actual_run_id=update_scope.run_id,
+                terminal_status="done",
+            )
+            assert settlement is not None
+            assert controller.confirm_exact_settlement(settlement) is True
+
+            await expect(
+                page.get_by_text("New version available", exact=True)
+            ).to_be_visible()
+            await expect(
+                frame.get_by_role("heading", name="root revision")
+            ).to_be_visible()
+            await page.locator("#follow-button").click()
+            await expect(
+                frame.get_by_role("heading", name="updated revision")
+            ).to_be_visible()
+            assert (
+                authority._selection[session_id].revision_id
+                == updated.revision.revision_id
+            )
+            assert authority._selection[session_id].following is True
+            await browser.close()
+    finally:
+        await gateway.aclose()
+        controller.discard_session(session_id)
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_imported_archive_reopens_exact_branch_after_source_purge(
     tmp_path: Path,
 ) -> None:

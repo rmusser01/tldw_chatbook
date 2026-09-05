@@ -893,13 +893,18 @@ function validatePatch(patch) {
   throw new Error("patch operation/schema");
 }
 
-function removeMappings(native, state) {
-  const stack = [native];
-  while (stack.length) {
-    const current = stack.pop();
-    const identifier = state.idByNative.get(current);
-    if (identifier) state.nativeById.delete(identifier);
-    for (const child of current.childNodes) stack.push(child);
+function pruneDetachedMappings(state) {
+  const attached = new Set();
+  const work = [...state.container.childNodes];
+  while (work.length) {
+    const current = work.pop();
+    attached.add(current);
+    work.push(...current.childNodes);
+  }
+  for (const [identifier, native] of state.nativeById) {
+    if (attached.has(native)) continue;
+    state.nativeById.delete(identifier);
+    state.idByNative.delete(native);
   }
 }
 
@@ -924,7 +929,6 @@ function applyPatch(patch, state) {
   const target = state.nativeById.get(patch.node_id);
   if (!target) throw new Error("unknown patch target");
   if (patch.op === "set-text") {
-    for (const child of target.childNodes) removeMappings(child, state);
     target.textContent = patch.value;
   } else if (patch.op === "set-attribute") {
     if (!(target instanceof Element)) throw new Error("attribute target");
@@ -954,7 +958,6 @@ function applyPatch(patch, state) {
     else if (patch.op === "remove-child") {
       if (child.parentNode !== target) throw new Error("patch parent mismatch");
       target.removeChild(child);
-      removeMappings(child, state);
     } else {
       const reference = patch.reference_id === null ? null : state.nativeById.get(patch.reference_id);
       if (patch.reference_id !== null && (!reference || reference.parentNode !== target)) {
@@ -968,9 +971,11 @@ function applyPatch(patch, state) {
 function cloneRendererState() {
   const state = {
     fragment: document.createDocumentFragment(),
+    container: null,
     nativeById: new Map(),
     idByNative: new WeakMap(),
   };
+  state.container = state.fragment;
   const cloned = new Map();
 
   function indexClone(original, copy) {
@@ -1079,6 +1084,7 @@ function prepareTransaction(patches, bridges) {
     applyPatch(patch, state);
     journal.push(Object.freeze({...patch}));
   }
+  pruneDetachedMappings(state);
   const preparedBridges = bridges.map((bridge) => Object.freeze(prepareBridge(bridge)));
   return Object.freeze({
     journal: Object.freeze(journal),
@@ -1087,8 +1093,9 @@ function prepareTransaction(patches, bridges) {
 }
 
 function commitTransaction(transaction) {
-  const liveState = {nativeById, idByNative};
+  const liveState = {container: root, nativeById, idByNative};
   for (const patch of transaction.journal) applyPatch(patch, liveState);
+  pruneDetachedMappings(liveState);
   nativeById = liveState.nativeById;
   idByNative = liveState.idByNative;
   for (const bridge of transaction.bridges) {

@@ -5,7 +5,12 @@ from dataclasses import replace
 
 import pytest
 
-from tldw_chatbook.Canvas.models import CanvasConflictResult, CanvasScope
+from tldw_chatbook.Canvas.limits import CanvasLimitError, CanvasRepositoryLimits
+from tldw_chatbook.Canvas.models import (
+    CanvasConflictResult,
+    CanvasQuotaUsage,
+    CanvasScope,
+)
 from tldw_chatbook.Chat.console_canvas_controller import (
     CanvasRunState,
     ConsoleCanvasController,
@@ -66,6 +71,255 @@ def test_successful_finalization_exposes_one_source_private_contribution() -> No
     assert SOURCE_SENTINEL not in settlement.metadata_json
     assert SOURCE_SENTINEL not in repr(settlement)
     assert settlement.contribution.revision_count == 1
+
+
+def test_production_owner_enforces_exact_default_canvas_and_revision_counts() -> None:
+    controller = _controller()
+    scope = _scope()
+    created = []
+    for index in range(10):
+        created.append(
+            controller.create_canvas(
+                scope,
+                tool_call_id=f"create-{index}",
+                title=f"Canvas {index}",
+                html="<p>x</p>",
+            )
+        )
+
+    with pytest.raises(CanvasLimitError, match="canvas_count_limit"):
+        controller.create_canvas(
+            scope,
+            tool_call_id="create-overflow",
+            title="Canvas overflow",
+            html="<p>x</p>",
+        )
+    assert controller.run_revision_count(RUN_ID) == 10
+
+    revision_controller = _controller()
+    current = revision_controller.create_canvas(
+        scope,
+        tool_call_id="root",
+        title="Revision boundary",
+        html="<p>0</p>",
+    )
+    for sequence in range(2, 101):
+        current = revision_controller.update_canvas(
+            scope,
+            tool_call_id=f"update-{sequence}",
+            canvas_id=current.revision.canvas_id,
+            expected_parent_revision_id=current.revision.revision_id,
+            html=f"<p>{sequence}</p>",
+        )
+
+    with pytest.raises(CanvasLimitError, match="revision_count_limit"):
+        revision_controller.update_canvas(
+            scope,
+            tool_call_id="update-overflow",
+            canvas_id=current.revision.canvas_id,
+            expected_parent_revision_id=current.revision.revision_id,
+            html="<p>101</p>",
+        )
+    assert revision_controller.run_revision_count(RUN_ID) == 100
+
+
+def test_production_owner_counts_concurrent_bytes_and_abort_releases_them() -> None:
+    limits = CanvasRepositoryLimits(
+        max_canvases_per_conversation=10,
+        max_revisions_per_canvas=100,
+        max_source_bytes_per_conversation=8,
+        max_source_bytes_per_revision=8,
+    )
+    controller = ConsoleCanvasController(repository_limits=limits)
+    scopes = [
+        _scope(run_id=f"run-{index}", active_message_ids=(f"assistant-{index}",))
+        for index in range(3)
+    ]
+    runs = [
+        controller.register_run(
+            scope, assistant_message_id=f"assistant-{index}", temporary=False
+        )
+        for index, scope in enumerate(scopes)
+    ]
+    runs[0].create_canvas(scopes[0], tool_call_id="first", title="First", html="1234")
+    runs[1].create_canvas(scopes[1], tool_call_id="second", title="Second", html="5678")
+
+    with pytest.raises(CanvasLimitError, match="conversation_source_bytes_limit"):
+        runs[2].create_canvas(scopes[2], tool_call_id="third", title="Third", html="x")
+    assert controller.run_revision_count("run-2") == 0
+
+    assert controller.abort_settlement("run-1", "cancelled") is True
+    runs[2].create_canvas(scopes[2], tool_call_id="third", title="Third", html="x")
+    assert controller.run_revision_count("run-2") == 1
+
+
+def test_durable_committed_stage_is_not_double_counted_after_persistence() -> None:
+    class DurableUsage:
+        usage = CanvasQuotaUsage((), (), 0)
+
+        def quota_usage(self, _scope):
+            return self.usage
+
+    service = DurableUsage()
+    limits = CanvasRepositoryLimits(max_source_bytes_per_conversation=4)
+    controller = ConsoleCanvasController(
+        durable_service=service, repository_limits=limits
+    )
+    first_scope = _scope(run_id="durable-first", active_message_ids=("first",))
+    first_run = controller.register_run(
+        first_scope, assistant_message_id="first", temporary=False
+    )
+    first = first_run.create_canvas(
+        first_scope, tool_call_id="first", title="First", html="12"
+    )
+    settlement = first_run.finish_assistant_run(
+        "first", actual_run_id="durable-first", terminal_status="done"
+    )
+    assert settlement is not None
+    service.usage = CanvasQuotaUsage(
+        (first.revision.canvas_id,), ((first.revision.canvas_id, 1),), 2
+    )
+    assert controller.confirm_exact_settlement(settlement) is True
+
+    second_scope = _scope(run_id="durable-second", active_message_ids=("second",))
+    second_run = controller.register_run(
+        second_scope, assistant_message_id="second", temporary=False
+    )
+    second_run.create_canvas(
+        second_scope, tool_call_id="second", title="Second", html="34"
+    )
+    assert controller.run_revision_count("durable-second") == 1
+
+
+def test_temporary_import_and_rename_share_admission_without_partial_stage() -> None:
+    limits = CanvasRepositoryLimits(
+        max_canvases_per_conversation=1,
+        max_revisions_per_canvas=2,
+        max_source_bytes_per_conversation=100,
+        max_source_bytes_per_revision=100,
+    )
+    controller = ConsoleCanvasController(repository_limits=limits)
+    controller.activate_session(SESSION_ID)
+    create_scope = _scope(run_id="import-create", active_message_ids=("user-1",))
+    created = controller.interactive_create_canvas(
+        create_scope,
+        origin_message_id="user-1",
+        title="Imported",
+        html="<p>one</p>",
+        temporary=True,
+    )
+    rename_scope = _scope(
+        run_id="import-rename",
+        active_message_ids=("user-1", "user-2"),
+        selected_canvas_id=created.revision.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+    )
+    renamed = controller.interactive_rename_canvas(
+        rename_scope,
+        origin_message_id="user-2",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        title="Renamed",
+        temporary=True,
+    )
+    overflow_scope = replace(
+        rename_scope,
+        run_id="import-overflow",
+        active_message_ids=("user-1", "user-2", "user-3"),
+        selected_revision_id=renamed.revision.revision_id,
+    )
+
+    with pytest.raises(CanvasLimitError, match="revision_count_limit"):
+        controller.interactive_update_canvas(
+            overflow_scope,
+            origin_message_id="user-3",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=renamed.revision.revision_id,
+            html="<p>three</p>",
+            temporary=True,
+        )
+
+    assert "import-overflow" not in controller._runs
+
+
+def test_durable_import_counts_concurrent_stage_and_existing_history(tmp_path) -> None:
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "canvas-admission.sqlite", "admission")
+    limits = CanvasRepositoryLimits(max_canvases_per_conversation=1)
+    try:
+        conversation_id = db.add_conversation({"title": "Admission"})
+        first_message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "first",
+            }
+        )
+        second_message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "parent_message_id": first_message_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "second",
+            }
+        )
+        assert conversation_id and first_message_id and second_message_id
+        controller = ConsoleCanvasController(
+            durable_service=CanvasService(db), repository_limits=limits
+        )
+        tool_scope = CanvasScope(
+            session_id="durable-session",
+            conversation_id=conversation_id,
+            active_message_ids=(first_message_id, second_message_id),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="tool-stage",
+        )
+        run = controller.register_run(
+            tool_scope, assistant_message_id=first_message_id, temporary=False
+        )
+        run.create_canvas(
+            tool_scope, tool_call_id="reserved", title="Reserved", html="<p>x</p>"
+        )
+        import_scope = replace(tool_scope, run_id="durable-import")
+
+        with pytest.raises(CanvasLimitError, match="canvas_count_limit"):
+            controller.interactive_create_canvas(
+                import_scope,
+                origin_message_id=second_message_id,
+                title="Imported",
+                html="<p>imported</p>",
+                temporary=False,
+            )
+
+        assert controller.abort_settlement("tool-stage", "cancelled") is True
+        imported = controller.interactive_create_canvas(
+            import_scope,
+            origin_message_id=second_message_id,
+            title="Imported",
+            html="<p>imported</p>",
+            temporary=False,
+        )
+        assert imported.revision.title == "Imported"
+
+        next_scope = replace(tool_scope, run_id="tool-after-import")
+        next_run = controller.register_run(
+            next_scope, assistant_message_id=second_message_id, temporary=False
+        )
+        with pytest.raises(CanvasLimitError, match="canvas_count_limit"):
+            next_run.create_canvas(
+                next_scope,
+                tool_call_id="existing-overflow",
+                title="Overflow",
+                html="<p>overflow</p>",
+            )
+        assert controller.run_revision_count("tool-after-import") == 0
+    finally:
+        db.close_connection()
 
 
 def test_canvas_only_success_keeps_the_registered_assistant_anchor() -> None:

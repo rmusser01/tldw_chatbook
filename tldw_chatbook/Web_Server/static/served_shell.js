@@ -42,7 +42,7 @@
     workbench.classList.add("terminal-only");
     openButton.hidden = !latest?.url;
     closeButton.hidden = true;
-    setStatus(latest?.url ? "Canvas closed" : "Terminal only");
+    setStatus(latest?.url ? "Canvas hidden" : "Terminal only");
     if (focusControl && !openButton.hidden) openButton.focus();
     window.dispatchEvent(new Event("resize"));
   }

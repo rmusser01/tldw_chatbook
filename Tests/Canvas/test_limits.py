@@ -8,6 +8,7 @@ import hashlib
 import pytest
 
 from tldw_chatbook.Canvas.limits import (
+    MAX_WIRE_INTEGER,
     CanvasLimitError,
     CanvasLimits,
     decode_data_url,
@@ -171,6 +172,22 @@ def test_asset_validation_rejects_aggregate_size_over_exact_boundary() -> None:
 
     with pytest.raises(CanvasLimitError, match="aggregate assets exceed 3 decoded bytes"):
         validate_asset_payloads([first, second], per_asset_limit=2, aggregate_limit=3)
+
+
+@pytest.mark.parametrize(
+    "assets",
+    [(), (decode_data_url("data:text/plain;base64,YQ==", field_name="asset"),)],
+)
+@pytest.mark.parametrize("field", ["per_asset_limit", "aggregate_limit"])
+@pytest.mark.parametrize("invalid", [-1, MAX_WIRE_INTEGER + 1, True])
+def test_asset_validation_checks_safe_wire_limits_before_iteration(
+    assets, field: str, invalid: int
+) -> None:
+    limits = {"per_asset_limit": 1, "aggregate_limit": 1}
+    limits[field] = invalid
+
+    with pytest.raises(CanvasLimitError):
+        validate_asset_payloads(assets, **limits)
 
 
 def test_data_url_rejects_malformed_base64_and_unknown_parameters() -> None:

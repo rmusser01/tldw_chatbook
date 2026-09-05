@@ -835,6 +835,98 @@ def test_benign_counter_form_timer_svg_and_typed_submit_work_with_zero_egress(
 
 
 @pytest.mark.loopback_network
+def test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        expect = importlib.import_module("playwright.sync_api").expect
+        source = """<!doctype html><html><body>
+<div id="left"><section id="moving"><button id="inside">inside</button><span id="descendant">descendant</span></section></div>
+<div id="right"><span id="marker">marker</span></div>
+<button id="move">move</button><button id="detach">detach</button>
+<button id="reinsert">reinsert</button><button id="remount">remount</button><button id="same">same</button>
+<button id="cycle">cycle</button><output id="count">0</output>
+<output id="result">ready</output>
+<script>
+const left = document.getElementById("left");
+const right = document.getElementById("right");
+const moving = document.getElementById("moving");
+const marker = document.getElementById("marker");
+const count = document.getElementById("count");
+const result = document.getElementById("result");
+let clicks = 0;
+document.getElementById("inside").addEventListener("click", () => { count.textContent = String(++clicks); });
+document.getElementById("move").addEventListener("click", () => { right.insertBefore(moving, marker); });
+document.getElementById("detach").addEventListener("click", () => { moving.parentNode.removeChild(moving); });
+document.getElementById("reinsert").addEventListener("click", () => { left.appendChild(moving); });
+document.getElementById("remount").addEventListener("click", () => {
+  right.appendChild(moving); left.appendChild(moving); right.insertBefore(moving, marker);
+});
+document.getElementById("same").addEventListener("click", () => { moving.parentNode.insertBefore(moving, moving); result.textContent = "same-ok"; });
+document.getElementById("cycle").addEventListener("click", () => {
+  try { moving.appendChild(left); result.textContent = "cycle-mutated"; }
+  catch (_) { result.textContent = "cycle-refused"; }
+});
+</script></body></html>"""
+        status = _load(page, _wire_plan(source), recorder)
+        assert status["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        frame.evaluate("window.__ownedMoving = document.querySelector('#moving')")
+
+        frame.locator("#move").click()
+        frame.locator("#right").wait_for()
+        assert frame.locator("#right > *").evaluate_all(
+            "nodes => nodes.map(node => node.id)"
+        ) == ["moving", "marker"]
+        assert (
+            frame.evaluate("window.__ownedMoving === document.querySelector('#moving')")
+            is True
+        )
+        assert frame.locator("#descendant").text_content() == "descendant"
+        frame.locator("#inside").click()
+        expect(frame.locator("#count")).to_have_text("1")
+        assert frame.locator("#count").text_content() == "1"
+
+        frame.locator("#detach").click()
+        frame.locator("#moving").wait_for(state="detached")
+        frame.locator("#remount").click()
+        expect(frame.locator("#right > #moving")).to_have_count(1)
+        assert frame.locator("#right > *").evaluate_all(
+            "nodes => nodes.map(node => node.id)"
+        ) == ["moving", "marker"]
+        assert (
+            frame.evaluate("window.__ownedMoving === document.querySelector('#moving')")
+            is False
+        )
+
+        for _ in range(20):
+            frame.locator("#detach").click()
+            frame.locator("#moving").wait_for(state="detached")
+            frame.locator("#reinsert").click()
+            frame.locator("#moving").wait_for(state="attached")
+        assert frame.locator("#descendant").text_content() == "descendant"
+        frame.locator("#inside").click()
+        expect(frame.locator("#count")).to_have_text("2")
+        assert frame.locator("#count").text_content() == "2"
+
+        frame.locator("#same").click()
+        expect(frame.locator("#result")).to_have_text("same-ok")
+        assert frame.locator("#result").text_content() == "same-ok"
+        frame.locator("#cycle").click()
+        expect(frame.locator("#result")).to_have_text("cycle-refused")
+        assert frame.locator("#result").text_content() == "cycle-refused"
+        assert frame.locator("#left > #moving").count() == 1
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     chromium_browser: Any,
     asset_server: _OwnedServer,

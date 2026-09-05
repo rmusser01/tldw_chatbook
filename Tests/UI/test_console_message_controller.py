@@ -40,7 +40,9 @@ from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Canvas.compiler import CanvasCompileError
 from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
+from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
 from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
@@ -511,6 +513,16 @@ async def test_production_message_controller_prefills_canvas_repair_without_sour
         role=ConsoleMessageRole.ASSISTANT,
         content="```html\n<script src='https://example.test/private.js'></script>\n```",
     )
+    screen._message._open_canvas_block_fn = AsyncMock(
+        side_effect=CanvasCompileError(
+            (
+                CanvasCompatibilityIssue(
+                    code="external-resource",
+                    message="External resources are unavailable.",
+                ),
+            )
+        )
+    )
     screen._message._prefill_canvas_repair_fn = Mock()
     event = SimpleNamespace(
         button=SimpleNamespace(
@@ -523,6 +535,7 @@ async def test_production_message_controller_prefills_canvas_repair_without_sour
 
     assert await screen.handle_console_message_action(event) is True
 
+    screen._message._open_canvas_block_fn.assert_awaited_once()
     repair = screen._message._prefill_canvas_repair_fn.call_args.args[0]
     assert "self-contained Canvas V1" in repair
     assert "example.test" not in repair

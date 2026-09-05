@@ -298,9 +298,32 @@ class NativeConsoleCanvasAuthority:
                 self._publication_receipts[publication_id] = receipt
             if not receipt.state_published:
                 previous = self._selection.get(scope.session_id)
-                self._selection[scope.session_id] = _Selection(
-                    info.canvas_id, info.revision_id, True
-                )
+                preserve_pin = False
+                if (
+                    previous is not None
+                    and not previous.following
+                    and not any(
+                        revision.parent_revision_id is None for revision in revisions
+                    )
+                ):
+                    try:
+                        self._read_exact(
+                            replace(
+                                scope,
+                                selected_canvas_id=previous.canvas_id,
+                                selected_revision_id=previous.revision_id,
+                            ),
+                            previous.canvas_id,
+                            previous.revision_id,
+                        )
+                    except (RuntimeError, ValueError):
+                        pass
+                    else:
+                        preserve_pin = True
+                if not preserve_pin:
+                    self._selection[scope.session_id] = _Selection(
+                        info.canvas_id, info.revision_id, True
+                    )
                 for revision in revisions:
                     self._publish(
                         scope.session_id,

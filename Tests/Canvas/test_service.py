@@ -156,6 +156,43 @@ def _append_revision(
     )
 
 
+def test_quota_usage_counts_deleted_durable_history_without_source(db) -> None:
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "quota history")
+    repository = CanvasRepository(db)
+    root_source = _html("root")
+    update_source = _html("update")
+    created = _create_canvas(
+        repository,
+        conversation_id,
+        message_id,
+        title="Quota history",
+        source=root_source,
+        run_id="quota-root",
+    )
+    _append_revision(
+        repository,
+        conversation_id,
+        created.identity.canvas_id,
+        created.revision.revision_id,
+        message_id,
+        title="Quota history",
+        source=update_source,
+        run_id="quota-update",
+    )
+    repository.soft_delete_canvas(conversation_id, created.identity.canvas_id)
+
+    usage = CanvasService(db, repository=repository).quota_usage(
+        _scope(conversation_id, message_id)
+    )
+
+    assert usage.canvas_ids == (created.identity.canvas_id,)
+    assert usage.revision_counts == ((created.identity.canvas_id, 2),)
+    assert usage.source_bytes == len(root_source.encode()) + len(update_source.encode())
+    assert "root" not in repr(usage)
+    assert "update" not in repr(usage)
+
+
 def test_user_import_create_and_update_preserve_durable_actor_provenance(db) -> None:
     conversation_id = _conversation(db)
     message_id = _message(db, conversation_id, "Import this HTML")

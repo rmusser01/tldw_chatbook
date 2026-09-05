@@ -1967,7 +1967,7 @@ async def test_owned_shell_starts_terminal_only_then_opens_and_reopens_canvas(
             output.mkdir(parents=True, exist_ok=True)
             await page.screenshot(path=output / "served-canvas-wide.png")
 
-        await page.get_by_role("button", name="Close Canvas").click()
+        await page.get_by_role("button", name="Hide Canvas").click()
         await expect(canvas).to_be_hidden()
         assert await page.evaluate("document.activeElement.id") == "served-open-canvas"
         await page.get_by_role("button", name="Open Canvas").click()

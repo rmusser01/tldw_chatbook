@@ -9,6 +9,7 @@ from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
     CanvasGatewayScope,
 )
+from tldw_chatbook.Canvas.limits import CanvasRepositoryLimits
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Canvas.service import CanvasService
@@ -822,6 +823,67 @@ def test_completed_tool_update_hot_reloads_without_requesting_auto_open():
     )
 
 
+def test_completed_tool_update_preserves_same_revision_historical_pin():
+    session_id = "temporary-tool-update-pinned"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+    created_scope = _branch_scope(
+        session_id, session_id, ("assistant-root",), "interactive-root"
+    )
+    created = controller.interactive_create_canvas(
+        created_scope,
+        origin_message_id="assistant-root",
+        title="Existing",
+        html="<!doctype html><p>root</p>",
+        temporary=True,
+    )
+    update_scope = _branch_scope(
+        session_id,
+        session_id,
+        ("assistant-root", "assistant-update"),
+        "tool-update",
+    )
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _requested: update_scope,
+        canvas_controller=controller,
+    )
+    controller.add_settlement_listener(authority.on_settlement_publication)
+    browser_scope = authority.gateway_scope(
+        session_id=session_id,
+        browser_session_id="browser-tool-pinned",
+        canvas_id=created.revision.canvas_id,
+        revision_id=created.revision.revision_id,
+    )
+    authority.navigate(browser_scope, action="pin")
+
+    run = controller.register_run(
+        update_scope, assistant_message_id="assistant-update", temporary=True
+    )
+    updated = run.update_canvas(
+        update_scope,
+        tool_call_id="canvas-update-call",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<!doctype html><p>updated</p>",
+    )
+    settlement = run.finish_assistant_run(
+        "assistant-update", actual_run_id=update_scope.run_id, terminal_status="done"
+    )
+
+    assert settlement is not None
+    assert controller.confirm_exact_settlement(settlement) is True
+    selection = authority._selection[session_id]
+    assert selection.revision_id == created.revision.revision_id
+    assert selection.following is False
+    assert authority._events[(session_id, created.revision.canvas_id)][
+        -1
+    ].revision_id == (updated.revision.revision_id)
+
+    following = authority.navigate(browser_scope, action="follow")
+    assert following.scope.revision_id == updated.revision.revision_id
+    assert following.projection.following is True
+
+
 def test_disable_before_settlement_confirmation_suppresses_browser_effects():
     session_id = "temporary-disabled-publication"
     enabled = [True]
@@ -908,7 +970,9 @@ def test_settlement_listener_retry_only_retries_incomplete_auto_open():
 
 def test_publication_capacity_never_evicts_incomplete_receipt_or_replays_event():
     session_id = "temporary-publication-capacity"
-    controller = ConsoleCanvasController()
+    controller = ConsoleCanvasController(
+        repository_limits=CanvasRepositoryLimits(max_canvases_per_conversation=300)
+    )
     controller.activate_session(session_id)
     opener_recovered = False
     attempts: list[str] = []
@@ -988,7 +1052,9 @@ def test_publication_capacity_never_evicts_incomplete_receipt_or_replays_event()
 
 def test_publication_capacity_churn_evicts_only_controller_delivered_receipts():
     session_id = "temporary-publication-success-churn"
-    controller = ConsoleCanvasController()
+    controller = ConsoleCanvasController(
+        repository_limits=CanvasRepositoryLimits(max_canvases_per_conversation=300)
+    )
     controller.activate_session(session_id)
     opened: list[str] = []
     authority = NativeConsoleCanvasAuthority(

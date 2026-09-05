@@ -35,7 +35,7 @@ def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
 
     assert len(blocks) == 1
     assert blocks[0].identity == "assistant-canvas:canvas-html:0"
-    assert blocks[0].compatible is True
+    assert blocks[0].compatible is None
     canvas_action_ids = [
         action.action_id
         for action in actions
@@ -59,7 +59,7 @@ def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
     assert open_as_new.canvas_block_ref.create_new is True
 
 
-def test_incompatible_canvas_html_prefills_repair_without_returning_source():
+def test_canvas_candidate_defers_compatibility_validation_until_open():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         id="assistant-incompatible",
@@ -70,12 +70,39 @@ def test_incompatible_canvas_html_prefills_repair_without_returning_source():
     block = assistant_canvas_html_blocks(message)[0]
     result = service.dispatch("canvas-open-0", message)
 
-    assert block.compatible is False
-    assert result.status == "canvas_repair_requested"
-    assert result.target_content is not None
-    assert "self-contained" in result.target_content
-    assert "https://example.com/app.js" not in result.target_content
-    assert result.target_invocation_id == block.identity
+    assert block.identity == "assistant-incompatible:canvas-html:0"
+    assert result.status == "canvas_open_requested"
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.identity == block.identity
+
+
+def test_canvas_action_discovery_and_dispatch_do_not_compile_candidates(
+    monkeypatch,
+):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-many-candidates",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="".join(
+            f"```html\n<!doctype html><p>{index}</p>\n```\n" for index in range(8)
+        ),
+    )
+
+    def fail_if_compiled(_source):
+        pytest.fail("candidate discovery/dispatch compiled on the caller thread")
+
+    monkeypatch.setattr(
+        message_actions, "compile_canvas_document", fail_if_compiled, raising=False
+    )
+
+    actions = service.available_actions(message)
+    result = service.dispatch("canvas-open-7", message)
+
+    assert len([item for item in actions if item.action_id.startswith("canvas-")]) == 16
+    assert result.status == "canvas_open_requested"
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.block_index == 7
 
 
 def test_assistant_message_actions_include_required_order():

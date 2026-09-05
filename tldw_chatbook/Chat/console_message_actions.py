@@ -8,7 +8,7 @@ from typing import Callable, Literal
 
 from markdown_it import MarkdownIt
 
-from tldw_chatbook.Canvas.compiler import CanvasCompileError, compile_canvas_document
+from tldw_chatbook.Canvas.compiler import CanvasCompileError
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -47,12 +47,16 @@ class ConsoleMessageAction:
 
 @dataclass(frozen=True, slots=True)
 class ConsoleCanvasHtmlBlock:
-    """One parsed assistant HTML fence eligible for a Canvas action."""
+    """One parsed assistant HTML-fence candidate for a Canvas action.
+
+    Compatibility is deliberately deferred to the bounded import service.
+    The optional fields remain for compatibility with existing consumers.
+    """
 
     index: int
     identity: str
     html: str
-    compatible: bool
+    compatible: bool | None = None
     compatibility_codes: tuple[str, ...] = ()
 
 
@@ -74,21 +78,11 @@ def assistant_canvas_html_blocks(
         if token.type != "fence" or language != "html":
             continue
         index = len(blocks)
-        codes: tuple[str, ...] = ()
-        compatible = True
-        try:
-            plan = compile_canvas_document(token.content)
-            codes = tuple(issue.code for issue in plan.compatibility_issues)
-        except CanvasCompileError as exc:
-            codes = tuple(issue.code for issue in exc.issues)
-            compatible = False
         blocks.append(
             ConsoleCanvasHtmlBlock(
                 index=index,
                 identity=f"{message.id}:canvas-html:{index}",
                 html=token.content,
-                compatible=compatible,
-                compatibility_codes=codes,
             )
         )
     return tuple(blocks)
@@ -229,6 +223,30 @@ class ConsoleActionResult:
     target_content: str | None = None
     target_invocation_id: str | None = None
     canvas_block_ref: ConsoleCanvasBlockReference | None = None
+
+
+def canvas_compile_repair_result(
+    action_id: str,
+    message: ConsoleChatMessage,
+    reference: ConsoleCanvasBlockReference,
+    error: CanvasCompileError,
+) -> ConsoleActionResult:
+    """Return bounded repair guidance after off-loop import validation fails."""
+
+    codes = ", ".join(issue.code for issue in error.issues) or "unsupported input"
+    return ConsoleActionResult(
+        action_id=action_id,
+        status="canvas_repair_requested",
+        visible_copy="Prepared a Canvas compatibility repair request.",
+        target_message_id=message.id,
+        target_content=(
+            "Please rewrite HTML block "
+            f"{reference.block_index + 1} from your previous response as one "
+            "self-contained Canvas V1 HTML document with inline CSS and "
+            f"JavaScript only. Resolve these compatibility issues: {codes}."
+        ),
+        target_invocation_id=reference.identity,
+    )
 
 
 @dataclass(frozen=True)
@@ -886,21 +904,6 @@ class ConsoleMessageActionService:
                     status="blocked",
                     visible_copy="That HTML block is no longer available.",
                     target_message_id=message.id,
-                )
-            if not block.compatible:
-                codes = ", ".join(block.compatibility_codes) or "unsupported input"
-                return ConsoleActionResult(
-                    action_id=action_id,
-                    status="canvas_repair_requested",
-                    visible_copy="Prepared a Canvas compatibility repair request.",
-                    target_message_id=message.id,
-                    target_content=(
-                        "Please rewrite HTML block "
-                        f"{block.index + 1} from your previous response as one "
-                        "self-contained Canvas V1 HTML document with inline CSS and "
-                        f"JavaScript only. Resolve these compatibility issues: {codes}."
-                    ),
-                    target_invocation_id=block.identity,
                 )
             create_new = action_id.startswith("canvas-open-new-")
             return ConsoleActionResult(

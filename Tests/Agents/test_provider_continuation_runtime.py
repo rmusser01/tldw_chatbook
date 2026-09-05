@@ -244,6 +244,152 @@ def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
     assert json.loads(stored.calls[0].arguments) == {"canvas_id": "canvas-1"}
 
 
+def test_ordinary_continuation_checkpoint_preserves_raw_round_bytes() -> None:
+    raw = '{ "z": 1, "expression" : "2+2" }'
+    call = ToolCall(
+        "calculator",
+        {"z": 1, "expression": "2+2"},
+        "call-1",
+        raw,
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall("call-1", "calculator", raw, "pending"),
+        assistant_content="Exact ordinary assistant content.",
+    )
+    turn = _native_turn((call,), checkpoint)
+    turn = replace(
+        turn,
+        text="Exact ordinary assistant content.",
+        assistant_message={
+            **turn.assistant_message,
+            "content": "Exact ordinary assistant content.",
+        },
+    )
+    events = []
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.has_tool_record_projection = lambda _call: False
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == "cancelled"
+
+    stored = next(
+        event.checkpoint for event in events if isinstance(event, ToolBatchReady)
+    )
+    assert stored == checkpoint
+    assert stored.rounds[0].calls[0].arguments == raw
+    assert stored.rounds[0].assistant_content == "Exact ordinary assistant content."
+
+
+def test_mixed_continuation_projects_only_opted_in_call() -> None:
+    ordinary_raw = '{ "expression" : "2+2", "z": 1 }'
+    private_raw = '{"html":"PRIVATE-CANARY"}'
+    ordinary = ToolCall(
+        "calculator",
+        {"expression": "2+2", "z": 1},
+        "ordinary",
+        ordinary_raw,
+    )
+    sensitive = ToolCall(
+        "calculator", {"html": "PRIVATE-CANARY"}, "sensitive", private_raw
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall("ordinary", "calculator", ordinary_raw, "pending"),
+        ContinuationCall("sensitive", "calculator", private_raw, "pending"),
+        assistant_content="provider-owned mixed round",
+    )
+    turn = _native_turn((ordinary, sensitive), checkpoint)
+    turn = replace(
+        turn,
+        text="provider-owned mixed round",
+        assistant_message={
+            **turn.assistant_message,
+            "content": "provider-owned mixed round",
+        },
+    )
+    events = []
+    deps = _deps(
+        [turn],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="unused"),
+        cancel=lambda: bool(events),
+    )
+    deps.has_tool_record_projection = lambda call: call.call_id == "sensitive"
+    deps.project_tool_record = lambda audience, call, result=None: ToolRecordProjection(
+        arguments={"canvas_id": "canvas-1"},
+        content="revision-1",
+        error="safe-error",
+        ok=result.ok if result is not None else None,
+    )
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == "cancelled"
+
+    stored = next(
+        event.checkpoint for event in events if isinstance(event, ToolBatchReady)
+    )
+    assert stored.rounds[0].calls[0] == checkpoint.rounds[0].calls[0]
+    assert "PRIVATE-CANARY" not in stored.rounds[0].calls[1].arguments
+    assert json.loads(stored.rounds[0].calls[1].arguments) == {"canvas_id": "canvas-1"}
+
+
+def test_ordinary_final_continuation_preserves_exact_checkpoint() -> None:
+    raw = '{"z":1, "expression":"2+2"}'
+    call = ToolCall("calculator", {"z": 1, "expression": "2+2"}, "call-1", raw)
+    pending_round = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("private",),
+        calls=(ContinuationCall("call-1", "calculator", raw, "pending"),),
+    )
+    completed_round = replace(
+        pending_round,
+        calls=(
+            ContinuationCall(
+                "call-1",
+                "calculator",
+                raw,
+                "completed",
+                ContinuationResult("4"),
+            ),
+        ),
+    )
+    initial = _kimi_checkpoint(revision=1, state="active", rounds=(pending_round,))
+    final_checkpoint = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        rounds=(
+            completed_round,
+            ContinuationRound(
+                assistant_content="Exact final assistant content.",
+                reasoning_blocks=("final private",),
+                calls=(),
+            ),
+        ),
+    )
+    events = []
+    deps = _deps(
+        [
+            _native_turn((call,), initial),
+            ModelTurn(
+                text="Exact final assistant content.",
+                provider_continuation=final_checkpoint,
+            ),
+        ],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: ToolResult(ok=True, content="4"),
+    )
+    deps.has_tool_record_projection = lambda _call: False
+
+    assert run_agent_loop(CONFIG, [], [CALCULATOR], deps).status == RUN_DONE
+    final = next(event for event in events if isinstance(event, FinalContinuation))
+    assert final.checkpoint == final_checkpoint
+
+
 def test_executing_failure_emits_no_later_step_record_or_dispatch() -> None:
     order: list[str] = []
     call = ToolCall(

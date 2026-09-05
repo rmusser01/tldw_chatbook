@@ -253,17 +253,22 @@ def validate_asset_payloads(
     """Validate decoded asset and aggregate byte ceilings and return their total."""
     if isinstance(assets, (str, bytes)) or not isinstance(assets, Sequence):
         raise CanvasLimitError("assets must be a sequence")
+    for field_name, limit in (
+        ("asset limit", per_asset_limit),
+        ("aggregate assets limit", aggregate_limit),
+    ):
+        _validate_non_negative_integer(limit, field_name=field_name)
+        if limit > MAX_WIRE_INTEGER:
+            raise CanvasLimitError(f"{field_name} exceeds the supported integer range")
 
     total = 0
     for asset in assets:
         if not isinstance(asset, DecodedDataUrl):
             raise CanvasLimitError("asset must be a decoded data URL")
         asset_size = len(asset.data)
-        _validate_non_negative_integer(per_asset_limit, field_name="asset limit")
         if asset_size > per_asset_limit:
             raise CanvasLimitError(f"asset exceeds {per_asset_limit} decoded bytes")
         total += asset_size
-        _validate_non_negative_integer(aggregate_limit, field_name="aggregate assets limit")
         if total > aggregate_limit:
             raise CanvasLimitError(
                 f"aggregate assets exceed {aggregate_limit} decoded bytes"

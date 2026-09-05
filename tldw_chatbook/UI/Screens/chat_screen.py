@@ -19591,6 +19591,7 @@ class ChatScreen(BaseAppScreen):
     async def _open_console_canvas_block(self, reference: Any, source: str) -> Any:
         """Import one authorized HTML block and open its native preview."""
 
+        from tldw_chatbook.Canvas.compiler import CanvasCompileError
         from tldw_chatbook.Chat.console_message_actions import (
             canvas_block_origin_turn_id,
         )
@@ -19607,19 +19608,34 @@ class ChatScreen(BaseAppScreen):
         message = store.get_message(message_id)
         authority = self._console_canvas_authority()
         runtime = self._console_runtime()
-        info = await authority.import_html_async(
-            session_id=session_id,
-            source=source,
-            create_new=reference.create_new,
-            source_message_id=message.id,
-            origin_message_id=message.persisted_message_id or message.id,
-            source_turn_id=canvas_block_origin_turn_id(
-                message, reference.block_index
-            ),
-            block_index=reference.block_index,
-            block_identity=reference.identity,
-            _is_current=lambda: self.is_mounted and self._console_runtime() is runtime,
-        )
+        try:
+            info = await authority.import_html_async(
+                session_id=session_id,
+                source=source,
+                create_new=reference.create_new,
+                source_message_id=message.id,
+                origin_message_id=message.persisted_message_id or message.id,
+                source_turn_id=canvas_block_origin_turn_id(
+                    message, reference.block_index
+                ),
+                block_index=reference.block_index,
+                block_identity=reference.identity,
+                _is_current=lambda: (
+                    self.is_mounted and self._console_runtime() is runtime
+                ),
+            )
+        except CanvasCompileError:
+            if (
+                not self.is_mounted
+                or self._console_runtime() is not runtime
+                or store.active_session_id != session_id
+                or store.session_id_for_message(message_id) != session_id
+                or message_id not in store.active_path_message_ids(session_id)
+            ):
+                raise RuntimeError(
+                    "Canvas source message is no longer current"
+                ) from None
+            raise
         return await self._open_console_canvas_selection(
             session_id=session_id,
             canvas_id=info.canvas_id,

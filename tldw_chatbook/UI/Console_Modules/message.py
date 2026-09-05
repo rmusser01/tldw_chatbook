@@ -117,6 +117,7 @@ from rich.markup import escape as escape_markup
 from textual.widgets import Button
 
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Canvas.compiler import CanvasCompileError
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -140,6 +141,7 @@ from ...Chat.console_message_actions import (
     ConsoleActionResult,
     ConsoleCanvasBlockReference,
     ConsoleMessageActionService,
+    canvas_compile_repair_result,
     resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
@@ -1527,9 +1529,25 @@ class ConsoleMessageController:
                     "That HTML block is no longer available.", severity="warning"
                 )
                 return True
-            opened = self._open_canvas_block_fn(reference, block.html)
-            if inspect.isawaitable(opened):
-                await opened
+            try:
+                opened = self._open_canvas_block_fn(reference, block.html)
+                if inspect.isawaitable(opened):
+                    await opened
+            except CanvasCompileError as exc:
+                result = canvas_compile_repair_result(
+                    action_id, message, reference, exc
+                )
+                repair = result.target_content
+                if repair is None or self._prefill_canvas_repair_fn is None:
+                    self.app_instance.notify(
+                        "Canvas repair is unavailable in this Console.",
+                        severity="warning",
+                    )
+                    return True
+                applied = self._prefill_canvas_repair_fn(repair)
+                if inspect.isawaitable(applied):
+                    await applied
+                result = replace(result, target_content=None)
             self._last_console_action = result
             return True
         self._last_console_action = result

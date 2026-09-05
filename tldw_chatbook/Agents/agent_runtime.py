@@ -1180,6 +1180,10 @@ def run_agent_loop(
                     call_id=continuation_call.call_id,
                     raw_arguments=continuation_call.arguments,
                 )
+                opted_in = projection_opt_in(tool_call)
+                if opted_in is False:
+                    projected_calls.append(continuation_call)
+                    continue
                 result = None
                 if continuation_call.result is not None:
                     if continuation_call.state == "completed":

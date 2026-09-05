@@ -22,6 +22,7 @@ from .models import (
     CanvasListItem,
     CanvasMutationResult,
     CanvasOrigin,
+    CanvasQuotaUsage,
     CanvasReadResult,
     CanvasRenderPlan,
     CanvasRevisionInfo,
@@ -149,6 +150,22 @@ class CanvasService:
             )
         )
         return tuple(item for item, _position in resolved)
+
+    def quota_usage(self, scope: CanvasScope) -> CanvasQuotaUsage:
+        """Return source-free conversation totals for staging admission."""
+
+        self._validate_scope(scope)
+        metadata = self._list_metadata(scope.conversation_id, include_deleted=True)
+        counts: dict[str, int] = {}
+        source_bytes = 0
+        for revision in metadata:
+            counts[revision.canvas_id] = counts.get(revision.canvas_id, 0) + 1
+            source_bytes += revision.source_bytes
+        return CanvasQuotaUsage(
+            canvas_ids=tuple(sorted(counts)),
+            revision_counts=tuple(sorted(counts.items())),
+            source_bytes=source_bytes,
+        )
 
     def read_canvas(self, scope: CanvasScope, canvas_id: str) -> CanvasReadResult:
         """Read the exact selected-or-resolved reachable revision and its source."""
@@ -592,11 +609,16 @@ class CanvasService:
         return revision
 
     def _list_metadata(
-        self, conversation_id: str
+        self, conversation_id: str, *, include_deleted: bool = False
     ) -> tuple[CanvasRevisionMetadata, ...]:
         repository_error: CanvasServiceError | None = None
         try:
-            metadata = self._repository.list_revision_metadata(conversation_id)
+            if include_deleted:
+                metadata = self._repository.list_revision_metadata(
+                    conversation_id, include_deleted=True
+                )
+            else:
+                metadata = self._repository.list_revision_metadata(conversation_id)
         except CanvasRepositoryError as exc:
             repository_error = self._mapped_repository_error(exc)
         except (CharactersRAGDBError, sqlite3.Error):

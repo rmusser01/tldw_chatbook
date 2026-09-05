@@ -615,7 +615,8 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       this.nodeType = localName === "#text" ? 3 : 1; this.parentNode = null;
       this.childNodes = []; this.attributes = new Map(); this.listeners = new Map();
       this.__text = text; this.__value = ""; this.__checked = false;
-      this.__disabled = false; this.__selected = false; this.style = styleProxy(this);
+      this.__disabled = false; this.__selected = false; this.__rendererPresent = true;
+      this.style = styleProxy(this);
     }
     get tagName() { return this.nodeType === 1 ? (this.namespaceURI === HTML ? this.localName.toUpperCase() : this.localName) : undefined; }
     get id() { return this.getAttribute("id") || ""; }
@@ -657,14 +658,19 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     }
     appendChild(child) {
       if (!(child instanceof VirtualNode) || child === this) throw new TypeError("Invalid child");
+      assertNoCycle(this, child);
       if (child.parentNode) child.parentNode.removeChild(child);
+      ensureRendererSubtree(child);
       child.parentNode = this; this.childNodes.push(child);
       emit({op: "append-child", node_id: this.__id, child_id: child.__id}); return child;
     }
     insertBefore(child, reference) {
       if (!(child instanceof VirtualNode) || (reference !== null && !(reference instanceof VirtualNode))) throw new TypeError("Invalid child/reference");
       if (reference !== null && reference.parentNode !== this) throw new Error("Reference is not a child");
+      if (child === reference) return child;
+      assertNoCycle(this, child);
       if (child.parentNode) child.parentNode.removeChild(child);
+      ensureRendererSubtree(child);
       const index = reference === null ? this.childNodes.length : this.childNodes.indexOf(reference);
       child.parentNode = this; this.childNodes.splice(index, 0, child);
       emit({op: "insert-before", node_id: this.__id, child_id: child.__id, reference_id: reference ? reference.__id : null}); return child;
@@ -707,6 +713,62 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     click() { return this.dispatchEvent(new VirtualEvent("click")); }
     querySelector(selector) { return query(this, String(selector), true); }
     querySelectorAll(selector) { return query(this, String(selector), false); }
+  }
+
+  function assertNoCycle(parent, child) {
+    for (let current = parent; current; current = current.parentNode) {
+      if (current === child) throw new TypeError("Invalid child cycle");
+    }
+  }
+
+  function ensureRendererSubtree(node) {
+    if (node.__rendererPresent) return;
+    const work = [{node, entered: false}];
+    while (work.length) {
+      const item = work.pop();
+      const current = item.node;
+      if (!item.entered) {
+        if (current.nodeType === 3) {
+          emit({op: "create-text", node_id: current.__id, value: current.__text});
+          current.__rendererPresent = true;
+          continue;
+        }
+        emit({op: "create-element", node_id: current.__id, tag: current.localName, namespace: current.namespaceURI});
+        current.__rendererPresent = true;
+        if (current.__text !== null) emit({op: "set-text", node_id: current.__id, value: current.__text});
+        for (const [name, value] of current.attributes) {
+          if (name !== "style") emit({op: "set-attribute", node_id: current.__id, name, value});
+        }
+        for (const [name, value] of current.style.values) {
+          emit({op: "set-style", node_id: current.__id, name, value});
+        }
+        if (current.__value !== "") emit({op: "set-property", node_id: current.__id, name: "value", value: current.__value});
+        for (const name of ["checked", "disabled", "selected"]) {
+          if (current["__" + name]) emit({op: "set-property", node_id: current.__id, name, value: true});
+        }
+        work.push({node: current, entered: true});
+        for (let index = current.childNodes.length - 1; index >= 0; index -= 1) {
+          work.push({node: current.childNodes[index], entered: false});
+        }
+      } else {
+        for (const child of current.childNodes) {
+          emit({op: "append-child", node_id: current.__id, child_id: child.__id});
+        }
+      }
+    }
+  }
+
+  function recordRendererPresence() {
+    mapForEach(nodes, (node) => { node.__rendererPresent = false; });
+    if (!root) return;
+    const work = [root];
+    while (work.length) {
+      const current = work.pop();
+      current.__rendererPresent = true;
+      for (let index = current.childNodes.length - 1; index >= 0; index -= 1) {
+        work.push(current.childNodes[index]);
+      }
+    }
   }
 
   function matches(node, selector) {
@@ -943,7 +1005,9 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     transaction.bridges = cloneJson(state.bridges, 0, makeList(), 64);
     transaction.timers = timerRecords;
     transaction.poison = state.poison;
-    return safeJsonStringify(transaction);
+    const encoded = safeJsonStringify(transaction);
+    recordRendererPresence();
+    return encoded;
   };
   controls.dispatch = (encoded) => {
     const record = safeJsonParse(encoded);

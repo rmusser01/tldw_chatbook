@@ -15,12 +15,17 @@ from loguru import logger
 
 from tldw_chatbook.Canvas.compilation import CanvasCompilation
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
-from tldw_chatbook.Canvas.limits import CanvasLimitError, sha256_utf8
+from tldw_chatbook.Canvas.limits import (
+    CanvasLimitError,
+    CanvasRepositoryLimits,
+    sha256_utf8,
+)
 from tldw_chatbook.Canvas.models import (
     CanvasConflictResult,
     CanvasListItem,
     CanvasMutationResult,
     CanvasOrigin,
+    CanvasQuotaUsage,
     CanvasReadResult,
     CanvasRenderPlan,
     CanvasRevisionInfo,
@@ -302,8 +307,14 @@ class CanvasRunCoordinator:
 class ConsoleCanvasController:
     """Coordinate exactly one mutation stage per registered assistant run."""
 
-    def __init__(self, *, durable_service: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        durable_service: object | None = None,
+        repository_limits: CanvasRepositoryLimits | None = None,
+    ) -> None:
         self._durable_service = durable_service
+        self._repository_limits = repository_limits or CanvasRepositoryLimits()
         self._runs: dict[str, _RunStage] = {}
         self._assistant_runs: dict[str, str] = {}
         self._closed = False
@@ -552,6 +563,13 @@ class ConsoleCanvasController:
         with self._lock:
             self.validate_interactive_owner(scope, owner, temporary=temporary)
             if not temporary:
+                self._admit_candidate(
+                    scope,
+                    temporary=False,
+                    canvas_id=None,
+                    creates_document=True,
+                    source_bytes=plan.source_identity.source_bytes,
+                )
                 created = self._service_call(
                     "import_canvas",
                     replace(scope, run_id=origin_turn_id or scope.run_id),
@@ -565,6 +583,13 @@ class ConsoleCanvasController:
                     created.revision, created.compatibility_issues
                 )
             self._validate_import_plan(html, plan)
+            self._admit_candidate(
+                scope,
+                temporary=True,
+                canvas_id=None,
+                creates_document=True,
+                source_bytes=plan.source_identity.source_bytes,
+            )
             stage = self._new_interactive_stage(
                 scope, origin_message_id=origin_message_id, temporary=True
             )
@@ -620,6 +645,13 @@ class ConsoleCanvasController:
                 selected_revision_id=expected_parent_revision_id,
             )
             if not temporary:
+                self._admit_candidate(
+                    scope,
+                    temporary=False,
+                    canvas_id=canvas_id,
+                    creates_document=False,
+                    source_bytes=plan.source_identity.source_bytes,
+                )
                 return self._service_call(
                     "import_update_canvas",
                     replace(selected, run_id=origin_turn_id or scope.run_id),
@@ -642,6 +674,13 @@ class ConsoleCanvasController:
                     current.revision.origin,
                 )
             self._validate_import_plan(html, plan)
+            self._admit_candidate(
+                scope,
+                temporary=True,
+                canvas_id=canvas_id,
+                creates_document=False,
+                source_bytes=plan.source_identity.source_bytes,
+            )
             stage = self._new_interactive_stage(
                 scope, origin_message_id=origin_message_id, temporary=True
             )
@@ -730,6 +769,14 @@ class ConsoleCanvasController:
                 selected_revision_id=expected_parent_revision_id,
             )
             if not temporary:
+                current = self._service_call("read_canvas", selected, canvas_id)
+                self._admit_candidate(
+                    scope,
+                    temporary=False,
+                    canvas_id=canvas_id,
+                    creates_document=False,
+                    source_bytes=current.revision.source_bytes,
+                )
                 return self._service_call(
                     "rename_canvas",
                     selected,
@@ -748,6 +795,13 @@ class ConsoleCanvasController:
                     current.revision.sequence,
                     current.revision.origin,
                 )
+            self._admit_candidate(
+                scope,
+                temporary=True,
+                canvas_id=canvas_id,
+                creates_document=False,
+                source_bytes=current.revision.source_bytes,
+            )
             stage = self._new_interactive_stage(
                 scope, origin_message_id=origin_message_id, temporary=True
             )
@@ -1387,11 +1441,82 @@ class ConsoleCanvasController:
             raise RuntimeError("canvas_scope_unavailable")
         return stage
 
-    @staticmethod
-    def _append(stage: _RunStage, row: _StagedRevision) -> None:
+    def _append(self, stage: _RunStage, row: _StagedRevision) -> None:
+        self._admit_candidate(
+            stage.scope,
+            temporary=stage.temporary,
+            canvas_id=row.info.canvas_id,
+            creates_document=row.creates_document,
+            source_bytes=row.info.source_bytes,
+        )
         stage.revisions.append(row)
         stage.by_revision_id[row.info.revision_id] = row
         stage.latest_by_canvas_id[row.info.canvas_id] = row
+
+    def _admit_candidate(
+        self,
+        scope: CanvasScope,
+        *,
+        temporary: bool,
+        canvas_id: str | None,
+        creates_document: bool,
+        source_bytes: int,
+    ) -> None:
+        """Reserve one revision against durable and concurrent staged totals."""
+
+        limits = self._repository_limits
+        if source_bytes > limits.max_source_bytes_per_revision:
+            raise CanvasLimitError("revision_source_bytes_limit")
+
+        if temporary or self._durable_service is None:
+            canvas_ids: set[str] = set()
+            revision_counts: dict[str, int] = {}
+            total_source_bytes = 0
+        else:
+            usage = self._service_call("quota_usage", scope)
+            if not isinstance(usage, CanvasQuotaUsage):
+                raise RuntimeError("canvas_quota_usage_unavailable")
+            canvas_ids = set(usage.canvas_ids)
+            revision_counts = dict(usage.revision_counts)
+            total_source_bytes = usage.source_bytes
+
+        session_owner = self._session_owners.get(scope.session_id)
+        for candidate_stage in self._runs.values():
+            if (
+                candidate_stage.state is CanvasRunState.DISCARDED
+                or (
+                    not temporary
+                    and self._durable_service is not None
+                    and candidate_stage.state is CanvasRunState.COMMITTED
+                )
+                or candidate_stage.temporary is not temporary
+                or candidate_stage.scope.conversation_id != scope.conversation_id
+            ):
+                continue
+            if temporary and (
+                candidate_stage.scope.session_id != scope.session_id
+                or candidate_stage.owner is not session_owner
+            ):
+                continue
+            for row in candidate_stage.revisions:
+                canvas_ids.add(row.info.canvas_id)
+                revision_counts[row.info.canvas_id] = (
+                    revision_counts.get(row.info.canvas_id, 0) + 1
+                )
+                total_source_bytes += row.info.source_bytes
+
+        candidate_key = canvas_id
+        if creates_document and candidate_key not in canvas_ids:
+            if len(canvas_ids) + 1 > limits.max_canvases_per_conversation:
+                raise CanvasLimitError("canvas_count_limit")
+        elif candidate_key is None:
+            raise RuntimeError("canvas_quota_candidate_invalid")
+
+        candidate_revision_count = revision_counts.get(candidate_key or "", 0) + 1
+        if candidate_revision_count > limits.max_revisions_per_canvas:
+            raise CanvasLimitError("revision_count_limit")
+        if total_source_bytes + source_bytes > limits.max_source_bytes_per_conversation:
+            raise CanvasLimitError("conversation_source_bytes_limit")
 
     @staticmethod
     def _replay(

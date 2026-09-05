@@ -107,11 +107,14 @@ TLS.
 Successful login creates an opaque in-memory browser session. Sessions expire
 after 30 minutes idle or eight hours absolute by default, and process shutdown
 revokes all sessions and live channels. There is currently no logout or
-individual-session revoke UI. Closing a Canvas preview revokes only that Canvas
-view, not the browser's full Chatbook session. The dedicated token admits the
-full Chatbook app on this host; it is not a multi-user account, filesystem, or
-database isolation system. Canvas capability URLs are narrower: a copied or
-guessed URL cannot reuse another browser session's Canvas authority.
+individual-session revoke UI. The trusted Canvas preview's explicit inner
+**Close** control revokes that Canvas view, not the browser's full Chatbook
+session. The served page's outer **Hide Canvas** control only hides its pane;
+the iframe and authority remain live. Closing an ordinary browser tab is not a
+guaranteed revocation action. The dedicated token admits the full Chatbook app
+on this host; it is not a multi-user account, filesystem, or database isolation
+system. Canvas capability URLs are narrower: a copied or guessed URL cannot
+reuse another browser session's Canvas authority.
 
 ### Incident response
 
