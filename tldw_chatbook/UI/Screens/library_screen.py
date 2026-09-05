@@ -445,6 +445,7 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -9038,9 +9039,36 @@ class LibraryScreen(BaseAppScreen):
         layout: bool = False,
         recompose: bool = False,
     ) -> "LibraryScreen":
-        """Capture one coordinator-safe seam around every screen recompose."""
+        """Capture one coordinator-safe seam around every screen recompose.
+
+        task-31567 (Qodo round): the Media focus restore rides here too.
+        The canvas-scoped seam covers ``_sync_library_canvas``'s ``kind ==
+        "media"`` branch and the viewer's own recompose, but a WHOLE-screen
+        ``refresh(recompose=True)`` -- what the screen's background workers
+        end in, and what ``_sync_library_canvas`` falls back to after
+        CLEARING the follow-up it had queued -- bypassed both and left
+        ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
+        This is the narrowest hook the screen already owns, so every such
+        call site is covered at once.
+
+        Gated on ``recompose`` (a plain repaint is the hot path and must
+        not capture, restore or queue anything) and on Media being the
+        active destination, so the other canvases are untouched. The
+        restore is queued with ``call_after_refresh`` -- correct for a
+        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
+        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
+        recompose has no such ordering and keeps riding
+        ``queue_after_recompose`` instead. Explicit targets still win
+        exactly as ``_restore_library_media_focus`` already decides.
+        """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
+        media_focus = (
+            self._capture_library_media_focus_identity()
+            if recompose
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            else None
+        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -9062,6 +9090,8 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
+        if media_focus is not None:
+            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
 
     async def action_library_notes_new(self) -> None:
@@ -24326,7 +24356,20 @@ class LibraryScreen(BaseAppScreen):
         # for that to be true. Live, focus sat on the Library pane grip and
         # the first Space collapsed the pane instead (critique #4, A cap
         # 31->32, B cap_69). Entry only -- exit keeps the user's focus.
-        _sync_library_canvas(self, "media", then=self._focus_library_media_items_pane)
+        #
+        # task-31631 AC#1: the ARMED list-entry seam, not the one-shot
+        # ``_focus_library_media_items_pane``. Both land on a row when the
+        # rows this sync mounts are the last word, but they are not: any of
+        # the screen's background workers ending in its own
+        # ``refresh(recompose=True)`` rebuilds the row Buttons underneath,
+        # and a one-shot focus dies with the widget it was set on
+        # (reproduced at 235x52 and 100x30 -- ``screen.focused`` is None
+        # after that recompose, which is critique #5's "F6, Down and Space
+        # all no-op with no focus painted anywhere"). ``_arm_...`` re-requests
+        # the row on every recompose while armed, and disarms itself the
+        # moment the user moves focus. It also prefers the first STILL-CHECKED
+        # row over the literal first row, which is what select mode wants.
+        _sync_library_canvas(self, "media", then=self._arm_library_list_entry_focus)
 
     def _library_media_select_enter_available(self) -> bool:
         """Whether ENTERING media Select mode is offered (task-28012).
@@ -39732,6 +39775,30 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            # task-31567: this recompose replaces every child, so whatever
+            # the user was standing on (the content box, the Find input, an
+            # action button) is about to be removed and Textual will pick
+            # the shell's first focusable widget -- a pane GRIP. The restore
+            # rides the viewer's own post-recompose hook rather than
+            # ``screen.call_after_refresh``: this rebuild is driven by the
+            # VIEWER's message pump, and the two have no ordering (the same
+            # trap ``PostRecomposeCallback`` exists for -- measured: the
+            # screen-level callback ran before the new children mounted and
+            # the grip still won).
+            # ...unless the Find token owns this recompose. It was consumed
+            # into ``find_focus_pending`` a few lines above, so the restore's
+            # own token guard reads False by the time it runs (review I2);
+            # read the viewer's copy here instead. Without this the seam
+            # re-focused the pressed Find BUTTON on the way through -- a
+            # third focus move, and a foreign ``DescendantFocus``, inside the
+            # window the token channel owns.
+            if not viewer.find_focus_pending:
+                viewer.queue_after_recompose(
+                    partial(
+                        self._restore_library_media_focus,
+                        self._capture_library_media_focus_identity(),
+                    )
+                )
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -40087,6 +40154,98 @@ class LibraryScreen(BaseAppScreen):
         if url.startswith(("http://", "https://")):
             webbrowser.open(url)
 
+    def _capture_library_media_focus_identity(self) -> str | None:
+        """Record what holds focus just before a media-path recompose.
+
+        task-31567. Returns an id selector (a media row, ``#library-media-
+        viewer-content``, the Find input, a toolbar button, ...) or ``None``
+        when nothing focusable-with-an-id owns focus. A pane GRIP is never
+        captured, so the restore below can never put focus back on one.
+        """
+        focused = self.focused
+        widget_id = getattr(focused, "id", None)
+        if not widget_id or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
+            return None
+        return f"#{widget_id}"
+
+    def _restore_library_media_focus(self, previous: str | None) -> None:
+        """Put focus back where a media recompose found it (task-31567 AC#1).
+
+        Textual re-picks focus when the widget holding it is recomposed
+        away, and the adaptive reader shell's two pane grips are the first
+        focusable widgets in it -- so EVERY media recompose that did not
+        name its own focus target landed the user on a grip, where Space
+        collapses a pane (wave 4 PR B) and the reading position is gone.
+        Measured before this seam, at 235x52 and 100x30 alike: a Reader
+        recompose from the content or the Find input landed on
+        ``library-media-items-grip``; a receipt repaint or leaving select
+        mode from a row landed on ``library-media-library-grip``.
+
+        An explicit target always WINS -- this only acts when nothing else
+        claimed focus:
+
+        * the two one-shot focus CHANNELS (task-31631's armed list-entry
+          request and task-31269's Find token) are checked directly,
+          because both land their focus in a LATER callback and would
+          otherwise be disarmed by a foreign ``set_focus`` here;
+        * any other explicit follow-up (PR E's ``focus_identity`` through
+          ``_complete_library_media_mutation``, a ``then=`` focus callback)
+          has already focused a real widget by the time this runs, which
+          the "focus is not a grip" check below detects generically.
+
+        Three choke points reach here, covering every media recompose: the
+        ``kind == "media"`` branch of ``_sync_library_canvas`` and
+        ``_sync_library_media_viewer_state`` (both canvas-scoped, via
+        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
+        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
+        Qodo round: background workers and ``_sync_library_canvas``'s own
+        failure fallback both take that bare path -- the fallback after
+        CLEARING the follow-up it had queued -- and left focus at ``None``.
+
+        Args:
+            previous: Identity captured by
+                ``_capture_library_media_focus_identity`` before the
+                recompose, or ``None`` to leave focus alone.
+        """
+        if previous is None:
+            return
+        if self._library_pending_list_entry_focus or (
+            self._library_media_find_focus_pending
+        ):
+            return
+        focused = self.focused
+        if focused is not None and not focused.has_class(
+            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        ):
+            return
+        try:
+            target = self.query_one(previous, Widget)
+        except (NoMatches, QueryError):
+            # The widget itself is gone (a row the write removed, the Find
+            # bar a mode switch closed): the list entry is the honest
+            # landing spot -- never the grip Textual would pick.
+            self._focus_library_list_entry()
+            return
+        if not target.focusable:
+            # Same failure, quieter: ``Screen.set_focus`` NO-OPS on a widget
+            # whose ``focusable`` is False, so treating this as success left
+            # focus on the grip. The media canvas and the viewer both
+            # compose gated actions disabled (Select all / Clear / Export /
+            # Analyze / Delete, Find, Generate) and those gates flip on
+            # exactly the recompose this seam wraps, so a captured id can
+            # come back unfocusable (review I1).
+            self._focus_library_list_entry()
+            return
+        # ``scroll_visible=False``: this seam restores FOCUS, never scroll
+        # position -- Media owns that separately (the stored viewer-return
+        # restore, and the wheel gesture that CANCELS it). Once the screen-
+        # level hook made this run after every whole-screen recompose, the
+        # default ``scroll_visible=True`` re-scrolled the focused row back
+        # into view and reinstated exactly the restore the user's wheel had
+        # just cancelled (``test_compact_media_viewer_back_wheel_scroll_
+        # cancels_stored_restore``, scroll_y 45 where the pin wants 0).
+        self.set_focus(target, scroll_visible=False)
+
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.
 
@@ -40126,6 +40285,11 @@ class LibraryScreen(BaseAppScreen):
         # here rather than in each of Escape's three branches so no future
         # sub-state can be added without it.
         self._register_footer_shortcuts()
+        # task-31567: the viewer-scoped branch queues its own restore from
+        # inside ``_sync_library_media_viewer_state`` (it alone knows whether
+        # a recompose actually happens). The whole-screen fallback needs
+        # nothing here -- ``LibraryScreen.refresh`` captures and restores
+        # around every screen recompose (Qodo round).
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)

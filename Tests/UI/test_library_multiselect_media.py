@@ -33,6 +33,17 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
+# task-31631 AC#2 drives the REAL screen (row clicks are mouse events, not
+# ``Button.press()`` calls), so it reuses the production-CSS media host and
+# the select-mode entry helper the wave-5 painted tests already own.
+from Tests.UI.test_library_media_render_fixes import (
+    _enter_media_select_mode,
+    _painted,
+    _host as _row_click_host,
+)
+from Tests.UI.test_library_media_side_by_side import _open_media_list
+from Tests.UI.test_library_shell import _wait_for_condition
+
 
 def _bind_media_mutation_seams(fake):
     """Give direct method fakes the production mutation boundary shape."""
@@ -149,7 +160,10 @@ def _media_fake(
     )
     # task-31271 seam (b): entering select mode lands focus on a row, and
     # the canvas sync's whole-screen fallback schedules that follow-up.
+    # task-31631: that follow-up is now the ARMED list-entry request (it
+    # survives the background recomposes a one-shot focus does not).
     fake._focus_library_media_items_pane = lambda: None
+    fake._arm_library_list_entry_focus = lambda **_kwargs: None
     fake.call_after_refresh = lambda *_args, **_kwargs: None
     return _bind_media_mutation_seams(fake)
 
@@ -1100,6 +1114,45 @@ def test_select_toggle_on_does_not_notify():
     LibraryScreen.handle_library_media_select_toggle(fake, event)
     assert fake._library_media_select_mode is True
     assert fake._notified == []
+
+
+def test_select_toggle_on_arms_row_focus_not_the_items_pane():
+    """task-31631 AC#1: entering select mode requests the LIST-ENTRY focus.
+
+    The footer starts promising "space toggle selection" the instant select
+    mode flips, and Space's own gate needs a focused ``.library-media-row``.
+    ``_focus_library_media_items_pane`` lands on a row too, but only once --
+    it dies with the Button it focused the next time a background worker
+    recomposes the screen (critique #5: "no focus painted anywhere"). The
+    armed seam re-requests the row across those recomposes, and prefers a
+    still-checked row over the literal first one.
+    """
+    fake = _media_fake(select_mode=False)
+    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    seams = []
+    fake._focus_library_media_items_pane = lambda: seams.append("items-pane")
+    fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    assert fake._library_media_select_mode is True
+    assert seams == ["list-entry"]
+
+
+def test_select_toggle_off_keeps_the_users_focus():
+    """task-31631: the EXIT branch is unchanged -- it re-registers the footer
+    and leaves focus where the user put it (no entry-focus request)."""
+    fake = _media_fake(select_mode=True)
+    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    seams = []
+    fake._focus_library_media_items_pane = lambda: seams.append("items-pane")
+    fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    assert fake._library_media_select_mode is False
+    assert seams == []
+    assert fake._footer_registrations == 1
 
 
 def test_type_filter_change_exits_select_mode_and_notifies_discard():
@@ -3007,3 +3060,85 @@ async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
         )
 
     assert fake._library_media_bulk_delete_in_flight is False
+
+
+# ---------------------------------------------------------------------------
+# task-31631 AC#2: every click on a media row is a toggle in select mode.
+#
+# Critique #5 P1 read live as "only a click on the one-cell ☐ seeds focus;
+# row-title clicks do nothing". The row is ONE full-width Button whose label
+# is "☐ <title>", so a title click always routed to
+# ``handle_library_media_row`` -- what dropped it is Textual's
+# ``Button._on_click``, which ignores any click that lands while the previous
+# press's 0.2s ``-active`` flash is still on the widget. Clicking ☐ and then
+# the same row's title (exactly what a reviewer does) puts the second click
+# inside that window, so the row reads as a one-cell target.
+#
+# Driven through the REAL screen with real mouse events on purpose: a
+# ``Button.press()`` call bypasses ``_on_click`` entirely and can never see
+# this bug.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_click_on_a_media_row_toggles_it_in_select_mode():
+    """task-31631 AC#2: marker cell and title cells are the same target."""
+    host = _row_click_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        marker_x = row.region.x
+        # Past the marker cell and its padding: inside the title text.
+        title_x = row.region.x + 6
+        row_y = row.region.y
+        assert title_x < row.region.right, row.region
+
+        await pilot.click(offset=(marker_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1, "marker click"
+
+        # The title, immediately after -- the click the live pass lost.
+        await pilot.click(offset=(title_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 0, (
+            "a title click right after a marker click did not toggle the row"
+        )
+
+        await pilot.click(offset=(title_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1, "title click"
+        canvas = screen.query_one("#library-media-canvas")
+        assert "1 selected" in _painted(host, canvas.region)
+
+        # The button's far right edge -- padding on a short title, not the
+        # marker or a letter -- toggles too; the target is the whole row.
+        edge_x = row.region.right - 2
+        assert edge_x > title_x, row.region
+        await pilot.click(offset=(edge_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 0, "right-edge click"
+
+
+@pytest.mark.asyncio
+async def test_media_row_title_click_still_opens_the_item_in_browse_mode():
+    """Browse mode is untouched: a title click opens the item (task-31631)."""
+    host = _row_click_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        assert screen._library_media_select_mode is False
+        row = screen.query_one("#library-media-row-0", Button)
+        await pilot.click(offset=(row.region.x + 6, row.region.y))
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_reader_session.pending_request is None
+                and screen._library_media_reader_session.loaded_id is not None
+            ),
+            message="A browse-mode title click did not open the item.",
+        )
+        assert screen._library_media_row_selection.count == 0
