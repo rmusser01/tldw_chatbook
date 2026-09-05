@@ -713,6 +713,30 @@ rediscover the same red from scratch.
   and should be the DEFAULT method for any baseline comparison expected to
   run for many minutes, not merely a fallback for when the overlay method is
   unavailable.
+- Wave-5 Task 2 (ingest controller PR)'s own full sequential xdist paired-
+  baseline sweep (branch `68a896993`, 358 failed/3992 passed vs. an
+  ISOLATED-worktree baseline at `74a6f5774`, 356 failed/3989 passed; 350
+  shared, 6 baseline-unique, 8 branch-unique) found 8 branch-unique names,
+  all resolved: 6 passed cleanly on a combined single-process re-run
+  (`test_library_media_reader_match_nav_t22209.py::test_a_new_document_
+  rescans_for_the_same_query`, `test_library_prompt_collections.py::
+  test_library_screen_manager_create_search_rename_and_explicit_all`,
+  `test_library_prompts_canvas.py::{test_library_prompt_pager_first_and_
+  filter_failure_states[size0], test_library_prompt_undo_refreshes_
+  applied_page_and_preserves_basket}`, `test_library_shell.py::{test_
+  library_media_durable_mutation_gates_and_refreshes_applied_scope[True],
+  test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_
+  db}`); 2 reproduced identically in the same combined re-run --
+  `test_library_notes_reader.py::test_wide_editor_deep_link_keeps_reader_
+  navigation_and_local_back` is the SAME name already documented above
+  (wave-3 task 5) as bidirectional run-to-run flakiness, reconfirmed here
+  too, and `test_library_media_reader_traversal_t22207.py::test_loading_
+  banner_paints_in_place_without_body_rebuild` is a NEW name, confirmed
+  pre-existing by reproducing identically in TRUE isolation on the
+  isolated pristine-baseline worktree (a Media-reader loading-banner
+  paint test; this task's own diff touches zero Media-reader code). None
+  of the 8 touches Ingest code or this task's own diff. **Zero real
+  regressions.**
 
 ## 8. Subsystem order (spec, "Order of work")
 
