@@ -847,6 +847,14 @@ async def test_snapshot_composition_is_light_and_shutdown_owner_is_called(monkey
     app._shutdown_console_image_edits = no_op
     app._shutdown_console_runtime = no_op
     app._shutdown_file_notes_session_owner = no_op
+    app._shutdown_collections_capture_runtime = no_op
+    app._shutdown_notes_sync_runtime = no_op
+    app._shutdown_actor_pack_import = no_op
+    app._shutdown_actor_pack_export = no_op
+    app._shutdown_raw_cli_runtime = no_op
+    app._shutdown_terminal_session_manager = no_op
+    app._shutdown_console_settings_durability = no_op
+    app._shutdown_persona_buddy = no_op
     await TldwCli._shutdown_app_owned_lifecycles(app)
     assert app.llamacpp_snapshot_service.closed == 1
 
