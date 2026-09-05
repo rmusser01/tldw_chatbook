@@ -225,9 +225,12 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
         fleet_section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        # State 1 is the default the user sees: collapsed (rows hidden),
-        # only the header + summary painted.
-        assert fleet_section.open is False
+        # The section MOUNTS collapsed, but task-13 (addition A) opens it
+        # once on first fleet activity: after the move into the Inspect rail
+        # a collapsed header with no body surfaced nothing at all. The
+        # summary line this test is really about is painted either way --
+        # the header stays visible in both states.
+        assert fleet_section.open is True
         assert fleet_section.summary == "●●✓ 2 working, 1 done"
 
         # Not just the widget's own state -- prove it actually RENDERS

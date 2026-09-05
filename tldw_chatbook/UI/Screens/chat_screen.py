@@ -29,6 +29,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.events import (
+    AppFocus,
     Click,
     DescendantBlur,
     DescendantFocus,
@@ -128,6 +129,7 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
+from ..Console_Modules.environment import ConsoleEnvironmentController
 from ..Console_Modules.capture_policy_bindings import (
     build_inspector_capture_policy_wiring,
 )
@@ -372,7 +374,9 @@ from ...Chat.console_display_state import (
     estimate_console_next_send_tokens,
 )
 from ...Chat.console_environment_state import (
+    ENVIRONMENT_SECTION_ID,
     EnvironmentSnapshot,
+    TASKS_SECTION_ID,
     project_environment_section,
     project_tasks_section,
 )
@@ -761,6 +765,12 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-13 (Console Inspector environment redesign): cadence for the
+# Environment panel's LOCAL tier (git status + the mtime-cached backlog
+# scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
+# its own 60s TTL and never rides this tick; see
+# `UI/Console_Modules/environment.py`.
+CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
 # task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
 # used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
 # rewrite `ui_state.toml` synchronously on the event loop, per click. This
@@ -2275,11 +2285,72 @@ class ChatScreen(BaseAppScreen):
         posts its own typed message with its own stable ``row_id``,
         mirroring ``console_status_chips.py``'s chip-activation messages
         rather than matching by DOM id.
+
+        task-13: the Environment and Tasks sections are that anticipated
+        sibling. They route to `_handle_console_environment_row` from THIS
+        handler rather than a second `@on(...RowActivated)` -- two handlers
+        for one message type on the same screen would both fire, and the
+        section-id fan-out is exactly what the guard above was built for.
         """
+        if message.section_id in (ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID):
+            message.stop()
+            self._handle_console_environment_row(message.section_id, message.row_id)
+            return
         if message.section_id != CONSOLE_AGENT_FLEET_SECTION_ID:
             return
         message.stop()
         self._agent._drill_into_console_agent_subagent(message.row_id)
+
+    @on(ConsoleInspectorSection.ViewAllRequested)
+    def on_console_inspector_section_view_all(
+        self, message: ConsoleInspectorSection.ViewAllRequested
+    ) -> None:
+        """Force a full (both-tier) Environment refresh from the "Refresh" tail.
+
+        Only the Environment section mounts a tail today, and its label is
+        "Refresh" (task-9), so this is the panel's explicit re-fetch: it
+        busts the 60s ``gh`` TTL, which is the entire point of pressing it.
+        """
+        if message.section_id != ENVIRONMENT_SECTION_ID:
+            return
+        message.stop()
+        self._console_environment.request_refresh(include_net=True, force_net=True)
+
+    @on(ConsoleInspectorSection.CollapseToggled)
+    def on_console_inspector_section_collapse_toggled(
+        self, message: ConsoleInspectorSection.CollapseToggled
+    ) -> None:
+        """Persist an Inspect-rail section's collapse state.
+
+        "environment"/"tasks" are registered rail-preference disclosure ids
+        (task-8), so they persist through the same writer every other rail
+        disclosure uses. The fleet section is not a persisted disclosure --
+        its collapse only clears/sets the transient auto-open dismissal so a
+        tick-recomputed force never fights the gesture.
+        """
+        if message.section_id == CONSOLE_AGENT_FLEET_SECTION_ID:
+            message.stop()
+            self._note_console_fleet_surface_toggle(message.open)
+            return
+        if message.section_id not in (ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID):
+            return
+        message.stop()
+        self._set_console_rail_preference(
+            section_updates={message.section_id: message.open},
+            notify_on_failure=False,
+        )
+
+    @on(AppFocus)
+    def on_console_app_focus_environment_refresh(self, _event: AppFocus) -> None:
+        """Re-read the local tier when the terminal regains focus.
+
+        Time spent in another window is exactly when the working tree moves
+        underneath the panel (a commit, a checkout, a rebase in another
+        pane). Deliberately NOT stopped: `AppFocus` is a broadcast every
+        other listener is entitled to. Free while the Inspect rail is closed
+        -- the controller's own rail-open guard refuses the dispatch.
+        """
+        self._console_environment.request_refresh()
 
     @on(ConsoleInspectorSection.RowCancelRequested)
     def on_console_agent_fleet_row_cancel_requested(
@@ -2413,6 +2484,11 @@ class ChatScreen(BaseAppScreen):
             # would restart from the top of the shell.
             self._focus_console_workbench_target("console-native-composer")
             return
+        # task-13: the rail is now displayed (the preference write above
+        # applied visibility synchronously), so the controller's own
+        # rail-open guard passes and both tiers can dispatch. Ordering
+        # matters: called BEFORE this returns, but AFTER the rail is shown.
+        self._console_environment.notify_rail_opened()
         # The rail mounts asynchronously; focus once it is actually there.
         #
         # TASK-24703: target the pinned authority summary, NOT the pane's
@@ -6769,6 +6845,25 @@ class ChatScreen(BaseAppScreen):
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         self._console_terminal_open = False
+        # task-13 (addition A): the fleet moved into the Inspect rail, which
+        # -- unlike the left rail it came from -- defaults CLOSED, so the
+        # existing `_apply_fleet_agent_section_auto_open` no longer surfaces
+        # busy fleet activity to anyone. `_apply_fleet_inspector_rail_auto_
+        # open` restores that, and this flag is its sticky user-dismissal
+        # (mirroring `_agent_section_user_dismissed_while_busy`): a
+        # tick-recomputed force must never fight a manual collapse. Cleared
+        # the moment the fleet goes idle, so the NEXT busy window auto-opens
+        # again. `_console_fleet_section_auto_opened` is the one-shot for the
+        # SECTION's own collapsed default -- one force per busy window, never
+        # re-applied against a later manual collapse.
+        self._console_fleet_inspector_dismissed = False
+        self._console_fleet_section_auto_opened = False
+        # task-13: in-memory expansion state for the Environment/Tasks
+        # sections (deliberately not persisted -- an expanded file list is a
+        # transient drill-in, not a layout preference; the sections' own
+        # collapse state IS persisted, via `_set_console_rail_preference`).
+        self._console_environment_expanded: set[str] = set()
+        self._console_environment_poll_timer: Any | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -6783,6 +6878,28 @@ class ChatScreen(BaseAppScreen):
             self,
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
+        )
+        # task-13: the Environment panel's own cadence/TTL/backoff
+        # orchestrator. Built here beside the other controllers, but every
+        # seam it takes is a LATE-BOUND lambda: `self.app` is not resolvable
+        # during `__init__` (no active app context in the bare-screen tests),
+        # and the rail-open/root answers must be read at dispatch time, not
+        # frozen at construction time.
+        # `exit_on_error=False` is not decoration: Textual's default PANICS
+        # the whole app on a raising worker, and these jobs run git/`gh`
+        # subprocesses and marshal back through `call_from_thread` -- which
+        # itself raises if the screen is torn down while a gather is in
+        # flight. A status panel must never be able to take the app down.
+        self._console_environment = ConsoleEnvironmentController(
+            run_worker=(
+                lambda job, **kwargs: self.run_worker(job, exit_on_error=False, **kwargs)
+            ),
+            marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
+            workspace_root_accessor=self._console_environment_root,
+            rail_open_accessor=(
+                lambda: self._is_console_widget_displayed("console-right-rail")
+            ),
+            on_snapshot=self._land_console_environment,
         )
         # `_console_provider_gateway`/`_console_chat_controller`: properties
         # over the app-owned runtime, no `__init__` slot -- see the note at
@@ -7598,30 +7715,153 @@ class ChatScreen(BaseAppScreen):
             readiness,
         )
 
+    def _console_environment_snapshot(self) -> EnvironmentSnapshot:
+        """Return the controller's current snapshot (default before first land).
+
+        A bare `ChatScreen` built outside `__init__`'s controller wiring
+        (several architecture tests do exactly that) has no controller, and
+        `EnvironmentSnapshot()`'s NOT_APPLICABLE tiers are the right answer
+        there anyway -- the quiet "No git workspace" row.
+        """
+        controller = getattr(self, "_console_environment", None)
+        if controller is None:
+            return EnvironmentSnapshot()
+        return controller.snapshot
+
     def _console_environment_section_state(self) -> ConsoleInspectorSectionState:
         """Build rows/summary for the Inspect rail's Environment section.
 
-        task-9: mounts the section with a static default projection --
-        ``EnvironmentSnapshot()``'s git tier is ``NOT_APPLICABLE``, so this
-        renders the quiet "No git workspace" row rather than an empty (thus
-        hidden) section. Task 11/12 replace this with the running
-        ``ConsoleEnvironmentController``'s current snapshot; this is
-        correct, visible interim behavior until that wiring lands.
+        task-9 mounted this from a static default projection; task-13 points
+        it at the live ``ConsoleEnvironmentController`` snapshot so a rail
+        RECOMPOSE (which rebuilds the section from scratch) repaints the same
+        data `_land_console_environment` last patched in, instead of
+        reverting to "No git workspace" until the next poll tick.
         """
         from datetime import datetime as _datetime, timezone as _timezone
 
         return project_environment_section(
-            EnvironmentSnapshot(), frozenset(), now=_datetime.now(_timezone.utc)
+            self._console_environment_snapshot(),
+            frozenset(self._console_environment_expanded),
+            now=_datetime.now(_timezone.utc),
         )
 
     def _console_tasks_section_state(self) -> ConsoleInspectorSectionState:
         """Build rows/summary for the Inspect rail's Tasks section.
 
-        task-9: a static default projection -- ``EnvironmentSnapshot()``'s
-        tasks tier is ``NOT_APPLICABLE``, so this renders no rows and the
-        section stays hidden until Task 11/12 wire a live backlog scan.
+        Same live-snapshot sourcing as the Environment section above; an
+        empty projection still hides the section entirely.
         """
-        return project_tasks_section(EnvironmentSnapshot(), frozenset())
+        return project_tasks_section(
+            self._console_environment_snapshot(),
+            frozenset(self._console_environment_expanded),
+        )
+
+    def _console_environment_root(self) -> str | None:
+        """Return the workspace root the Environment panel reports on.
+
+        The conversation's own change-review roots (first = primary), so the
+        panel and Change Review can never disagree about which tree is being
+        described. ``None`` when there is no root -- the controller treats
+        that as "nothing to gather" and dispatches nothing.
+        """
+        roots = self._review_selection._console_change_review_workspace_roots()
+        if not roots:
+            return None
+        return roots[0]
+
+    def _land_console_environment(self, snapshot: EnvironmentSnapshot) -> None:
+        """Repaint the Environment/Tasks sections from a landed snapshot.
+
+        Runs on the UI thread (the controller marshals every landing through
+        ``app.call_from_thread``). Both sections are resolved BEFORE either is
+        written, so a rail that is mid-recompose or not mounted at all leaves
+        the pair consistent rather than half-applied.
+
+        Args:
+            snapshot: The controller's newly landed environment snapshot.
+        """
+        from datetime import datetime as _datetime, timezone as _timezone
+
+        expanded = frozenset(self._console_environment_expanded)
+        environment_state = project_environment_section(
+            snapshot, expanded, now=_datetime.now(_timezone.utc)
+        )
+        tasks_state = project_tasks_section(snapshot, expanded)
+        try:
+            environment_section = self.query_one(
+                "#console-environment-section", ConsoleInspectorSection
+            )
+            tasks_section = self.query_one(
+                "#console-tasks-section", ConsoleInspectorSection
+            )
+        except (NoMatches, QueryError):
+            return  # rail not mounted (or mid-recompose): nothing to paint
+        for section, state in (
+            (environment_section, environment_state),
+            (tasks_section, tasks_state),
+        ):
+            section.sync_state(state)
+            section.styles.display = "block" if state.rows else "none"
+
+    def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
+        """Run one Environment/Tasks row's action.
+
+        Synchronous and focus-neutral by construction: every branch either
+        re-projects the sections, pushes a screen, opens a URL, or inserts
+        composer text -- none of them move the caret (burn-down lesson: a
+        row action that steals focus, especially onto the control that
+        undoes it, is worse than no action).
+
+        Args:
+            section_id: ``"environment"`` or ``"tasks"``.
+            row_id: The activated row's stable id.
+        """
+        from tldw_chatbook.Chat.console_environment_state import (
+            ENV_ROW_CHECKS_FIX,
+            ENV_ROW_COMMIT_PUSH,
+            ENV_ROW_PR_ADD,
+            ENV_ROW_PR_OPEN,
+            EXPANDABLE_ENV_ROWS,
+            TASKS_ROW_ADD,
+            TASKS_ROW_HEAD,
+            failing_checks_text,
+            pr_summary_text,
+        )
+
+        snapshot = self._console_environment.snapshot
+        if row_id in EXPANDABLE_ENV_ROWS or row_id == TASKS_ROW_HEAD:
+            self._console_environment_expanded.symmetric_difference_update({row_id})
+            self._land_console_environment(snapshot)
+            return
+        if row_id == "env-changes-review":
+            self._open_change_review()
+            return
+        if row_id == ENV_ROW_COMMIT_PUSH:
+            self._open_change_review_current_mode()
+            return
+        if row_id == ENV_ROW_PR_OPEN and snapshot.pr.url:
+            try:
+                self.app.open_url(snapshot.pr.url)
+            except Exception:  # noqa: BLE001 -- never raise out of a row action
+                logger.warning("environment: open_url failed")
+            return
+        if row_id == ENV_ROW_PR_ADD:
+            self._insert_prompt_text_into_composer(
+                pr_summary_text(snapshot.pr), replace=False
+            )
+            return
+        if row_id == ENV_ROW_CHECKS_FIX:
+            self._insert_prompt_text_into_composer(
+                failing_checks_text(snapshot.pr), replace=False
+            )
+            return
+        if row_id == TASKS_ROW_ADD and snapshot.tasks.branch_task is not None:
+            branch_task = snapshot.tasks.branch_task
+            self._insert_prompt_text_into_composer(
+                f"Working on task-{branch_task.task_id}: {branch_task.title}\n"
+                f"{branch_task.path}",
+                replace=False,
+            )
 
     def _console_rail_system_line_state(self) -> tuple[str, bool]:
         """Return the Model rail's ``System: <preview>`` line text + dim flag.
@@ -7768,9 +8008,19 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._run_coalesced_console_agent_fleet_sync)
 
     def _run_coalesced_console_agent_fleet_sync(self) -> None:
-        """Execute one coalesced Agent-fleet-section sync (task-5)."""
+        """Execute one coalesced Agent-fleet-section sync (task-5).
+
+        task-13 also nudges the Environment panel's LOCAL tier from here:
+        agent work is the single most likely thing to have just changed the
+        working tree, and this is the one coalesced point every fleet-state
+        change funnels through. Costs nothing while the Inspect rail is
+        closed -- the controller's rail-open guard refuses the dispatch --
+        and the local tier is git status plus a cached backlog scan, never
+        the network.
+        """
         self._console_agent_fleet_sync_scheduled = False
         self._sync_console_agent_section()
+        self._console_environment.request_refresh()
 
     def _sync_console_agent_section(self) -> None:
         """Apply the Agent rail's derived payload to the mounted widgets.
@@ -7822,6 +8072,21 @@ class ChatScreen(BaseAppScreen):
             fleet_section.styles.display = (
                 "block" if fleet_section_state.rows else "none"
             )
+            # task-13 (addition A): the section mounts COLLAPSED in the
+            # Inspect rail (`open=False`, right_rail.py) -- a header with no
+            # body is not "surfacing the fleet". Open it ONCE per busy
+            # window: a one-shot, rather than a per-tick force, is what makes
+            # a later manual collapse stick even though `CollapseToggled` is
+            # delivered asynchronously and cannot set the dismissal flag
+            # before the next tick lands. Both are reset by
+            # `_apply_fleet_inspector_rail_auto_open` when the fleet quiets.
+            if (
+                fleet_section_state.rows
+                and not self._console_fleet_section_auto_opened
+                and not self._console_fleet_inspector_dismissed
+            ):
+                self._console_fleet_section_auto_opened = True
+                fleet_section.set_open(True)
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
             fleet_summary.update(fleet_line)
             fleet_summary.styles.display = "block" if fleet_line else "none"
@@ -10205,6 +10470,16 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-cost-ttl")
             self._console_cost_ttl_timer = None
 
+    def _stop_console_environment_poll_timer(self) -> None:
+        """Stop the Environment panel's local-tier poll timer, if running."""
+        if self._console_environment_poll_timer is None:
+            return
+        try:
+            self._console_environment_poll_timer.stop()
+        finally:
+            self._record_ui_timer_stopped("console-environment-poll")
+            self._console_environment_poll_timer = None
+
     def _build_console_staged_context_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -11658,6 +11933,65 @@ class ChatScreen(BaseAppScreen):
             return replace(rail_state, right_open=True)
         return rail_state
 
+    def _apply_fleet_inspector_rail_auto_open(
+        self, rail_state: ConsoleRailState
+    ) -> ConsoleRailState:
+        """Reveal the Inspect rail while the agent fleet has anything to report.
+
+        task-13 (addition A). `ConsoleAgentController._apply_fleet_agent_
+        section_auto_open` has forced the Agent SECTION open on fleet
+        activity since TASK-915, but it never had to force a RAIL: the fleet
+        list lived in the left rail, which defaults open. Task-10 moved that
+        list into the Inspect rail, which defaults CLOSED -- so the section
+        force kept working and surfaced nothing. This is its right-rail
+        sibling, and it is deliberately a SIBLING rather than a retarget:
+        the left rail's Agent section still owns the viewed run's
+        status/steps/drilldown controls, so that force is still needed where
+        it is.
+
+        Shaped exactly like `_apply_pending_launch_inspector_auto_open`
+        above -- an ephemeral override on the RENDERED state, never written
+        back to the persisted preference, and never applied over
+        `right_forced_collapsed` (a width the rail cannot afford is not
+        negotiable). `_console_fleet_inspector_dismissed` is the TASK-915
+        sticky-dismissal discipline: this force is recomputed on every rail
+        build, so without it one manual collapse would be silently undone by
+        the next tick. The flag clears the moment the fleet goes quiet, so
+        the next busy window auto-opens again.
+
+        Args:
+            rail_state: Rail state before fleet visibility is applied.
+
+        Returns:
+            The original state, or a copy with the Inspect rail opened.
+        """
+        if not self._agent._console_agent_fleet_summary_line():
+            self._console_fleet_inspector_dismissed = False
+            self._console_fleet_section_auto_opened = False
+            return rail_state
+        if rail_state.right_open or self._console_fleet_inspector_dismissed:
+            return rail_state
+        if rail_state.right_forced_collapsed:
+            return rail_state
+        return replace(rail_state, right_open=True)
+
+    def _note_console_fleet_surface_toggle(self, open: bool) -> None:
+        """Record a deliberate open/collapse of a fleet surface.
+
+        One flag covers both fleet surfaces (the Inspect rail and the fleet
+        section inside it): either gesture means "stop putting this in front
+        of me", and a single flag cannot half-land the way two coupled ones
+        could. Never persisted -- it is scoped to the current busy window,
+        exactly like `_agent_section_user_dismissed_while_busy`.
+
+        Args:
+            open: The state the surface was just moved to.
+        """
+        if open:
+            self._console_fleet_inspector_dismissed = False
+        elif self._agent._console_agent_fleet_summary_line():
+            self._console_fleet_inspector_dismissed = True
+
     @staticmethod
     def _console_badge_inspector_rows(
         inspector_state: ConsoleInspectorState,
@@ -11838,6 +12172,7 @@ class ChatScreen(BaseAppScreen):
             rail_state, resolved_available_columns
         )
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = self._apply_fleet_inspector_rail_auto_open(rail_state)
         return resolve_console_rail_priority(rail_state, resolved_available_columns)
 
     def _set_console_rail_preference(
@@ -11912,6 +12247,11 @@ class ChatScreen(BaseAppScreen):
             )
         if right_open is not None:
             self._pending_console_launch_auto_open_inspector = False
+            # task-13 (addition A): same disarm discipline one line up, for
+            # the fleet's own auto-open. MUST happen before the rail state is
+            # rebuilt below, or `_apply_fleet_inspector_rail_auto_open` would
+            # re-force the rail the caller just collapsed.
+            self._note_console_fleet_surface_toggle(bool(right_open))
         rail_state = self._current_console_rail_state()
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
@@ -14526,6 +14866,15 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._skill._refresh_console_skill_candidates(), exclusive=False
         )
+        # task-13: the Environment panel's local-tier poll. Same audited
+        # create/stop pairing as the cost-TTL and transcript-sync timers
+        # above it. `poll_tick` is a cheap no-op while the Inspect rail is
+        # closed or the workspace has no root, so this runs for the screen's
+        # whole life rather than being armed and disarmed.
+        self._console_environment_poll_timer = self.set_interval(
+            CONSOLE_ENVIRONMENT_POLL_SECONDS, self._console_environment.poll_tick
+        )
+        self._record_ui_timer_created("console-environment-poll")
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -14676,6 +15025,7 @@ class ChatScreen(BaseAppScreen):
         self._stop_console_transcript_sync_timer()
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
+        self._stop_console_environment_poll_timer()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
         # now lives in the decomposed controller (wave-2 console
@@ -18200,6 +18550,7 @@ class ChatScreen(BaseAppScreen):
         *,
         initial_path: str | None = None,
         initial_snapshot_id: int | None = None,
+        initial_current_mode: bool = False,
     ) -> None:
         """Push the Change Review screen for the active conversation.
 
@@ -18218,6 +18569,11 @@ class ChatScreen(BaseAppScreen):
             initial_snapshot_id: Paired with ``initial_path`` -- disambiguates
                 two windows of the SAME run covering the same path (spec
                 §2). ``None`` when the caller has no snapshot row to pin to.
+            initial_current_mode: task-13. Open straight onto the WORKING
+                TREE rather than a recorded turn (Task 12's screen param).
+                Set only by the Environment panel's "Commit or push" row,
+                whose whole subject is uncommitted work; ``False`` -- and
+                byte-compatible -- for every other caller.
         """
         provider = self._review_selection._console_change_review_provider()
         if provider is None:
@@ -18249,8 +18605,13 @@ class ChatScreen(BaseAppScreen):
                 initial_path=initial_path,
                 initial_snapshot_id=initial_snapshot_id,
                 workspace_roots=workspace_roots,
+                initial_current_mode=initial_current_mode,
             )
         )
+
+    def _open_change_review_current_mode(self) -> None:
+        """Open Change Review on the working tree (Environment "Commit or push")."""
+        self._open_change_review(initial_current_mode=True)
 
     @on(Button.Pressed, "#console-inspector-review-changes")
     def handle_console_inspector_review_changes(self, event: Button.Pressed) -> None:

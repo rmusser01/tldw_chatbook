@@ -271,3 +271,141 @@ def test_stale_local_landing_is_dropped_by_dispatch_token(monkeypatch):
     fx.run_job(0)  # land the FIRST (older, now-stale) dispatch second
     assert fx.controller.snapshot.git.branch == newer_branch  # stale landing dropped
     assert fx.git_calls == 2  # both gathers ran; only the newer one's landing stuck
+
+
+# ---------------------------------------------------------------------------
+# task-13 hardening (additions B and C). B closes two gaps in the deferred
+# net path that only exist because the dispatch is deferred at all; C makes a
+# branch change actually TRIGGER the net refetch its own TTL key already
+# allows for.
+# ---------------------------------------------------------------------------
+
+
+def _net_dispatch_count(fx) -> int:
+    return sum(
+        1
+        for d in fx.dispatched
+        if d["group"] == ConsoleEnvironmentController.NET_WORKER_GROUP
+    )
+
+
+def test_deferred_net_dispatch_is_dropped_when_the_rail_closed_meanwhile(monkeypatch):
+    """B1: the rail-open guard must be re-checked at RE-dispatch time.
+
+    `request_refresh` refuses to dispatch behind a closed rail, but a net
+    request deferred while the branch was unknown is re-issued later, from
+    `_land` -- and the rail can have closed in between. Without a second
+    check that deferred `gh` fetch fires for a panel nobody is looking at.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    assert len(fx.jobs) == 1 and _net_dispatch_count(fx) == 0  # net deferred
+
+    fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    fx.run_job(0)  # local lands: the deferred net would be re-issued here
+    assert _net_dispatch_count(fx) == 0
+    assert fx.pr_calls == 0
+    assert fx.controller._net_pending is False  # dropped, not left latched
+
+    fx.rail_open = True  # reopening still fetches normally
+    fx.controller.notify_rail_opened()
+    assert _net_dispatch_count(fx) == 1
+
+
+def test_pending_net_request_is_cleared_when_its_scope_is_dropped(monkeypatch):
+    """B2: a pending net request whose local landing is scope-dropped is orphaned.
+
+    `_land`'s stale-scope guard returns before the pending-net block, so the
+    request that was waiting on that landing can never be re-issued -- and
+    its accumulated `force_net` then leaks into whatever request re-keys the
+    slot next, silently bypassing the 60s TTL.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending is True
+    assert fx.controller._net_pending_force is True
+
+    fx.root = "/other/repo"  # workspace switched before the local job landed
+    fx.run_job(0)  # this landing is scope-dropped
+    assert fx.controller._net_pending is False
+    assert fx.controller._net_pending_force is False
+    assert fx.controller._net_pending_scope is None
+
+    # ...so a later PLAIN refresh cannot inherit the dropped request's force.
+    fx.controller.request_refresh(include_net=True)
+    assert fx.controller._net_pending_scope == "/other/repo"
+    assert fx.controller._net_pending_force is False
+
+
+def test_pending_net_force_accumulates_within_one_scope(monkeypatch):
+    """The `_net_pending_scope`/force block's same-scope arm: force is sticky."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)
+    assert fx.controller._net_pending_scope == "/w/repo"
+    assert fx.controller._net_pending_force is False
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending_force is True
+
+    fx.controller.request_refresh(include_net=True)  # must not DOWNGRADE it
+    assert fx.controller._net_pending_force is True
+
+    # An in-window TTL entry for the branch that is about to land (the fake
+    # gatherer numbers branches by CALL, not by dispatch, so the first job
+    # actually run yields `feat/call-1`): only a genuinely FORCED deferred
+    # dispatch busts it.
+    fx.controller._net_fetched_at = ("/w/repo", "feat/call-1", fx.clock)
+    fx.run_job(2)  # land the newest local dispatch (older tokens are stale)
+    assert fx.controller._net_pending is False
+    fx.run_job(len(fx.jobs) - 1)
+    assert fx.pr_calls == 1
+    assert fx.pr_branches_seen == ["feat/call-1"]
+
+
+def test_pending_net_force_is_rekeyed_not_inherited_on_a_new_scope(monkeypatch):
+    """The other arm: a DIFFERENT scope resets force rather than inheriting it."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller._net_pending_force is True
+
+    fx.root = "/other/repo"
+    fx.controller.request_refresh(include_net=True)  # new scope, not forced
+    assert fx.controller._net_pending_scope == "/other/repo"
+    assert fx.controller._net_pending_force is False
+
+
+def test_branch_change_on_a_local_landing_escalates_a_net_refresh(monkeypatch):
+    """C: showing another branch's PR unmarked is the defect this closes.
+
+    The net TTL is keyed `(root, branch)`, so a branch change is already
+    TTL-clean -- nothing merely *triggered* the refetch, so the panel kept
+    painting the previous branch's PR/checks until the next rail open.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands feat/call-1; the deferred net job is queued
+    fx.run_job(1)  # net lands for feat/call-1
+    assert fx.pr_branches_seen == ["feat/call-1"]
+
+    jobs_before = len(fx.jobs)
+    fx.controller.poll_tick()  # local tier only
+    fx.run_job(jobs_before)  # lands feat/call-2 -- a different branch
+    assert len(fx.jobs) == jobs_before + 2  # the escalated net job is queued
+    fx.run_job(jobs_before + 1)
+    assert fx.pr_branches_seen == ["feat/call-1", "feat/call-2"]
+
+
+def test_branch_change_does_not_escalate_while_the_rail_is_closed(monkeypatch):
+    """C's negative control: no `gh` fetch for a panel nobody is looking at."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    fx.run_job(1)
+    assert fx.pr_calls == 1
+
+    fx.controller.request_refresh()  # queue one more local job while open
+    fx.rail_open = False  # rail closes before it lands
+    jobs_before = len(fx.jobs)
+    fx.run_job(jobs_before - 1)
+    assert len(fx.jobs) == jobs_before  # nothing escalated
+    assert fx.pr_calls == 1

@@ -46,6 +46,17 @@ tests could not exercise since jobs ran synchronously at dispatch time):
   dispatch's result can arrive after a newer one already landed. A
   landing is honored only when its token still matches the tier's latest
   issued token; otherwise it's a stale, superseded result and is dropped.
+- The deferred net re-dispatch re-checks ``rail_open_accessor`` (the rail
+  can close during the deferral), and a pending net request whose scope is
+  dropped mid-flight is cleared rather than latched -- otherwise its
+  accumulated ``force_net`` leaks into the next request that re-keys the
+  slot and silently bypasses the TTL. (task-13 addition B.)
+- A local landing whose branch differs from the one the current PR state
+  was fetched for escalates a net refresh while the rail is open. The TTL
+  key is ``(root, branch)`` so the new branch was always TTL-clean --
+  nothing *triggered* the refetch, so a checkout kept painting the previous
+  branch's PR and checks as if they were the new branch's. (task-13
+  addition C.)
 
 The gatherers (``gather_git_env``, ``gather_pr_env``, ``BacklogTaskScanner``)
 are imported as module attributes -- not called through an indirection
@@ -208,9 +219,23 @@ class ConsoleEnvironmentController:
 
     # -- landing (runs on the UI thread, via marshal_to_ui) ------------------
 
+    def _clear_net_pending(self) -> None:
+        self._net_pending = False
+        self._net_pending_force = False
+        self._net_pending_scope = None
+
     def _land(self, scope_root: str, tier: str, result: Any, token: int) -> None:
         if scope_root != self._workspace_root_accessor():
-            return  # stale-scope guard: a newer refresh already superseded this one
+            # Stale-scope guard: a newer refresh already superseded this one.
+            # B2: a net request deferred against THIS scope was waiting on
+            # exactly this landing to supply its branch, so nothing can ever
+            # re-issue it -- and leaving it latched lets its accumulated
+            # `force_net` leak into whichever request re-keys the slot next,
+            # silently bypassing the 60s TTL. Drop it; the next rail
+            # open/refresh for the live scope requests its own fetch.
+            if self._net_pending and self._net_pending_scope == scope_root:
+                self._clear_net_pending()
+            return
         if token != self._dispatch_tokens[tier]:
             return  # stale-dispatch guard: a newer dispatch of this tier already landed/is in flight
 
@@ -221,16 +246,59 @@ class ConsoleEnvironmentController:
             self._landed_root = scope_root
             if self._net_pending and self._net_pending_scope == scope_root:
                 force = self._net_pending_force
-                self._net_pending = False
-                self._net_pending_force = False
-                self._net_pending_scope = None
-                if force or self._failures[_NET_TIER] < self._MAX_FAILURES:
+                self._clear_net_pending()
+                # B1: the rail-open guard `request_refresh` applied when this
+                # was requested has to be re-applied HERE -- the deferral
+                # means an unknown amount of time passed, and the user may
+                # have collapsed the Inspect rail since. Without this a
+                # deferred `gh` fetch fires for a panel nobody is looking at.
+                if self._rail_open_accessor() and (
+                    force or self._failures[_NET_TIER] < self._MAX_FAILURES
+                ):
                     self._dispatch_net(scope_root, force_net=force)
+            elif self._branch_change_needs_net(scope_root):
+                self._dispatch_net(scope_root, force_net=False)
         else:
             self._record_outcome(_NET_TIER, result.availability)
             self.snapshot = dataclasses.replace(self.snapshot, pr=result)
 
         self._on_snapshot(self.snapshot)
+
+    def _branch_change_needs_net(self, scope_root: str) -> bool:
+        """Whether a just-landed local branch invalidates the fetched PR state.
+
+        C (task-13): the net TTL is keyed ``(root, branch)``, so a branch
+        change is already TTL-clean -- the defect was that *nothing
+        triggered* the refetch. A checkout with the rail open therefore kept
+        painting the previous branch's PR number, title, and check results
+        as if they belonged to the new branch, until something else (rail
+        reopen, explicit Refresh) happened to bust it. Showing another
+        branch's PR unmarked is worse than showing none.
+
+        Only escalates when a net fetch has actually been made (there is a
+        branch to compare against); the first fetch stays owned by the
+        rail-open/refresh paths, and the rail-open and backoff guards still
+        apply here exactly as they do on the request path.
+
+        Args:
+            scope_root: The workspace root this landing belongs to.
+
+        Returns:
+            ``True`` when a net refresh should be dispatched now.
+        """
+        if self._net_fetched_at is None:
+            return False
+        if self.snapshot.git.availability is not EnvSourceAvailability.OK:
+            # An ERROR/NOT_APPLICABLE local result carries ``branch=None``,
+            # which is a missing answer, not a branch change: escalating on
+            # it would spend a `gh` call describing nothing.
+            return False
+        fetched_root, fetched_branch, _ = self._net_fetched_at
+        if (fetched_root, fetched_branch) == (scope_root, self.snapshot.git.branch):
+            return False
+        if not self._rail_open_accessor():
+            return False
+        return self._failures[_NET_TIER] < self._MAX_FAILURES
 
     def _record_outcome(self, tier: str, availability: EnvSourceAvailability) -> None:
         if availability is EnvSourceAvailability.ERROR:
