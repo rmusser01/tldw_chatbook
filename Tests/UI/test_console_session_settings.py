@@ -33,6 +33,7 @@ from textual.widgets import (
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
 import tldw_chatbook.UI.Console_Modules.settings_navigation as settings_navigation_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
+import tldw_chatbook.UI.Console_Modules.provider_selection as provider_selection_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
@@ -86,6 +87,7 @@ from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
+    PendingHandoffStore,
 )
 from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.UI.Screens.chat_screen import (
@@ -812,7 +814,7 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     messages = []
     screen = _bare_console_state_screen(store)
     screen.app_instance = SimpleNamespace(
-        pending_handoffs=chat_screen_module.PendingHandoffStore(),
+        pending_handoffs=PendingHandoffStore(),
     )
     screen.post_message = messages.append
 
@@ -978,7 +980,7 @@ def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
-    handoffs = chat_screen_module.PendingHandoffStore()
+    handoffs = PendingHandoffStore()
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._ensure_console_chat_store = lambda: store
     screen.post_message = lambda _message: None
@@ -1017,7 +1019,7 @@ def test_credential_route_navigation_rejection_clears_exact_staged_return_slot()
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
-    handoffs = chat_screen_module.PendingHandoffStore()
+    handoffs = PendingHandoffStore()
     messages: list[object] = []
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._ensure_console_chat_store = lambda: store
@@ -1050,7 +1052,7 @@ def test_credential_route_rejected_delivery_repairs_the_exact_slot() -> None:
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
-    handoffs = chat_screen_module.PendingHandoffStore()
+    handoffs = PendingHandoffStore()
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._ensure_console_chat_store = lambda: store
     screen.post_message = lambda _message: False
@@ -1083,7 +1085,7 @@ def test_credential_route_stale_identical_snapshot_cannot_reopen_newer_request(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
-    handoffs = chat_screen_module.PendingHandoffStore()
+    handoffs = PendingHandoffStore()
     messages: list[object] = []
     scheduled: list[object] = []
     fake_app = SimpleNamespace(screen_stack=(screen,))
@@ -1442,7 +1444,7 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     fake_app = SimpleNamespace(push_screen=push_screen)
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
     screen.app_instance = SimpleNamespace(
-        pending_handoffs=chat_screen_module.PendingHandoffStore()
+        pending_handoffs=PendingHandoffStore()
     )
     screen._session = SimpleNamespace(
         _ensure_active_console_session_settings=lambda: settings
@@ -5207,7 +5209,7 @@ async def test_console_model_resolution_failure_logs_provider_context(
     def fake_exception(message, *args, **kwargs):
         logged.append((message, args, kwargs))
 
-    monkeypatch.setattr(chat_screen_module.logger, "exception", fake_exception)
+    monkeypatch.setattr(provider_selection_module.logger, "exception", fake_exception)
 
     models = await console._providers_models_for_console_settings(
         "OpenAI",
@@ -10325,7 +10327,7 @@ def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -
     app.app_config = _disk_loaded_snapshot()
     console = ChatScreen(app)
     fresh = _disk_loaded_snapshot(api_settings={"openai": {"api_key": "sk-fresh"}})
-    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+    monkeypatch.setattr(provider_selection_module, "load_settings", lambda: fresh)
 
     assert console._provider_readiness_app_config() is fresh
 
@@ -10341,7 +10343,7 @@ def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) ->
             "load_settings must not be consulted for injected snapshots"
         )
 
-    monkeypatch.setattr(chat_screen_module, "load_settings", _fail_load_settings)
+    monkeypatch.setattr(provider_selection_module, "load_settings", _fail_load_settings)
 
     assert console._provider_readiness_app_config() is app.app_config
 
@@ -10356,7 +10358,7 @@ def test_provider_readiness_config_falls_back_when_load_settings_fails(
     def _boom():
         raise RuntimeError("disk unavailable")
 
-    monkeypatch.setattr(chat_screen_module, "load_settings", _boom)
+    monkeypatch.setattr(provider_selection_module, "load_settings", _boom)
 
     assert console._provider_readiness_app_config() is app.app_config
 
