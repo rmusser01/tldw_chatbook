@@ -41,7 +41,7 @@ class ConsoleSaveMarkdownModal(
 ):
     """Prompt for the .md destination path."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSaveMarkdownModal {
         align: center middle;
     }

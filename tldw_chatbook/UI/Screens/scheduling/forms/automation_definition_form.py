@@ -125,7 +125,7 @@ class AutomationDefinitionForm(ModalScreen):
         Binding("escape", "dismiss", "Close", show=False),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     AutomationDefinitionForm {
         align: center middle;
     }

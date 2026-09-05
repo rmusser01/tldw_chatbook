@@ -60,7 +60,7 @@ class ToolProfileRow:
 class ToolProfilesPanel(Vertical):
     """Render immutable profile facts and emit explicit management requests."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ToolProfilesPanel {
         width: 100%;
         height: auto;
