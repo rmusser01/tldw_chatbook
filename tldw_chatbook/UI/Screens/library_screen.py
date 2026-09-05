@@ -487,6 +487,7 @@ from ..Library_Modules import (
     LibraryPromptHistoryRegion,
     LibrarySkillsBrowseController,
 )
+from ..Library_Modules.controller_state import ControllerState
 from ..Library_Modules.media_analysis_wiring import build_library_media_analysis_controller
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
@@ -15531,7 +15532,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 type_choices_visible=self._library_media_type_choices_visible,
                 review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
-                **self._library_media_analyze_receipt_fields(),
+                **self._media_analysis_controller._library_media_analyze_receipt_fields(),
             )
         state = build_library_media_browse_state(
             controller.applied_result,
@@ -15548,7 +15549,7 @@ class LibraryScreen(BaseAppScreen):
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
             review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
-            **self._library_media_analyze_receipt_fields(),
+            **self._media_analysis_controller._library_media_analyze_receipt_fields(),
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15568,76 +15569,14 @@ class LibraryScreen(BaseAppScreen):
         return receipt[1] if receipt is not None else ""
 
 
-    # Analysis compatibility properties: retain screen reads and writes.
-    @property
-    def _library_media_analyze_total(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_total
-
-    @_library_media_analyze_total.setter
-    def _library_media_analyze_total(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_total = value
-
-    @property
-    def _library_media_analyze_done(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_done
-
-    @_library_media_analyze_done.setter
-    def _library_media_analyze_done(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_done = value
-
-    @property
-    def _library_media_analyze_failed_ids(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_failed_ids
-
-    @_library_media_analyze_failed_ids.setter
-    def _library_media_analyze_failed_ids(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_failed_ids = value
-
-    @property
-    def _library_media_analyze_choice(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_choice
-
-    @_library_media_analyze_choice.setter
-    def _library_media_analyze_choice(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_choice = value
-
-    @property
-    def _library_media_analyze_reason_cache(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_reason_cache
-
-    @_library_media_analyze_reason_cache.setter
-    def _library_media_analyze_reason_cache(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_reason_cache = value
-
-    @property
-    def _library_media_analyze_origin(self) -> Any:
-        return self._media_analysis_controller._library_media_analyze_origin
-
-    @_library_media_analyze_origin.setter
-    def _library_media_analyze_origin(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_analyze_origin = value
-
-    @property
-    def _library_media_editing_analysis(self) -> Any:
-        return self._media_analysis_controller._library_media_editing_analysis
-
-    @_library_media_editing_analysis.setter
-    def _library_media_editing_analysis(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_editing_analysis = value
-
-    @property
-    def _library_media_generating_analysis(self) -> Any:
-        return self._media_analysis_controller._library_media_generating_analysis
-
-    @_library_media_generating_analysis.setter
-    def _library_media_generating_analysis(self, value: Any) -> None:
-        self._media_analysis_controller._library_media_generating_analysis = value
-
-    def _library_media_analyze_receipt_fields(self) -> dict[str, Any]:
-        return self._media_analysis_controller._library_media_analyze_receipt_fields()
-
-    def _library_media_analyze_reason(self) -> str:
-        return self._media_analysis_controller._library_media_analyze_reason()
+    _library_media_analyze_choice = ControllerState("_media_analysis_controller", "_library_media_analyze_choice")
+    _library_media_analyze_done = ControllerState("_media_analysis_controller", "_library_media_analyze_done")
+    _library_media_analyze_failed_ids = ControllerState("_media_analysis_controller", "_library_media_analyze_failed_ids")
+    _library_media_analyze_origin = ControllerState("_media_analysis_controller", "_library_media_analyze_origin")
+    _library_media_analyze_reason_cache = ControllerState("_media_analysis_controller", "_library_media_analyze_reason_cache")
+    _library_media_analyze_total = ControllerState("_media_analysis_controller", "_library_media_analyze_total")
+    _library_media_editing_analysis = ControllerState("_media_analysis_controller", "_library_media_editing_analysis")
+    _library_media_generating_analysis = ControllerState("_media_analysis_controller", "_library_media_generating_analysis")
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
@@ -15684,7 +15623,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
-            "analysis_action_reason": self._library_media_analyze_reason(),
+            "analysis_action_reason": self._media_analysis_controller._library_media_analyze_reason(),
             # task-31632: the page-or-facet load failure the canvas paints as
             # ONE recovery callout, Retry inside it. ``None`` whenever the
             # last load of each fence succeeded.
@@ -30339,7 +30278,7 @@ class LibraryScreen(BaseAppScreen):
         # overwrites a stale entry unconditionally the moment THAT id's
         # own fresh outcome lands, which is the only point clearing it
         # early was ever protecting.
-        self._start_library_media_analyze(
+        self._media_analysis_controller._start_library_media_analyze(
             media_ids,
             overwrite=False,
             on_item_done=self._record_library_ingest_analyze_outcome,
@@ -35399,32 +35338,9 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:
         return self._media_analysis_controller.handle_library_media_analysis_save(event)
 
-    async def _save_library_media_analysis(
-        self,
-        media_id: str,
-        *,
-        content: str,
-        analysis_content: str,
-        viewer_owned: bool = True,
-    ) -> bool:
-        return await self._media_analysis_controller._save_library_media_analysis(media_id, content=content, analysis_content=analysis_content, viewer_owned=viewer_owned)
-
-    def _notify_library_media_analysis_warning(self, message: str) -> None:
-        return self._media_analysis_controller._notify_library_media_analysis_warning(message)
-
     @on(Button.Pressed, "#library-media-analysis-generate")
     def handle_library_media_analysis_generate(self, event: Button.Pressed) -> None:
         return self._media_analysis_controller.handle_library_media_analysis_generate(event)
-
-    async def _generate_library_media_analysis(
-        self,
-        media_id: str,
-        *,
-        content: str,
-        resolution: Any,
-        viewer_owned: bool = True,
-    ) -> bool:
-        return await self._media_analysis_controller._generate_library_media_analysis(media_id, content=content, resolution=resolution, viewer_owned=viewer_owned)
 
     def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
         """Call the resolved provider once and return the analysis text.
@@ -35481,43 +35397,6 @@ class LibraryScreen(BaseAppScreen):
         self, event: Button.Pressed
     ) -> None:
         return self._media_analysis_controller.handle_library_media_analyze_receipt_dismiss(event)
-
-    def _clear_library_media_analyze_receipt(self) -> None:
-        return self._media_analysis_controller._clear_library_media_analyze_receipt()
-
-    def _start_library_media_analyze(
-        self,
-        media_ids: tuple[str, ...],
-        *,
-        overwrite: bool,
-        on_item_done: Callable[[str, bool, str], None] | None = None,
-    ) -> None:
-        return self._media_analysis_controller._start_library_media_analyze(media_ids, overwrite=overwrite, on_item_done=on_item_done)
-
-    async def _analyze_library_media_selection(
-        self,
-        media_ids: tuple[str, ...],
-        *,
-        resolution: Any,
-        overwrite: bool,
-        on_item_done: Callable[[str, bool, str], None] | None = None,
-    ) -> None:
-        return await self._media_analysis_controller._analyze_library_media_selection(media_ids, resolution=resolution, overwrite=overwrite, on_item_done=on_item_done)
-
-    async def _analyze_one_library_media_item(
-        self, media_id: str, *, resolution: Any
-    ) -> bool:
-        return await self._media_analysis_controller._analyze_one_library_media_item(media_id, resolution=resolution)
-
-    async def _library_media_unanalyzed_ids(
-        self, media_ids: tuple[str, ...]
-    ) -> tuple[str, ...]:
-        return await self._media_analysis_controller._library_media_unanalyzed_ids(media_ids)
-
-    async def _fetch_library_media_analysis_detail(
-        self, media_id: str, *, include_content: bool
-    ) -> Mapping[str, Any] | None:
-        return await self._media_analysis_controller._fetch_library_media_analysis_detail(media_id, include_content=include_content)
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:

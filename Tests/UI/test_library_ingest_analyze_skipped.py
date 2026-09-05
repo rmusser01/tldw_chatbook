@@ -121,7 +121,7 @@ async def test_pressing_analyze_skipped_runs_the_worker_over_exactly_those_ids(
         await pilot.pause()
 
         calls = []
-        screen._start_library_media_analyze = (
+        screen._media_analysis_controller._start_library_media_analyze = (
             lambda media_ids, **kwargs: calls.append((media_ids, kwargs))
         )
         button = await _wait_for_selector(
