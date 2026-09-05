@@ -1,11 +1,11 @@
 ---
 id: TASK-31552
 title: llama.cpp manual prompt-cache snapshot manager
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 18:07'
+updated_date: '2026-09-05 18:25'
 labels: []
 dependencies: []
 references:
@@ -68,9 +68,16 @@ Recheck allocation before integration.
 - [x] #11 The Save area visibly states the effective newest-N retention limit across all models, including count changes and narrow terminal layouts.
 - [x] #12 The integrated Console keeps Environment collectors off closed-Inspect startup while first-open, refresh, and reopen behavior remain usable
 - [x] #13 Suspended reusable Console screens do not dispatch Environment collectors, and returning to an open Inspect rail refreshes using the retained owner
+- [x] #14 Snapshot settings remain outside the whole-registry pre-import closure until the provider settings surface is used
 <!-- AC:END -->
 
 ## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Pre-import contribution plan: pin snapshot-settings absence in a fresh whole-route
+walk, defer the canonical F9 preference imports to their existing use sites, and
+verify mounted F9 behavior plus paired census against untouched dev. ADR required:
+no new ADR; ADR-097 applies. Do not raise limits or refactor unrelated routes.
 
 <!-- SECTION:PLAN:BEGIN -->
 Latest-dev integration plan: reproduce Environment dispatch while a reusable
@@ -87,6 +94,14 @@ ADR required: yes. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapsho
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Merge paused after latest-dev `22006e84d` integration. 71 startup/UI checks pass;
+the wider pre-import guard fails on both PR and untouched dev (549 vs 547 modules,
+limit500; both exceed LOC caps too). Deferred F9 snapshot-preference imports at
+their three use sites, removing the PR's two modules: final547/422544LOC versus
+baseline547/422128LOC. New whole-route closure RED/GREEN, 20 affected tests pass,
+independent review clear, no new lint debt. ADR-097 limits unchanged. Broader
+inherited multi-route paydown requires owner direction; status stays In Progress.
+
 Latest-dev reuse integration: Library baseline failures were paired against an
 untouched archive; 106 focused plus two changed lifecycle tests passed. Console
 reuse passed 131 targeted checks, then independent review exposed Environment
@@ -175,6 +190,10 @@ CSS/inventory reproduction and whitespace checks pass. Existing ADR-097/ADR-119
 apply; no budget change or broad test sweep. GitHub review/check settlement and
 the requested remote merge remain the external integration steps.
 <!-- SECTION:NOTES:END -->
+
+<!-- SECTION:PLAN:END -->
+
+<!-- SECTION:PLAN:END -->
 
 <!-- SECTION:PLAN:END -->
 

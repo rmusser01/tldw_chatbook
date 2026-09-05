@@ -1,5 +1,23 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Merge paused: inherited whole-registry pre-import breach
+
+Latest dev `22006e84d` (Library media/focus) rebased with only a lessons-document
+conflict; both additions were preserved. Integrated startup/Console/Models/F9
+verification passed 71 tests but exposed the broader pre-import guard:
+549 modules / 422600 LOC against limits 500 / 380000. An untouched archive of
+the exact dev measured 547 / 422128, including Library at 147363 LOC against
+its 145000 single-route cap. This is not a passing baseline.
+
+Removed this PR's two added modules by deferring F9 snapshot-preference imports
+to save/revert/provider rendering. A fresh whole-route closure regression failed
+before and passes after; 20 closure/F9/UI-ready tests pass, independent review is
+clear, and no new baseline-relative lint findings remain. Final whole-pass census
+is 547 / 422544: module parity with dev, not budget compliance (the existing screen
+files include additional feature code). No limit or pinned snapshot was raised.
+Under ADR-097, merge is paused pending owner direction for the unrelated multi-route
+payload reduction. Task remains In Progress despite completed feature criteria.
+
 ## Latest-dev reuse integration
 
 Rebased through dev `5f12507c1` (Library reuse) and `64ce47a04` (Console reuse).

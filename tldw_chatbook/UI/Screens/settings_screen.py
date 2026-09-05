@@ -49,7 +49,6 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from tldw_chatbook.LLM_Management import snapshot_settings as snapshot_preferences
 from tldw_chatbook.UI.focus_ownership import (
     focus_is_on_screen,
     focused_id_on_screen,
@@ -6803,6 +6802,10 @@ class SettingsScreen(BaseAppScreen):
     async def _save_snapshot_preferences_draft(
         self, raw, expected, provider_dirty
     ) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
         try:
             value = snapshot_preferences.SnapshotPreferences(
                 enabled=raw[0],
@@ -6871,6 +6874,10 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     async def _revert_snapshot_preferences(self) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
         try:
             loaded = await asyncio.to_thread(
                 snapshot_preferences.load_snapshot_preferences
@@ -15205,6 +15212,10 @@ class SettingsScreen(BaseAppScreen):
                     yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
         if self._snapshot_preferences_loaded is None:
             try:
                 self._snapshot_preferences_loaded = (
