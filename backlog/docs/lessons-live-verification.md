@@ -2018,3 +2018,9 @@ proved that cleanup preserves another voice owner.
 alongside audio completion. A successful sink and cleared speaking-message ID
 prove audio ownership, not delivery to a separate visual state consumer. Re-run
 from the current PR tree: older live evidence can exercise a superseded host.
+
+## Two live assessments on one profile reproduce a wedge the app warned you about (media critique #5, 2026-09-04)
+
+**The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
+
+**What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
