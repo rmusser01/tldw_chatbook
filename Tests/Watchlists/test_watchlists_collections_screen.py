@@ -1580,6 +1580,7 @@ async def test_items_reload_scopes_to_watchlist():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
@@ -1594,6 +1595,9 @@ async def test_items_reload_scopes_to_watchlist():
         service.add_source(watchlist["id"], member)
         _seed_item(db, member, "Member item")
         _seed_item(db, outsider, "Outsider item")
+        # Direct DB seeds bypass the normal write flow's rail refresh.
+        # Publish them before selecting a scope the startup tree did not know.
+        await screen._load_tree_data().wait()
 
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
