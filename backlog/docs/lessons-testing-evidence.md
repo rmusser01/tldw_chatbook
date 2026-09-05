@@ -9,6 +9,26 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Spend forecasts must test admitted media and durable recovery IDs
+
+**PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
+attachment, so failed echoes, assistant images, missing attachment bytes, and
+images omitted by a non-vision model all suppressed a valid text estimate.
+The recovery tests also reused one ID for the transient row and its database
+record, hiding a mismatch that counted unfinished recovered turns as Current
+spend. Mounted regressions reproduced the media cases; distinct persisted and
+transient IDs reproduced both accepted and quarantined recovery errors.
+The first media fix then captured full send configuration even for an empty
+chat, pulling RAG imports onto startup: CI and the local census measured 1,030
+modules against the 972 limit while clean dev passed. Checking for admitted
+user attachments before resolving media capabilities removes that eager work.
+
+**What to do.** Reuse the provider's metadata-only admission and image-budget
+projection for display decisions. Give hydrated test rows distinct transient
+and persisted IDs, and verify both request-context and settled-spend ownership.
+
+---
+
 ## SQLite progress handlers must not query their active connection
 
 **TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
