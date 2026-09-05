@@ -8300,6 +8300,74 @@ MediaDetailsWidget {
  * ======================================== */
 
 /* --- LLM Management Tab --- */
+#llamacpp-snapshot-manager {
+    height: auto;
+    width: 100%;
+    margin-top: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#llamacpp-snapshot-manager Static,
+#settings-snapshot-controls Static {
+    height: auto;
+    text-wrap: wrap;
+}
+
+#llamacpp-snapshot-manager .snapshot-actions {
+    height: 3;
+    width: 100%;
+}
+
+#llamacpp-snapshot-manager .snapshot-actions Button {
+    min-width: 8;
+    width: 1fr;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    text-wrap: nowrap;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+#llamacpp-snapshot-manager .snapshot-actions Button:disabled {
+    border: none;
+}
+
+#llamacpp-snapshot-manager DataTable {
+    height: 5;
+    width: 100%;
+}
+
+#snapshot-disabled-reason,
+#snapshot-operation-status,
+#settings-snapshot-result {
+    color: $warning;
+}
+
+#llamacpp-snapshot-manager .snapshot-copy {
+    color: $text-muted;
+}
+
+#snapshot-retention {
+    text-style: bold;
+}
+
+#snapshot-keep,
+#settings-snapshot-keep {
+    width: 8;
+}
+
+#llamacpp-snapshot-manager .snapshot-keep-label {
+    width: 12;
+}
+
+#settings-snapshot-controls {
+    height: auto;
+    margin-bottom: 1;
+}
+
 .gguf-source-mode-row {
     layout: horizontal;
     width: 100%;

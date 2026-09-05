@@ -25,6 +25,40 @@ def test_snapshot_defaults_are_opt_in_and_keep_ten() -> None:
     assert SnapshotPreferences().model_dump() == {"enabled": False, "keep_count": 10}
 
 
+def test_snapshot_expected_pair_rejects_update_at_locked_mutation(monkeypatch):
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+
+    before = SnapshotPreferences()
+    newer = SnapshotPreferences(enabled=True, keep_count=12)
+    desired = SnapshotPreferences(enabled=False, keep_count=20)
+    assert save_snapshot_preferences(before)
+
+    def interleaved(values, **kwargs):
+        assert config.apply_settings_mutation_to_cli_config(
+            {"llamacpp_snapshots": newer.model_dump()}
+        ).fully_applied
+        return config.apply_settings_mutation_to_cli_config(values, **kwargs)
+
+    monkeypatch.setattr(
+        preferences, "apply_settings_mutation_to_cli_config", interleaved
+    )
+    with pytest.raises(preferences.SnapshotPreferencesConflict):
+        save_snapshot_preferences(desired, expected=before)
+    assert load_snapshot_preferences() == newer
+
+
+def test_snapshot_expected_default_pair_and_noop_succeed():
+    before = SnapshotPreferences()
+    config.apply_settings_mutation_to_cli_config(
+        {}, delete_keys={"llamacpp_snapshots": ["enabled", "keep_count"]}
+    )
+    assert save_snapshot_preferences(before, expected=before)
+    assert save_snapshot_preferences(before, expected=before)
+    desired = SnapshotPreferences(enabled=True, keep_count=1000)
+    assert save_snapshot_preferences(desired, expected=before)
+    assert load_snapshot_preferences() == desired
+
+
 def test_shipping_config_template_contains_the_snapshot_defaults() -> None:
     """A fresh profile must persist the same defaults exposed by the model."""
     template = tomllib.loads(config.CONFIG_TOML_CONTENT)
