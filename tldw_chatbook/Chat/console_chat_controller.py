@@ -18412,7 +18412,7 @@ class ConsoleChatController:
                     version=version,
                     role=message.role.value,
                     content=content,
-                    parent_message_id=message.parent_message_id,
+                    parent_message_id=self.store.durable_parent_for_message(native_id),
                     status=message.status,
                     deleted=False,
                     provider_visible=provider_visible,
