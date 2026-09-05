@@ -64,7 +64,8 @@ waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 in the left rail. Once a tool call has run for five seconds the line grows
 a `✕ abandon call` link: clicking it abandons that one call (the model sees
 it fail as "tool call cancelled") and the turn continues, unlike **Stop**,
-which ends the run.
+which ends the run. A tool that must finish once started (a Watchlists
+mutation, for example) cannot be abandoned and shows no link.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:

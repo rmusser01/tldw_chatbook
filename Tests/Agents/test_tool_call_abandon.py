@@ -52,3 +52,52 @@ def test_an_abandon_request_cancels_only_the_wrapped_call_and_is_cleared_after()
     assert run_wide_stop is False
     assert tool_call_abandon_requested(run_id) is False
     assert inflight_tool_call(run_id) is None
+
+
+def test_the_screen_action_reaches_the_service_and_cancels_only_the_call():
+    """The action -> controller -> service chain, with a hung call in flight."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    controller = ConsoleChatController(store=store, provider_gateway=None)
+    controller._agent_bridge = SimpleNamespace(
+        live_primary_run_id=lambda conversation_id: "run-ui" if conversation_id == "conv-1" else None
+    )
+    notices = []
+    screen = SimpleNamespace(
+        _ensure_console_chat_controller=lambda: controller,
+        app_instance=SimpleNamespace(notify=lambda message, **kw: notices.append(message)),
+    )
+    # Nothing in flight: the click is refused, not queued.
+    ChatScreen.action_abandon_console_tool_call(screen)
+    assert notices == ["No tool call is running."]
+    assert tool_call_abandon_requested("run-ui") is False
+
+    release = threading.Event()
+
+    def _hung():
+        release.wait(10)
+        return None
+
+    _mark_tool_call_inflight("run-ui", "c1", "slow_tool")
+    try:
+        ChatScreen.action_abandon_console_tool_call(screen)
+        assert notices[-1] == "Abandoning slow_tool… the turn continues."
+        run_wide_stop = False
+        result = _call_with_timeout(
+            _hung,
+            seconds=30.0,
+            tool_name="slow_tool",
+            should_cancel=lambda: run_wide_stop or tool_call_abandon_requested("run-ui"),
+        )
+    finally:
+        _clear_tool_call_inflight("run-ui")
+        release.set()
+    assert result.ok is False and result.outcome == TOOL_OUTCOME_CANCELLED
+    assert run_wide_stop is False and inflight_tool_call("run-ui") is None

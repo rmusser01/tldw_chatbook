@@ -315,13 +315,17 @@ def _fleet_turn_activity(children: Sequence[Any], *, now: float) -> str:
         that has run longest, ``"N sub-agent(s) working"`` when no child is
         inside a tool call, or ``""`` when nothing is running.
     """
-    running = [child for child in children if child is not None]
-    if not running:
+    # Every running child counts, even one whose run has not attached or
+    # published a step yet (its entry is None); only children WITH a live
+    # feed can name a tool.
+    count = len(children)
+    if not count:
         return ""
-    count = len(running)
     label = f"{count} sub-agent{'s' if count != 1 else ''}"
     tool_steps = []
-    for child in running:
+    for child in children:
+        if child is None:
+            continue
         steps = tuple(getattr(child, "steps", ()) or ())
         last = steps[-1] if steps else None
         if last is not None and getattr(last, "kind", "") == STEP_TOOL_CALL:
@@ -850,16 +854,15 @@ class ConsoleAgentController:
         # (`live_run_snapshot`, the one live source of a working child's
         # steps); `getattr` because bare bridge doubles lack it.
         read_run = getattr(bridge, "live_run_snapshot", None)
-        children = (
-            [
+        children = [
+            (
                 read_run(conversation_id, summary.run_id)
-                for summary in (getattr(snapshot, "subagents", ()) or ())
-                if getattr(summary, "run_id", "")
-                and getattr(summary, "status", "") == "running"
-            ]
-            if read_run is not None
-            else []
-        )
+                if read_run is not None and getattr(summary, "run_id", "")
+                else None
+            )
+            for summary in (getattr(snapshot, "subagents", ()) or ())
+            if getattr(summary, "status", "") == "running"
+        ]
         return console_turn_activity_text(snapshot, now=time.monotonic(), children=children)
 
     def console_turn_activity_abandon_action(self) -> str:
@@ -883,9 +886,19 @@ class ConsoleAgentController:
         if read_snapshot is None:
             return ""
         conversation_id = self._current_console_rail_conversation_id() or ""
-        return console_turn_activity_abandon_action(
+        action = console_turn_activity_abandon_action(
             read_snapshot(conversation_id), now=time.monotonic()
         )
+        if not action:
+            return ""
+        # Only a call the service registered through its timeout wrapper
+        # can be abandoned; a definitive-after-start tool (or a call with
+        # no timeout) runs outside it and must not advertise the action.
+        from tldw_chatbook.Agents.agent_service import inflight_tool_call
+
+        find_run = getattr(bridge, "live_primary_run_id", None)
+        run_id = find_run(conversation_id) if find_run is not None else None
+        return action if run_id and inflight_tool_call(run_id) is not None else ""
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:
         """Return the Agent rail's (status, steps, sub-agents) line text.

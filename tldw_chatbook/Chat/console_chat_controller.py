@@ -14047,7 +14047,10 @@ class ConsoleChatController:
                 break
         if not conversation_id:
             return None
-        run_id = self._latest_unanchored_primary_run_id(conversation_id)
+        find_run = getattr(self._agent_bridge, "live_primary_run_id", None)
+        run_id = find_run(conversation_id) if callable(find_run) else None
+        if not run_id:
+            run_id = self._latest_unanchored_primary_run_id(conversation_id)
         if not run_id:
             return None
         from tldw_chatbook.Agents.agent_service import request_tool_call_abandon

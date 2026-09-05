@@ -1630,13 +1630,29 @@ def _clear_tool_call_inflight(run_id: str) -> None:
 
 
 def inflight_tool_call(run_id: str) -> tuple[str, str] | None:
-    """Return ``(call_key, tool_name)`` for ``run_id``'s in-flight call, or None."""
+    """Return the tool call ``run_id`` has in flight through the timeout wrapper.
+
+    Args:
+        run_id: The run to look up.
+
+    Returns:
+        ``(call_key, tool_name)`` while such a call is running, else None.
+        Calls dispatched outside the wrapper (no timeout, or a definitive-
+        after-start tool) are never registered and never abandonable.
+    """
     with _TOOL_CALL_ABANDON_LOCK:
         return _INFLIGHT_TOOL_CALLS.get(run_id)
 
 
 def tool_call_abandon_requested(run_id: str) -> bool:
-    """Whether the user asked to abandon ``run_id``'s in-flight tool call."""
+    """Whether the user asked to abandon ``run_id``'s in-flight tool call.
+
+    Args:
+        run_id: The run to look up.
+
+    Returns:
+        True while an abandon request is pending for the run's current call.
+    """
     with _TOOL_CALL_ABANDON_LOCK:
         return run_id in _TOOL_CALL_ABANDON_REQUESTS
 

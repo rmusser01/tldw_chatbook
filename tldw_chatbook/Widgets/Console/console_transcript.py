@@ -7553,6 +7553,9 @@ class ConsoleTranscript(VerticalScroll):
         Args:
             activity: The derived line (``console_turn_activity_text``), or
                 ``""`` when nothing is live.
+            action: task-31386: the Textual action the row's "abandon
+                call" affordance runs, or ``""`` for no affordance. Kept
+                only while ``activity`` is live.
 
         Returns:
             The line that will actually render, or ``""``.

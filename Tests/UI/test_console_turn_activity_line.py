@@ -38,13 +38,17 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.UI.Console_Modules.agent import (
+    CONSOLE_TURN_ACTIVITY_ABANDON_ACTION,
+    CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS,
     CONSOLE_TURN_ACTIVITY_SEPARATOR,
     CONSOLE_TURN_ACTIVITY_THINKING,
     ConsoleAgentController,
+    console_turn_activity_abandon_action,
     console_turn_activity_text,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import (
     CONSOLE_GENERATING_PLACEHOLDER,
+    CONSOLE_TURN_ACTIVITY_ABANDON_COPY,
     ConsoleMarkdownMessage,
     ConsoleTranscript,
 )
@@ -871,14 +875,6 @@ async def test_an_ineffective_activity_never_repaints_an_idle_transcript():
 # offers "abandon call".
 # --------------------------------------------------------------------------
 
-from tldw_chatbook.UI.Console_Modules.agent import (  # noqa: E402
-    CONSOLE_TURN_ACTIVITY_ABANDON_ACTION,
-    CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS,
-    console_turn_activity_abandon_action,
-)
-from tldw_chatbook.Widgets.Console.console_transcript import (  # noqa: E402
-    CONSOLE_TURN_ACTIVITY_ABANDON_COPY,
-)
 
 
 def _child(*steps):
@@ -896,6 +892,9 @@ def test_a_fleet_turn_names_the_children_and_their_longest_running_tool():
     assert text == f"3 sub-agents{CONSOLE_TURN_ACTIVITY_SEPARATOR}⚙ grep_files{CONSOLE_TURN_ACTIVITY_SEPARATOR}12s"
     # No child inside a tool call: the count still replaces "Thinking…".
     assert console_turn_activity_text(primary, now=110.0, children=[thinking]) == "1 sub-agent working"
+    # A child whose run has not attached (no live feed yet) still counts.
+    assert console_turn_activity_text(primary, now=110.0, children=[None, slow]).startswith("2 sub-agents")
+    assert console_turn_activity_text(primary, now=110.0, children=[None]) == "1 sub-agent working"
 
 
 def test_a_primary_tool_call_still_wins_over_the_fleet_and_single_agent_turns_are_unchanged():
