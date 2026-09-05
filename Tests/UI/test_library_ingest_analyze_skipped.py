@@ -599,3 +599,143 @@ async def test_a_structural_change_during_a_no_fallback_repaint_still_repaints(
             is False
         ), "the action must re-enable within the run's own settling sync"
 
+
+# --- Qodo review round (PR #2400) ---------------------------------------
+
+
+def test_analyze_origin_values_are_named_constants():
+    """Qodo #1: the "media"/"import" origin literals are repeated across
+    init, assignment, receipt rendering, and unmount handling -- named
+    once, next to ``_ANALYZE_SELECTED_WORKER_GROUP``, so they cannot drift
+    apart from one another."""
+    assert library_screen_module._ANALYZE_ORIGIN_MEDIA == "media"
+    assert library_screen_module._ANALYZE_ORIGIN_IMPORT == "import"
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_prunes_the_stale_outcome_for_a_reused_media_id(
+    monkeypatch,
+):
+    """Qodo #2: ``_library_ingest_analyze_outcomes`` is keyed only by media
+    id for the screen's whole lifetime. Without pruning it when its job is
+    cleared, a later job reusing that same id inherits the stale success --
+    hiding the remediation action and painting the new (unanalyzed) row as
+    already analyzed. After Clear finished, a new job with the same media
+    id and analysis_skipped must be offered the action again, and its row
+    must not be painted as analyzed (AC (a)); the count must reflect only
+    the current job's row, not a stale memory of the old one (AC (b))."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [_skipped_job(job_id="ingest-job-1", media_id=7, source_path="/tmp/a.txt")],
+        next_id=2,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+        # A prior press of the action already fixed media id 7.
+        screen._library_ingest_analyze_outcomes["7"] = (True, "")
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+        assert not screen.query("#library-ingest-analyze-skipped"), (
+            "already-fixed id must not offer the action"
+        )
+
+        # Clear finished: arm, then confirm past the double-click dead zone.
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
+        screen._library_ingest_clear_finished_armed_at -= 1.0
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
+
+        # A NEW job reuses the same media id and is skipped again (e.g. a
+        # newer, unanalyzed version/re-import).
+        app.library_ingest_jobs.restore(
+            [_skipped_job(job_id="ingest-job-2", media_id=7, source_path="/tmp/a.txt")],
+            next_id=3,
+        )
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        assert str(button.label) == "Analyze 1 skipped", (
+            "N must reflect only the current job's row, not the stale outcome"
+        )
+        canvas_text = "\n".join(
+            str(row.renderable)
+            for row in screen.query("#library-ingest-queue-panel Static")
+        )
+        assert "analyzed" not in canvas_text, (
+            "the new job's row must not be painted as already analyzed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_auto_skipped_ids_are_resolved_not_left_actionable_forever(
+    monkeypatch,
+):
+    """Qodo #3: the AC#3 partition pass auto-skips ids that already carry
+    an analysis without recording an outcome for them -- they stay counted
+    by "Analyze N skipped" forever, and every later press reports nothing
+    left to run. After a mixed run (one auto-skipped, one generated), N
+    must drop to 0, the action must disappear, and the auto-skipped row
+    must show a resolved receipt."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [
+            _skipped_job(job_id="ingest-job-1", media_id=7, source_path="/tmp/a.txt"),
+            _skipped_job(job_id="ingest-job-2", media_id=9, source_path="/tmp/b.txt"),
+        ],
+        next_id=3,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+
+        async def _unanalyzed(media_ids):
+            # "7" already has an analysis (auto-skipped by the partition
+            # pass); "9" does not.
+            return tuple(mid for mid in media_ids if mid != "7")
+
+        async def _one(media_id, *, resolution):
+            return True
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_analyze_running is False,
+            message="the run never settled",
+        )
+        await pilot.pause()
+
+        outcomes = screen._library_ingest_analyze_outcomes
+        assert outcomes.get("7", (None,))[0] is True, (
+            "the auto-skipped id must get a recorded outcome too"
+        )
+        assert outcomes.get("9", (None,))[0] is True
+
+        assert not screen.query("#library-ingest-analyze-skipped"), (
+            "N must drop to 0 and the action must disappear"
+        )
+        canvas_text = "\n".join(
+            str(row.renderable)
+            for row in screen.query("#library-ingest-queue-panel Static")
+        )
+        assert "analysis skipped" not in canvas_text
+        assert "analyzed · a.txt" in canvas_text, (
+            "the auto-skipped row must show a resolved receipt"
+        )
+        assert "analyzed · b.txt" in canvas_text
+

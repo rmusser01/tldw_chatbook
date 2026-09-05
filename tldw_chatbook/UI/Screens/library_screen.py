@@ -718,6 +718,13 @@ _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
 # Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
 # can never interleave two runs over the same ids.
 _ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
+# task-28007 (Qodo review round, PR #2400 #1): the two surfaces a bulk-
+# Analyze run can start from. Named once so the init default
+# (``_library_media_analyze_origin``), its assignment in
+# ``_start_library_media_analyze``, and its two readers (the unmount
+# notice, the receipt-fields guard) cannot drift apart from one another.
+_ANALYZE_ORIGIN_MEDIA = "media"
+_ANALYZE_ORIGIN_IMPORT = "import"
 # task-28007 AC#2: the catch-all reason an ``on_item_done`` hook reports for
 # a failed item that raised no exception (fix round 1, I-1: a RAISED
 # exception's own ``str(exc)`` is used instead -- see the loop in
@@ -729,6 +736,12 @@ _ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
 # ultimately mean the same thing from here: no analysis exists for this item
 # now.
 _ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
+# task-28007 (Qodo review round, PR #2400 #3): the ``on_item_done`` reason
+# recorded for an id the AC#3 partition pass auto-skips (an Import-run id
+# that already carries an analysis) rather than running -- ``_apply_
+# analyze_outcome`` (``library_ingest_state.py``) reads this to paint
+# "already analyzed" instead of the generic "analyzed" receipt.
+_ANALYZE_AUTO_SKIP_REASON = "already analyzed"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -2740,7 +2753,7 @@ class LibraryScreen(BaseAppScreen):
         # queue's "Analyze N skipped"). Read only by ``on_unmount``'s
         # interrupted-run notice, to send the user back to the control they
         # actually used instead of always naming Select mode's.
-        self._library_media_analyze_origin: str = "media"
+        self._library_media_analyze_origin: str = _ANALYZE_ORIGIN_MEDIA
         # task-28007 AC#1/AC#2: outcomes recorded by the Import queue's
         # "Analyze N skipped" run-summary action, media-id-string ->
         # (ok, reason). Read by ``_build_library_ingest_state`` to overlay
@@ -9665,7 +9678,8 @@ class LibraryScreen(BaseAppScreen):
             # Analyze" to reopen; that copy stays for the Media-canvas
             # (Select mode) origin only.
             from_import = (
-                getattr(self, "_library_media_analyze_origin", "media") == "import"
+                getattr(self, "_library_media_analyze_origin", _ANALYZE_ORIGIN_MEDIA)
+                == _ANALYZE_ORIGIN_IMPORT
             )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify) and self._library_media_analyze_total == 0:
@@ -15506,7 +15520,10 @@ class LibraryScreen(BaseAppScreen):
         reports itself, per row, with its own disabled action for
         progress; the Media canvas shows nothing for that run.
         """
-        if getattr(self, "_library_media_analyze_origin", "media") == "import":
+        if (
+            getattr(self, "_library_media_analyze_origin", _ANALYZE_ORIGIN_MEDIA)
+            == _ANALYZE_ORIGIN_IMPORT
+        ):
             return {
                 "analyze_receipt_total": 0,
                 "analyze_receipt_done": 0,
@@ -35190,6 +35207,19 @@ class LibraryScreen(BaseAppScreen):
                     IngestJobState.SKIPPED,
                 )
             ]
+            # task-28007 (Qodo review round, PR #2400 #2): a bulk-Analyze
+            # outcome is keyed only by media id for the screen's whole
+            # lifetime -- without pruning it here, a LATER job reusing this
+            # same media id (a re-import, a newer document version) would
+            # inherit this stale outcome, hiding "Analyze N skipped" for it
+            # and painting its row as already analyzed even though the
+            # current version has no analysis. Pop exactly the ids of the
+            # jobs actually leaving the registry now, not the recent-
+            # imports ledger extension below (those were already gone
+            # before this press).
+            for job in terminal:
+                if job.media_id is not None:
+                    self._library_ingest_analyze_outcomes.pop(str(job.media_id), None)
             known = {job.job_id for job in terminal}
             terminal.extend(
                 job
@@ -40600,7 +40630,7 @@ class LibraryScreen(BaseAppScreen):
         # same signal C-1's branch above already uses to distinguish the
         # two origins.
         self._library_media_analyze_origin = (
-            "import" if on_item_done is not None else "media"
+            _ANALYZE_ORIGIN_IMPORT if on_item_done is not None else _ANALYZE_ORIGIN_MEDIA
         )
         self.run_worker(
             self._analyze_library_media_selection(
@@ -40655,6 +40685,20 @@ class LibraryScreen(BaseAppScreen):
                     # its count unchanged. Auto-skip the already-analyzed
                     # ids and say so instead; if that leaves nothing to
                     # run, say THAT and stop -- still no silent no-op.
+                    # (Qodo review round, PR #2400 #3) An id dropped here
+                    # never entered the loop below, so without an outcome
+                    # of its own it stayed counted by "Analyze N skipped"
+                    # forever -- every later press just re-discovered it
+                    # already analyzed and reported nothing left to run.
+                    # Record it as resolved through the SAME hook so it
+                    # drops out of the count exactly like a generated one.
+                    still_skipped = set(unanalyzed)
+                    if on_item_done is not None:
+                        for media_id in media_ids:
+                            if media_id not in still_skipped:
+                                on_item_done(
+                                    media_id, True, _ANALYZE_AUTO_SKIP_REASON
+                                )
                     notify = getattr(self.app_instance, "notify", None)
                     if not unanalyzed:
                         if callable(notify):

@@ -2063,11 +2063,17 @@ def _apply_analyze_outcome(
         return row
     ok, reason = outcome
     title = _basename(job.source_path)
-    message = (
-        f"{_GLYPH_DONE} analyzed · {title}"
-        if ok
-        else f"{_GLYPH_FAILED} analysis failed · {title} · {reason}"
-    )
+    if ok:
+        # (Qodo review round, PR #2400 #3) An id the AC#3 partition pass
+        # auto-skipped (it already carried an analysis) is resolved
+        # through this same hook with a distinguishing reason, so its row
+        # reads as "already analyzed" rather than claiming a fresh
+        # generation that never ran.
+        message = f"{_GLYPH_DONE} {reason} · {title}" if reason else (
+            f"{_GLYPH_DONE} analyzed · {title}"
+        )
+    else:
+        message = f"{_GLYPH_FAILED} analysis failed · {title} · {reason}"
     new_progress = dict(row.progress or {})
     new_progress["message"] = message
     # A stale percent from the import's own progress payload no longer
