@@ -303,8 +303,8 @@ def export_recovery(session: LabSession) -> bytes:
     ).encode("utf-8")
 
 
-def rebase_recovery(session: LabSession, profile_key: str, epoch: str) -> LabSession:
-    """Retire work before replacing authority; never rewrite captured run provenance."""
+def interrupt_unfinished(session: LabSession) -> LabSession:
+    """Terminalize unfinished recovery members, retaining manifest and authority."""
     if session.batch:
         from .lab_state import accept_result
 
@@ -322,6 +322,12 @@ def rebase_recovery(session: LabSession, profile_key: str, epoch: str) -> LabSes
                         error={"message": "Preview interrupted before recovery"},
                     ),
                 )
+    return session
+
+
+def rebase_recovery(session: LabSession, profile_key: str, epoch: str) -> LabSession:
+    """Retire work before replacing authority; never rewrite captured run provenance."""
+    session = interrupt_unfinished(session)
     return prune_session(
         session.model_copy(
             update={"profile_key": profile_key, "epoch": epoch, "batch": None}
@@ -369,23 +375,7 @@ def parse_recovery(payload: bytes) -> LabSession:
             raise ValueError("Recovery reference digest mismatch")
         session = LabSession.model_validate({**document, "undo": []})
         _membership(session)
-        if session.batch:
-            from .lab_state import accept_result
-
-            for run_id, request in session.batch["requests"].items():
-                if run_id not in session.batch.get("outcomes", {}):
-                    session = accept_result(
-                        session,
-                        RunResult(
-                            request=RunRequest.model_validate(request),
-                            status="interrupted",
-                            report=None,
-                            started_at="",
-                            finished_at="",
-                            elapsed_ms=0,
-                            error={"message": "Preview interrupted before recovery"},
-                        ),
-                    )
+        session = interrupt_unfinished(session)
         validate_active(session)
         return session
     except (

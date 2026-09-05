@@ -26,11 +26,12 @@ from tldw_chatbook.Chunking.lab_models import (
 )
 from tldw_chatbook.Chunking.lab_recovery import (
     export_recovery,
+    interrupt_unfinished,
     parse_recovery,
     rebase_recovery,
     validate_active,
 )
-from tldw_chatbook.Chunking.lab_state import accept_result, new_session
+from tldw_chatbook.Chunking.lab_state import new_session
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 SCHEMA_VERSION = 1
@@ -385,24 +386,7 @@ class CheckpointStore:
                         "No valid recovery checkpoint; preserve the database"
                     )
             token = CheckpointToken(profile, epoch, session.revision, generation)
-            if session.batch is not None:
-                for run_id, request in session.batch["requests"].items():
-                    if run_id not in session.batch.get("outcomes", {}):
-                        session = accept_result(
-                            session,
-                            RunResult(
-                                request=RunRequest.model_validate(request),
-                                status="interrupted",
-                                report=None,
-                                started_at="",
-                                finished_at="",
-                                elapsed_ms=0,
-                                error={
-                                    "message": "Preview interrupted before recovery"
-                                },
-                            ),
-                        )
-            return session, token
+            return interrupt_unfinished(session), token
         finally:
             conn.execute("ROLLBACK")
 

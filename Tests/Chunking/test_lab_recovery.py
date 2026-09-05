@@ -165,6 +165,66 @@ def test_unfinished_import_is_interrupted_without_execution():
     assert restored.batch["outcomes"] == {request.run_id: "interrupted"}
 
 
+@pytest.mark.parametrize("boundary", ["parse", "load", "rebase"])
+def test_recovery_boundaries_share_partial_batch_interruption_policy(
+    tmp_path, boundary
+):
+    from Tests.Chunking.test_lab_state import _completed
+    from tldw_chatbook.Chunking.lab_recovery import rebase_recovery
+    from tldw_chatbook.Chunking.lab_state import (
+        accept_result,
+        capture_batch,
+        install_batch,
+        pin_baseline,
+    )
+    from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
+
+    session = pin_baseline(completed_session())
+    requests = capture_batch(session, tuple(session.candidates))
+    session = accept_result(install_batch(session, requests), _completed(requests[0]))
+    completed = session.results[requests[0].run_id]
+    if boundary == "parse":
+        restored = parse_recovery(export_recovery(session))
+    elif boundary == "load":
+        store = CheckpointStore(tmp_path / "lab.sqlite3", session.profile_key)
+        try:
+            token = store.save(session, expected=None)
+            restored, loaded_token = store.load()
+            assert loaded_token == token
+        finally:
+            store.close()
+    else:
+        restored = rebase_recovery(session, "another-profile", "new-authority")
+    assert restored.results[requests[0].run_id] == completed
+    interrupted = restored.results[requests[1].run_id]
+    assert interrupted == {
+        "request": requests[1].model_dump(mode="json"),
+        "status": "interrupted",
+        "report": None,
+        "started_at": "",
+        "finished_at": "",
+        "elapsed_ms": 0.0,
+        "error": {"message": "Preview interrupted before recovery"},
+    }
+    assert restored.revision == session.revision + 1
+    assert restored.content_revision == session.content_revision + 1
+    if boundary == "rebase":
+        assert restored.batch is None
+        assert (restored.profile_key, restored.epoch) == (
+            "another-profile",
+            "new-authority",
+        )
+    else:
+        assert restored.batch["outcomes"] == {
+            requests[0].run_id: "completed",
+            requests[1].run_id: "interrupted",
+        }
+        assert (restored.profile_key, restored.epoch) == (
+            session.profile_key,
+            session.epoch,
+        )
+
+
 def test_total_envelope_limit_is_checked_before_decoding(monkeypatch):
     from tldw_chatbook.Chunking import lab_recovery
 
