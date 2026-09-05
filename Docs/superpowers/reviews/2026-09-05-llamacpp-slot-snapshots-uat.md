@@ -1,5 +1,26 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Final closeout — merged
+
+[PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) merged into dev
+on 2026-09-05 at 19:44 UTC as `ec55a0ed3b4d5dc4b772254ba832dad030c566d3`.
+Final reviewed head was `f416ba31197ba6e0e0e876c9607df4d2660dbe38`;
+required CI passed and all seven review threads were resolved.
+The final Queue-edit dev integration passed 69 targeted checks and all six
+derived-artifact checks. The most recent live UAT remains the explicitly
+identified Scheduling-base run below; it is not relabeled as final-head UAT.
+Later integrations did not change snapshot production behavior.
+
+The manual manager is complete. Follow-up work is filed, unassigned, and deferred:
+
+- [TASK-31738: automatic per-conversation reuse](../../../backlog/tasks/task-31738%20-%20llama.cpp-opt-in-automatic-per-conversation-prompt-cache-reuse.md).
+- [TASK-31739: real-server audio qualification](../../../backlog/tasks/task-31739%20-%20llama.cpp-real-server-audio-snapshot-reuse-qualification.md).
+- [TASK-31740: Windows private storage](../../../backlog/tasks/task-31740%20-%20llama.cpp-Windows-private-snapshot-storage-support.md).
+
+The remaining sections preserve the execution history. Their pending merge,
+missing-evidence, and pause statements describe those earlier checkpoints,
+not the current status. Audio reuse and Windows private storage are not claimed.
+
 ## Subsequent dev integration: Scheduling and Meetings
 
 After the approved repair, dev advanced twice while CI ran. Scheduling
