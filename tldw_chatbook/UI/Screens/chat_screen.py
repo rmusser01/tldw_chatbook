@@ -15318,6 +15318,33 @@ class ChatScreen(BaseAppScreen):
                 )
             self.app_instance.notify(copy, severity="information")
 
+    def flush_pending_work(self) -> bool:
+        """Veto navigation while a dirty queue-manager edit is open.
+
+        TASK-31701: the one genuinely lossy Console navigation left after
+        TASK-31520 made switches lossless. The navigation seam dismisses
+        pushed screens before switching, so a queue-manager edit whose
+        text diverges from the queued entry would be silently discarded
+        -- the retired busy-fleet dialog had been its accidental
+        protection. Same convention as Library's note-editor dirty guard:
+        veto, tell the user why, let them save or cancel and retry.
+        A clean edit view, a saved edit, or no modal never vetoes.
+
+        Returns:
+            ``False`` to veto while a dirty edit is open; ``True``
+            otherwise.
+        """
+        for screen in reversed(self.app.screen_stack):
+            checker = getattr(screen, "has_unsaved_edit", None)
+            if callable(checker) and checker():
+                self.notify(
+                    "Unsaved queue edit -- save or cancel it before "
+                    "leaving Console.",
+                    severity="warning",
+                )
+                return False
+        return True
+
     async def confirm_navigation(self) -> bool:
         """Allow tab switches: leaving Console no longer cancels anything.
 
