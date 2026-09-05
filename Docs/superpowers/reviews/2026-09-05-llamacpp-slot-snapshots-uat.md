@@ -1,5 +1,50 @@
 # Manual llama.cpp snapshots — live UAT, 2026-09-05
 
+## Latest dev rebase and boot integration
+
+`dev` advanced again to `7e904737c787886c983c6c3312f0f9ca67c43453`
+(Console Environment redesign). The second rebase preserved its AppFocus
+forwarding and Console changes; only the diagnostic inventory aggregate
+conflicted. Rebuilt that artifact from the combined sources, retaining dev's
+new owner/call rows and the snapshot-store sinks. Earlier integration evidence
+below is retained with its exact base.
+
+Rebased onto `dev` at `e990738b2812876c2593b91f62d0b2c5b2e3b69d`
+(Chunking Lab integration), without code conflicts. Range-diff preserves the
+snapshot changes and dev's additional app lifecycles. The merged diagnostic
+inventory needed only its aggregate sink-file count regenerated from 11 to 12;
+the two snapshot-store rows are unchanged and no diagnostic bodies were added.
+
+Post-rebase combined run: **460 passed, 3 failed, 1 deselected**, 117.09s. All
+three failures were denied socket binds in the sandbox, including the process
+manager; rerunning those three with local-socket permissions passed in 1.41s.
+The 463 checks include mounted Models first-use/layout checks. Evidence:
+`pr-post-rebase-targeted.log` and `pr-post-rebase-sockets.log`.
+
+The expanded boot check exposed three snapshot bare-type CSS rules exceeding
+the parsed selector ratchet (277 > 274). Re-keyed these to existing snapshot
+IDs/classes, also narrowed the table selectors, and rebuilt the CSS bundle.
+All **18 boot checks pass** in 27.23s: UI-ready modules 972/972 and boot CSS
+785,185/804,000 bytes. No budget was raised. Initial and corrected evidence:
+`pr-post-rebase-boot.log`, `pr-post-rebase-boot-fixed.log`. CSS reproduction,
+diagnostic inventory reproduction and whitespace checks pass. Existing dependency,
+deprecation and multiprocessing-resource warnings remain recorded in the logs.
+
+The first CSS UI rerun was **34 passed, 2 failed**: reduced selector specificity
+let launcher disabled borders clip Restore, and removing the broad Static rule
+lost inherited Checkbox/CollapsibleTitle styling at 80 columns. Retained ancestor
+specificity for the exact button IDs and explicitly included the checkbox IDs and
+collapsible title types. The button checks then passed; the title-wrap correction
+restored the 80-column F9 check (**1 passed**, 4.78s). Failed runs and the computed
+checkbox-style diagnostic are retained as `pr-post-rebase-css-ui.log`,
+`pr-css-cascade-recheck.log` and `pr-css-checkbox-diagnostic.log`.
+
+Final combined layout/boot check: **25 passed, 6 warnings**, 48.83s
+(`pr-final-css-boot.log`), covering both terminal sizes, normal Models first use,
+launcher primary controls and all 18 boot checks. CSS regeneration and whitespace
+checks pass. The live UAT below predates this final selector-only paydown; no
+model/runtime or snapshot service behavior changed in that paydown.
+
 ## PR #2419 review remediation
 
 Qodo's six validation/style findings are addressed: configured key-file paths

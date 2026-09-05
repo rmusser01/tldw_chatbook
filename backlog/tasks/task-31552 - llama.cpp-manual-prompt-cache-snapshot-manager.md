@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 16:40'
+updated_date: '2026-09-05 16:59'
 labels: []
 dependencies: []
 references:
@@ -142,6 +142,18 @@ checks passed, startup census passed twice at 972/972, and fresh normal b10816/
 Gemma vision UAT passed in 258.67s. Scoped lint/format, CSS reproduction, inventory
 and whitespace checks pass; unchanged broad-file lint and dependency warnings
 remain documented. The current UAT report supersedes historical pending statements.
+
+Rebased onto dev e990738b2812 (Chunking Lab) without code conflicts. Regenerated
+only the merged diagnostic sink count (11 to 12), and paid down three snapshot
+bare-type CSS rules using precise existing subjects while preserving inherited
+Checkbox/CollapsibleTitle styling and button precedence. The initial 80-column
+regressions and their corrections are retained in the UAT report; the lesson is
+recorded in lessons-testing-evidence.md. Post-rebase snapshot verification passed
+460 checks plus 3 socket checks after granting local socket permissions; final
+combined mounted layout/boot verification passed all 25 checks in 48.83s.
+CSS/inventory reproduction and whitespace checks pass. Existing ADR-097/ADR-119
+apply; no budget change or broad test sweep. GitHub review/check settlement and
+the requested remote merge remain the external integration steps.
 <!-- SECTION:NOTES:END -->
 
 UAT remediation plan (2026-09-05): reproduce overlapping background readiness and
@@ -163,3 +175,10 @@ real Models UAT reverified. Preserve the ADR-097 ratchet without raising its lim
 ADR required: no new ADR. ADR path: backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md.
 Also applies: backlog/decisions/097-boot-budget-ratchets.md.
 Reason: boundary hardening and lazy composition implement the accepted contracts.
+
+Post-rebase CI plan: replace the three snapshot ancestor-scoped bare-type CSS
+rules exposed by the boot ratchet (277 > 274) with selectors keyed to existing
+snapshot IDs/classes, rebuild generated CSS, and rerun the boot budgets and
+mounted Models/F9 tests. Regenerate the merged diagnostic inventory summary
+(12 sink files: dev's 11 plus snapshot_store) without changing sink rows.
+ADR required: no new ADR; existing ADR-097 and ADR-119 apply.
