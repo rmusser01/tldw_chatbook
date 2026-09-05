@@ -1670,8 +1670,7 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
 
         visible_text = _visible_static_text(screen)
         for expected in (
-            "Last pull: —",
-            "Last push: —",
+            "Local schedules — no scheduling server connected; sync is off.",
             "Schedule Queue",
             "Task Detail",
             "No scheduled tasks yet",
@@ -1679,9 +1678,16 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
             "No conflict",
         ):
             assert expected in visible_text
-        assert {"Local", "Server (unavailable)", "Follow in Console"}.issubset(
+        assert {"Create ▾", "Follow in Console"}.issubset(
             _visible_button_labels(screen)
         )
+        for selector in (
+            "#scheduling-owner-local",
+            "#scheduling-owner-server",
+            "#scheduling-last-pull",
+            "#scheduling-last-push",
+        ):
+            assert not screen.query_one(selector).display
         assert screen.query_one("#scheduling-owner-server", Button).disabled
         assert screen.query_one("#schedules-follow-in-console", Button).disabled
         assert "Column 1:" not in visible_text
@@ -2067,7 +2073,9 @@ OPERATIONAL_LOADING_CONTRACTS = [
             "#scheduling-detail-pane",
             "#scheduling-inspector-pane",
         ),
-        ("#schedules-follow-in-console",),
+        # Create stays in the rail while initial loading leaves the detail
+        # action below the fold; Console follow is still disabled below.
+        ("#scheduling-new-task",),
     ),
     (
         "workflows",
@@ -2141,6 +2149,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         )
         if route == "schedules":
             assert screen.query_one("#schedules-follow-in-console", Button).disabled
+            assert not screen.query_one("#scheduling-new-task", Button).disabled
     if load_cancelled is not None:
         await asyncio.wait_for(load_cancelled.wait(), timeout=1)
 
