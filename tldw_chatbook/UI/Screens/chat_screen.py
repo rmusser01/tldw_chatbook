@@ -8923,7 +8923,7 @@ class ChatScreen(BaseAppScreen):
                 store.set_workspace_context(workspace_context)
         runtime = self._console_runtime()
         if runtime.canvas_controller is not None:
-            runtime.ensure_canvas_native_authority(
+            runtime.bind_canvas_native_view(
                 scope_resolver=self._console_canvas_scope,
                 bridge_sink=self._prefill_console_canvas_repair,
                 bridge_prepare=self._prepare_console_canvas_submit,

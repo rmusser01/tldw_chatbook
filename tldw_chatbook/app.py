@@ -7598,24 +7598,33 @@ class TldwCli(
 
         # A textual-serve child receives a one-use, per-AppService control
         # capability through its spawn environment. Native terminal launches
-        # have no such variables and allocate no control client.
-        from .Canvas.control_protocol import (
-            CanvasControlClient,
-            ControlProtocolError,
+        # have no such variables and need not import the served transport.
+        canvas_control_keys = (
+            "CHATBOOK_CANVAS_CONTROL_HOST",
+            "CHATBOOK_CANVAS_CONTROL_PORT",
+            "CHATBOOK_CANVAS_CONTROL_CHILD_ID",
+            "CHATBOOK_CANVAS_CONTROL_SECRET",
+            "CHATBOOK_CANVAS_CONTROL_VERSION",
         )
-        from .Canvas.gateway import ServedCanvasControlHandler
+        self.served_canvas_handler = None
+        self.served_canvas_control = None
+        if any(key in os.environ for key in canvas_control_keys):
+            from .Canvas.control_protocol import (
+                CanvasControlClient,
+                ControlProtocolError,
+            )
+            from .Canvas.gateway import ServedCanvasControlHandler
 
-        self.served_canvas_handler = ServedCanvasControlHandler()
-        try:
-            self.served_canvas_control = CanvasControlClient.from_environment(
-                os.environ,
-                handler=self.served_canvas_handler.handle,
-            )
-        except ControlProtocolError:
-            self.served_canvas_control = None
-            loguru_logger.warning(
-                "Served Canvas control disabled code=invalid_spawn_environment"
-            )
+            self.served_canvas_handler = ServedCanvasControlHandler()
+            try:
+                self.served_canvas_control = CanvasControlClient.from_environment(
+                    os.environ,
+                    handler=self.served_canvas_handler.handle,
+                )
+            except ControlProtocolError:
+                loguru_logger.warning(
+                    "Served Canvas control disabled code=invalid_spawn_environment"
+                )
         self._served_canvas_control_start_task: asyncio.Task[None] | None = None
 
         # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
