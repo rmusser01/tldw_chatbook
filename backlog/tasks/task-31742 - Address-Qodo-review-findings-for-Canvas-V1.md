@@ -27,6 +27,9 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #3 Valid review corrections preserve path authorization, transaction ownership, strict bounded wire validation, effective configuration precedence, compatibility and source-private diagnostics.
 - [ ] #4 Targeted regression tests, independent review and required current-head CI support merge readiness; no security or performance gate is weakened.
 - [ ] #5 A completed tool turn followed by a saved user prompt admits Capture On atomically, preserving original call reconstruction, exact owner/response/range validation and failure rollback; calculator and Canvas production-factory controls pass.
+- [ ] #6 Pre-dispatch Retry proves and reuses its exact owned reservation without admitting unrelated calls, reviving terminal calls or duplicating dispatch; real controller/gateway recovery tests cover repeated failure and stale authority.
+- [ ] #7 Commit reconciliation distinguishes committed, rolled-back and unknown outcomes; post-commit failures cannot duplicate surface writes or provider entry, or incorrectly mark a dispatched call not dispatched.
+- [ ] #8 Both agent-mode and ordinary fresh next-message sends support the verified transition after a completed tool turn; other routes gain no implicit permission.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,6 +49,14 @@ Reason: explicitly compose one verified replacement and one user append at the
 existing atomic dispatch boundary, without changing schema or granting authority
 from response links. Written-spec review precedes detailed implementation planning
 and product changes; no capture bypass or V2 work is authorized by this expansion.
+
+Requested design-review corrections are now incorporated in the linked contract:
+reuse the exact owned pre-dispatch reservation through the controller/gateway
+recovery handoff; reconcile write outcomes by exact call and surface/header
+identity before Retry/Cancel/adapter entry; include ordinary FRESH next sends as
+well as AGENT_FIRST. Add real recovery, post-commit error and route-transition
+tests to the subsequent implementation plan. These are design requirements,
+not implemented or passing behavior; AC4 through AC8 remain unchecked.
 
 ## Implementation Notes
 
