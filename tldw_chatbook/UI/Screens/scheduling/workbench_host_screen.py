@@ -37,6 +37,13 @@ class WorkbenchHostScreen(Screen):
     for later tasks, and this task's own conflicts-badge repoint.
     """
 
+    # TASK-24459: the widgets this host receives are scheduling panes whose
+    # `scheduling-*` rules live on the app-loaded scheduling sheet
+    # (`TldwCli._ensure_screen_owned_css`). The host is only ever pushed
+    # from `SchedulesWorkbench`, after the navigation that loaded the sheet
+    # -- deliberately no `CSS_PATH` here, for the same harness-tier reason
+    # documented on `SchedulesWorkbench`.
+
     BINDINGS: ClassVar = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(

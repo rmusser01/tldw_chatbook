@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Mapping
 
@@ -26,6 +27,37 @@ _SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
 _FACET_ERROR = "Couldn't load media types. Retry."
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
+# Final review I-2: not "Retry failed · " -- the Analyze receipt on this
+# same canvas (library_media_canvas.py) already has a Button labelled
+# exactly "Retry failed", and the two can be on screen together. Matches
+# the module's own "Couldn't load ..." vocabulary instead.
+_RETRY_FAILED_PREFIX = "Couldn't retry · "
+# Review I-2: no number. This request path is a bare ``asyncio.to_thread``
+# with no ``wait_for`` and no deadline, so any bound quoted here would be
+# invented. (The 5 s figure belongs to the screen-level source snapshot,
+# a different path.)
+_TIMEOUT_REASON = "timed out"
+
+
+def _retry_failure_reason(exc: BaseException) -> str:
+    """Name a failed refresh in the reader's terms, never as a bare class.
+
+    Args:
+        exc: The exception the failed page request raised.
+
+    Returns:
+        A short human-readable reason for the failure.
+    """
+    # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
+    # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
+    if isinstance(exc, TimeoutError):
+        return _TIMEOUT_REASON
+    if isinstance(exc, (OSError, sqlite3.OperationalError)):
+        # One bounded line: this lands in a ~36-col status Static, so an
+        # embedded newline or a long path would push the pager off screen.
+        message = " ".join(str(exc).split())[:80]
+        return message or type(exc).__name__
+    return type(exc).__name__
 
 
 class LibraryMediaBrowseController:
@@ -54,6 +86,12 @@ class LibraryMediaBrowseController:
         self.loading = False
         self.error_copy = ""
         self.stale_copy = ""
+        # Final review M-3: the reason the PAGE went stale, kept separate
+        # from ``stale_copy`` (the pager's own status line, which a failed
+        # Retry overwrites with "Couldn't retry · <reason>"). Every gated
+        # action's tooltip reads this one instead, so it keeps explaining
+        # why the action is off across repeated failed retries.
+        self.stale_reason = ""
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -180,6 +218,7 @@ class LibraryMediaBrowseController:
                         self.freshness = "stale"
                         self.error_copy = ""
                         self.stale_copy = _SHRINK_COPY
+                        self.stale_reason = _SHRINK_COPY
                     else:
                         self.error_copy = _SERVICE_ERROR
                     self._sync(focus_identity)
@@ -201,6 +240,14 @@ class LibraryMediaBrowseController:
             self.inflight_scope = None
             if self.freshness != "stale":
                 self.error_copy = self._failure_copy(scope)
+            else:
+                # task-31220: on a stale page the stale copy is the ONLY
+                # thing shown, and leaving it untouched is what made Retry
+                # read as inert across repeated presses (critique #5).
+                # ``_MUTATION_COPY``/``_SHRINK_COPY`` still describe why the
+                # page went stale; this describes why recovering from it
+                # just failed. ``_apply`` clears it on the next success.
+                self.stale_copy = _RETRY_FAILED_PREFIX + _retry_failure_reason(exc)
             self._sync(focus_identity)
 
     def _apply(
@@ -219,6 +266,7 @@ class LibraryMediaBrowseController:
         self.inflight_scope = None
         self.error_copy = ""
         self.stale_copy = ""
+        self.stale_reason = ""
         self._sync(focus_identity)
         return True
 
@@ -246,6 +294,7 @@ class LibraryMediaBrowseController:
         self.freshness = "stale"
         self.error_copy = ""
         self.stale_copy = stale_copy.strip()
+        self.stale_reason = self.stale_copy
 
     def begin_mutation(self) -> MediaBrowseScope:
         """Fence reads before a durable write and preserve its applied scope."""

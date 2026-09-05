@@ -16,6 +16,7 @@ from Tests.UI.test_library_shell import (
     GatedFailingSecondLibraryMediaScopeService,
     LibraryHarness,
     LibraryProductionCSSHarness,
+    StaticLibraryMediaScopeService,
     _active_library_screen,
     _seed_conversations,
     _two_conversations,
@@ -1216,10 +1217,8 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 message="Compact double shrink never reached stale recovery.",
             )
             for selector in (
-                "#library-media-row-0",
                 "#library-media-select-toggle",
                 "#library-media-export",
-                "#library-media-bulk-delete-undo",
             ):
                 action = screen.query_one(selector, Button)
                 assert action.disabled, selector
@@ -1227,24 +1226,34 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 assert action.tooltip == controller.stale_copy, selector
             assert not screen.query_one("#library-media-retry", Button).disabled
             assert not screen.query_one("#library-media-type-filter", Button).disabled
+            # task-31220: rows carry the mutation gate only -- reading an item
+            # is how you recover from a stale page, so it is never gated by
+            # that staleness.
+            assert not screen.query_one("#library-media-row-0", Button).disabled
+            # task-31220: neither does the receipt's Undo -- it restores the
+            # ids the receipt itself names, so it is the receipt's own
+            # recovery rather than an action on this (stale) page.
+            compact_undo = screen.query_one("#library-media-bulk-delete-undo", Button)
+            assert not compact_undo.disabled
+            assert str(compact_undo.label) == "Undo"
 
-            await pilot.resize_terminal(*WIDE_SIZE)
-            await _wait_for_compact_class(screen, pilot, compact=False)
-            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
-                "○"
-            )
-            await pilot.resize_terminal(*NARROW_SIZE)
-            await _wait_for_compact_class(screen, pilot, compact=True)
-            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
-                "○"
-            )
+            # The density crossings still matter: ``apply_compact_presentation``
+            # re-gates every row IN PLACE, so a crossing must not re-disable
+            # (or re-mark) a row the stale gate no longer owns.
+            for size, compact in ((WIDE_SIZE, False), (NARROW_SIZE, True)):
+                await pilot.resize_terminal(*size)
+                await _wait_for_compact_class(screen, pilot, compact=compact)
+                row = screen.query_one("#library-media-row-0", Button)
+                assert not row.disabled
+                assert not str(row.label).startswith("○")
 
             screen._sync_library_media_browse_state(None)
             await _wait_for_condition(
                 pilot,
-                lambda: screen.query_one("#library-media-row-0", Button).disabled,
+                lambda: screen.query_one("#library-media-export", Button).disabled,
                 message="Compact stale action gate did not survive recompose.",
             )
+            assert not screen.query_one("#library-media-row-0", Button).disabled
     finally:
         service.page_two_release.set()
 
@@ -1287,6 +1296,141 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         assert empty_canvas.region.contains_region(empty_action.region)
         assert empty_action.can_focus
         assert not empty_screen.query("#library-media-pager")
+
+
+class ReversibleLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """A bulk delete that fully succeeds, and an Undo that puts the row back.
+
+    task-31220: the focus contract ("receipt ✓ → focus Undo, so Enter undoes")
+    was pinned only against recording stubs, and its second half -- surviving
+    the mutation-completion refresh -- was found LIVE, not by any test. This
+    seam exists so one app-level test can drive the real screen end to end.
+    """
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.trashed: dict[int, dict] = {}
+
+    async def delete_media_item(self, *, media_id, **kwargs):
+        for index, item in enumerate(list(self.media_items)):
+            if self._backing_id(item, index) == media_id:
+                self.trashed[media_id] = item
+                self.media_items = [row for row in self.media_items if row is not item]
+                return True
+        raise KeyError(media_id)
+
+    async def restore_media_item(self, *, media_id, **kwargs):
+        item = self.trashed.pop(media_id)
+        self.media_items = [*self.media_items, item]
+        return dict(item)
+
+
+@pytest.mark.asyncio
+async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> None:
+    """task-31220 AC: the confirmation promises "You can undo right away", so
+    the receipt's Undo must hold real DOM focus when the delete settles and
+    Enter must undo.
+
+    NARROW_SIZE on purpose: at 100x30 live, the mutation-completion refresh
+    recomposed the canvas a beat after the tail focused Undo and destroyed the
+    focused button -- the stub-level pins were all green through that.
+    """
+    app = _build_media_test_app()
+    service = ReversibleLibraryMediaScopeService(_two_media_items())
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-selected")
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-media-delete-selected", Button
+            ).disabled,
+            message="Selected Media row never enabled bulk delete.",
+        )
+        screen.query_one("#library-media-delete-selected", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-bulk-delete-confirm")
+        screen.query_one("#library-media-bulk-delete-confirm", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_media_bulk_delete_in_flight
+                and bool(screen.query("#library-media-bulk-delete-undo"))
+                and not screen._library_media_select_mode
+            ),
+            message="Full-success bulk delete never settled on its receipt.",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        undo = screen.query_one("#library-media-bulk-delete-undo", Button)
+        assert not undo.disabled
+        assert str(undo.label) == "Undo"
+        # The contract, at the DOM: not "can_focus", not a recorded stub call.
+        assert screen.focused is not None
+        assert screen.focused.id == "library-media-bulk-delete-undo"
+
+        # ...and the channel that keeps it there. The completion refresh
+        # preserves whatever already has focus inside the canvas, so with the
+        # tail's focus already landed the identity is redundant; live at
+        # 100x30 the refresh won that race, the override had nothing to
+        # preserve, and Undo lost focus. Clearing focus first reproduces that
+        # ordering: the identity must carry the target on its own.
+        screen.set_focus(None)
+        screen._sync_library_media_browse_state("#library-media-bulk-delete-undo")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == "library-media-bulk-delete-undo"
+
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_media_bulk_delete_in_flight
+                and not screen.query("#library-media-bulk-delete-receipt")
+                and len(screen.query(".library-media-row")) == 2
+            ),
+            message="Enter on the focused Undo never restored the deleted row.",
+        )
+        assert service.trashed == {}
+        assert screen._library_media_delete_receipt_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
+    """task-31220: Dismiss retires the WHOLE receipt, failure copy included --
+    otherwise the next receipt inherits a "✗ undo failed" claim about a batch
+    the user already dismissed."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._library_media_delete_receipt_undo_failure = "1 of 1 · database is locked"
+        screen._sync_library_media_browse_state(None)
+        receipt_copy = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt-copy"
+        )
+        assert str(receipt_copy.renderable) == (
+            "✗ undo failed · 1 of 1 · database is locked"
+        )
+
+        screen.query_one("#library-media-bulk-delete-receipt-dismiss", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-bulk-delete-receipt"),
+            message="Dismiss never retired the failed-undo receipt.",
+        )
+        assert screen._library_media_delete_receipt_ids == ()
+        assert screen._library_media_delete_receipt_undo_failure == ""
 
 
 @pytest.mark.asyncio
