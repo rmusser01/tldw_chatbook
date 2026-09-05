@@ -600,16 +600,25 @@ reopened and AC10 records the corrective outcomes; AC9 remains unsatisfied.
 - [ ] Enforce count/revision/byte quotas in the actual Console mutation owner
   before staging, including existing/concurrent history and failure release.
 - [ ] Preserve bounded DOM identity for move/reinsert and reject cycles atomically.
-- [ ] Preserve ordinary non-opt-in continuation bytes and assistant text while
+- [x] Preserve ordinary non-opt-in continuation bytes and assistant text while
   retaining fail-closed sensitive Canvas projection in mixed rounds.
 - [ ] Discover transcript HTML-fence identity cheaply and compile compatibility
   only through bounded off-loop validation, retaining stale-message fences.
-- [ ] Keep valid historical pins on ordinary publication; preserve explicit
+- [x] Keep valid historical pins on ordinary publication; preserve explicit
   selection and Follow semantics, including same-revision pin intent.
-- [ ] Validate asset helper arguments before iteration using safe-wire integers;
+- [x] Validate asset helper arguments before iteration using safe-wire integers;
   distinguish inner explicit Close from outer Hide and browser-tab closure.
-- [ ] Run exact RED/GREEN and affected targeted/statics checks, then one scoped
+- [x] Run exact RED/GREEN and affected targeted/statics checks, then one scoped
   final rereview. No second broad review, unrelated baseline fix or full sweep.
+
+Correction `c875bad60f`, scoped rereview through `a7bcc6b094`: I3/I5/M1/M2
+addressed; I1/I2/I4 remain open. Residuals are the default temporary-session
+8 MiB cap, detached-node edits and empty/false form-state reconstruction, and
+late compile-refusal repair after disable. Existing targeted passes do not
+cover these cases. The one-wave limit is reached; preserve the worktree and
+request explicit authorization for another bounded pass rather than waive
+these required behaviors. See `Docs/Canvas/V1_VERIFICATION.md` for exact
+evidence, native-versus-served qualifications and independent baseline limits.
 
 ## Execution Handoff
 

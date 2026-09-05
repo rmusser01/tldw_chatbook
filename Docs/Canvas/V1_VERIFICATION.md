@@ -28,7 +28,7 @@ Canvas disabled; transcript action discovery/dispatch compiling synchronously;
 and settlement publication resetting a historical pin. Minor corrections cover
 asset-limit argument validation and explicit Close versus pane Hide wording.
 The consolidated correction wave is committed as `c875bad60f`; scoped rereview
-is pending. No Critical
+of `facd1e0fb0..a7bcc6b094` still requires fixes in I1, I2 and I4. No Critical
 finding was established; this is not a security certification or merge approval.
 
 The reviewer authored Task 7.2a and the Task 7.4 continuation. Separate
@@ -55,8 +55,38 @@ The implementation adds production-owner admission against existing durable
 usage and concurrent staging, bounded DOM move/reinsert handling, unchanged
 ordinary non-opt-in continuation records, deferred off-loop HTML compatibility
 validation, pin-preserving update publication, safe-wire helper argument checks,
-and accurate outer Hide/inner Close copy. These are implementation claims
-pending scoped rereview, not closure of the findings by test count alone.
+and accurate outer Hide/inner Close copy. The scoped verdict below qualifies
+these implementation claims; test counts alone do not close the findings.
+
+**Scoped rereview verdict: not ready to merge.** I3 (ordinary continuation
+bytes), I5 (pin-preserving publication), M1 (helper limits) and M2 (Close/Hide)
+are addressed. I1, I2 and I4 remain open:
+
+- The production temporary owner still uses the durable 50 MiB aggregate
+  ceiling, not ADR-115's additional **8 MiB temporary-session cap**. Count,
+  revision and durable/concurrent admission fixes do not cover that default.
+- Detached-node setters still emit native patches before reconstruction, so
+  detach, edit while detached, then reinsert can reject the transaction.
+  Reconstruction also restores only nonempty/true form properties after HTML
+  attributes, losing current empty/false values. The latter is fix-introduced.
+- A late `CanvasCompileError` can still reach the repair draft sink after
+  Canvas is disabled. The new error-path checks cover mounted/runtime identity
+  and active path, but not the enabled latch and exact captured source block.
+  Successful imports retain their guard; the refused-import repair effect
+  needs equivalent freshness checks. This is a fix-introduced error path.
+
+These are static, code-supported rereview findings, not newly executed failed
+regressions. The passing checks below do not cover these residual cases. The
+new publication browser test was **native**; the served node verified Hide and
+reopen, not a fresh served publication-while-pinned flow. Shared authority code
+and static served wiring support I5's closure without overstating browser evidence.
+
+The single final correction wave and scoped rereview allowed by the selected
+workflow are exhausted. The residuals are required behavior, not waived or
+parked as harmless. TASK-31232 remains In Progress with AC3, AC9 and AC10 open.
+An additional focused correction pass requires explicit user direction. Keep
+the branch/worktree and this plan's review/recovery files intact; no merge,
+push, full sweep or unrelated baseline repair is authorized.
 
 ```sh
 ../../.venv/bin/python -m pytest -q Tests/Canvas/test_limits.py Tests/Agents/test_provider_continuation_runtime.py Tests/Chat/test_console_canvas_controller.py Tests/Canvas/test_native_authority.py Tests/Canvas/test_service.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_message_controller.py::test_production_message_controller_prefills_canvas_repair_without_source_state Tests/Canvas/test_compiler_scheduling.py::test_chat_screen_html_import_yields_and_checks_view_before_apply
