@@ -13,6 +13,10 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 auth_token = "default-secret-key-for-single-user"
 
 [canvas]
+# Effective preference order is a non-empty environment override, then this
+# saved TOML value, then the default. TLDW_CANVAS_ENABLED and
+# TLDW_CANVAS_AUTO_OPEN_ON_CREATE accept only true or false (case-insensitive);
+# malformed non-empty values fail closed. Hard quotas have no env overrides.
 # Global execution/delivery/tool-advertisement kill switch. Stored revisions
 # and Chatbook export/import data remain intact when this is off.
 enabled = true

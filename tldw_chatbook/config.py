@@ -124,6 +124,8 @@ class CanvasConfigPolicy:
 
 
 _CANVAS_CONFIG_KEYS = frozenset({"enabled", "auto_open_on_create"})
+_CANVAS_ENABLED_ENV = "TLDW_CANVAS_ENABLED"
+_CANVAS_AUTO_OPEN_ENV = "TLDW_CANVAS_AUTO_OPEN_ON_CREATE"
 
 
 def _strict_canvas_bool(
@@ -145,9 +147,45 @@ def _strict_canvas_bool(
     return False
 
 
+def _resolve_canvas_bool(
+    section: Mapping[str, Any],
+    key: str,
+    *,
+    environment_name: str,
+    environ: Mapping[str, str],
+    default: bool,
+    invalid_config_diagnostic: str,
+    invalid_environment_diagnostic: str,
+    diagnostics: list[str],
+) -> bool:
+    """Resolve one strict environment-over-config Canvas preference."""
+
+    raw_environment = environ.get(environment_name)
+    if raw_environment is not None:
+        if type(raw_environment) is not str:
+            diagnostics.append(invalid_environment_diagnostic)
+            return False
+        normalized = raw_environment.strip().lower()
+        if normalized:
+            if normalized == "true":
+                return True
+            if normalized == "false":
+                return False
+            diagnostics.append(invalid_environment_diagnostic)
+            return False
+    return _strict_canvas_bool(
+        section,
+        key,
+        default=default,
+        invalid_diagnostic=invalid_config_diagnostic,
+        diagnostics=diagnostics,
+    )
+
+
 def _normalize_canvas_execution(
     config: Mapping[str, Any] | None,
     *,
+    environ: Mapping[str, str],
     diagnostics: list[str],
 ) -> tuple[Mapping[str, Any], bool, bool]:
     """Return the Canvas section, strict execution gate, and table validity."""
@@ -165,14 +203,23 @@ def _normalize_canvas_execution(
         valid_table = False
         diagnostics.append("canvas must be a table; Canvas is disabled")
 
-    enabled = _strict_canvas_bool(
+    if not valid_table:
+        return canvas, False, False
+    enabled = _resolve_canvas_bool(
         canvas,
         "enabled",
+        environment_name=_CANVAS_ENABLED_ENV,
+        environ=environ,
         default=True,
-        invalid_diagnostic="canvas.enabled must be a boolean; Canvas is disabled",
+        invalid_config_diagnostic=(
+            "canvas.enabled must be a boolean; Canvas is disabled"
+        ),
+        invalid_environment_diagnostic=(
+            "TLDW_CANVAS_ENABLED must be true or false; Canvas is disabled"
+        ),
         diagnostics=diagnostics,
     )
-    return canvas, enabled if valid_table else False, valid_table
+    return canvas, enabled, True
 
 
 def _summarize_canvas_web_auth_policy(
@@ -281,21 +328,30 @@ def build_canvas_config_policy(
 
     values = config if isinstance(config, Mapping) else {}
     diagnostics: list[str] = []
+    effective_environment = os.environ if environ is None else environ
     canvas, enabled, valid_canvas_table = _normalize_canvas_execution(
         values,
+        environ=effective_environment,
         diagnostics=diagnostics,
     )
-    auto_open = _strict_canvas_bool(
-        canvas,
-        "auto_open_on_create",
-        default=True,
-        invalid_diagnostic=(
-            "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
-        ),
-        diagnostics=diagnostics,
+    auto_open = (
+        _resolve_canvas_bool(
+            canvas,
+            "auto_open_on_create",
+            environment_name=_CANVAS_AUTO_OPEN_ENV,
+            environ=effective_environment,
+            default=True,
+            invalid_config_diagnostic=(
+                "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
+            ),
+            invalid_environment_diagnostic=(
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE must be true or false; auto-open is disabled"
+            ),
+            diagnostics=diagnostics,
+        )
+        if valid_canvas_table
+        else False
     )
-    if not valid_canvas_table:
-        auto_open = False
     if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
         diagnostics.append(
             "Canvas quota overrides are unsupported; hard limits remain fixed"
@@ -305,7 +361,7 @@ def build_canvas_config_policy(
     web = raw_web if isinstance(raw_web, Mapping) else {}
     remote_status, remote_summary = _canvas_remote_access_status(
         web,
-        environ=os.environ if environ is None else environ,
+        environ=effective_environment,
         keyring_get=keyring_get,
         web_auth_policy=web_auth_policy,
     )
@@ -336,6 +392,7 @@ def get_canvas_execution_enabled() -> bool:
     config = load_cli_config_and_ensure_existence()
     _canvas, enabled, _valid_table = _normalize_canvas_execution(
         config,
+        environ=os.environ,
         diagnostics=[],
     )
     return enabled
@@ -5435,6 +5492,10 @@ bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -
 port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
 
 [canvas]
+# Effective preference order is a non-empty environment override, then this
+# saved TOML value, then the default. TLDW_CANVAS_ENABLED and
+# TLDW_CANVAS_AUTO_OPEN_ON_CREATE accept only true or false (case-insensitive);
+# malformed non-empty values fail closed. Hard quotas have no env overrides.
 # One global execution/delivery/tool-advertisement kill switch. Turning this
 # off preserves stored Canvas revisions and Chatbook export/import data.
 enabled = true

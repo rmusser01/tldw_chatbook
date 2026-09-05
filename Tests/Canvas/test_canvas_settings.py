@@ -10,6 +10,19 @@ import pytest
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Canvas.limits import CanvasLimits
 
+CANVAS_ENVIRONMENT_KEYS = (
+    "TLDW_CANVAS_ENABLED",
+    "TLDW_CANVAS_AUTO_OPEN_ON_CREATE",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_canvas_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep stored/default policy tests independent of the host environment."""
+
+    for key in CANVAS_ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
 
 def test_canvas_defaults_are_enabled_and_shared_by_both_config_templates() -> None:
     policy = config_module.build_canvas_config_policy({})
@@ -41,11 +54,145 @@ def test_malformed_canvas_booleans_fail_closed(invalid: object) -> None:
 
 
 def test_malformed_canvas_table_fails_all_execution_preferences_closed() -> None:
-    policy = config_module.build_canvas_config_policy({"canvas": "enabled"})
+    policy = config_module.build_canvas_config_policy(
+        {"canvas": "enabled"},
+        environ={
+            "TLDW_CANVAS_ENABLED": "true",
+            "TLDW_CANVAS_AUTO_OPEN_ON_CREATE": "true",
+        },
+    )
 
     assert policy.enabled is False
     assert policy.auto_open_on_create is False
     assert policy.diagnostics == ("canvas must be a table; Canvas is disabled",)
+
+
+@pytest.mark.parametrize(
+    (
+        "environment",
+        "stored",
+        "expected_enabled",
+        "expected_auto_open",
+        "expected_diagnostics",
+    ),
+    [
+        (
+            {
+                "TLDW_CANVAS_ENABLED": " TrUe ",
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE": " FALSE ",
+            },
+            {"enabled": False, "auto_open_on_create": True},
+            True,
+            False,
+            (),
+        ),
+        (
+            {
+                "TLDW_CANVAS_ENABLED": "false",
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE": "true",
+            },
+            {"enabled": True, "auto_open_on_create": False},
+            False,
+            True,
+            (),
+        ),
+        (
+            {
+                "TLDW_CANVAS_ENABLED": " ",
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE": "",
+            },
+            {"enabled": False, "auto_open_on_create": True},
+            False,
+            True,
+            (),
+        ),
+        (
+            {
+                "TLDW_CANVAS_ENABLED": "enabled-value-canary",
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE": "1",
+            },
+            {"enabled": True, "auto_open_on_create": True},
+            False,
+            False,
+            (
+                "TLDW_CANVAS_ENABLED must be true or false; Canvas is disabled",
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE must be true or false; auto-open is disabled",
+            ),
+        ),
+    ],
+)
+def test_canvas_environment_preferences_strictly_override_stored_values(
+    environment: dict[str, str],
+    stored: dict[str, bool],
+    expected_enabled: bool,
+    expected_auto_open: bool,
+    expected_diagnostics: tuple[str, ...],
+) -> None:
+    policy = config_module.build_canvas_config_policy(
+        {"canvas": stored}, environ=environment
+    )
+
+    assert policy.enabled is expected_enabled
+    assert policy.auto_open_on_create is expected_auto_open
+    assert policy.diagnostics == expected_diagnostics
+    assert "enabled-value-canary" not in repr(policy)
+
+
+def test_canvas_environment_preferences_are_dynamic_and_match_the_cheap_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = {"canvas": {"enabled": False, "auto_open_on_create": True}}
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: stored,
+    )
+
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", " true ")
+    monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "false")
+    policy = config_module.build_canvas_config_policy(stored)
+    assert policy.enabled is config_module.get_canvas_execution_enabled() is True
+    assert policy.auto_open_on_create is False
+
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", "false")
+    monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "TRUE")
+    policy = config_module.build_canvas_config_policy(stored)
+    assert policy.enabled is config_module.get_canvas_execution_enabled() is False
+    assert policy.auto_open_on_create is True
+
+
+def test_accepted_process_disable_latch_is_stronger_than_enabling_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    monkeypatch.setattr(
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"canvas": {"enabled": False}},
+    )
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", "true")
+    runtime = ConsoleRuntime(
+        object(), canvas_enabled_reader=config_module.get_canvas_execution_enabled
+    )
+
+    assert runtime.canvas_enabled() is True
+    runtime.latch_canvas_disabled()
+    assert runtime.canvas_enabled() is False
+    assert config_module.get_canvas_execution_enabled() is True
+
+
+def test_canvas_environment_does_not_create_quota_overrides() -> None:
+    policy = config_module.build_canvas_config_policy(
+        {},
+        environ={
+            "TLDW_CANVAS_HTML_BYTES": "1",
+            "TLDW_CANVAS_SCRIPT_BYTES": "1",
+        },
+    )
+
+    assert policy.limits == CanvasLimits()
+    assert policy.diagnostics == ()
 
 
 def test_canvas_quota_overrides_cannot_raise_or_lower_hard_limits() -> None:

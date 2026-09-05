@@ -6,15 +6,29 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from textual.widgets import Checkbox
 
 from Tests.UI.test_destination_shells import _active_destination_screen, _visible_text
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import _click_settings_category
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
+from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.config import RuntimeConfigSnapshot
+
+CANVAS_ENVIRONMENT_KEYS = (
+    "TLDW_CANVAS_ENABLED",
+    "TLDW_CANVAS_AUTO_OPEN_ON_CREATE",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_canvas_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Settings Canvas tests independent of deployment preferences."""
+
+    for key in CANVAS_ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
 
 async def test_privacy_settings_present_canvas_controls_status_and_read_only_quotas() -> (
@@ -51,6 +65,67 @@ async def test_privacy_settings_present_canvas_controls_status_and_read_only_quo
         await pilot.pause()
         draft = screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY]
         assert draft.values["canvas.enabled"] is False
+
+
+async def test_privacy_settings_show_effective_environment_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", "false")
+    monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "true")
+    app = _build_test_app(
+        config_overrides={
+            "canvas": {"enabled": True, "auto_open_on_create": False},
+            "web_server": {"host": "127.0.0.1"},
+        }
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        await _click_settings_category(pilot, SettingsCategoryId.PRIVACY_SECURITY.value)
+        card = _active_destination_screen(pilot.app).query_one("#settings-canvas-card")
+        text = _visible_text(card)
+
+        assert card.query_one("#settings-canvas-enabled", Checkbox).value is False
+        assert card.query_one("#settings-canvas-auto-open", Checkbox).value is True
+        assert "Environment variables override saved preferences" in text
+        assert "effective values" in text
+
+
+async def test_failed_canvas_reconciliation_forces_disable_despite_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", "true")
+    monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "true")
+    app = _build_test_app(
+        config_overrides={
+            "canvas": {"enabled": True, "auto_open_on_create": True},
+            "web_server": {"host": "127.0.0.1"},
+        }
+    )
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_canvas_snapshot_policy",
+        staticmethod(lambda _snapshot: None),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.get_runtime_config_snapshot",
+        lambda *args, **kwargs: None,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        await _click_settings_category(pilot, SettingsCategoryId.PRIVACY_SECURITY.value)
+        screen = _active_destination_screen(pilot.app)
+
+        policy, stable = screen._reconcile_canvas_runtime_policy(None)
+
+        assert stable is False
+        assert policy.enabled is False
+        assert policy.auto_open_on_create is False
+        assert app.app_config["canvas"] == {
+            "enabled": False,
+            "auto_open_on_create": False,
+        }
 
 
 async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime(
@@ -121,6 +196,8 @@ async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime
 async def test_accepted_disable_stays_latched_when_config_is_reenabled_before_callback(
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("TLDW_CANVAS_ENABLED", "true")
+    monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "true")
     app = _build_test_app(
         config_overrides={
             "canvas": {"enabled": True, "auto_open_on_create": True},

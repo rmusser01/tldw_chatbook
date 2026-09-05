@@ -99,8 +99,19 @@ leaves its protections.
 **Settings > Privacy & Security > Enable Canvas tools, actions, and browser
 delivery** is the global kill switch. Turning it off immediately revokes Canvas
 execution and browser delivery while preserving stored artifacts. Re-enabling
-the saved setting requires restarting Chatbook. For remote browser admission,
-TLS, and incident response, see the [Web Server operations guide](../../../tldw_chatbook/Web_Server/README.md).
+the saved setting requires restarting Chatbook.
+
+`TLDW_CANVAS_ENABLED` and `TLDW_CANVAS_AUTO_OPEN_ON_CREATE` override their
+saved TOML preferences when non-empty. Values are trimmed and accept only
+case-insensitive `true` or `false`; empty values fall back to TOML/defaults, and
+malformed values fail closed. An invalid non-table `[canvas]` configuration
+cannot be enabled by the environment. Settings displays the effective values,
+so saving TOML does not defeat an environment override. After a disable is
+accepted, the process latch remains disabled until restart even if an effective
+preference later reads true.
+
+For remote browser admission, TLS, and incident response, see the
+[Web Server operations guide](../../../tldw_chatbook/Web_Server/README.md).
 
 V2 bundled libraries, V3 multi-file virtual filesystems, and Canvas server
 synchronization are deferred. V1 does not emulate them.

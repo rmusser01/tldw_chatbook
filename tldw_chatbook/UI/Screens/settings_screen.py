@@ -19710,6 +19710,12 @@ class SettingsScreen(BaseAppScreen):
                         "Canvas actions are unchanged."
                     ),
                 )
+                yield Static(
+                    "These controls show effective values. Environment variables "
+                    "override saved preferences when set, so saving TOML cannot "
+                    "override the environment.",
+                    classes="settings-status-row",
+                )
                 yield Static("Remote browser access", classes="destination-section")
                 yield self._detail_row(
                     "Configured served posture", canvas_policy.remote_access_summary
@@ -26502,7 +26508,8 @@ class SettingsScreen(BaseAppScreen):
 
         logger.warning("Canvas runtime config generation did not stabilize; failing closed")
         policy = build_canvas_config_policy(
-            {"canvas": {"enabled": False, "auto_open_on_create": False}}
+            {"canvas": {"enabled": False, "auto_open_on_create": False}},
+            environ={},
         )
         self._app_config_section_target()["canvas"] = {
             "enabled": False,

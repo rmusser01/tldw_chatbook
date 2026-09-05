@@ -33,6 +33,10 @@ USER_OPEN_DIALOG_MODULES = frozenset(
     }
 )
 CHATBOOK_CONFLICT_MODULE = "tldw_chatbook.Chatbooks.conflict_resolver"
+CANVAS_PREFERENCE_ENV = (
+    "TLDW_CANVAS_ENABLED",
+    "TLDW_CANVAS_AUTO_OPEN_ON_CREATE",
+)
 
 
 def _isolated_environment(tmp_path: Path) -> dict[str, str]:
@@ -54,6 +58,8 @@ def _isolated_environment(tmp_path: Path) -> dict[str, str]:
         "XDG_DATA_HOME": str(data_home),
     }
     environment.pop("PYTEST_CURRENT_TEST", None)
+    for key in CANVAS_PREFERENCE_ENV:
+        environment.pop(key, None)
     return environment
 
 
@@ -125,19 +131,31 @@ def test_execution_only_config_read_does_not_import_web_auth(tmp_path: Path) -> 
             "-c",
             textwrap.dedent(
                 """
+                import os
                 import sys
 
                 from tldw_chatbook import config
 
                 config.load_cli_config_and_ensure_existence = lambda: {
-                    "canvas": {"enabled": True, "auto_open_on_create": False},
+                    "canvas": {"enabled": False, "auto_open_on_create": False},
                     "web_server": {
                         "host": "0.0.0.0",
                         "public_url": "https://chatbook.example",
                     },
                 }
                 assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
+                assert config.get_canvas_execution_enabled() is False
+
+                os.environ["TLDW_CANVAS_ENABLED"] = " true "
                 assert config.get_canvas_execution_enabled() is True
+                assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
+
+                os.environ["TLDW_CANVAS_ENABLED"] = "false"
+                assert config.get_canvas_execution_enabled() is False
+                assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
+
+                os.environ["TLDW_CANVAS_ENABLED"] = "invalid-canary"
+                assert config.get_canvas_execution_enabled() is False
                 assert "tldw_chatbook.Canvas.web_auth" not in sys.modules
 
                 policy = config.build_canvas_config_policy(
