@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from collections.abc import Mapping
 import inspect
 from typing import Optional
@@ -60,15 +60,12 @@ from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_chat_models import ConsoleMessageRole, derive_console_session_title
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_command_suggestions import _COMMAND_DESCRIPTIONS
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
-from ...Widgets.Console.console_rewind_modal import (
-    ConsoleRewindChoice,
-    ConsoleRewindModal,
-    KIND_RESTORE,
-    KIND_SUMMARIZE_FROM,
-    KIND_SUMMARIZE_UP_TO,
-    RewindPromptRow,
-)
+
+if TYPE_CHECKING:
+    from ...Widgets.Console.console_rewind_modal import (
+        ConsoleRewindChoice,
+        RewindPromptRow,
+    )
 
 
 logger = logger.bind(module="ChatScreen")
@@ -344,6 +341,9 @@ class ConsoleCommandsController:
 
     async def _open_console_style_picker_for_insert(self) -> None:
         """Open the image-style picker, inserting whatever style is chosen."""
+        from ...Widgets.Console.console_style_picker_modal import (
+            ConsoleStylePickerModal,
+        )
 
         def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
             self._focus_console_composer_if_needed(force=True)
@@ -661,6 +661,8 @@ class ConsoleCommandsController:
             `preview` is a collapsed, truncated single-line preview of its
             content.
         """
+        from ...Widgets.Console.console_rewind_modal import RewindPromptRow
+
         store = self._ensure_console_chat_store()
         user_messages = [
             message
@@ -765,6 +767,8 @@ class ConsoleCommandsController:
         Returns:
             True when the modal opened; False when no USER prompt rows exist.
         """
+        from ...Widgets.Console.console_rewind_modal import ConsoleRewindModal
+
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
@@ -852,6 +856,12 @@ class ConsoleCommandsController:
             choice: The modal's result, or `None`.
             active_path_identity: Exact ordered path captured for the modal.
         """
+        from ...Widgets.Console.console_rewind_modal import (
+            KIND_RESTORE,
+            KIND_SUMMARIZE_FROM,
+            KIND_SUMMARIZE_UP_TO,
+        )
+
         store = self._ensure_console_chat_store()
         try:
             if store.active_session_id != session_id:

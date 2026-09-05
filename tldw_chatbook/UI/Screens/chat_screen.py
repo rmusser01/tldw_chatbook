@@ -587,7 +587,6 @@ from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModa
 from ...Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
 )
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
@@ -596,14 +595,6 @@ from ...Widgets.destination_rail import (
 )
 from ...Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
-)
-from ...Widgets.Console.console_rewind_modal import (
-    ConsoleRewindChoice,
-    ConsoleRewindModal,
-    KIND_RESTORE,
-    KIND_SUMMARIZE_FROM,
-    KIND_SUMMARIZE_UP_TO,
-    RewindPromptRow,
 )
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
@@ -625,6 +616,7 @@ if TYPE_CHECKING:
         ConsoleEnvironmentController,
     )
     from tldw_chatbook.app import TldwCli
+    from ...Widgets.Console.console_rewind_modal import ConsoleRewindChoice
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsDraftSnapshot,
         ConsoleSettingsResult,
