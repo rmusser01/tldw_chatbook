@@ -267,8 +267,10 @@ class ChatQuestionCard(Container):
             sections = self.query_one("#question-sections", VerticalScroll)
         except NoMatches:
             return
+        from tldw_chatbook.Agents.run_context import clean_subagent_label
+
         payload = self._payload or {}
-        label = str(payload.get("asker_label") or "").strip()[:40]
+        label = clean_subagent_label(payload.get("asker_label"))
         if payload.get("asked_by") == "sub-agent":
             who = f"Sub-agent '{label}'" if label else "A sub-agent"
         else:

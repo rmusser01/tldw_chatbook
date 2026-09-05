@@ -131,7 +131,12 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
+from .run_context import (
+    CurrentRunActor,
+    clean_subagent_label,
+    use_run_actor,
+    use_tool_call_id,
+)
 from .run_log import _setting
 from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
 from .run_log_eviction import (
@@ -1036,16 +1041,12 @@ _FILE_CONTENT_TOOL_NAMES = frozenset(
 )
 
 
-#: task-31382: a task-derived sub-agent label is cut here so a card title or
-#: marker header stays one line.
-SUBAGENT_LABEL_MAX_CHARS = 40
-
-
 def subagent_display_label(agent_name: str | None, task: str | None) -> str | None:
     """Return the display label for a sub-agent run (task-31382).
 
     The named agent's name wins when the spawn named one; otherwise the
-    first line of the child's task, cut to ``SUBAGENT_LABEL_MAX_CHARS``.
+    first line of the child's task. Either goes through
+    ``clean_subagent_label`` so the label is one bounded, control-free line.
 
     Args:
         agent_name: The resolved named-agent name, or None.
@@ -1054,15 +1055,12 @@ def subagent_display_label(agent_name: str | None, task: str | None) -> str | No
     Returns:
         A one-line label, or None when neither source has text.
     """
-    name = (agent_name or "").strip()
+    name = clean_subagent_label(agent_name)
     if name:
         return name
-    first_line = (task or "").strip().splitlines()[0].strip() if (task or "").strip() else ""
-    if not first_line:
-        return None
-    if len(first_line) > SUBAGENT_LABEL_MAX_CHARS:
-        return first_line[: SUBAGENT_LABEL_MAX_CHARS - 1].rstrip() + "…"
-    return first_line
+    stripped = (task or "").strip()
+    first_line = stripped.splitlines()[0] if stripped else ""
+    return clean_subagent_label(first_line) or None
 
 
 def _is_file_content_tool(tool_name: str) -> bool:

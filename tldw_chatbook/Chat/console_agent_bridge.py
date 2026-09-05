@@ -1557,7 +1557,9 @@ def format_question_marker(
     Returns:
         The marker text.
     """
-    label = _sanitize_task_marker_label(str(asker_label or "")).strip()[:40]
+    from tldw_chatbook.Agents.run_context import clean_subagent_label
+
+    label = clean_subagent_label(asker_label)
     if asked_by == "sub-agent":
         who = f"sub-agent '{label}'" if label else "a sub-agent"
     else:

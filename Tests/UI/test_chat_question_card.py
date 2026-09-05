@@ -348,3 +348,13 @@ async def test_title_names_the_sub_agent_label_and_falls_back_without_one():
         assert str(card.query_one("#question-title", Static).render()) == (
             "A sub-agent has 2 questions for you:"
         )
+        # A label with newlines / control characters is flattened to one
+        # line and cut, the same way the transcript marker renders it.
+        messy = _payload(1, request_id="round-3")
+        messy["asked_by"] = "sub-agent"
+        messy["asker_label"] = " re\nsearcher\x07 " + "z" * 60
+        app.query_one(ChatTaskCards).sync_state(TaskResumeState(pending_question=messy))
+        await pilot.pause()
+        title = str(card.query_one("#question-title", Static).render())
+        assert title.startswith("Sub-agent 're searcher z") and title.endswith("…' has 1 question for you:")
+        assert "\n" not in title and "\x07" not in title
