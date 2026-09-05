@@ -9,23 +9,22 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
-## Index-plan guards must accept the names the DDL actually uses
+## Qualify temporary filesystem metadata and use payload-specific privacy canaries
 
-**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
-no-statistics query-plan assertions passed for the Keyword indexes, but the
-index census guard rejected every pin because its evidence extractor only
-recognized `idx_` and `uq_` names. The schema used descriptive
-`character_conversation_search_*` names. A synthetic positive/negative pair
-reproduced the missing positive pin while preserving rejection of `not in`.
-Accepting standalone identifier literals fixed the guard without changing the
-DDL or labeling new indexes as pre-convention. The same qualification found
-that the schema allowlist scanner omitted the new dedicated DDL module; the
-live-schema parity test caught all five missing tables.
+**Dev test review / TASK-31661, 2026-09-05.** A fresh pytest root under
+`/private/tmp` inherited macOS group `wheel`: Notes fixtures were UID/GID
+501:0 while the process was 501:20. The writable-file metadata guard correctly
+reported `unsupported_metadata`. Moving the pytest root to the per-user temporary
+directory produced 501:20 fixtures and all 140 Notes conflict-executor tests
+passed without a runtime change. Separately, seven import privacy tests searched
+the entire formatted traceback for the generic word `private`; they matched the
+checkout's `/private/tmp` source paths, not an exception payload.
 
-**What to do.** Run both live-schema parity and index-plan inventory checks
-when moving DDL into a dedicated module. Register its source explicitly, keep
-real query-plan assertions, and verify a guard's name recognition before
-discarding evidence or weakening its inventory policy.
+**What to do.** Check actual fixture ownership before diagnosing an authority
+guard as broken; do not weaken it to accommodate an incorrectly owned test root.
+Use an unmistakable injected payload canary for privacy assertions, including
+the full traceback. A source-path substring is neither proof of payload leakage
+nor a portable canary.
 
 ## A test counter is neither atomic publication nor completion evidence
 
@@ -43,6 +42,7 @@ entry counts cannot prove completion. Keep malformed-state checks strict rather
 than retrying arbitrary parse failures. Here the existing rendered final-response
 token provides the ordering boundary, so no new polling protocol is needed.
 ---
+
 ## Populated replacement widgets are not yet layout evidence
 
 **TASK-31656, 2026-09-05.** The broad Watchlists run reached the expected
@@ -11960,3 +11960,21 @@ backing id before releasing requests. The complete no-change/match-navigation
 files and Reader handoff node then passed together (13 tests); performance and
 content assertions stayed unchanged. A selected UI identity proves intent, not
 that its asynchronous request has reached a controlled fake's release boundary.
+
+## Index-plan guards must accept the names the DDL actually uses
+
+**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
+no-statistics query-plan assertions passed for the Keyword indexes, but the
+index census guard rejected every pin because its evidence extractor only
+recognized `idx_` and `uq_` names. The schema used descriptive
+`character_conversation_search_*` names. A synthetic positive/negative pair
+reproduced the missing positive pin while preserving rejection of `not in`.
+Accepting standalone identifier literals fixed the guard without changing the
+DDL or labeling new indexes as pre-convention. The same qualification found
+that the schema allowlist scanner omitted the new dedicated DDL module; the
+live-schema parity test caught all five missing tables.
+
+**What to do.** Run both live-schema parity and index-plan inventory checks
+when moving DDL into a dedicated module. Register its source explicitly, keep
+real query-plan assertions, and verify a guard's name recognition before
+discarding evidence or weakening its inventory policy.
