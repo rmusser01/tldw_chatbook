@@ -202,6 +202,10 @@ def load_failure_recovery_state(
         why=state_reason,
         next_action="Retry",
         recovery_action="Retry",
+        # Hardcoded on purpose (task-31632 review): every caller so far is a
+        # local read, and the callout does not paint the owner -- only
+        # ``visible_copy`` does, which no load-failure surface uses. Make it
+        # a parameter when a remote/server load first needs one.
         authority_owner="local data source",
         stable_selector=stable_selector,
         disabled_tooltip=DestinationRecoveryState._sentence(

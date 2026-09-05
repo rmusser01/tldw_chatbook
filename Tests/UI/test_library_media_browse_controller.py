@@ -617,6 +617,8 @@ async def test_first_load_failure_recovery_state_names_the_service() -> None:
     assert state is not None
     assert state.message == "Couldn't load media · unable to open database file"
     assert state.severity == "error"
+    assert state.retry_id == "library-media-retry"
+    assert state.stable_selector == "#library-media-load-failure"
     assert controller.error_copy == (
         "Couldn't load media. Check the local Library and retry."
     )
@@ -632,6 +634,9 @@ async def test_exhausted_clamp_without_an_applied_page_still_has_a_reason() -> N
     state = controller.failure
     assert state is not None
     assert state.message == "Couldn't load media · the list changed while loading"
+    assert state.severity == "error"
+    assert state.retry_id == "library-media-retry"
+    assert state.stable_selector == "#library-media-load-failure"
     assert controller.error_copy == (
         "Couldn't load media. Check the local Library and retry."
     )
@@ -680,3 +685,80 @@ async def test_retry_reloads_the_type_facets_that_failed() -> None:
 
     assert controller.type_options == ("video",)
     assert controller.failure is None
+
+
+@pytest.mark.asyncio
+async def test_a_page_success_never_clears_a_live_facet_failure() -> None:
+    """Each fence clears its OWN failure; neither speaks for the other."""
+    screen = _Screen()
+    service = _Service(_page(1, 20), types=RuntimeError("boom"))
+    controller = _controller(screen, service)
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    facet_failure = controller.failure
+    assert facet_failure is not None
+
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.applied_result is not None
+    assert controller.failure is facet_failure
+
+
+@pytest.mark.asyncio
+async def test_a_facet_success_never_clears_a_live_page_failure() -> None:
+    screen = _Screen()
+    service = _Service(RuntimeError("cold"), types=("video",))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    page_failure = controller.failure
+    assert page_failure is not None
+
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+
+    assert controller.type_options == ("video",)
+    assert controller.failure is page_failure
+
+
+@pytest.mark.asyncio
+async def test_a_page_failure_is_live_until_the_next_request_starts() -> None:
+    """Pin WHICH step clears it: the request start, not the success.
+
+    ``_begin_request`` clears ``page_failure`` eagerly so the callout is
+    gone while the retry is in flight -- so "absent after a success" alone
+    would prove nothing about the success callback. Both moments are
+    asserted separately here.
+    """
+    screen = _Screen()
+    service = _Service(RuntimeError("cold"), _page(1, 20))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    assert controller.failure is not None
+
+    controller.retry(focus_identity=None)
+    assert controller.failure is None
+
+    await screen.pending.pop()
+    assert controller.failure is None
+    assert controller.applied_result is not None
+
+
+@pytest.mark.asyncio
+async def test_a_facet_failure_is_live_until_the_next_facet_request_starts() -> None:
+    screen = _Screen()
+    service = _Service(types=RuntimeError("boom"))
+    controller = _controller(screen, service)
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    assert controller.failure is not None
+
+    service.types = ("video",)
+    controller.request_facets(fingerprint="next")
+    assert controller.failure is None
+
+    await screen.pending.pop()
+    assert controller.failure is None
+    assert controller.type_options == ("video",)

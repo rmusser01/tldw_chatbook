@@ -15802,6 +15802,10 @@ class LibraryScreen(BaseAppScreen):
                 else ""
             ),
             "analysis_action_reason": self._library_media_analyze_reason(),
+            # task-31632: the page-or-facet load failure the canvas paints as
+            # ONE recovery callout, Retry inside it. ``None`` whenever the
+            # last load of each fence succeeded.
+            "load_failure": controller.failure,
             "compact": False,
             "show_preview": False,
         }
