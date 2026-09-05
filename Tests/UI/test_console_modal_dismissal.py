@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import ast
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import importlib
 import inspect
 from pathlib import Path
 from types import MethodType
-from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
 from textual import events, on
@@ -18,7 +18,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.background_signals import (
     await_background_task,
@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
 from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -51,6 +52,15 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+)
 from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
     ConsoleSummarizePreviewModal,
 )
@@ -108,8 +118,23 @@ from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
 )
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    ConsoleCapturePolicyDialog,
+    ConsoleTracePrivacyDialog,
+    GlobalFullCaptureConfirmation,
+)
+from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+    ConsoleExchangeExportDialog,
+)
+from tldw_chatbook.Widgets.Console.console_fork_chat_modal import ConsoleForkChatModal
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
+)
+from tldw_chatbook.Widgets.Console.console_library_access_modal import (
+    ConsoleLibraryAccessModal,
+)
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
+    ConsoleLibrarySearchModal,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
@@ -134,6 +159,9 @@ from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
     ConsoleReviewNotesModal,
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
+    ConsoleSaveMarkdownModal,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
     ConsoleSettingsModal,
@@ -150,6 +178,9 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
     ConsoleStylePickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_terminal_session_modal import (
+    ConsoleTerminalSessionModal,
 )
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
@@ -410,6 +441,69 @@ def _prompt_variables_factory() -> PromptVariablesDialog:
     )
 
 
+def _model_popover_factory() -> ConsoleModelPopover:
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-test")
+    origin = ConsoleSettingsOrigin("contract-session", None, 0)
+    draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    def rebase(
+        state: ConsoleSettingsDraftState, **kwargs: object
+    ) -> ConsoleSettingsDraftState:
+        return replace(
+            state,
+            settings=replace(
+                state.settings,
+                provider=str(kwargs["provider"]),
+                model=(
+                    str(kwargs["model"])
+                    if kwargs.get("model") is not None
+                    else None
+                ),
+            ),
+        )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    return ConsoleModelPopover(
+        origin=origin,
+        app_config={"api_settings": {"openai": {"api_key": "test-key"}}},
+        initial_draft=draft,
+        providers_models={"openai": ["gpt-test"]},
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=rebase,
+        live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
+    )
+
+
 TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         ConsoleWorkspaceFilesModal,
@@ -502,10 +596,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleModelPopover,
-        lambda: ConsoleModelPopover(
-            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
-            providers_models={"openai": ["gpt-test"]},
-        ),
+        _model_popover_factory,
         "#console-model-popover",
         None,
         "Console model chip",
@@ -1000,8 +1091,18 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type is not ConsoleWorkspaceRenameModal
+    if contract.modal_type
+    not in {ConsoleRagSettingsModal, ConsoleWorkspaceRenameModal}
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
+_CURRENT_CONSOLE_DIRECT_MODAL_TYPES = (
+    ChangeRevertConfirmModal,
+    ConsoleForkChatModal,
+    ConsoleLibraryAccessModal,
+    ConsoleLibrarySearchModal,
+    ConsoleSaveMarkdownModal,
+    ConsoleTerminalSessionModal,
+    DeleteConfirmationDialog,
+)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in TASK4_MODAL_CONTRACTS
@@ -1021,6 +1122,7 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         _CONSOLE_ROOT,
         (
             *_CONSOLE_DIRECT_MODAL_TYPES,
+            *_CURRENT_CONSOLE_DIRECT_MODAL_TYPES,
             *_DIRECT_SHARED_MODAL_TYPES,
             ChangeReviewScreen,
             ConsolePromptComparisonModal,
@@ -1067,8 +1169,34 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
     ),
     _ModalLaunchEdge(
         TrajectoryScreen,
-        (TrajectoryScreen, EnhancedFileOpen, TraceExportDialog),
+        (
+            TrajectoryScreen,
+            ConsoleCapturePolicyDialog,
+            EnhancedFileOpen,
+            TraceExportDialog,
+        ),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleCapturePolicyDialog,
+        (ConfirmationDialog, GlobalFullCaptureConfirmation),
+        ("tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleConversationInspector,
+        (
+            ConfirmationDialog,
+            ConsoleExchangeExportDialog,
+            ConsoleTracePrivacyDialog,
+        ),
+        (
+            "tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
+        ),
+    ),
+    _ModalLaunchEdge(
+        ConsoleExchangeExportDialog,
+        (ConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",),
     ),
     _ModalLaunchEdge(
         TraceExportDialog,
@@ -1118,6 +1246,13 @@ def _resolve_ast_reference(
     if isinstance(node, ast.Attribute):
         owner = _resolve_ast_reference(node.value, bindings)
         return getattr(owner, node.attr, None)
+    if isinstance(node, ast.Call) and not node.args and not node.keywords:
+        factory = _resolve_ast_reference(node.func, bindings)
+        if callable(factory) and getattr(factory, "__name__", "") in {
+            "_conversation_settings_modal_module",
+            "_lazy_summarize_preview_modal",
+        }:
+            return factory()
     return None
 
 
@@ -1194,6 +1329,13 @@ def _constructed_modal_types(
 
             visit_AsyncFunctionDef = visit_FunctionDef
 
+            def visit_Assign(self, node: ast.Assign) -> None:
+                value = _resolve_ast_reference(node.value, bindings)
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and value is not None:
+                        bindings[target.id] = value
+                self.generic_visit(node)
+
             def visit_Call(self, node: ast.Call) -> None:
                 functions = set(self.function_stack)
                 classes = set(self.class_stack)
@@ -1208,11 +1350,20 @@ def _constructed_modal_types(
                 if excluded_functions and functions & excluded_functions:
                     self.generic_visit(node)
                     return
-                runtime_type = _resolve_ast_reference(node.func, bindings)
-                if inspect.isclass(runtime_type) and issubclass(
-                    runtime_type, ModalScreen
+                runtime_reference = _resolve_ast_reference(node.func, bindings)
+                if inspect.isclass(runtime_reference) and issubclass(
+                    runtime_reference, ModalScreen
                 ):
-                    constructed.add(runtime_type)
+                    constructed.add(runtime_reference)
+                elif callable(runtime_reference):
+                    try:
+                        return_type = get_type_hints(runtime_reference).get("return")
+                    except (NameError, TypeError):
+                        return_type = None
+                    if inspect.isclass(return_type) and issubclass(
+                        return_type, ModalScreen
+                    ):
+                        constructed.add(return_type)
                 self.generic_visit(node)
 
         _ConstructorVisitor().visit(tree)
@@ -1366,7 +1517,16 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # outside the legacy task-2/3/5/6/7 dismissal-contract graph. Keep them
     # explicit so a newly added modal still fails this inventory gate.
     inventory_only_types: set[type[ModalScreen[Any]]] = {
+        ConsoleCapturePolicyDialog,
+        ConsoleExchangeExportDialog,
+        ConsoleForkChatModal,
+        ConsoleLibraryAccessModal,
+        ConsoleLibrarySearchModal,
         ConsolePromptComparisonModal,
+        ConsoleSaveMarkdownModal,
+        ConsoleTerminalSessionModal,
+        ConsoleTracePrivacyDialog,
+        GlobalFullCaptureConfirmation,
         ProjectInstructionNoticeModal,
         ProjectInstructionSetupModal,
         TraceExportDialog,
@@ -1387,12 +1547,13 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # The current dev baseline grows to 49 when TASK-26042's Workspace Files
-    # owner seam joins the explicit Console launch graph.
-    assert len(reachable_modal_types) == 49
+    assert len(reachable_modal_types) == 59
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    } | inventory_only_types | {TrajectoryScreen}
+    } | inventory_only_types | {DeleteConfirmationDialog, TrajectoryScreen}
+    # ConsoleRagSettingsModal is the tested shared base for the concrete
+    # ConsoleLibrarySearchModal; only the latter is constructed at runtime.
+    all_contract_types.remove(ConsoleRagSettingsModal)
     assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
@@ -1526,7 +1687,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 15
+    assert len(TASK2_MODAL_CONTRACTS) == 16
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "ConsoleWorkspaceFilesModal",
         "AutoSpeakConsentModal",
@@ -1923,6 +2084,8 @@ async def test_settings_clean_close_sources_restore_opener_focus(source: str) ->
             await pilot.click("#console-settings-cancel")
         elif source == "escape":
             await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("escape")
         else:
             await pilot.click(offset=(0, 0))
         await pilot.pause()
@@ -1944,7 +2107,16 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
         focused_input = modal.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = modal.query_one("#console-settings-provider", Select)
+        advanced = modal.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        )
+        advanced.collapsed = False
+        await pilot.pause()
+        provider_select = modal.query_one(
+            "#console-settings-reasoning-effort", Select
+        )
+        provider_select.scroll_visible(animate=False)
+        await pilot.pause()
         focused_input.focus()
         await pilot.pause()
         provider_region = _settings_screen_region(provider_select)
