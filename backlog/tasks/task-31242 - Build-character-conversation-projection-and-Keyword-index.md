@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:05'
-updated_date: '2026-09-05 22:31'
+updated_date: '2026-09-05 22:52'
 labels:
   - database
   - search
@@ -81,4 +81,7 @@ TDD raw logs: /private/tmp/character-keyword-qodo1.3RcKio/. Initial RED7 query c
 
 PR2434 final approved refresh: scoped review pr-2434-qodo-rereview-1.md resolved all6 findings with0new/open. Preserved927b26df82cfbc9a8965bd072ce2c0504ddd2ca4 as codex/task-31242-pre-pr2434-final-927b26df8, fetched actualdev53194eee674865bd8b4aa6daac4b1e7d97160594 (schema65), then rebased8Task2 commits from4e904f54. All8range-diff entries equal; no conflicts. Upstream Console trace changes and lesson retained. Tested runtime tip a663ba73cec17337c8737de95bc1295122b248f1.
 Fresh exact151-test nine-file plus wheel/sdist migration gate:151passed,1inherited warning in50.17s, raw /private/tmp/character-keyword-pr2434-final.5d7h9u/final-gate.log. Resource88owners/63handles drained/0remaining, FDdelta+13 remains subset-only. Scoped Ruff/format/fatallegacy and fresh531-base diagnostic Counters588/6/1/1/0/0 equal. Schema110,index275/275/62pins,task3332,CSS,profile and persistentdiagnostic guards all pass; raw static.log,legacy-diagnostics.log,guards.log and rebase/range-diff logs in same directory. Full PR whitespace pass. No runtime edits after tests. All ACs and independent review/fresh local qualification complete; markingDone under final rebase brief. Earlier InProgress paragraphs historical. ADR120/unshipped66 remain; Task3 repair-page continuation and snapshot-label obligations, later UI/cancellation/DataProfile/live gates remain separately owned. No push/merge; controller owns remote review/CI and strictbase integration.
+
+PR2434 base refresh2: preserved published5eab216edb3aaba949fcccf0a8d09f8c85a72777 as codex/task-31242-pre-refresh2-5eab216ed; fetched actualdev8e9d1128d4fae98a0bf085db0b6d41919422c57a/schema65 and rebased9commits from53194eee6. All9range-diff entries equal, no conflicts; upstream ChunkingLab/first-use fixes and lessons retained. Tested runtime e1a534bce7715b57ed3b8dd4934abef78836db5b. Exact151 gate passed151/1inheritedwarning42.40s; separate Tests/UI/test_mcp_workbench.py::test_test_tool_preview_escape_revokes_nonce_through_mounted_binding passed1/1warning2.22s. CI33996239070 on5eab failed that selector at Textual timer/rendering teardown with missing text-area--gutter; local passes do not establish CI cause or prove flakiness. No MCP changes/skips/timeouts/dependency changes, no fullfastlane/suite. Original Qodo fixes/review remain complete; external CI qualification still pending.
+Raw /private/tmp/character-keyword-pr2434-refresh2.VVwUjY/: final-gate.log,mcp-selector.log,ci-failure-excerpt.log,rebase.log,range-diff.log,static.log,legacy-diagnostics.log,guards.log. Static and fresh8e9legacy Counters588/6/1/1/0/0 equal; schema110,index275/275/62pins,task3332,CSS,profile,persistentdiagnostic and PRwhitespace pass. Resource88owners/63drained/0remaining,FDdelta+13 subset-only; inheritedwarning and downstream repairpaging/snapshot/UI obligations retained. KeepDone for owningACs, explicit remoteCI pending; bookkeeping-only commit after tests stopped. Controller owns exactlease publishing/freshCI/merge.
 <!-- SECTION:NOTES:END -->
