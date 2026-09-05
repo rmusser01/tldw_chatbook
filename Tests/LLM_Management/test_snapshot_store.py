@@ -42,6 +42,27 @@ def test_fixture_uses_complete_effective_evidence():
     assert dict(actual.state_settings)["effective-slot-contexts"] == "0:4096"
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_publication_predicate_rejects_without_publishing_or_pruning(store, raises):
+    old = _save(store).record
+    working = store.reserve_save("test-launch-a", 0)
+    working.path.write_bytes(b"new data")
+    receipt = SlotReceipt(slot_id=0, filename=working.path.name, tokens=7, bytes=8)
+
+    def reject():
+        if raises:
+            raise RuntimeError("private-validation-canary")
+        return False
+
+    with pytest.raises(SnapshotError, match="publication_invalidated") as raised:
+        store.commit_save(
+            working, receipt, evidence(), "Test model", 1, validate_publication=reject
+        )
+    assert "private-validation-canary" not in str(raised.value)
+    assert store.list_records().records == (old,)
+    assert working.path.read_bytes() == b"new data"
+
+
 def test_reservation_is_private_and_only_commit_makes_it_visible(store):
     working = store.reserve_save("launch-a", 2)
     assert working.path.stat().st_mode & 0o777 == 0o600

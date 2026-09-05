@@ -6,23 +6,26 @@ from __future__ import annotations
 
 #
 import functools
-from loguru import logger as _loguru_fallback_logger
+import os
 import shlex
+import socket
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+from loguru import logger as _loguru_fallback_logger
 
 #
 # Third-party Imports
-from textual.widgets import Input, RichLog, TextArea, Button
+from textual.widgets import Button, Input, RichLog, TextArea
 
 #
 # Local Imports
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
-from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
-from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Model_Artifacts.gguf_admission import (
     GGUFPathError,
     GGUFSourceChangedError,
@@ -30,6 +33,9 @@ from tldw_chatbook.Model_Artifacts.gguf_admission import (
     open_local_gguf,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+
 from .gguf_source_modes import (
     GGUFSourceMode,
     GGUFSourceSelection,
@@ -39,14 +45,16 @@ from .gguf_source_modes import (
 )
 from .server_lifecycle import (
     ServerLaunchClaim,
+    SnapshotLaunchContext,
     attach_server_claim_resource,
     current_llm_destination,
     release_server_claim,
     reserve_server_launch,
     run_server_subprocess,
-    sync_current_llm_destination,
     stop_server_process,
+    sync_current_llm_destination,
 )
+
 #
 ########################################################################################################################
 #
@@ -256,6 +264,42 @@ def _build_gguf_server_command(
     return command
 
 
+def _snapshot_listener_exists(base_url: str) -> bool:
+    """Probe only the admission-validated numeric endpoint from the launch worker."""
+    target = urlsplit(base_url)
+    try:
+        with socket.create_connection((target.hostname, target.port), timeout=5):
+            return True
+    except ConnectionRefusedError:
+        return False
+    # Ambiguous network failures are preflight failures, never proof of ownership.
+
+
+def _prepare_snapshot_launch(app, command, claim):
+    owner = getattr(app, "llamacpp_snapshot_service", None)
+    if claim.provider != "llamacpp" or owner is None:
+        return command, {}
+    from tldw_chatbook.LLM_Management.snapshot_admission import prepare_launch
+    from tldw_chatbook.LLM_Management.snapshot_models import SnapshotError
+    from tldw_chatbook.LLM_Management.snapshot_settings import load_snapshot_preferences
+
+    if not load_snapshot_preferences().enabled:
+        return command, {}
+    if owner.store is None:
+        raise SnapshotError("snapshot_storage_preparing", submission_possible=False)
+    descriptor = prepare_launch(tuple(command), dict(os.environ), claim, uuid4().hex)
+    if descriptor.disabled_reason:
+        raise SnapshotError("snapshot_launch_unavailable", submission_possible=False)
+    if _snapshot_listener_exists(descriptor.base_url):
+        raise SnapshotError("snapshot_endpoint_in_use", submission_possible=False)
+    directory = owner.store.prepare_launch_directory(descriptor.launch_id)
+    claim._snapshot_context = SnapshotLaunchContext(descriptor, directory)
+    return [*command, "--slots", "--slot-save-path", str(directory) + os.sep], {
+        "env": descriptor.child_env,
+        "private_umask": 0o077,
+    }
+
+
 def _run_gguf_server_worker(
     app: "TldwCli",
     provider: str,
@@ -310,6 +354,10 @@ def _run_gguf_server_worker(
             port,
             additional_args,
         )
+        command, snapshot_options = _prepare_snapshot_launch(app, command, claim)
+        if claim.cancel_event.is_set():
+            _settle_source_preparation(app, provider, claim)
+            return f"{provider} launch cancelled"
         return run_server_subprocess(
             app,
             provider,
@@ -318,6 +366,7 @@ def _run_gguf_server_worker(
             subprocess,
             cwd=Path(executable).parent if provider == "llamafile" else None,
             nonzero_status=_GGUF_RUNTIME_LOAD_FAILURE,
+            **snapshot_options,
         )
     except Exception as error:
         logger.error(
