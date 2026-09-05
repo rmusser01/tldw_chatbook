@@ -2851,6 +2851,50 @@ async def test_media_capability_captures_settled_visible_selected_row(
     module = _load_scenarios()
     monkeypatch.setenv("TASK23019_RAW_ROOT", str(tmp_path))
 
+    # TASK-31237 made Find opt-in. Adapt the current test journey without
+    # rewriting the hashed TASK-23019 scenario and its historical evidence.
+    async def open_find(screen, pilot):
+        if not screen.query("#library-media-content-search"):
+            screen.query_one("#library-media-reader-find", module.Button).press()
+        await module._wait_for_selector(screen, pilot, "#library-media-content-search")
+
+    original_open = module._open_destination
+    original_focus = module._work_focus_target
+    original_wait = module._wait_for_condition
+
+    async def open_destination(screen, pilot, destination):
+        shell = await original_open(screen, pilot, destination)
+        if destination == "media":
+            await open_find(screen, pilot)
+
+            async def wait_for_current_media_action(pilot, predicate, **kwargs):
+                await original_wait(pilot, predicate, **kwargs)
+                if kwargs.get("message") == "Media bulk selection count did not settle":
+                    await original_wait(
+                        pilot,
+                        lambda: (
+                            not screen.query_one(
+                                "#library-media-delete-selected", module.Button
+                            ).disabled
+                        ),
+                        message="Media Delete action did not settle after selection",
+                    )
+
+            # The selected-count label can paint before the mutation gate
+            # re-enables Delete after a reader load. Press only a ready action.
+            monkeypatch.setattr(
+                module, "_wait_for_condition", wait_for_current_media_action
+            )
+        return shell
+
+    async def work_focus_target(screen, pilot, destination):
+        if destination == "media":
+            await open_find(screen, pilot)
+        return await original_focus(screen, pilot, destination)
+
+    monkeypatch.setattr(module, "_open_destination", open_destination)
+    monkeypatch.setattr(module, "_work_focus_target", work_focus_target)
+
     facts = await module.run_media_capability()
 
     assert facts["status"] == "PASS"
