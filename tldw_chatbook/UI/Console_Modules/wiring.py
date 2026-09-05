@@ -85,6 +85,7 @@ from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Screens.settings_library_rag_defaults import load_direct_library_tools
+from .settings_durability import ConsoleSettingsDurabilityController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -637,6 +638,34 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._settings_durability = ConsoleSettingsDurabilityController(
+        app_instance=screen.app_instance,
+        _ensure_console_chat_controller=lambda *args, **kwargs: (
+            screen._ensure_console_chat_controller(*args, **kwargs)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _global_chat_display_name=lambda *args, **kwargs: (
+            screen._global_chat_display_name(*args, **kwargs)
+        ),
+        _provider_readiness_app_config=lambda *args, **kwargs: (
+            screen._provider_readiness_app_config(*args, **kwargs)
+        ),
+        _sync_console_identity_surfaces=lambda *args, **kwargs: (
+            screen._sync_console_identity_surfaces(*args, **kwargs)
+        ),
+        _sync_console_settings_recovery_surfaces=lambda *args, **kwargs: (
+            screen._sync_console_settings_recovery_surfaces(*args, **kwargs)
+        ),
+        _sync_native_console_chat_ui=lambda *args, **kwargs: (
+            screen._sync_native_console_chat_ui(*args, **kwargs)
+        ),
+        run_worker=lambda worker, *, exclusive, group: screen.run_worker(
+            worker, exclusive=exclusive, group=group
+        ),
+    )
+
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
         conversation_id_accessor=lambda: screen._current_console_conversation_id(),
