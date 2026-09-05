@@ -114,8 +114,32 @@ class ConsoleSubmissionController:
         )
         self.is_mounted_accessor = is_mounted_accessor
         self._watchdog_seconds_accessor = _watchdog_seconds_accessor
+        # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
+        # then the queued submit's accept/refuse consumption slot.
+        # `_console_pending_send_stash` stays a single slot: it is consumed
+        # within the same keypress -> Button.press() handoff for whichever
+        # composer currently has focus (bounded to one UI action, never
+        # spans a provider round-trip), unlike the map below.
         self._console_pending_send_stash = None
+        # Task 3b: PER-SESSION -- a keyboard send's stash is written at
+        # dispatch (keyed by the dispatching session) and read/cleared much
+        # later, at that SAME session's own accept/refuse (`_notify_
+        # submission_accepted` fires only after the provider-readiness
+        # probe/skill-substitution awaits, which can run for seconds). A
+        # single shared slot let a DIFFERENT session's concurrent dispatch
+        # clobber this one's entry mid-flight (Task 3 made that genuinely
+        # concurrent) -- e.g. session A's still-pending stash getting
+        # silently replaced by session B's `None`, or a stale entry
+        # restoring/clearing the WRONG session's composer. See
+        # `_console_submit_session_by_task` for how the no-arg
+        # `on_submission_accepted` hook still resolves its own session.
         self._console_inflight_send_stashes = {}
+        #: `asyncio.Task -> owning session id`, registered for the duration
+        #: of `_submit_console_native_draft`'s own `await controller.
+        #: submit_draft(...)` call so the no-arg `on_submission_accepted`
+        #: callback (fired synchronously from deep inside that same await,
+        #: on the SAME task) can resolve which session's stash entry above
+        #: is its own, without changing that hook's public no-arg contract.
         self._console_submit_session_by_task = {}
         self._console_unknown_send_armed = None
 

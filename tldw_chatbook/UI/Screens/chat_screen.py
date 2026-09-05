@@ -107,7 +107,6 @@ from ..Console_Modules.agent import (
     apply_console_agent_status_state,
 )
 from ..Console_Modules.prompt_queue import (
-    ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
@@ -135,7 +134,6 @@ from ..Console_Modules.provider_continuation_recovery import (
 )
 from ..Console_Modules.retrieval import (
     sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
-    source_mentions_rag as _source_mentions_rag,
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
@@ -205,10 +203,6 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 from ...Chat.rag_scope import RagScope
 from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
-    KIND_COMMAND,
-    KIND_NOT_COMMAND,
-    KIND_UNKNOWN,
-    REWIND_COMMAND_NAME,
     CommandParse,
 )
 from ...Chat.console_prefill import (
@@ -1400,35 +1394,6 @@ class _ControllerState:
 
     def __set__(self, instance: object, value: object) -> None:
         setattr(self._owner(instance), self._state_name, value)
-
-
-def _active_lineage_rows(db, conversation_id: str, rows: list[dict]) -> list[dict]:
-    """Filter fetched rows to the conversation's active branch.
-
-    PR #2262 review: a conversation can hold off-path branches (regenerate
-    siblings) and unselected variants; the transcript the user sees is the
-    parent-chain from ``active_leaf_message_id``. Falls back to every row
-    for legacy conversations with no leaf pointer.
-    """
-    by_id = {str(row.get("id")): row for row in rows}
-    record = None
-    try:
-        record = db.get_conversation_by_id(conversation_id)
-    except Exception:
-        record = None
-    leaf = str((record or {}).get("active_leaf_message_id") or "") or None
-    if leaf is None or leaf not in by_id:
-        return rows
-    lineage: list[dict] = []
-    seen: set[str] = set()
-    current: str | None = leaf
-    while current is not None and current in by_id and current not in seen:
-        seen.add(current)
-        lineage.append(by_id[current])
-        parent = by_id[current].get("parent_message_id")
-        current = str(parent) if parent else None
-    lineage.reverse()
-    return lineage if len(lineage) == len(seen) else lineage
 
 
 class ChatScreen(BaseAppScreen):
@@ -4173,7 +4138,7 @@ class ChatScreen(BaseAppScreen):
             starred=bool(getattr(opener, "starred", False)),
             favorites_available=bool(getattr(opener, "marks_available", True)),
             native_session_id=native_session_id,
-            has_messages=self._console_target_has_messages(
+            has_messages=self._row_actions._console_target_has_messages(
                 native_session_id, conversation_id
             ),
         )
@@ -4197,49 +4162,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_conversation_state(self, conversation_id: str | None) -> str:
-        """Return one conversation's PERSISTED state, or the default.
-
-        Qodo review, PR #2233. The row's ``status`` field was used here, and
-        it is display copy, not a database state: rows reach the browser
-        carrying ``active``, ``open``, ``workspace`` or ``workspace-thread``
-        as well as real states, and first-wins deduplication keeps those
-        ahead of the canonical persisted row. Every non-canonical value
-        normalises to ``in-progress``, so a *resolved* conversation shown as
-        an "active session" row offered **Archive** instead of Unarchive and
-        marked the wrong current status.
-
-        The menu asks the database instead. This is one primary-key lookup
-        taken when the menu opens, not on every rail render.
-
-        Args:
-            conversation_id: Persisted conversation id, or None for a chat
-                that has never been saved.
-
-        Returns:
-            A canonical state, or the default when it cannot be resolved --
-            unsaved chats have no state, and the menu gates their
-            state-changing entries anyway.
-        """
-        from tldw_chatbook.Chat.console_conversation_actions import (
-            DEFAULT_CONVERSATION_STATE,
-        )
-
-        if not conversation_id:
-            return DEFAULT_CONVERSATION_STATE
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return DEFAULT_CONVERSATION_STATE
-        try:
-            record = db.get_conversation_by_id(conversation_id)
-        except Exception as exc:  # noqa: BLE001 - falls back, never blocks the menu
-            logger.debug(
-                "Console conversation state lookup failed: exception_type={}",
-                type(exc).__name__,
-            )
-            return DEFAULT_CONVERSATION_STATE
-        if not record:
-            return DEFAULT_CONVERSATION_STATE
-        return str(record.get("state") or DEFAULT_CONVERSATION_STATE)
+        return self._row_actions._console_conversation_state(conversation_id)
 
     def on_conversation_action_menu_dismissed(self, event: Message) -> None:
         """Return focus to the asterisk that opened the menu.
@@ -4264,42 +4187,6 @@ class ChatScreen(BaseAppScreen):
 
     # ---- Workspace action menu (TASK-25712) ----------------------------
 
-    def _workspace_menu_target(self, workspace_id: str):
-        """Build the pure menu target from registry truth.
-
-        Args:
-            workspace_id: Registry id of the workspace row pressed.
-
-        Returns:
-            A ``WorkspaceMenuTarget`` (imported lazily per ADR-097) or None
-            when the workspace is no longer resolvable -- the caller then
-            just does not open a menu.
-        """
-        from tldw_chatbook.Chat.console_workspace_actions import (
-            WorkspaceMenuTarget,
-        )
-
-        registry_service = getattr(
-            self.app_instance, "workspace_registry_service", None
-        )
-        record = (
-            registry_service.get_workspace(workspace_id)
-            if registry_service is not None
-            else None
-        )
-        if record is None:
-            return None
-        return WorkspaceMenuTarget(
-            workspace_id=workspace_id,
-            name=str(getattr(record, "name", "") or ""),
-            is_active=bool(getattr(record, "active", False)),
-            files_available=bool(
-                self._workspace._workspace_files_availability_by_id.get(
-                    workspace_id, False
-                )
-            ),
-        )
-
     async def _open_console_workspace_action_menu(
         self,
         *,
@@ -4314,7 +4201,7 @@ class ChatScreen(BaseAppScreen):
             screen_x: Absolute anchor column.
             screen_y: Absolute anchor row.
         """
-        target = self._workspace_menu_target(workspace_id)
+        target = self._row_actions._workspace_menu_target(workspace_id)
         if target is None:
             self.app_instance.notify(
                 "This workspace is no longer available.", severity="warning"
@@ -4393,7 +4280,7 @@ class ChatScreen(BaseAppScreen):
             starred=starred,
             favorites_available=marks_service is not None,
             native_session_id=native_session_id,
-            has_messages=self._console_target_has_messages(
+            has_messages=self._row_actions._console_target_has_messages(
                 native_session_id, conversation_id
             ),
         )
@@ -4480,100 +4367,9 @@ class ChatScreen(BaseAppScreen):
             group="console-row-action-menu-open",
         )
 
-    async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
-        """Activate a workspace, then create the new chat inside it.
-
-        TASK-25712: "New chat" on a non-active workspace composes the two
-        existing operations -- activation, then session creation, which
-        targets the active workspace -- rather than threading a workspace
-        parameter through session creation.
-
-        Review, PR #2255: the activation wrapper deliberately discards
-        ``_switch_console_workspace``'s failure result (its other callers
-        are fire-and-forget), so success is verified against the registry
-        afterwards. A missing workspace or a failed switch must NOT create
-        the chat in the previously active workspace -- the user asked for
-        it somewhere specific.
-        """
-        registry_service = getattr(
-            self.app_instance, "workspace_registry_service", None
-        )
-
-        def _record():
-            return (
-                registry_service.get_workspace(workspace_id)
-                if registry_service is not None
-                else None
-            )
-
-        record = _record()
-        if record is None:
-            self.app_instance.notify(
-                "This workspace is no longer available.", severity="warning"
-            )
-            return
-        if not getattr(record, "active", False):
-            self._workspace.activate_workspace_id(workspace_id)
-            record = _record()
-            if record is None or not getattr(record, "active", False):
-                self.app_instance.notify(
-                    f"Could not activate {record.name if record else workspace_id}. "
-                    "New chat was not created.",
-                    severity="warning",
-                )
-                return
-        await self._session._create_native_console_session_from_active_context()
-
     def on_workspace_action_chosen(self, event: "WorkspaceActionChosen") -> None:
-        """Run the chosen workspace command against the captured row.
-
-        Dispatched by handler-name convention (ADR-097 lazy-import rule).
-        """
-        from tldw_chatbook.Chat.console_workspace_actions import (
-            ACTION_ACTIVATE,
-            ACTION_ARCHIVE,
-            ACTION_NEW_CHAT,
-            ACTION_RAG_SCOPE,
-            ACTION_RENAME,
-            ACTION_SHOW_FILES,
-        )
-
         event.stop()
-        target = event.target
-        workspace_id = str(target.workspace_id)
-        if event.action_id == ACTION_ACTIVATE:
-            self._workspace.activate_workspace_id(workspace_id)
-            return
-        if event.action_id == ACTION_NEW_CHAT:
-            self.run_worker(
-                self._create_console_chat_in_workspace(workspace_id),
-                exclusive=True,
-                group="console-workspace-new-chat",
-            )
-            return
-        if event.action_id == ACTION_SHOW_FILES:
-            self.run_worker(
-                self._workspace.request_workspace_files(
-                    workspace_id,
-                    expected_available=bool(target.files_available),
-                ),
-                exclusive=False,
-                group="console-workspace-files-open",
-            )
-            return
-        if event.action_id == ACTION_RENAME:
-            self._workspace._open_console_workspace_rename(workspace_id)
-            return
-        if event.action_id == ACTION_RAG_SCOPE:
-            self.run_worker(
-                self._workspace._open_console_workspace_scope_picker(),
-                exclusive=True,
-                group="console-workspace-scope-open",
-            )
-            return
-        if event.action_id == ACTION_ARCHIVE:
-            self._workspace._confirm_console_workspace_archive(workspace_id)
-            return
+        self._row_actions.apply_workspace_action(event.action_id, event.target)
 
     def on_workspace_action_menu_dismissed(
         self, event: "WorkspaceActionMenuDismissed"
@@ -4588,252 +4384,12 @@ class ChatScreen(BaseAppScreen):
             return
         self._restore_console_menu_opener_focus(event.opener_id)
 
-    def _console_target_has_messages(
-        self, native_session_id: str, conversation_id: str | None
-    ) -> bool:
-        """Cheap open-time probe: does this row have any messages?
-
-        TASK-25886: gates the copy entries. A native session asks the live
-        store; a persisted conversation asks the database for a single row.
-        """
-        if native_session_id:
-            try:
-                store = self._ensure_console_chat_store()
-                return bool(store.read_only_messages_for_session(native_session_id))
-            except Exception:
-                return False
-        if not conversation_id:
-            return False
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return False
-        try:
-            return bool(db.get_messages_for_conversation(conversation_id, limit=1))
-        except Exception:
-            return False
-
-    def _console_markdown_source_messages(self, target) -> list:
-        """Return normalized messages for a copy target, or [].
-
-        Source pick (TASK-25886): an open native session reads the LIVE
-        chat store (richest fidelity -- in-flight tool structure never
-        needed serializing); a persisted conversation reads the database,
-        paginated so long chats are not silently truncated at the default
-        page size.
-        """
-        from tldw_chatbook.Chat.console_conversation_markdown import (
-            markdown_messages_from_db_rows,
-            markdown_messages_from_store,
-        )
-
-        native_session_id = str(getattr(target, "native_session_id", "") or "")
-        if native_session_id:
-            try:
-                store = self._ensure_console_chat_store()
-                live = store.read_only_messages_for_session(native_session_id)
-            except Exception:
-                logger.opt(exception=True).debug("copy-markdown live read failed")
-                live = []
-            if live:
-                return markdown_messages_from_store(live)
-        conversation_id = (target.conversation_id or "").strip()
-        if not conversation_id:
-            return []
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return []
-        rows: list[dict] = []
-        page_size = 200
-        offset = 0
-        # PR #2262 review: one logical read, one transaction (reads use the
-        # shared context manager too), then a lineage filter below.
-        with db.transaction():
-            while True:
-                page = db.get_messages_for_conversation(
-                    conversation_id, limit=page_size, offset=offset
-                )
-                rows.extend(page)
-                if len(page) < page_size:
-                    break
-                offset += page_size
-            active_rows = _active_lineage_rows(db, conversation_id, rows)
-        return markdown_messages_from_db_rows(active_rows)
-
-    def _render_console_conversation_markdown(self, target, fidelity: str):
-        """Render the target chat as markdown, or None when empty."""
-        from tldw_chatbook.Chat.console_conversation_markdown import (
-            render_conversation_markdown,
-        )
-        from datetime import date
-
-        messages = self._console_markdown_source_messages(target)
-        if not messages:
-            return None
-        return render_conversation_markdown(
-            title=str(getattr(target, "title", "") or ""),
-            rendered_at=date.today().isoformat(),
-            messages=messages,
-            fidelity=fidelity,
-        )
-
-    async def _copy_console_conversation_markdown(self, target, fidelity: str) -> None:
-        """Copy one conversation to the clipboard as markdown."""
-        import asyncio
-
-        # PR #2262 review: the paginated read + render are blocking work;
-        # coroutine workers still run on the UI loop, so push them off it.
-        markdown = await asyncio.to_thread(
-            self._render_console_conversation_markdown, target, fidelity
-        )
-        if markdown is None:
-            self.app.notify("This chat has no messages to copy.", severity="warning")
-            return
-        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
-        if not callable(copy_to_clipboard):
-            self.app.notify("Clipboard is unavailable.", severity="warning")
-            return
-        copy_to_clipboard(markdown)
-        size_kb = max(1, round(len(markdown.encode("utf-8")) / 1024))
-        label = "Clean markdown" if fidelity == "clean" else "Full transcript"
-        self.app.notify(f"Copied {label} ({size_kb} KB).")
-
     async def _save_console_conversation_markdown(self, target) -> None:
-        """Prompt for a path and write the Clean markdown rendering."""
-        from pathlib import Path
-
-        from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
-            ConsoleSaveMarkdownModal,
-            markdown_filename_slug,
-        )
-
-        import asyncio
-
-        markdown = await asyncio.to_thread(
-            self._render_console_conversation_markdown, target, "clean"
-        )
-        if markdown is None:
-            self.app.notify("This chat has no messages to save.", severity="warning")
-            return
-        title = str(getattr(target, "title", "") or "")
-        default_path = str(
-            Path.home() / "Downloads" / f"{markdown_filename_slug(title)}.md"
-        )
-
-        def _write(chosen: "str | None") -> None:
-            if not chosen:
-                return
-            self.run_worker(
-                self._write_console_markdown_file(chosen, markdown),
-                exclusive=True,
-                group="console-copy-markdown",
-            )
-
-        self.push_screen(
-            ConsoleSaveMarkdownModal(default_path=default_path), callback=_write
-        )
-
-    async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
-        """Validate and write one markdown export off the loop."""
-        from pathlib import Path
-
-        import aiofiles
-
-        from tldw_chatbook.Utils.path_validation import validate_path_simple
-
-        # expanduser FIRST: validate_path_simple rejects unresolved '~'
-        # components, and the expansion is exactly what a user means by it.
-        candidate = Path(path_text).expanduser()
-        try:
-            target_path = validate_path_simple(candidate, require_exists=False)
-        except Exception as exc:
-            self.app.notify(f"Invalid path: {exc}", severity="error")
-            return
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(target_path, "w", encoding="utf-8") as fh:
-                await fh.write(markdown)
-        except Exception as exc:
-            self.app.notify(f"Could not write file: {exc}", severity="error")
-            return
-        self.app.notify(f"Saved {target_path.name}.")
+        return await self._row_actions._save_console_conversation_markdown(target)
 
     def on_conversation_action_chosen(self, event: Message) -> None:
-        """Run the chosen row command against the captured conversation.
-
-        Dispatched by handler-name convention -- see
-        `on_conversation_action_menu_dismissed` for why.
-        """
-        from tldw_chatbook.Chat.console_conversation_actions import (
-            ACTION_ARCHIVE,
-            ACTION_DELETE,
-            ACTION_FAVORITE,
-            ACTION_RENAME,
-            ACTION_UNARCHIVE,
-            ACTION_UNFAVORITE,
-            ARCHIVED_STATE,
-            DEFAULT_CONVERSATION_STATE,
-            state_from_action,
-        )
-
         event.stop()
-        target = event.target
-        action_id = event.action_id
-        conversation_id = (target.conversation_id or "").strip()
-        # TASK-25886: copy/save work for open native sessions too (their
-        # messages come from the live store), so they route BEFORE the
-        # persisted-id guard below.
-        if action_id in ("copy-markdown:clean", "copy-markdown:full"):
-            self.run_worker(
-                self._copy_console_conversation_markdown(
-                    target, "clean" if action_id.endswith("clean") else "full"
-                ),
-                exclusive=True,
-                group="console-copy-markdown",
-            )
-            return
-        if action_id == "save-markdown":
-            self.run_worker(
-                self._save_console_conversation_markdown(target),
-                exclusive=True,
-                group="console-copy-markdown",
-            )
-            return
-        if not conversation_id:
-            self.app.notify(
-                "Send or save this chat before managing it.", severity="warning"
-            )
-            return
-
-        if action_id in (ACTION_FAVORITE, ACTION_UNFAVORITE):
-            self._workspace._toggle_console_conversation_star(
-                conversation_id,
-                starred=action_id == ACTION_UNFAVORITE,
-                conversation_title=target.title,
-            )
-            return
-
-        if action_id == ACTION_RENAME:
-            self._workspace.open_console_conversation_rename(
-                conversation_id, target.title
-            )
-            return
-
-        if action_id == ACTION_DELETE:
-            self._workspace.confirm_console_conversation_delete(
-                conversation_id, target.title
-            )
-            return
-
-        new_state = state_from_action(action_id)
-        if action_id == ACTION_ARCHIVE:
-            new_state = ARCHIVED_STATE
-        elif action_id == ACTION_UNARCHIVE:
-            new_state = DEFAULT_CONVERSATION_STATE
-        if new_state is None:
-            return
-        self._workspace.set_console_conversation_state(
-            conversation_id, new_state, conversation_title=target.title
-        )
+        self._row_actions.apply_conversation_action(event.action_id, event.target)
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
     def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
@@ -4936,30 +4492,6 @@ class ChatScreen(BaseAppScreen):
         ) = None
         self._console_identity_refresh_generation = 0
         self._console_appearance_refresh_generation = 0
-        # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
-        # then the queued submit's accept/refuse consumption slot.
-        # `_console_pending_send_stash` stays a single slot: it is consumed
-        # within the same keypress -> Button.press() handoff for whichever
-        # composer currently has focus (bounded to one UI action, never
-        # spans a provider round-trip), unlike the map below.
-        # Task 3b: PER-SESSION -- a keyboard send's stash is written at
-        # dispatch (keyed by the dispatching session) and read/cleared much
-        # later, at that SAME session's own accept/refuse (`_notify_
-        # submission_accepted` fires only after the provider-readiness
-        # probe/skill-substitution awaits, which can run for seconds). A
-        # single shared slot let a DIFFERENT session's concurrent dispatch
-        # clobber this one's entry mid-flight (Task 3 made that genuinely
-        # concurrent) -- e.g. session A's still-pending stash getting
-        # silently replaced by session B's `None`, or a stale entry
-        # restoring/clearing the WRONG session's composer. See
-        # `_console_submit_session_by_task` for how the no-arg
-        # `on_submission_accepted` hook still resolves its own session.
-        #: `asyncio.Task -> owning session id`, registered for the duration
-        #: of `_submit_console_native_draft`'s own `await controller.
-        #: submit_draft(...)` call so the no-arg `on_submission_accepted`
-        #: callback (fired synchronously from deep inside that same await,
-        #: on the SAME task) can resolve which session's stash entry above
-        #: is its own, without changing that hook's public no-arg contract.
         # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
         # "install:<request_id>" / "script:<request_id>") this screen has
         # already fired a park toast for -- see `_park_console_approval`'s
@@ -5152,13 +4684,6 @@ class ChatScreen(BaseAppScreen):
     #: no pass is open. A CLASS attribute default because the hand-built
     #: `ChatScreen.__new__()` test fixtures never run `__init__`.
     _console_derivation_memo: dict[Any, Any] | None = None
-
-    #: Cross-tick memo for the cost chip's per-row token estimates
-    #: (task-15451), lazily created by `_console_cost_estimate_cache_or_new`.
-    #: Unlike `_console_derivation_memo` this deliberately OUTLIVES a single
-    #: pass -- the whole point is that the 0.2s tick stops re-tokenizing rows
-    #: it already estimated on the previous tick. Also a CLASS attribute
-    #: default, for the same `__new__()`-fixture reason.
 
     @contextmanager
     def _console_derivation_scope(self):

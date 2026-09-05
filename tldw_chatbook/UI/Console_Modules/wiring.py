@@ -92,6 +92,7 @@ from .provider_selection import ConsoleProviderSelectionController
 from .commands import ConsoleCommandsController
 from .context_cost import ConsoleContextCostController
 from .submission import ConsoleSubmissionController
+from .row_actions import ConsoleRowActionsController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -1004,6 +1005,54 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._row_actions = ConsoleRowActionsController(
+        app_instance_accessor=lambda: screen.app_instance,
+        _activate_workspace=lambda workspace_id: (
+            screen._workspace.activate_workspace_id(workspace_id)
+        ),
+        _archive_workspace=lambda workspace_id: (
+            screen._workspace._confirm_console_workspace_archive(workspace_id)
+        ),
+        _create_session=lambda: (
+            screen._session._create_native_console_session_from_active_context()
+        ),
+        _delete_conversation=lambda *args: (
+            screen._workspace.confirm_console_conversation_delete(*args)
+        ),
+        _ensure_console_chat_store=lambda *args, **kwargs: (
+            screen._ensure_console_chat_store(*args, **kwargs)
+        ),
+        _notify=lambda *args, **kwargs: screen.app.notify(*args, **kwargs),
+        _open_workspace_scope=lambda: (
+            screen._workspace._open_console_workspace_scope_picker()
+        ),
+        _rename_conversation=lambda *args: (
+            screen._workspace.open_console_conversation_rename(*args)
+        ),
+        _rename_workspace=lambda workspace_id: (
+            screen._workspace._open_console_workspace_rename(workspace_id)
+        ),
+        _request_workspace_files=lambda *args, **kwargs: (
+            screen._workspace.request_workspace_files(*args, **kwargs)
+        ),
+        _save_markdown=lambda target: screen._save_console_conversation_markdown(
+            target
+        ),
+        _set_conversation_state=lambda *args, **kwargs: (
+            screen._workspace.set_console_conversation_state(*args, **kwargs)
+        ),
+        _toggle_star=lambda *args, **kwargs: (
+            screen._workspace._toggle_console_conversation_star(*args, **kwargs)
+        ),
+        push_screen=lambda *args, **kwargs: screen.push_screen(*args, **kwargs),
+        run_worker=lambda worker, *, exclusive, group: screen.run_worker(
+            worker, exclusive=exclusive, group=group
+        ),
+        _files_availability_by_id_accessor=lambda: (
+            screen._workspace._workspace_files_availability_by_id
+        ),
+    )
+
     build_console_submission_controller(screen)
 
     screen._context_cost = ConsoleContextCostController(
