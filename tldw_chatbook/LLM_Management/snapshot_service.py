@@ -201,7 +201,9 @@ class LlamaCppSnapshotService:
         if not self._valid(generation) or generation.client is None:
             return
         async with generation.refresh_lock:
-            generation.ready = False
+            # Keep the last completed observation while a reentry probe awaits
+            # I/O. An admitted operation already performs its own fresh probe;
+            # a concurrent pending probe is not evidence that its launch failed.
             descriptor = generation.descriptor
             try:
                 observation = await generation.client.readiness()
@@ -230,10 +232,12 @@ class LlamaCppSnapshotService:
                     )
                     generation.message = None
             except SnapshotError as exc:
+                generation.ready = False
                 generation.message = exc.code
                 if generation.operation_id is None:
                     generation.status = "unavailable"
             except Exception:  # noqa: BLE001 - no raw HTTP failure enters retained state
+                generation.ready = False
                 generation.message = "readiness_failed"
                 if generation.operation_id is None:
                     generation.status = "unavailable"

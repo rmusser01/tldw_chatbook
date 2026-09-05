@@ -1,6 +1,14 @@
 # llama.cpp snapshots: verification evidence
 
-Date: 2026-09-04. Feature status: **In Progress**. Live AC5 remains **open**.
+Date: 2026-09-04. Historical verification round; see the subsequent live update.
+
+**2026-09-05 update:** the existing b10816 executable, Gemma 4 model and adjacent
+vision projector were located and used. The earlier missing-assets conclusion
+was incorrect. Initial live UAT found a confirmed-Restore readiness race; the
+reviewed fix and final normal-UI replay now pass, including text/image reuse,
+retention and Delete. AC1/AC5 have live evidence for this exact configuration.
+The [UAT record](2026-09-05-llamacpp-slot-snapshots-uat.md) supersedes the live
+status below. The remaining sections describe the earlier verification round.
 
 The manual manager, private storage, bounded client, lifecycle integration, and
 canonical preferences are implemented. Units 1–5 passed their independent scoped
@@ -17,7 +25,7 @@ and branch-wide whitespace checks passed. These checks do not supply live counte
 
 ## Evidence boundaries
 
-No local server/model/projector/image asset set was supplied for this execution.
+The earlier execution did not locate/use the existing local assets.
 No model download, real-model launch, paid call, or audio test occurred. **Every
 live counter is missing**: cold text, restored text, cold A, native A→B, restored
 A→A, restored A→B. Fixture counts used by oracle tests are invented test inputs,

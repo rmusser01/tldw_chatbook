@@ -78,7 +78,7 @@ async def test_models_live_persistence_and_media_reuse(
     import socket
 
     import httpx
-    from textual.widgets import Button, DataTable, Input, Select
+    from textual.widgets import Button, Collapsible, DataTable, Input, Select
 
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
@@ -86,6 +86,7 @@ async def test_models_live_persistence_and_media_reuse(
         server_process,
         stop_server_process,
     )
+    from tldw_chatbook.LLM_Management.snapshot_settings import load_snapshot_preferences
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
@@ -137,6 +138,11 @@ async def test_models_live_persistence_and_media_reuse(
             window = app.screen.query_one(LLMManagementWindow)
             manager = window.query_one(LlamaCppSnapshotManager)
 
+            async def capture(label):
+                await pilot.pause()
+                app.save_screenshot(f"{label}.svg", path=str(tmp_path))
+                print(f"Live Models stage: {label}", flush=True)
+
             async def until(predicate, label, seconds=120):
                 try:
                     async with asyncio.timeout(seconds):
@@ -171,7 +177,7 @@ async def test_models_live_persistence_and_media_reuse(
                         "--mmproj",
                         str(assets["MMPROJ"]),
                         "--mmproj-device",
-                        "CPU",
+                        "none",
                         "--no-mmproj-offload",
                         "--swa-full",
                         "--cache-ram",
@@ -185,7 +191,11 @@ async def test_models_live_persistence_and_media_reuse(
 
             async def press(selector):
                 control = window.query_one(selector, Button)
-                await until(lambda: not control.disabled, "action enabled")
+                # Textual ignores keyboard presses during its active feedback.
+                await until(
+                    lambda: not control.disabled and not control.has_class("-active"),
+                    "action enabled and accepting keyboard input",
+                )
                 control.focus()
                 await pilot.pause()
                 await pilot.press("enter")
@@ -203,6 +213,7 @@ async def test_models_live_persistence_and_media_reuse(
                         if processes[-1].poll() is not None:
                             pytest.fail("Selected live server exited before readiness")
                 assert len(service.view().slots) == 1
+                await capture(f"started-{len(processes)}")
 
             async def stop():
                 await press("#llamacpp-stop-server-button")
@@ -211,6 +222,7 @@ async def test_models_live_persistence_and_media_reuse(
                     "confirmed Stop",
                 )
                 assert processes[-1].poll() is not None
+                print(f"Live Models stopped/reaped child {len(processes)}", flush=True)
 
             async def mutate(action):
                 seen = False
@@ -239,11 +251,14 @@ async def test_models_live_persistence_and_media_reuse(
                             "Restore confirmation",
                         )
                         app.screen.query_one("#confirm-button", Button).press()
+                    await until(lambda: seen, "mutation admission", seconds=10)
                     await until(complete.is_set, "acknowledged mutation", seconds=620)
                     view = service.view()
+                    await capture(f"{action}-{len(processes)}")
                     if view.status != "idle" or view.message is not None:
                         pytest.fail(
-                            "Live snapshot mutation was not a clean acknowledged completion"
+                            "Live snapshot mutation was not a clean acknowledged completion: "
+                            f"status={view.status}, reason={view.message}"
                         )
                 finally:
                     unsubscribe()
@@ -288,6 +303,7 @@ async def test_models_live_persistence_and_media_reuse(
                 await until(
                     lambda: service.view().status == "idle", "post-chat observations"
                 )
+                print(f"Live chat cache_n={cached}, prompt_n={processed}", flush=True)
                 return cached, cached + processed
 
             async with httpx.AsyncClient(
@@ -339,6 +355,60 @@ async def test_models_live_persistence_and_media_reuse(
                     "Snapshot live cache_n/prompt_total: "
                     + json.dumps(evidence, sort_keys=True)
                 )
+
+                # Real files and UI preference persistence, not a mocked catalog.
+                original_ids = {
+                    record.snapshot_id for record in service.view().catalog.records
+                }
+                assert load_snapshot_preferences().keep_count == 10
+                for _ in range(11):
+                    await mutate("save")
+                retained = service.view().catalog.records
+                assert len(retained) == 10
+                assert original_ids.isdisjoint(
+                    record.snapshot_id for record in retained
+                )
+                await capture("retention-default-ten")
+                manager.query_one(
+                    "#snapshot-details-panel", Collapsible
+                ).collapsed = False
+                manager.query_one("#snapshot-keep", Input).value = "2"
+                await press("#snapshot-apply")
+                await until(
+                    lambda: load_snapshot_preferences().keep_count == 2,
+                    "persisted retention preference",
+                )
+                assert len(service.view().catalog.records) == 10
+                await mutate("save")
+                assert len(service.view().catalog.records) == 2
+                await capture("retention-lowered-after-save")
+
+                selected = service.view().catalog.records[0]
+                manager.query_one("#snapshot-records", DataTable).move_cursor(row=0)
+                await pilot.pause()
+                await press("#snapshot-delete")
+                await until(
+                    lambda: bool(app.screen.query("#confirm-button")),
+                    "Delete confirmation",
+                )
+                await capture("delete-confirmation")
+                await pilot.press("escape")
+                assert selected in service.view().catalog.records
+                await press("#snapshot-delete")
+                await until(
+                    lambda: bool(app.screen.query("#confirm-button")),
+                    "Delete confirmation again",
+                )
+                app.screen.query_one("#confirm-button", Button).press()
+                await until(
+                    lambda: len(service.view().catalog.records) == 1,
+                    "confirmed Delete",
+                )
+                assert selected not in service.view().catalog.records
+                assert not (service.store.catalog / selected.filename).exists()
+                assert processes[-1].poll() is None
+                await capture("deleted-one-server-still-running")
+                record_property("snapshot_live_retention_delete", "passed")
         finally:
             await stop_server_process(app, "llamacpp", "Live verification server")
             async with asyncio.timeout(30):

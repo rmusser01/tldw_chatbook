@@ -5,9 +5,12 @@ context. It does **not** save, reopen, or restore Chatbook conversations. Normal
 chat requests are unchanged, and successful Restore does not guarantee that a
 later request will reuse the cache.
 
-Implementation and automated verification are available. Real-server text/image
-reuse has **not yet been verified** for TASK-31552; the feature remains In Progress.
-See the [evidence record](../superpowers/reviews/2026-09-04-llamacpp-slot-snapshots-verification.md).
+**Live Models UAT passed with b10816 and Gemma 4 plus its BF16 vision projector.**
+The confirmed-Restore/readiness race is fixed, and the normal UI demonstrated text
+and same-image reuse, default/configurable retention and confirmed Delete with
+no diagnostic overrides. This is evidence for that exact configuration, not a
+guarantee for other models or releases. See the
+[UAT record](../superpowers/reviews/2026-09-05-llamacpp-slot-snapshots-uat.md).
 
 ## Before launching
 
@@ -28,7 +31,7 @@ evidence. Runtime, model, projector, effective settings, and observed slot conte
 must match. Automatic settings whose effective values cannot be observed disable
 Save/Restore. Explicit CPU settings such as `--flash-attn off --fit off --device
 none --n-gpu-layers 0 --parallel 1 --ctx-size 8192` avoid those automatic choices.
-For vision, provide the matching `--mmproj` and explicit `--mmproj-device CPU`
+For vision, provide the matching `--mmproj` and explicit `--mmproj-device none`
 with `--no-mmproj-offload`. These are examples, not universal model recommendations.
 SWA models require `--swa-full` for prefix reuse; Chatbook does not add it
 automatically. Unknown or incompatible settings remain disabled rather than guessed.

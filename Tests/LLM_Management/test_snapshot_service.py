@@ -677,6 +677,78 @@ async def test_invalidation_during_publication_worker_preserves_keep_one(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["save", "restore"])
+@pytest.mark.parametrize("observation", ["pending_success", "failure", "invalidated"])
+async def test_background_readiness_during_staging_only_blocks_on_lost_evidence(
+    harness, monkeypatch, action, observation
+):
+    """A pending reentry probe must not revoke the operation's fresh evidence."""
+    h = harness
+    await h.service.refresh()
+    h.service.start_save(0)
+    await settled(h.service)
+    saved = h.store.list_records().records[0]
+    client = h.clients["launch-a"]
+    client.calls.clear()
+    client.dispatched.clear()
+    staged, release_stage = threading.Event(), threading.Event()
+    probing, release_probe = asyncio.Event(), asyncio.Event()
+    method = "reserve_save" if action == "save" else "stage_restore"
+    original_stage = getattr(h.store, method)
+    original_readiness = client.readiness
+
+    def stage(*args):
+        working = original_stage(*args)
+        staged.set()
+        assert release_stage.wait(5)
+        return working
+
+    async def readiness():
+        probing.set()
+        await release_probe.wait()
+        if observation == "failure":
+            raise SnapshotError("connection_failed", submission_possible=False)
+        return await original_readiness()
+
+    monkeypatch.setattr(h.store, method, stage)
+    refresh = None
+    try:
+        if action == "save":
+            h.service.start_save(0)
+        else:
+            h.service.start_restore(saved.snapshot_id, 0)
+        assert await asyncio.to_thread(staged.wait, 5)
+        monkeypatch.setattr(client, "readiness", readiness)
+        refresh = asyncio.create_task(h.service.refresh())
+        async with asyncio.timeout(5):
+            await probing.wait()
+        if observation == "failure":
+            release_probe.set()
+            await refresh
+        elif observation == "invalidated":
+            h.first.claim.cancel_event.set()
+        release_stage.set()
+        if observation == "pending_success":
+            async with asyncio.timeout(5):
+                while (
+                    not client.dispatched.is_set() and h.service.view().message is None
+                ):
+                    await asyncio.sleep(0.001)
+        else:
+            await settled(h.service)
+        assert client.dispatched.is_set() is (observation == "pending_success")
+        if action == "restore" or observation != "pending_success":
+            assert (h.store.catalog / saved.filename).read_bytes() == b"saved cache"
+    finally:
+        release_stage.set()
+        release_probe.set()
+        if refresh is not None:
+            await refresh
+        await settled(h.service)
+        await h.service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_failed_action_refresh_prevents_post_even_after_prior_ready(
     harness, monkeypatch
 ):
