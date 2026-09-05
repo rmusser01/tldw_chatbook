@@ -11642,3 +11642,25 @@ Rule: demonstrate a successful positive control, identify the actual failure
 mechanism, and fail qualification on unexpected host/API/disposal errors.
 A generic exception or timeout is evidence of failure, not proof that the
 resource boundary under test enforced its configured limit.
+
+## A tested quota helper is not evidence that the production owner uses it
+
+Incident (TASK-31232 final Canvas review, 2026-09-05): the standalone staging
+store enforced Canvas admission quotas, but the real Console wired its own
+controller/coordinator. That owner appended revisions without the helper's
+admission checks. A direct production-coordinator probe staged and confirmed
+11 Canvases despite the limit of 10. Repository commit checks could not protect
+temporary confirmed history or bound the earlier staged allocation.
+
+Rule: trace the actual provider-to-mutation-owner wiring before selecting a
+quota test target. Assert admission at the production owner with existing and
+concurrent work, not only on a similarly named helper or final durable commit.
+
+The same review's raw Python probe imported application configuration before
+establishing owned test directories. Logs reported loading ambient config and
+ensuring the user's chat_dicts directory; no pre-probe snapshot could determine
+whether the directory was newly created. No database/provider/browser launched,
+but that is not proof of no filesystem effect. Prefer repository pytest fixtures
+and establish owned config/data before application imports: an in-memory subject
+does not make its module's bootstrap side-effect-free. Do not delete ambient
+state afterward or suppress the deviation from the verification record.

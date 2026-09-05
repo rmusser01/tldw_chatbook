@@ -27,7 +27,8 @@ patches losing renderer identity; ordinary continuation content rewritten with
 Canvas disabled; transcript action discovery/dispatch compiling synchronously;
 and settlement publication resetting a historical pin. Minor corrections cover
 asset-limit argument validation and explicit Close versus pane Hide wording.
-One consolidated correction wave and scoped rereview are required. No Critical
+The consolidated correction wave is committed as `c875bad60f`; scoped rereview
+is pending. No Critical
 finding was established; this is not a security certification or merge approval.
 
 The reviewer authored Task 7.2a and the Task 7.4 continuation. Separate
@@ -47,6 +48,51 @@ no configuration-save evidence was observed. No database, provider or browser
 was launched. Further executable review probes were stopped; ambient state was
 not deleted or modified to conceal the deviation. Future tests must establish
 owned configuration/data before importing application modules.
+
+### Final correction-wave evidence (`c875bad60f`)
+
+The implementation adds production-owner admission against existing durable
+usage and concurrent staging, bounded DOM move/reinsert handling, unchanged
+ordinary non-opt-in continuation records, deferred off-loop HTML compatibility
+validation, pin-preserving update publication, safe-wire helper argument checks,
+and accurate outer Hide/inner Close copy. These are implementation claims
+pending scoped rereview, not closure of the findings by test count alone.
+
+```sh
+../../.venv/bin/python -m pytest -q Tests/Canvas/test_limits.py Tests/Agents/test_provider_continuation_runtime.py Tests/Chat/test_console_canvas_controller.py Tests/Canvas/test_native_authority.py Tests/Canvas/test_service.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_message_controller.py::test_production_message_controller_prefills_canvas_repair_without_source_state Tests/Canvas/test_compiler_scheduling.py::test_chat_screen_html_import_yields_and_checks_view_before_apply
+../../.venv/bin/python -m pytest -q Tests/Canvas/test_runtime_assets.py
+```
+
+Exit 0: **358 passed, 1 warning in 34.86s**, followed by **20 passed, 1 skipped,
+1 warning in 1.18s**. The warnings are the known Requests dependency mismatch;
+the asset skip requires the optional `TLDW_CANVAS_RUNTIME_ARCHIVE_DIR` cache.
+No download, full sweep or unchanged long Console matrix was run.
+
+Final browser regressions for DOM move/reinsert, real tool publication while
+pinned, and outer Hide/reopen: **3 passed, 1 warning in 5.93s**. This is after
+the final runtime edits and manifest refresh. Exact owned browser/driver PIDs
+and profile were captured while alive; the child survivor set was empty and
+the exact profile was removed afterward. Earlier fix-wave browser runs rely
+on fixture cleanup, not independently captured PID/profile provenance.
+
+```sh
+../../.venv/bin/python -m pytest -q Tests/Canvas/browser/test_canvas_zero_egress.py::test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds Tests/Canvas/browser/test_canvas_native_flow.py::test_real_tool_publication_keeps_same_revision_pin_until_follow Tests/Canvas/browser/test_canvas_served_flow.py::test_owned_shell_starts_terminal_only_then_opens_and_reopens_canvas
+```
+
+The initial publication preview failed with `runtime_unavailable` because the
+authored JavaScript edits did not yet match the manifest. Updating the exact
+hash/byte records resolved that refusal; this was not a pinning failure. A
+subsequent ambiguous Follow locator was narrowed to the intended control.
+The strengthened DOM case separately failed when a detached subtree was
+reconstructed and moved repeatedly in a later transaction; immediate virtual
+renderer-presence bookkeeping corrected it before the final three-test run.
+
+Manifest verification, three JavaScript syntax checks, changed-Python compileall
+and diff whitespace checks exited 0. Normalized Ruff comparison across 19 changed
+Python paths against `1a6e6c74fb` found zero added/removed findings; 49 changed
+format ranges passed. This is unchanged inherited lint debt, not whole-repository
+clean lint. The earlier six baseline failures and all review limitations above
+remain outside these targeted passing results.
 
 The stricter exact-reopen test subsequently reproduced a product defect: the
 child selects the historical root, but the existing served renderer remains on
