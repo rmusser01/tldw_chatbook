@@ -4,12 +4,13 @@
 # Imports
 import json
 import logging
+import sqlite3
 import uuid as uuid_module
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 # Local Imports
-from ..DB.Client_Media_DB_v2 import MediaDatabase, InputError
+from ..DB.Client_Media_DB_v2 import InputError, MediaDatabase
 from ..Metrics.metrics_logger import log_counter
 from .auto_selection import AUTO_SENTINEL
 
@@ -58,6 +59,10 @@ class InvalidTemplateError(ChunkingTemplateError):
     """
 
     pass
+
+
+class TemplateUpdateConflictError(ChunkingTemplateError):
+    """An expected template identity or version no longer matches."""
 
 
 class ChunkingInteropService:
@@ -241,15 +246,6 @@ class ChunkingInteropService:
 
         try:
             with self.media_db.transaction() as conn:
-                # Name liveness under the partial unique index: a
-                # soft-deleted row with the same name does not block.
-                existing = conn.execute(
-                    "SELECT id FROM ChunkingTemplates WHERE deleted = 0 AND name = ?",
-                    (name.strip(),),
-                ).fetchone()
-                if existing:
-                    raise InputError(f"Template with name '{name}' already exists")
-
                 cursor = conn.execute(
                     """
                     INSERT INTO ChunkingTemplates
@@ -272,6 +268,8 @@ class ChunkingInteropService:
 
             return template_id
 
+        except sqlite3.IntegrityError as exc:
+            raise InputError(f"Template with name '{name}' already exists") from exc
         except InputError:
             raise
         except Exception as e:
@@ -285,6 +283,9 @@ class ChunkingInteropService:
         description: Optional[str] = None,
         template_json: Optional[Union[str, Dict[str, Any]]] = None,
         tags: Optional[Sequence[str]] = None,
+        *,
+        expected_uuid: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> None:
         """
         Update an existing live template (validates the NEW body only, AC 24).
@@ -302,6 +303,10 @@ class ChunkingInteropService:
             template_json: New template JSON (optional; validated on write)
             tags: New tags for the JSON column (optional; also refreshed
                 from the new body's tags when the body carries them)
+            expected_uuid: UUID read with the editable record. Must be
+                supplied together with ``expected_version``.
+            expected_version: Version read with the editable record. Must
+                be supplied together with ``expected_uuid``.
 
         Raises:
             TemplateNotFoundError: If no live template has this ID
@@ -311,11 +316,13 @@ class ChunkingInteropService:
                 new name is the reserved sentinel "auto"
                 (case-insensitive on the whole word; auto-selection spec
                 §4.3/AC 14, Qodo #4)
+            TemplateUpdateConflictError: If an expected UUID or version no
+                longer identifies the live record.
         """
-        template = self.get_template_by_id(template_id)
-
-        if template["is_builtin"]:
-            raise BuiltinTemplateError("Cannot modify builtin templates")
+        if (expected_uuid is None) != (expected_version is None):
+            raise InputError(
+                "expected_uuid and expected_version must be supplied together"
+            )
 
         updates = []
         params = []
@@ -342,7 +349,7 @@ class ChunkingInteropService:
         if template_json is not None:
             body = self._parse_template_body(template_json)
             body_tags = self._pop_body_tags(body)
-            self._validate_body(template["name"], body)
+            self._validate_body(name or f"ID {template_id}", body)
             updates.append("template_json = ?")
             params.append(json.dumps(body))
             if body_tags is not None:
@@ -356,40 +363,84 @@ class ChunkingInteropService:
             updates.append("tags = ?")
             params.append(json.dumps(column_tags))
 
-        if not updates:
-            return  # Nothing to update
-
-        updates.append("version = version + 1")
-
         try:
-            query = (
-                f"UPDATE ChunkingTemplates SET {', '.join(updates)} "
-                "WHERE id = ? AND deleted = 0"
-            )
-            params.append(template_id)
-
             with self.media_db.transaction() as conn:
-                if name is not None:
-                    # Name liveness excluding this row itself.
-                    existing = conn.execute(
-                        "SELECT id FROM ChunkingTemplates "
-                        "WHERE deleted = 0 AND name = ?",
-                        (name.strip(),),
+                if not updates:
+                    row = conn.execute(
+                        "SELECT uuid, version, deleted, is_builtin "
+                        "FROM ChunkingTemplates WHERE id = ?",
+                        (template_id,),
                     ).fetchone()
-                    if existing and existing["id"] != template_id:
-                        raise InputError(
-                            f"Template with name '{name}' already exists"
-                        )
-                conn.execute(query, params)
+                    self._raise_update_guard_failure(
+                        template_id,
+                        row,
+                        expected_uuid=expected_uuid,
+                        expected_version=expected_version,
+                    )
+                    return
+                updates.append("version = version + 1")
+                predicates = ["id = ?"]
+                params.append(template_id)
+                if expected_uuid is not None:
+                    predicates.extend(["uuid = ?", "version = ?"])
+                    params.extend([expected_uuid, expected_version])
+                predicates.extend(["deleted = 0", "is_builtin = 0"])
+                query = (
+                    f"UPDATE ChunkingTemplates SET {', '.join(updates)} "
+                    f"WHERE {' AND '.join(predicates)}"
+                )
+                cursor = conn.execute(query, params)
+                if cursor.rowcount != 1:
+                    row = conn.execute(
+                        "SELECT uuid, version, deleted, is_builtin "
+                        "FROM ChunkingTemplates WHERE id = ?",
+                        (template_id,),
+                    ).fetchone()
+                    self._raise_update_guard_failure(
+                        template_id,
+                        row,
+                        expected_uuid=expected_uuid,
+                        expected_version=expected_version,
+                    )
+                    raise ChunkingTemplateError(
+                        f"Template update affected {cursor.rowcount} rows"
+                    )
 
             log_counter("chunking_template_updated", 1)
             logger.info(f"Updated chunking template ID {template_id}")
 
-        except InputError:
+        except sqlite3.IntegrityError as exc:
+            raise InputError(f"Template with name '{name}' already exists") from exc
+        except (
+            InputError,
+            TemplateNotFoundError,
+            BuiltinTemplateError,
+            TemplateUpdateConflictError,
+        ):
             raise
         except Exception as e:
             logger.error(f"Error updating template: {e}")
             raise ChunkingTemplateError(f"Failed to update template: {str(e)}")
+
+    @staticmethod
+    def _raise_update_guard_failure(
+        template_id: int,
+        row: Any,
+        *,
+        expected_uuid: Optional[str],
+        expected_version: Optional[int],
+    ) -> None:
+        """Classify a guarded update miss while its write transaction is open."""
+        if row is None or bool(row["deleted"]):
+            raise TemplateNotFoundError(f"Template with ID {template_id} not found")
+        if bool(row["is_builtin"]):
+            raise BuiltinTemplateError("Cannot modify builtin templates")
+        if expected_uuid is not None and (
+            row["uuid"] != expected_uuid or int(row["version"]) != expected_version
+        ):
+            raise TemplateUpdateConflictError(
+                f"Template with ID {template_id} changed since it was loaded"
+            )
 
     def delete_template(self, template_id: int) -> None:
         """
