@@ -13,6 +13,8 @@ from tldw_chatbook.Audio.meeting_capture import SpeechRun
 from tldw_chatbook.Audio.meeting_session import (
     LocalMeetingSink,
     MeetingMeta,
+    MeetingResult,
+    MeetingSegment,
     MeetingSession,
     format_clock,
     read_meeting_json,
@@ -241,6 +243,54 @@ def test_stop_twice_is_a_no_op(tmp_path):
     assert first is second and capture.stops == 1
 
 
+def test_tap_failure_during_start_downgrades_the_persisted_mode(tmp_path, monkeypatch):
+    """Q13: MeetingCapture drops to room mode when the system tap refuses to
+    start, but MeetingMeta had already copied "call" -- meeting.json and the
+    MeetingResult then claimed system audio that was never recorded."""
+    session, capture, built = _session(tmp_path, mode="call")
+
+    def start_dictation(self, **callbacks):
+        self.callbacks = callbacks
+        capture.mode = "room"      # the tap failed while the recorder came up
+        return True
+
+    monkeypatch.setattr(FakeDictation, "start_dictation", start_dictation)
+    assert session.start() is True
+    assert session.meta.mode == "room"
+    assert read_meeting_json(tmp_path)["mode"] == "room"
+    capture.audio_position_s = 1.0
+    assert session.stop().meta.mode == "room"
+
+
+def test_start_leaves_the_mode_alone_when_the_tap_comes_up(tmp_path):
+    session, capture, built = _session(tmp_path, mode="call")
+    assert session.start() is True
+    assert session.meta.mode == "call" and read_meeting_json(tmp_path)["mode"] == "call"
+
+
+def test_listener_error_log_names_the_event_and_listener_not_the_payload(tmp_path):
+    """Q10: the error line carried only the exception, so a failure in the
+    partial callback was indistinguishable from one in the segment callback."""
+    from loguru import logger
+
+    session, capture, built = _session(tmp_path)
+    session.start()
+
+    def exploding_listener(kind, payload):
+        raise RuntimeError("listener boom")
+
+    session.subscribe(exploding_listener)
+    messages: list[str] = []
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="ERROR")
+    try:
+        built[0].callbacks["on_partial_transcript"]("secret meeting content")
+    finally:
+        logger.remove(sink_id)
+    joined = "\n".join(messages)
+    assert "partial" in joined and "exploding_listener" in joined and "listener boom" in joined
+    assert "secret meeting content" not in joined   # payload is meeting content
+
+
 def test_start_failure_sets_error_state(tmp_path, monkeypatch):
     session, capture, built = _session(tmp_path)
     monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **cb: False)
@@ -399,6 +449,39 @@ def test_local_sink_records_submit_failure(tmp_path):
     _run_meeting(tmp_path, sink)
     assert sink.job_id is None and "registry refused" in sink.last_submit_error
     assert read_meeting_json(tmp_path)["ingest_error"] == "registry refused"
+
+
+def test_local_sink_closes_its_handle_even_when_finalisation_raises(tmp_path):
+    """Q4: the transcript handle was only released on the happy path, so a
+    submit (or a markdown write) that raised leaked the descriptor."""
+
+    def submit(**kwargs):
+        raise RuntimeError("registry refused")
+
+    sink = LocalMeetingSink(tmp_path, submit=submit)
+    _run_meeting(tmp_path, sink)
+    assert sink._handle is None
+
+    md_sink = LocalMeetingSink(tmp_path, submit=lambda **kw: None, post_transcribe=False)
+    md_sink.on_started(_meta(tmp_path))
+    handle = md_sink._handle
+    md_sink.folder = tmp_path / "does-not-exist"     # transcript.md write blows up
+    with pytest.raises(OSError):
+        md_sink.on_stopped(
+            MeetingResult(meta=_meta(tmp_path), ended_at="2026-09-04T15:00:00", duration_s=1.0,
+                          segment_count=0, transcription_complete=True, failed_segments=0,
+                          stop_reason="user")
+        )
+    assert md_sink._handle is None and handle.closed
+
+
+def test_local_sink_is_a_context_manager_and_close_is_idempotent(tmp_path):
+    with LocalMeetingSink(tmp_path, submit=lambda **kw: None) as sink:
+        sink.on_started(_meta(tmp_path))
+        sink.on_segment(MeetingSegment(0, 0.0, 1.0, 0.0, 1.0, "you", "hi"))
+    assert sink._handle is None
+    sink.close()
+    assert (tmp_path / "transcript.jsonl").read_text().strip()
 
 
 def test_render_markdown_room_mode_omits_labels(tmp_path):

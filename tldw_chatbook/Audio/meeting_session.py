@@ -171,7 +171,14 @@ class MeetingSession:
             try:
                 listener(kind, payload)
             except Exception as exc:  # noqa: BLE001
-                logger.error("meeting listener error: {}", exc)
+                # `kind` and the listener's identity only: the payload is
+                # meeting content (transcript text) and never reaches a log.
+                logger.error(
+                    "meeting listener error on {} from {}: {}",
+                    kind,
+                    getattr(listener, "__qualname__", repr(type(listener))),
+                    exc,
+                )
 
     def _set_state(self, state: str) -> None:
         self.state = state
@@ -210,6 +217,16 @@ class MeetingSession:
         if not ok:
             self._set_state("error")
             return False
+        # The capture settles its effective mode while starting: a system tap
+        # that fails to start downgrades "call" to "room" AFTER MeetingMeta
+        # was built, and the persisted metadata (and MeetingResult) would
+        # otherwise keep claiming system audio was captured (Qodo Q13). The
+        # separate "System source lost" indicator reads the tap's own state.
+        effective_mode = getattr(self.capture, "mode", self.meta.mode)
+        if effective_mode != self.meta.mode:
+            self.meta.mode = effective_mode
+            payload.update(self.meta.to_json())
+            write_meeting_json(self.meta.folder, payload)
         self._set_state("recording")
         self._each_sink("on_started", self.meta)
         return True
@@ -382,6 +399,25 @@ class LocalMeetingSink:
         self.job_id: str | None = None
         self.last_submit_error: str | None = None
 
+    def __enter__(self) -> "LocalMeetingSink":
+        """Return the sink itself; the handle opens on ``on_started``."""
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Close the transcript handle however the block is left."""
+        self.close()
+
+    def close(self) -> None:
+        """Close the JSONL transcript handle. Safe to call more than once."""
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError as exc:
+                # A close() error can echo the transcript's absolute path,
+                # which sits under the user's recordings dir.
+                logger.warning("meeting transcript close failed: {}", redact_user_paths(str(exc)))
+
     def on_started(self, meta: MeetingMeta) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
         self._handle = open(self.folder / TRANSCRIPT_JSONL, "a", encoding="utf-8")  # noqa: SIM115
@@ -396,29 +432,32 @@ class LocalMeetingSink:
             self._handle.flush()
 
     def on_stopped(self, result: MeetingResult) -> None:
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
-        started = datetime.fromisoformat(result.meta.started_at)
-        title = f"Meeting {started:%Y-%m-%d %H:%M}"
-        if self.post_transcribe:
-            kwargs = dict(
-                source_path=str(self.folder / "mixed.wav"), title=title, keywords=("meeting",),
-                detected_type="audio", ingest_options={"diarization": bool(self.post_diarize)},
-            )
-        else:
-            md_path = self.folder / "transcript.md"
-            md_path.write_text(render_markdown(result, self._segments), encoding="utf-8")
-            kwargs = dict(
-                source_path=str(md_path), title=title, keywords=("meeting",),
-                detected_type="document", ingest_options={},
-            )
+        # try/finally, not "close first": the markdown render and the Library
+        # submit both run here, and either raising used to be a route out of
+        # this method that left the transcript handle open (Qodo Q4).
         try:
-            self.job_id = self._submit(**kwargs)
-            update_meeting_json(self.folder, ingest_job_id=self.job_id)
-        except Exception as exc:  # noqa: BLE001 - the footer reports it (spec §7)
-            self.last_submit_error = str(exc)
-            update_meeting_json(self.folder, ingest_error=str(exc))
-            # The submit kwargs carry the meeting folder, so a registry
-            # error usually echoes an absolute path back at us.
-            logger.error("meeting ingest submit failed: {}", redact_user_paths(str(exc)))
+            started = datetime.fromisoformat(result.meta.started_at)
+            title = f"Meeting {started:%Y-%m-%d %H:%M}"
+            if self.post_transcribe:
+                kwargs = dict(
+                    source_path=str(self.folder / "mixed.wav"), title=title, keywords=("meeting",),
+                    detected_type="audio", ingest_options={"diarization": bool(self.post_diarize)},
+                )
+            else:
+                md_path = self.folder / "transcript.md"
+                md_path.write_text(render_markdown(result, self._segments), encoding="utf-8")
+                kwargs = dict(
+                    source_path=str(md_path), title=title, keywords=("meeting",),
+                    detected_type="document", ingest_options={},
+                )
+            try:
+                self.job_id = self._submit(**kwargs)
+                update_meeting_json(self.folder, ingest_job_id=self.job_id)
+            except Exception as exc:  # noqa: BLE001 - the footer reports it (spec §7)
+                self.last_submit_error = str(exc)
+                update_meeting_json(self.folder, ingest_error=str(exc))
+                # The submit kwargs carry the meeting folder, so a registry
+                # error usually echoes an absolute path back at us.
+                logger.error("meeting ingest submit failed: {}", redact_user_paths(str(exc)))
+        finally:
+            self.close()
