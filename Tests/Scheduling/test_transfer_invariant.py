@@ -52,6 +52,17 @@ from tldw_chatbook.Scheduling.services.server_client import (
     ServerUnavailableError,
 )
 
+#: Fix round 1, finding 6: `begin_to_server`/`begin_to_local` below discard
+#: their `begin_transfer_to_*` outcome, so a regression that silently
+#: refuses every transfer (the exact vacuous-Hypothesis bug `_server_
+#: reachable = True` seeding just fixed) would again make `never_both_
+#: armed` "pass" unnoticed -- vacuously true because nothing ever armed.
+#: Counted at module level (not per-example) and reset/asserted once by
+#: `TestTransferInvariant.runTest` below, across the WHOLE property
+#: run's many generated examples -- a per-example assert would spuriously
+#: fail on Hypothesis's own minimal (zero-rule-call) examples.
+_successful_begins = 0
+
 
 class _FakeApp:
     """Only ``active_server_id`` is read by the transfer facade."""
@@ -181,7 +192,12 @@ class TransferInvariantMachine(RuleBasedStateMachine):
 
     @rule()
     def begin_to_server(self):
-        self._run(self.service.begin_transfer_to_server("reminder_task", self.row_id))
+        outcome = self._run(
+            self.service.begin_transfer_to_server("reminder_task", self.row_id)
+        )
+        if outcome.status == "pending":
+            global _successful_begins
+            _successful_begins += 1
 
     @rule(outcome=st.sampled_from(["success", "fail", "error", "ambiguous"]))
     def sync_push(self, outcome):
@@ -206,6 +222,8 @@ class TransferInvariantMachine(RuleBasedStateMachine):
         )
         if outcome.status == "pending" and outcome.row_id:
             self.copy_id = outcome.row_id
+            global _successful_begins
+            _successful_begins += 1
 
     @rule()
     def recover(self):
@@ -243,4 +261,31 @@ class TransferInvariantMachine(RuleBasedStateMachine):
         )
 
 
-TestTransferInvariant = TransferInvariantMachine.TestCase
+class TestTransferInvariant(TransferInvariantMachine.TestCase):
+    """Fix round 1, finding 6: wraps the generated `TestCase` to assert
+    the counter above ONCE, across the whole property run's many
+    generated examples -- not per-example (Hypothesis's own minimal
+    zero-rule-call examples would spuriously fail that).
+
+    Defined directly as `TestTransferInvariant` (not a separately-named
+    class aliased afterward): pytest's unittest collector walks every
+    module-level name and collects any `unittest.TestCase` subclass it
+    finds regardless of naming convention (`RuleBasedStateMachine.
+    TestCase` already is one) -- a `class _Foo(...): ...` +
+    `TestTransferInvariant = _Foo` alias left BOTH names as separate
+    module attributes pointing at the same class, so pytest collected
+    (and ran the whole Hypothesis property twice for) both `_Foo::
+    runTest` and `TestTransferInvariant::runTest`.
+    """
+
+    def runTest(self):
+        global _successful_begins
+        _successful_begins = 0
+        super().runTest()
+        assert _successful_begins > 0, (
+            "no begin_transfer_to_server/to_local ever succeeded across "
+            "the whole property run -- either the transfer machinery is "
+            "silently refusing every attempt again (the exact vacuous-"
+            "Hypothesis bug `_server_reachable = True` seeding above "
+            "fixed), or this counter itself broke"
+        )

@@ -43,9 +43,9 @@ from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.widgets import DataTable, Static
 
 from tldw_chatbook.Scheduling.services.server_client import ServerClientNotFoundError
-from textual.widgets import DataTable, Static
 
 
 @dataclass

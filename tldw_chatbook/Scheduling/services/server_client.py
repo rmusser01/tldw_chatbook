@@ -109,10 +109,15 @@ class SchedulingServerClient:
         """Probe Scheduled Tasks automation capabilities, cached per connection.
 
         task-3 (schedules UAT remediation ruling 5) capabilities handshake
-        -- mirrors `client.py`'s `/sync/capabilities` probe-and-cache shape
-        (`get_sync_v2_capabilities`). Fetched at most once per connection
-        (reset by `set_notifications_service`), so repeated callers (every
-        sync cycle) don't re-probe.
+        -- the PROBE construction mirrors `client.py`'s `/sync/
+        capabilities` route (`get_sync_v2_capabilities`), but that method
+        itself does not cache (it's a plain probe, called fresh each time
+        by `Sync_Interop/server_sync_service.py`). The per-connection
+        CACHING shape here instead mirrors `Prompt_Management/prompt_
+        scope_service.py`'s `_server_capabilities_cache` (fix round 1,
+        finding 3 -- corrected citation): fetched at most once per
+        connection (reset by `set_notifications_service`), so repeated
+        callers (every sync cycle) don't re-probe.
 
         Returns:
             The parsed capabilities dict once fetched successfully (cached

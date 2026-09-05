@@ -75,7 +75,9 @@ class _App(ConsolidatedCSSApp):
 
 
 async def _sync_via_action(pilot, workbench):
-    workbench.action_sync_now()
+    # Fix round 1: action_sync_now is now async (it re-probes reachability
+    # before deciding, matching _run_owner_transfer/_on_owner_server).
+    await workbench.action_sync_now()
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

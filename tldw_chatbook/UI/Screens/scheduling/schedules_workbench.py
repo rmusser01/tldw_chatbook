@@ -3138,17 +3138,8 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         # task-3 (ruling 4): re-probe right before deciding, rather than
-        # trust whatever the mount-time background probe last cached --
-        # `refresh_server_reachability`'s own probe is itself cached
-        # per-connection, so this is a no-op round trip once a verdict is
-        # already known and only actually re-checks a genuinely stale
-        # (errored) prior attempt. Guarded with getattr, same reasoning as
-        # `_refresh_server_reachability`: a test double that models
-        # `transfer_refusal` but not this newer probe method must not
-        # crash the worker over a method it was never asked to implement.
-        refresh_reachability = getattr(service, "refresh_server_reachability", None)
-        if refresh_reachability is not None:
-            await refresh_reachability()
+        # trust whatever the mount-time background probe last cached.
+        await self._reprobe_server_reachability(service)
         reason = service.transfer_refusal(row_dict, direction)
         if reason is not None:
             row.show_error(reason)
@@ -4329,6 +4320,28 @@ class SchedulesWorkbench(BaseAppScreen):
             _probe, exclusive=True, group="schedules-server-reachability"
         )
 
+    @staticmethod
+    async def _reprobe_server_reachability(service: Any) -> None:
+        """Re-probe reachability right before a decision that gates on it.
+
+        Fix round 1, finding 1: `_run_owner_transfer` already did this
+        inline; `_on_owner_server` and `action_sync_now` did not, so a
+        press during the on-mount probe window (`_refresh_server_
+        reachability`'s background worker hasn't resolved yet) saw the
+        honest default -- `server_reachable=False` -- and refused a
+        genuinely configured, about-to-be-confirmed server. `refresh_
+        server_reachability`'s own probe is cached per-connection, so
+        this is a no-op round trip once a verdict is already known and
+        only actually re-checks a still-pending mount-time probe or a
+        genuinely stale (errored) prior attempt. Guarded with getattr: a
+        test double that models `server_reachable`/`transfer_refusal`
+        but not this newer probe method must not crash a worker over a
+        method it was never asked to implement.
+        """
+        refresh_reachability = getattr(service, "refresh_server_reachability", None)
+        if refresh_reachability is not None:
+            await refresh_reachability()
+
     def _sync_header_status(self, status: WorkbenchStatus, label: str) -> None:
         """Reflect real sync health in the destination header chip."""
         try:
@@ -4443,10 +4456,14 @@ class SchedulesWorkbench(BaseAppScreen):
         self._set_owner("local")
 
     @on(Button.Pressed, "#scheduling-owner-server")
-    def _on_owner_server(self) -> None:
+    async def _on_owner_server(self) -> None:
         service = self._service()
         if service is None:
             return
+        # Fix round 1, finding 1: re-probe rather than trust whatever the
+        # mount-time background probe last cached -- same reasoning as
+        # `_run_owner_transfer`'s own re-probe.
+        await self._reprobe_server_reachability(service)
         active_server_id = self._active_server_id()
         if not self._server_available(service, active_server_id):
             self.app_instance.notify("No server connection", severity="warning")
@@ -4908,7 +4925,7 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-bulk-toggle",
         )  # type: ignore[arg-type]
 
-    def action_sync_now(self) -> None:
+    async def action_sync_now(self) -> None:
         """Sync schedule state now."""
         if self._sync_running:
             self.app_instance.notify("Sync already in progress", severity="warning")
@@ -4920,6 +4937,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        # Fix round 1, finding 1: re-probe rather than trust whatever the
+        # mount-time background probe last cached -- same reasoning as
+        # `_run_owner_transfer`'s own re-probe.
+        await self._reprobe_server_reachability(service)
         if not self._server_available(service, self._active_server_id()):
             # Honest no-op: never claim "Sync completed" when nothing can
             # sync. Same predicate as the sync bar's collapse (review F10):
