@@ -739,6 +739,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         query: str = "",
         lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED,
         onboarding_all_empty: bool = False,
+        workspace_handoff_action: tuple[bool, str] | None = None,
     ) -> None:
         """Refresh the rail from new state.
 
@@ -754,6 +755,8 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             query: Latest search box text.
             lifecycle: Current progressive-disclosure lifecycle.
             onboarding_all_empty: Whether one fresh evidence generation was empty.
+            workspace_handoff_action: Current blocked flag and tooltip for the
+                retained workspace handoff action, derived by its policy owner.
 
         Returns:
             None.
@@ -838,6 +841,16 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 button.styles.min_height = 1
 
         details_lines = shell.details_lines
+        if workspace_handoff_action is not None:
+            try:
+                handoff = self.query_one("#library-use-in-console", Button)
+            except NoMatches:
+                pass  # Workspace actions are optional for standalone rails.
+            else:
+                blocked, tooltip = workspace_handoff_action
+                handoff.tooltip = tooltip
+                handoff.disabled = False  # The press handler explains the block.
+                handoff.set_class(blocked, "library-source-action-blocked")
         try:
             self.query_one("#library-details-runtime", Static).update(
                 library_dim_label_text(
