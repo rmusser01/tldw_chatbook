@@ -26,6 +26,13 @@ PARTIAL_LABEL_WINDOW_S = 1.0
 
 @dataclass
 class MeetingMeta:
+    """How one meeting was recorded: folder, mode, sources, transcriber.
+
+    Written to `meeting.json` at start. `mode` is the EFFECTIVE mode
+    (`"call"` with system audio, `"room"` mic-only) and is corrected by
+    `MeetingSession.start` if the system tap fails to come up.
+    """
+
     folder: Path
     mode: str
     started_at: str
@@ -35,6 +42,7 @@ class MeetingMeta:
     model: str
 
     def to_json(self) -> dict:
+        """Return the JSON-safe payload (``folder`` stringified)."""
         payload = asdict(self)
         payload["folder"] = str(self.folder)
         return payload
@@ -42,6 +50,13 @@ class MeetingMeta:
 
 @dataclass
 class MeetingSegment:
+    """One finalised transcript segment, placed on both clocks.
+
+    Audio time (`t_audio_*`) drives the transcript's timestamps and the
+    speaker label window; wall time (`t_wall_*`) is what the user's own
+    clock said. `label` is None in room mode.
+    """
+
     seq: int
     t_audio_start: float
     t_audio_end: float
@@ -51,11 +66,19 @@ class MeetingSegment:
     text: str
 
     def to_json(self) -> dict:
+        """Return the JSONL row for this segment."""
         return asdict(self)
 
 
 @dataclass
 class MeetingResult:
+    """The outcome of one meeting: how it ended and what was captured.
+
+    `transcription_complete` is False when the transcriber did not finish
+    draining before stop; `failed_segments` counts finals that errored or
+    arrived too late to keep.
+    """
+
     meta: MeetingMeta
     ended_at: str
     duration_s: float
@@ -66,6 +89,7 @@ class MeetingResult:
     recovered: bool = False
 
     def to_json(self) -> dict:
+        """Return the full `meeting.json` payload (metadata plus outcome)."""
         payload = self.meta.to_json()
         payload.update(
             ended_at=self.ended_at, duration_s=self.duration_s, segment_count=self.segment_count,
@@ -77,6 +101,12 @@ class MeetingResult:
 
 @dataclass
 class SpeakerSegment:
+    """A diarizer's verdict for one span: who spoke, and optionally what.
+
+    The phase-2 `Diarizer` seam's return type (spec §3.3); nothing produces
+    these yet, the energy heuristic in `meeting_capture` labels segments.
+    """
+
     start_s: float
     end_s: float
     speaker: str
@@ -97,15 +127,47 @@ class Diarizer(Protocol):
 
 
 def write_meeting_json(folder: Path, payload: dict) -> None:
+    """Write `meeting.json` in `folder`, replacing any existing one.
+
+    Args:
+        folder: The meeting folder.
+        payload: The full payload to persist (JSON-serialisable).
+
+    Raises:
+        OSError: The folder is not writable.
+    """
     (Path(folder) / MEETING_JSON).write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def read_meeting_json(folder: Path) -> dict:
+    """Read `meeting.json` from `folder`.
+
+    Args:
+        folder: The meeting folder.
+
+    Returns:
+        The payload, or an empty dict when the file does not exist yet.
+
+    Raises:
+        json.JSONDecodeError: The file exists but is truncated or malformed
+            (a crash mid-write); recovery reports this to the user.
+    """
     path = Path(folder) / MEETING_JSON
     return json.loads(path.read_text()) if path.exists() else {}
 
 
 def update_meeting_json(folder: Path, **fields: Any) -> dict:
+    """Merge `fields` into `folder`'s `meeting.json` and write it back.
+
+    Args:
+        folder: The meeting folder.
+        **fields: Keys to add or overwrite. Note that `folder` itself is
+            positional here, so a payload carrying a "folder" key must have
+            it removed before being spread into this call.
+
+    Returns:
+        The merged payload.
+    """
     payload = read_meeting_json(folder)
     payload.update(fields)
     write_meeting_json(folder, payload)
@@ -113,6 +175,7 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
 
 
 def format_clock(seconds: float) -> str:
+    """Format `seconds` as ``HH:MM:SS``; negatives clamp to zero."""
     total = int(max(0.0, seconds))
     return f"{total // 3600:02d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
 
@@ -358,6 +421,18 @@ class MeetingSession:
 
 
 def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> str:
+    """Render a meeting as a Markdown transcript.
+
+    Used when post-meeting re-transcription is off: the Markdown, not the
+    audio, is what goes to the Library.
+
+    Args:
+        result: The finished meeting.
+        segments: Its segments, in order.
+
+    Returns:
+        The Markdown document, newline-terminated.
+    """
     meta = result.meta
     started = datetime.fromisoformat(meta.started_at)
     lines = [
@@ -380,7 +455,14 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
 
 
 class LocalMeetingSink:
-    """JSONL transcript + Library ingest submit on stop (spec §5)."""
+    """JSONL transcript + Library ingest submit on stop (spec §5).
+
+    Writes one JSON line per finalised segment while the meeting runs, then
+    on stop hands the Library either `mixed.wav` (re-transcribed there, with
+    diarization) or a rendered `transcript.md`. A submit failure is recorded
+    on `last_submit_error` and in `meeting.json` rather than raised: the
+    recording is already safe on disk, and the screen's footer reports it.
+    """
 
     def __init__(
         self,
@@ -390,6 +472,16 @@ class LocalMeetingSink:
         post_transcribe: bool = True,
         post_diarize: bool = True,
     ) -> None:
+        """Build the sink.
+
+        Args:
+            folder: The meeting folder; the transcript is written here.
+            submit: Library ingest submit, returning a job id. Called on the
+                UI thread by the owner's marshalling wrapper.
+            post_transcribe: Submit the audio for re-transcription rather
+                than the Markdown transcript.
+            post_diarize: Ask the Library for speaker labels (audio only).
+        """
         self.folder = Path(folder)
         self._submit = submit
         self.post_transcribe = post_transcribe
@@ -419,19 +511,31 @@ class LocalMeetingSink:
                 logger.warning("meeting transcript close failed: {}", redact_user_paths(str(exc)))
 
     def on_started(self, meta: MeetingMeta) -> None:
+        """Open the JSONL transcript for this meeting."""
         self.folder.mkdir(parents=True, exist_ok=True)
         self._handle = open(self.folder / TRANSCRIPT_JSONL, "a", encoding="utf-8")  # noqa: SIM115
 
     def on_partial(self, text: str, label: str | None) -> None:
+        """Ignore partials: only finalised segments are persisted."""
         return None
 
     def on_segment(self, segment: MeetingSegment) -> None:
+        """Append one segment to the JSONL transcript and flush it."""
         self._segments.append(segment)
         if self._handle is not None:
             self._handle.write(json.dumps(segment.to_json()) + "\n")
             self._handle.flush()
 
     def on_stopped(self, result: MeetingResult) -> None:
+        """Close the transcript and hand the meeting to the Library.
+
+        Args:
+            result: The finished meeting.
+
+        Raises:
+            OSError: The Markdown transcript could not be written (the
+                submit's own failures are recorded, not raised).
+        """
         # try/finally, not "close first": the markdown render and the Library
         # submit both run here, and either raising used to be a route out of
         # this method that left the transcript handle open (Qodo Q4).

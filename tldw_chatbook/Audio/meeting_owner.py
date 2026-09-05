@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -46,9 +46,19 @@ BYTES_PER_S = 32000.0
 #: wait (`IngestJobState`, `Library/library_ingest_jobs.py`).
 TERMINAL_JOB_STATES = frozenset({"done", "failed", "cancelled", "skipped"})
 
+if TYPE_CHECKING:  # import-light at runtime: `console_voice_input` pulls config
+    from tldw_chatbook.Chat.console_voice_input import EffectiveConfig
 
-def resolve_effective_config():
-    """Late import: `console_voice_input` pulls config; keep this module light."""
+
+def resolve_effective_config() -> "EffectiveConfig | None":
+    """Resolve the transcription settings a meeting would actually run with.
+
+    Late import: `console_voice_input` pulls config; keep this module light.
+
+    Returns:
+        The effective dictation config, or None when no local provider is
+        usable (see `console_voice_input.resolve`).
+    """
     from tldw_chatbook.Chat.console_voice_input import resolve
 
     return resolve()
@@ -131,6 +141,14 @@ class MeetingSettings(BaseModel):
 
 @dataclass
 class PrepareResult:
+    """Everything the Meetings rail needs to decide what it can offer.
+
+    Produced by `MeetingSessionOwner.prepare()` before any recording starts:
+    the resolved system-audio route, the transcriber that would be used,
+    whether post-meeting speaker labels are possible, unfinished folders
+    from a previous crash, and the input devices to populate the pickers.
+    """
+
     tap_mode: TapMode
     provider: str
     model: str
@@ -145,7 +163,16 @@ class PrepareResult:
 
 
 def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
-    """Missing diarization modules, checked WITHOUT importing them (spec §3.5)."""
+    """Missing diarization modules, checked WITHOUT importing them (spec §3.5).
+
+    Args:
+        find_spec: Module-spec lookup, injectable for tests. Importing these
+            modules for real would pull torch into the UI process.
+
+    Returns:
+        The names of the `DIARIZATION_MODULES` that are not installed; empty
+        when speaker labels can be produced after the meeting.
+    """
     missing = []
     for name in DIARIZATION_MODULES:
         try:
@@ -158,6 +185,18 @@ def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, .
 
 
 def scan_recoverable(meetings_dir: Path) -> list[Path]:
+    """Find meeting folders left unfinished by a crash.
+
+    A folder qualifies when any of its WAV tracks still carries the
+    placeholder header written at creation time (`wav_needs_patch`).
+
+    Args:
+        meetings_dir: The recordings directory to scan; a missing directory
+            is not an error.
+
+    Returns:
+        The recoverable folders, sorted by name (oldest meeting first).
+    """
     meetings_dir = Path(meetings_dir)
     if not meetings_dir.exists():
         return []
@@ -169,6 +208,23 @@ def scan_recoverable(meetings_dir: Path) -> list[Path]:
 
 
 def recover_folder(folder: Path) -> dict:
+    """Repair one crashed meeting's WAV headers and metadata.
+
+    Patches every track whose header is still a placeholder, recomputes the
+    duration from `mixed.wav`, and marks `meeting.json` as recovered (with a
+    fallback `ended_at` taken from the recording's mtime).
+
+    Args:
+        folder: The meeting folder, as returned by `scan_recoverable`.
+
+    Returns:
+        The updated `meeting.json` payload.
+
+    Raises:
+        OSError: The folder or its tracks cannot be read or rewritten.
+        json.JSONDecodeError: `meeting.json` exists but is truncated or
+            malformed; the caller reports it as a failed recovery.
+    """
     folder = Path(folder)
     for name in ("mixed.wav", "you.wav", "others.wav"):
         path = folder / name
@@ -247,6 +303,16 @@ def _missing_recorder_message(exc: BaseException) -> str | None:
 
 
 class MeetingSessionOwner:
+    """Owns the running meeting for the whole app (spec §3.4, §7).
+
+    Screens are never cached across tab switches, so the session, its
+    watchdog and the post-meeting ingest cleanup all live here rather than
+    on the Meetings screen: a meeting survives navigating away and is
+    re-attached to by the next screen that mounts. Textual-free -- the app
+    injects `call_from_thread`, the ingest submit and the registry
+    listener hooks; everything else is injectable for tests.
+    """
+
     def __init__(
         self,
         *,
@@ -297,6 +363,14 @@ class MeetingSessionOwner:
 
     # ---- prepare ----------------------------------------------------------
     def prepare(self) -> PrepareResult:
+        """Probe everything a meeting needs, without touching the recorder.
+
+        Safe to call repeatedly; `apply_device_choice` clears the cached
+        result so the next call re-probes the new source.
+
+        Returns:
+            The probe outcome, also stored on `self.prepared`.
+        """
         cfg = resolve_effective_config()
         provider = self.settings.provider if self.settings.provider != "auto" else getattr(cfg, "provider", "auto")
         model = self.settings.model or (getattr(cfg, "model", "") or "")
@@ -331,6 +405,16 @@ class MeetingSessionOwner:
         return self._call_from_thread(self._submit_ingest, **kwargs)
 
     def start(self) -> MeetingSession:
+        """Create the meeting folder and start recording.
+
+        Returns:
+            The running session (also stored on `self.session`).
+
+        Raises:
+            RuntimeError: A meeting is already running, or the session
+                failed to start -- in which case the folder, its writers and
+                the transcript sink are cleaned up first.
+        """
         # Late import (C1): `meeting_capture` needs numpy, and `app.py`
         # imports this module at module scope. A meeting is the only thing
         # that needs the mixer, so nothing pays for numpy until Start.
@@ -404,14 +488,23 @@ class MeetingSessionOwner:
                 return session
 
     def pause(self) -> None:
+        """Pause the running meeting, if there is one."""
         if self.session is not None:
             self.session.pause()
 
     def resume(self) -> None:
+        """Resume a paused meeting, if there is one."""
         if self.session is not None:
             self.session.resume()
 
     def apply_device_choice(self, kind: str, value: str) -> None:
+        """Persist a rail picker choice and force the next `prepare()` to re-probe.
+
+        Args:
+            kind: ``"mic"`` or ``"system"``.
+            value: The device name; ``"default"`` for the mic means "no
+                explicit device" and is stored as an empty string.
+        """
         from tldw_chatbook.config import save_setting_to_cli_config
 
         key = "mic_device" if kind == "mic" else "system_source"
@@ -421,6 +514,15 @@ class MeetingSessionOwner:
         self.prepared = None   # next prepare() re-probes with the new source
 
     def stop(self, reason: str = "user") -> MeetingResult | None:
+        """Finalise the running meeting; idempotent for sequential callers.
+
+        Args:
+            reason: Why it ended (``"user"``, ``"mic_lost"``,
+                ``"disk_error"``, ``"shutdown"``), recorded in the result.
+
+        Returns:
+            The meeting's result, or the last one when no session is running.
+        """
         # ponytail: claim under the owner RLock, then run the (possibly
         # blocking, cross-thread) session.stop() outside it -- serialized by
         # a separate plain lock so a UI-thread callback that needs
@@ -546,7 +648,19 @@ def _config_accessors():
 
 
 def build_meeting_session_owner(app: Any) -> "MeetingSessionOwner":
-    """Wire the owner to a `TldwCli`: config, ingest registry, UI-thread marshalling."""
+    """Wire the owner to a `TldwCli`: config, ingest registry, UI-thread marshalling.
+
+    Args:
+        app: The running `TldwCli`. Its ingest registry is UI-thread-only, so
+            every call into it (submit, state read, listener registration) is
+            marshalled through `app.call_from_thread`.
+
+    Returns:
+        The owner, built from the `[meetings]` config section.
+
+    Raises:
+        pydantic.ValidationError: The `[meetings]` config is unusable.
+    """
     get_setting, get_data_dir = _config_accessors()
     settings = MeetingSettings.from_config(get_setting, get_data_dir())
 

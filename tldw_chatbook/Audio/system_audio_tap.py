@@ -33,6 +33,18 @@ HELPER_NAME = "tldw-audiotap"
 
 @dataclass(frozen=True)
 class TapMode:
+    """The system-audio route `probe` resolved, and why.
+
+    Attributes:
+        kind: ``native_macos``, ``native_parec``, ``native_wasapi``,
+            ``virtual_device`` or ``unavailable``.
+        reason: User-facing copy for the rail -- the route's name, or why
+            there isn't one.
+        command: Helper argv for a subprocess route.
+        device_name: Input device name for a virtual-cable route.
+        device_index: Device index for the WASAPI loopback route.
+    """
+
     kind: str
     reason: str
     command: tuple[str, ...] | None = None
@@ -43,12 +55,36 @@ class TapMode:
 # ---- pure resolvers -------------------------------------------------------
 
 def validate_sink_name(name: str) -> str:
+    """Check a PulseAudio sink name before it reaches a command line.
+
+    Args:
+        name: The sink name, as reported by `pactl`.
+
+    Returns:
+        The same name, unchanged.
+
+    Raises:
+        ValueError: Empty, or containing anything outside
+            ``[A-Za-z0-9._-]`` -- the tap spawns no shell, but a sink name
+            is still device-supplied text that ends up in argv.
+    """
     if not name or not SINK_NAME_RE.match(name):
         raise ValueError(f"unsafe PulseAudio sink name: {name!r}")
     return name
 
 
 def parse_default_sink(output: str) -> str:
+    """Read the default sink name out of `pactl get-default-sink` output.
+
+    Args:
+        output: The command's stdout.
+
+    Returns:
+        The validated sink name.
+
+    Raises:
+        ValueError: No output, or the name fails `validate_sink_name`.
+    """
     first = (output or "").strip().splitlines()[:1]
     if not first:
         raise ValueError("pactl returned no default sink")
@@ -56,6 +92,18 @@ def parse_default_sink(output: str) -> str:
 
 
 def linux_capture_command(tool: str, sink: str) -> tuple[str, ...]:
+    """Build the argv that captures a sink's monitor as 16 kHz mono PCM16.
+
+    Args:
+        tool: ``"parec"`` or ``"pw-record"``.
+        sink: The sink whose ``.monitor`` source is captured.
+
+    Returns:
+        The command, ready for `SubprocessTap`.
+
+    Raises:
+        ValueError: Unknown tool, or an unsafe sink name.
+    """
     sink = validate_sink_name(sink)
     if tool == "parec":
         return (
@@ -71,6 +119,16 @@ def linux_capture_command(tool: str, sink: str) -> tuple[str, ...]:
 
 
 def resolve_wasapi_loopback(devices: list[dict], default_output_name: str) -> int | None:
+    """Find the WASAPI loopback input that mirrors the default output.
+
+    Args:
+        devices: `sounddevice.query_devices()` rows, in index order.
+        default_output_name: Name of the current default output device.
+
+    Returns:
+        The device index, or None when Windows exposes no matching
+        ``[Loopback]`` input (the user then picks a virtual cable).
+    """
     for index, device in enumerate(devices):
         name = str(device.get("name", ""))
         if (
@@ -83,6 +141,14 @@ def resolve_wasapi_loopback(devices: list[dict], default_output_name: str) -> in
 
 
 def macos_version_ok(mac_ver: str) -> bool:
+    """Whether this macOS is new enough for Core Audio process taps.
+
+    Args:
+        mac_ver: `platform.mac_ver()[0]`, e.g. ``"14.6.1"``.
+
+    Returns:
+        True from macOS 14.2 on; False for anything older or unparseable.
+    """
     try:
         parts = tuple(int(p) for p in (mac_ver or "").split(".")[:2])
     except ValueError:
@@ -93,15 +159,39 @@ def macos_version_ok(mac_ver: str) -> bool:
 # ---- macOS helper lookup --------------------------------------------------
 
 def helper_source_path() -> Path:
+    """Return the path to the Swift tap helper's source, shipped in-package."""
     return Path(__file__).with_name("audiotap") / "main.swift"
 
 
 def bundled_helper_path(executable: str = sys.executable) -> Path | None:
+    """Look for a helper binary shipped next to the interpreter.
+
+    Args:
+        executable: The running interpreter's path; the packaged app puts
+            the helper in the same `Contents/MacOS` directory.
+
+    Returns:
+        The helper path, or None when this is not a packaged install.
+    """
     candidate = Path(executable).resolve().parent / HELPER_NAME
     return candidate if candidate.exists() else None
 
 
 def dev_helper_path(data_dir: Path) -> Path:
+    """Return where a locally compiled helper lives for the current source.
+
+    The filename carries a digest of the Swift source, so editing the helper
+    yields a new path instead of silently reusing a stale binary.
+
+    Args:
+        data_dir: The user data dir; the binary goes in its `bin/`.
+
+    Returns:
+        The (possibly not-yet-existing) helper path.
+
+    Raises:
+        OSError: The helper source cannot be read.
+    """
     digest = hashlib.sha256(helper_source_path().read_bytes()).hexdigest()[:12]
     return Path(data_dir) / "bin" / f"{HELPER_NAME}-{digest}"
 
@@ -113,7 +203,19 @@ def ensure_helper(
     which: Callable[[str], str | None] = shutil.which,
     executable: str = sys.executable,
 ) -> Path | None:
-    """Return a runnable helper binary, compiling with swiftc if needed."""
+    """Return a runnable helper binary, compiling with swiftc if needed.
+
+    Args:
+        data_dir: Where a locally compiled helper is cached.
+        run: Process runner, injectable for tests.
+        which: Executable lookup, injectable for tests.
+        executable: The running interpreter, used to find a bundled helper.
+
+    Returns:
+        A path to a runnable helper, or None when there is none and one
+        cannot be built (no source, no swiftc, compile failed) -- the caller
+        then reports the native route as unavailable.
+    """
     bundled = bundled_helper_path(executable)
     if bundled is not None:
         return bundled
@@ -157,6 +259,26 @@ def probe(
     query_devices: Callable[[], list] | None = None,
     default_output_name: str | None = None,
 ) -> TapMode:
+    """Resolve how (or whether) this machine can capture system audio.
+
+    Pure decision-making: nothing is started here, and no device is opened
+    beyond enumeration. An explicit `system_source` short-circuits to that
+    virtual device; otherwise the native route for the platform is probed.
+
+    Args:
+        system_source: ``"auto"``, or the name of a virtual input device.
+        platform: `sys.platform`, injectable for tests.
+        mac_ver: macOS version string; probed when None.
+        which: Executable lookup, injectable for tests.
+        run: Process runner, injectable for tests.
+        data_dir: User data dir for the macOS helper cache.
+        query_devices: Windows device enumeration, injectable for tests.
+        default_output_name: Windows default output name, injectable.
+
+    Returns:
+        The resolved `TapMode`; `kind == "unavailable"` carries the reason
+        the rail shows, and never raises for a missing tool or backend.
+    """
     source = (system_source or "auto").strip()
     if source and source.lower() != "auto":
         return TapMode("virtual_device", f"Virtual device: {source}", device_name=source)
@@ -204,7 +326,12 @@ def probe(
 # ---- taps -----------------------------------------------------------------
 
 class SubprocessTap:
-    """Reads fixed-size PCM frames from a helper process's stdout."""
+    """Reads fixed-size PCM frames from a helper process's stdout.
+
+    Used for the macOS Swift helper and for `parec`/`pw-record` on Linux. A
+    helper that exits on its own is restarted exactly once; a second exit
+    leaves `state == "lost"` and the meeting continues mic-only (spec §3.6).
+    """
 
     def __init__(
         self,
@@ -215,6 +342,15 @@ class SubprocessTap:
         spawn: Callable[..., Any] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Build the tap.
+
+        Args:
+            command: Helper argv; it must write raw PCM to stdout.
+            frame_bytes: Bytes read per frame (20 ms at 16 kHz mono PCM16).
+            restart_delay_s: Wait before the single restart attempt.
+            spawn: Process spawner, injectable for tests.
+            sleep: Sleep function, injectable for tests.
+        """
         self._command = tuple(command)
         self._frame_bytes = frame_bytes
         self._restart_delay_s = restart_delay_s
@@ -232,6 +368,7 @@ class SubprocessTap:
 
     @property
     def last_stderr(self) -> str:
+        """The helper's last few stderr lines, for the failure message."""
         return "\n".join(self._stderr_lines)
 
     def _launch(self) -> bool:
@@ -261,6 +398,16 @@ class SubprocessTap:
             self._stderr_lines.append(raw.decode("utf-8", "replace").rstrip())
 
     def start(self, on_frames: Callable[[bytes], None]) -> bool:
+        """Spawn the helper and stream its frames.
+
+        Args:
+            on_frames: Called on the reader thread with one complete frame
+                at a time; short reads are discarded.
+
+        Returns:
+            True when the helper started. False (state ``"lost"``) means the
+            meeting degrades to mic-only; nothing is raised.
+        """
         self._on_frames = on_frames
         self._stopping = False
         if not self._launch():
@@ -302,6 +449,7 @@ class SubprocessTap:
             return
 
     def stop(self) -> None:
+        """Close the helper's stdin, wait, then terminate if it lingers."""
         self._stopping = True
         proc = self._proc
         if proc is not None:
@@ -322,9 +470,21 @@ class SubprocessTap:
 
 
 class DeviceTap:
-    """System audio through an ordinary input device (loopback or virtual cable)."""
+    """System audio through an ordinary input device (loopback or virtual cable).
+
+    Covers the Windows WASAPI loopback route (by index) and any user-chosen
+    virtual cable such as BlackHole or VB-Cable (by name).
+    """
 
     def __init__(self, device_name: str | None, *, device_index: int | None = None, recorder_factory=None) -> None:
+        """Build the tap.
+
+        Args:
+            device_name: The input device to capture, resolved by name.
+            device_index: A device index, when already known (WASAPI).
+            recorder_factory: Recorder builder, injectable for tests;
+                defaults to `AudioRecordingService`.
+        """
         self._device_name = device_name
         self._device_index = device_index
         self._factory = recorder_factory
@@ -332,6 +492,16 @@ class DeviceTap:
         self.state = "stopped"
 
     def start(self, on_frames: Callable[[bytes], None]) -> bool:
+        """Open the configured input device and stream its frames.
+
+        Args:
+            on_frames: Called with each captured chunk.
+
+        Returns:
+            True when recording started. A configured device that is no
+            longer present returns False rather than falling back to the
+            default input, which would record the room a second time.
+        """
         factory = self._factory
         if factory is None:
             from .recording_service import AudioRecordingService
@@ -372,6 +542,7 @@ class DeviceTap:
         return ok
 
     def stop(self) -> None:
+        """Stop the underlying recorder; tolerates one that never started."""
         if self._recorder is not None:
             try:
                 self._recorder.stop_recording()
@@ -381,6 +552,17 @@ class DeviceTap:
 
 
 def build_tap(mode: TapMode, *, recorder_factory=None):
+    """Build the tap object for a probed `TapMode`.
+
+    Args:
+        mode: The route `probe` resolved.
+        recorder_factory: Recorder builder for device-backed routes,
+            injectable for tests.
+
+    Returns:
+        A `SubprocessTap`, a `DeviceTap`, or None when the mode carries no
+        usable route -- None is what puts the meeting in room mode.
+    """
     if mode.kind in ("native_macos", "native_parec") and mode.command:
         return SubprocessTap(mode.command)
     if mode.kind == "native_wasapi":
