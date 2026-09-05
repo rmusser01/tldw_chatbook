@@ -9,6 +9,16 @@ conflicted. Rebuilt that artifact from the combined sources, retaining dev's
 new owner/call rows and the snapshot-store sinks. Earlier integration evidence
 below is retained with its exact base.
 
+Latest-base verification: **65 passed, 1 failed**, 50.74s
+(`pr-environment-rebase.log`). The failure is the UI-ready census, now 976/972;
+all snapshot service, mounted Models/F9 and other boot checks pass. An untouched
+archive of dev `7e904737c787886c983c6c3312f0f9ca67c43453` reproduces exactly
+976/972 (**3 passed, 1 failed**, 9.22s; `pr-latest-dev-census.log`). The four
+additional modules are Console environment state/UI and workspace status/git
+support; no snapshot modules are resident. This is an inherited base regression,
+not an all-green integration result. The requested remote merge is paused for
+the owner's choice whether to include that unrelated Console startup fix.
+
 Rebased onto `dev` at `e990738b2812876c2593b91f62d0b2c5b2e3b69d`
 (Chunking Lab integration), without code conflicts. Range-diff preserves the
 snapshot changes and dev's additional app lifecycles. The merged diagnostic
