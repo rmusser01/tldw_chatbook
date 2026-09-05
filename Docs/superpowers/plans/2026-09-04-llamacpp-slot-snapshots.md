@@ -265,7 +265,7 @@ def test_mutation_timeouts_do_not_inherit_probe_timeout():
     assert MUTATION_TIMEOUT.read == 600
 ```
 
-- [ ] Implement a dedicated client with `trust_env=False`, `follow_redirects=False`, no proxy, and the descriptor's validated numeric loopback URL. Give each GET an overall 5-second `asyncio.timeout`; wrap each POST in an overall 600-second timeout and the explicit per-phase values. Stream responses into a capped 1 MiB buffer; parse only whitelisted fields and discard raw bodies. Unsupported, auth and protocol errors become fixed codes. On a possibly submitted mutation with no valid terminal response, raise `SnapshotError("outcome_unknown", submission_possible=True)`.
+- [ ] Implement a dedicated client with `trust_env=False`, `follow_redirects=False`, no proxy, and the descriptor's validated numeric loopback URL. Give each GET an overall 5-second `asyncio.timeout` and bound the complete health/props/slots readiness observation by the same 5-second overall budget; test the aggregate with a short injected deadline. Wrap each POST in an overall 600-second timeout and the explicit per-phase values. Stream responses into a capped 1 MiB buffer; parse only whitelisted fields and discard raw bodies. Unsupported, auth and protocol errors become fixed codes. On a possibly submitted mutation with no valid terminal response, raise `SnapshotError("outcome_unknown", submission_possible=True)`.
 
 ```python
 PROBE_SECONDS = 5.0

@@ -185,7 +185,7 @@ class SlotReceipt(_StrictFrozenModel):
     @field_validator("filename")
     @classmethod
     def _safe_filename(cls, value: str) -> str:
-        if not value or PurePath(value).name != value:
+        if not value or "\0" in value or PurePath(value).name != value:
             raise ValueError("filename must be a basename")
         return value
 
