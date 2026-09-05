@@ -522,3 +522,77 @@ async def test_console_send_watchdog_is_a_noop_once_the_stash_is_consumed():
         # Nothing resurrected: the composer stays exactly as the normal
         # accept/refuse path already left it.
         assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "keyboard,late_text",
+    [(False, ""), (False, "new draft"), (True, ""), (True, "new draft")],
+)
+async def test_setup_refusal_after_acceptance_preserves_draft(
+    monkeypatch, keyboard, late_text
+):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        controller = console._ensure_console_chat_controller()
+        session = controller.store.ensure_session()
+        console._session._sync_console_session_draft()
+        composer.load_draft("original draft")
+        if keyboard:
+            console._console_inflight_send_stashes[session.id] = (
+                composer.stash_draft_for_send()
+            )
+
+        async def refuse_after_setup(draft, *, session_id=None):
+            controller.on_submission_accepted()
+            if late_text:
+                composer.insert_text(late_text)
+            return ConsoleSubmitResult(False, False, "Setup cancelled")
+
+        monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
+        await console._submit_console_native_draft("original draft", session.id)
+        expected = (
+            "original draft" + late_text
+            if keyboard
+            else (late_text or "original draft")
+        )
+        assert composer.draft_text() == expected
+
+
+@pytest.mark.asyncio
+async def test_setup_refusal_does_not_restore_consumed_stash_into_other_visible_draft(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        controller = console._ensure_console_chat_controller()
+        session = controller.store.ensure_session()
+        console._session._sync_console_session_draft()
+        composer.load_draft("A private draft")
+        console._console_inflight_send_stashes[session.id] = (
+            composer.stash_draft_for_send()
+        )
+
+        async def refuse_after_setup(draft, *, session_id=None):
+            controller.on_submission_accepted()
+            # A remains store-active while the composer already presents B.
+            composer.load_draft("B private draft")
+            console._console_visible_draft_session_id = "other-session"
+            return ConsoleSubmitResult(False, False, "Setup cancelled")
+
+        # Hold the session-switch presentation gap while observing the refusal;
+        # the ordinary final sync would finish that transition and replace B.
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", AsyncMock())
+        monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
+        await console._submit_console_native_draft("A private draft", session.id)
+        assert composer.draft_text() == "B private draft"

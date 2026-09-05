@@ -175,6 +175,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount.": (),
         "canvas sync failed": ("kind",),
         "Library entry canvas repair attempt failed": (),
         "Strict Library entry shell synchronization failed": (),
@@ -217,6 +218,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Image generation batch raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed": (),
         "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
@@ -3395,3 +3397,55 @@ def test_task_15103_review_ledger_semantic_atom_digest_is_scope_independent() ->
     moved = {**atom, "qualified_scope": "Another.place"}
 
     assert moved["semantic_digest"] == atom["semantic_digest"]
+
+
+@pytest.mark.parametrize("environment_name", [".venv", "developer-python"])
+def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment_name: str
+) -> None:
+    """Local dependency installations must not become application owners/sinks."""
+    package = tmp_path / "tldw_chatbook"
+    package.mkdir()
+    environment = package / environment_name
+    dependency = environment / "lib/python3.13/site-packages/foreign.py"
+    dependency.parent.mkdir(parents=True)
+    (environment / "pyvenv.cfg").write_text("home = /local/python\n")
+    dependency.write_text("logger.error('foreign')\nlogger.add('foreign.log')\n")
+    # A similarly named application module is still in scope.
+    application = package / "venv"
+    application.mkdir()
+    (application / "owner.py").write_text(
+        "logger.warning('owned')\nlogger.add('owned.log')\n"
+    )
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert [row["path"] for row in inventory["owners"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert [row["path"] for row in inventory["persistent_sink_topology"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert inventory["summary"] == {
+        "owner_files": 1,
+        "persistent_sink_files": 1,
+        "task_492_calls": 0,
+        "task_494_calls": 1,
+        "path_privacy_candidate_calls": 0,
+    }
+
+
+def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypatch):
+    owners = {
+        "tldw_chatbook/UI/LLM_Management_Window.py": {"Lazy LLM view mount failed": ()},
+        "tldw_chatbook/UI/Screens/library_screen.py": {
+            "Pending Library lifecycle write failed during unmount.": ()
+        },
+    }
+    for owner, labels in owners.items():
+        for label, fields in labels.items():
+            assert REVIEWED_METADATA_ONLY_DIAGNOSTICS[owner][label] == fields
+    monkeypatch.setitem(globals(), "REVIEWED_METADATA_ONLY_DIAGNOSTICS", owners)
+    test_reviewed_diagnostic_changes_are_metadata_only()

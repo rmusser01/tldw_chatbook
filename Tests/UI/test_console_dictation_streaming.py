@@ -3098,7 +3098,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
                 await pilot.pause(0.01)
             # Blocked mid-flight: nothing must have been spoken yet.
             assert not any(
-                call.args[0].__class__.__name__ == "TTSRequestEvent"
+                call.args[0].__class__.__name__ == "TTSMessageSpeechRequestEvent"
                 for call in app.post_message.call_args_list
             )
 
@@ -3112,13 +3112,14 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
                     (
                         call.args[0]
                         for call in app.post_message.call_args_list
-                        if call.args[0].__class__.__name__ == "TTSRequestEvent"
+                        if call.args[0].__class__.__name__
+                        == "TTSMessageSpeechRequestEvent"
                     ),
                     None,
                 )
 
             assert spoken_event is not None
-            assert spoken_event.text == "The answer is 42."
+            assert spoken_event.snapshot.raw_content == "The answer is 42."
             assert spoken_event.message_id == message.id
             assert console._console_speaking_message_id == message.id
     finally:
@@ -3927,7 +3928,11 @@ async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
         spoken: list[str] = []
         while time.monotonic() < deadline and not spoken:
             await pilot.pause(0.01)
-            spoken = _spoken_texts(app.post_message)
+            spoken = [
+                call.args[0].snapshot.raw_content
+                for call in app.post_message.call_args_list
+                if call.args[0].__class__.__name__ == "TTSMessageSpeechRequestEvent"
+            ]
 
         assert spoken == ["The answer is 42."]
         assert console._console_speaking_message_id == message.id

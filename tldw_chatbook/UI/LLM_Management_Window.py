@@ -2174,7 +2174,7 @@ class LLMManagementWindow(Container):
         try:
             await self._mount_deferred_views(view_name)
         except Exception:
-            logger.exception("Lazy LLM view mount failed: {}", view_name)
+            logger.error("Lazy LLM view mount failed")
             return
         finally:
             self._populating_views.discard(view_name)

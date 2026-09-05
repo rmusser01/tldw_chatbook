@@ -978,6 +978,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self._is_current_view():
             self.release_interaction_capture()
             return
+        self._apply_interaction_position(event)
+        event.stop()
+
+    def _apply_interaction_position(self, event: events.MouseEvent) -> None:
+        """Apply the latest pointer sample while the interaction is still armed."""
+        if self._interaction is None:
+            return
         mode, origin_x, origin_y, original = self._interaction
         screen_x = int(event.screen_x if event.screen_x is not None else event.x)
         screen_y = int(event.screen_y if event.screen_y is not None else event.y)
@@ -998,7 +1005,6 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self._working_preferences, geometry=preferred
         )
         self._apply_geometry(preferred)
-        event.stop()
 
     def on_mouse_up(self, event: events.MouseUp) -> None:
         """Finish one interaction, release capture, and persist exactly once."""
@@ -1009,7 +1015,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self._is_current_view():
             self.release_interaction_capture()
             return
-        self._interaction = None
+        # Terminals may coalesce moves or report the last position only on release.
+        self._apply_interaction_position(event)
         self.release_interaction_capture()
         self._schedule_geometry_persist(self._working_preferences.geometry)
         event.stop()
