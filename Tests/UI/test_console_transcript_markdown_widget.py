@@ -7,13 +7,13 @@ explicit link policy (http(s) to the browser, other schemes notify-only).
 """
 
 import webbrowser
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Markdown, Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleCitationPhase,
@@ -54,14 +54,6 @@ class MarkdownHarness(App):
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
-
-
-_BUNDLE = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "tldw_cli_modular.tcss"
-)
 
 
 class StyledMarkdownHarness(MarkdownHarness):

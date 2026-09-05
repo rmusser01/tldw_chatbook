@@ -278,20 +278,16 @@ _BUNDLE = (
 # TASK-25812 split the per-screen rules out of the boot bundle: the speech
 # disclosure/modal styles the "real styles" tests verify now live in the
 # sheet SettingsScreen itself attaches via CSS_PATH, not in _BUNDLE.
-_SETTINGS_SHEET = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "screen_agentic_settings.tcss"
-)
+_SETTINGS_SHEET = _BUNDLE.with_name("screen_agentic_settings.tcss")
+_SETTINGS_CSS_PATH = [str(_BUNDLE), str(_SETTINGS_SHEET)]
 
 
 class _StyledDestinationHarness(DestinationHarness):
-    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
+    CSS_PATH = _SETTINGS_CSS_PATH
 
 
 class _StyledPanelHarness(_PanelHarness):
-    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
+    CSS_PATH = _SETTINGS_CSS_PATH
 
 
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
@@ -3310,8 +3306,9 @@ async def test_production_bundle_applies_speech_disclosure_styles() -> None:
         assert selector in sheet_css
 
     app = _StyledPanelHarness(configure_provider="audio_cpp")
-    assert _SETTINGS_SHEET.resolve() in [
-        Path(sheet).resolve() for sheet in app.CSS_PATH
+    assert [Path(path).resolve() for path in app.CSS_PATH] == [
+        _BUNDLE.resolve(),
+        _SETTINGS_SHEET.resolve(),
     ]
 
     async with app.run_test(size=(120, 40)):
