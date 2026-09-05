@@ -478,6 +478,7 @@ class TestAudioRecordingIntegration:
                 mock_stream.close.assert_called_once_with()
                 assert service.stream is None
 
+    @pytest.mark.real_audio_device
     def test_sounddevice_recording_flow(self):
         """Test complete recording flow with sounddevice backend."""
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", False):
