@@ -1663,7 +1663,7 @@ def _mutate_manual_fence(
             preserve_descendants=True,
         )
     elif name == "parent":
-        nodes[rows[3].id].parent_message_id = rows[0].persisted_message_id
+        store._native_parent_by_message[rows[3].id] = rows[0].id
     elif name == "status_visibility":
         nodes[rows[3].id].status = "failed"
     elif name == "deletion":

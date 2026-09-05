@@ -32,6 +32,19 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_prepared_request import (
+    MEMORY_OPEN_TAG,
+    PreparedConsoleRequest,
+    PreparedProviderRequest,
+    build_console_request,
+    prepare_provider_request,
+    resolve_request_capacity,
+    thaw_json,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionResult,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -43,27 +56,66 @@ class _SequencedCapturingGateway:
     """Fake provider gateway: streams one scripted reply per call, in order,
     and records the exact outgoing message list for EVERY call.
 
-    Both real sends (``submit_draft``) and the non-streaming summarize seam
-    (``summarize_up_to`` -> ``_collect_summary_completion``) flow through the
-    same ``stream_chat`` method on the real gateway protocol, so a single
-    sequenced/capturing fake -- mirroring ``_SequencedGateway`` in
-    ``test_console_branching_e2e.py`` plus the message-capture from
-    ``SummaryGateway`` in ``test_console_rewind_summarize.py`` -- covers both.
+    Real sends stream; summaries use auxiliary completion. Both consume the
+    same scripted sequence and retain the exact outgoing payload for assertions.
     """
 
     def __init__(self, replies):
         self._replies = list(replies)
         self.calls: list[list[dict]] = []
+        self.prepared_calls: list[PreparedProviderRequest] = []
 
     async def resolve_for_send(self, selection):
-        return provider_resolution(
-            base_url="http://127.0.0.1:9099", max_tokens=512
+        destination = provider_resolution(
+            base_url="http://127.0.0.1:9099"
+        ).resolved_destination
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            max_tokens=512,
+            resolved_destination=destination,
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):
+        if isinstance(messages, PreparedProviderRequest):
+            self.prepared_calls.append(messages)
+            messages = thaw_json(messages.messages_payload)
         self.calls.append(messages)
         text = self._replies[len(self.calls) - 1]
         yield text
+
+    def prepare_chat_request(
+        self, resolution, messages, *, tools=None, apply_safety_window=True, **kwargs
+    ):
+        semantic = (
+            messages
+            if isinstance(messages, PreparedConsoleRequest)
+            else build_console_request(messages, tools=tools or ())
+        )
+        return prepare_provider_request(
+            semantic,
+            wire_style="single_preamble",
+            model=resolution.model,
+            provider=resolution.provider,
+            capacity=resolve_request_capacity(
+                context_window_tokens=50_000,
+                requested_response_tokens=resolution.max_tokens or 512,
+            ),
+            count_fn=lambda rows, _model: sum(
+                len(str(row.get("content", "")).split()) + 2 for row in rows
+            ),
+            apply_safety_window=apply_safety_window,
+        )
+
+    async def complete_auxiliary(self, request):
+        self.calls.append([dict(message) for message in request.messages])
+        return AuxiliaryCompletionResult(
+            provider=request.resolution.provider,
+            model=request.resolution.model,
+            text=self._replies[len(self.calls) - 1],
+        )
 
 
 def _new_controller(db: CharactersRAGDB, replies):
@@ -94,7 +146,7 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    all_nodes = screen._message._console_messages_from_conversation_tree(tree)
     active_leaf_id, before_message_id = db.get_conversation_active_cursor(
         conversation_id
     )
@@ -172,16 +224,12 @@ async def test_before_first_survives_restart_then_resend_clears_marker(tmp_path)
             store=resumed,
             provider_gateway=_SequencedCapturingGateway(["A1 edited"]),
         )
-        assert (
-            await resumed_controller.submit_draft("U1 edited")
-        ).accepted is True
+        assert (await resumed_controller.submit_draft("U1 edited")).accepted is True
         active_leaf, before = db.get_conversation_active_cursor(conversation_id)
         assert active_leaf is not None
         assert before is None
 
-        restarted, restarted_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        restarted, restarted_session = _resume_into_fresh_store(db, conversation_id)
         assert [
             message.content
             for message in restarted.messages_for_session(restarted_session.id)
@@ -220,9 +268,7 @@ async def test_before_first_unsent_draft_edit_is_session_only(tmp_path):
         assert resumed.session_draft(resumed_session.id) == "unsent local edit"
 
         del resumed, resumed_session
-        restarted, restarted_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        restarted, restarted_session = _resume_into_fresh_store(db, conversation_id)
         assert restarted.active_path_message_ids(restarted_session.id) == []
         assert restarted.session_draft(restarted_session.id) == "U1"
         assert db.get_conversation_active_cursor(conversation_id) == (
@@ -235,20 +281,23 @@ async def test_before_first_unsent_draft_edit_is_session_only(tmp_path):
 
 @pytest.mark.asyncio
 async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
+    # The real compaction guard requires savings after the memory preamble.
+    u1_text = "U1 " + "original user context " * 40
+    a1_text = "A1 " + "original assistant context " * 40
     db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
     try:
         store, controller, session, gateway = _new_controller(
-            db, replies=["A1", "A2", "A2-prime", "SUMMARY TEXT", "A3"]
+            db, replies=[a1_text, "A2", "A2-prime", "SUMMARY TEXT", "A3"]
         )
 
         # ---- Step 1: converse U1 -> A1 -> U2 -> A2 (persisted) ----
-        result1 = await controller.submit_draft("U1")
+        result1 = await controller.submit_draft(u1_text)
         assert result1.accepted is True
         await store.hydrate_session_library_policy(session.id)
         result2 = await controller.submit_draft("U2")
         assert result2.accepted is True
         transcript = store.messages_for_session(session.id)
-        assert [m.content for m in transcript] == ["U1", "A1", "U2", "A2"]
+        assert [m.content for m in transcript] == [u1_text, a1_text, "U2", "A2"]
         u1, a1, u2, a2 = transcript
         conversation_id = session.persisted_conversation_id
         assert conversation_id is not None  # real persistence engaged throughout
@@ -258,8 +307,8 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         target = _restore_to_prompt(store, session.id, u2.id)
         assert target == a1.id
         assert [m.content for m in store.messages_for_session(session.id)] == [
-            "U1",
-            "A1",
+            u1_text,
+            a1_text,
         ]
         # Composer-refill step simulated: the full original prompt text is
         # retrievable (the screen would feed this into
@@ -289,24 +338,35 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         a2_prime_id = store.active_leaf(session.id)
         assert store.get_message(a2_prime_id).content == "A2-prime"
         assert [m.content for m in store.messages_for_session(session.id)] == [
-            "U1",
-            "A1",
+            u1_text,
+            a1_text,
             "U2-edited",
             "A2-prime",
         ]
 
         # ---- Step 4: summarize up to the new tip's prompt ----
+        snapshots = controller._durable_context_snapshots(session.id)
+        assert snapshots is not None
+        assert snapshots[0].parent_message_id is None
+        assert all(
+            child.parent_message_id == parent.message_id
+            for parent, child in zip(snapshots[:-1], snapshots[1:], strict=True)
+        ), [(row.message_id, row.parent_message_id) for row in snapshots]
         summarize_result = await controller.summarize_up_to(u2_prime_id)
         assert summarize_result.accepted is True
-        assert store.session_context_summary(session.id) == (
-            "SUMMARY TEXT",
-            u2_prime_id,
-        )
+        repository = controller._context_repository
+        memory = repository.list_active_memories(conversation_id)[0]
+        scope = repository.load_memory_scope(memory.memory_id)
+        assert memory.summary_text == "SUMMARY TEXT"
+        assert memory.boundary_message_id == a1.persisted_message_id
+        assert scope.selection_anchor_message_id == u2_prime.persisted_message_id
+        assert scope.coverage_kind.value == "prefix"
+        assert store.session_context_summary(session.id) == (None, None)
         # The summarize span covered exactly U1/A1 (everything before the new
         # tip's prompt) -- never the edited prompt or its reply.
         summarize_span_text = gateway.calls[3][1]["content"]
-        assert "User: U1" in summarize_span_text
-        assert "Assistant: A1" in summarize_span_text
+        assert '"content":"U1 ' in summarize_span_text
+        assert '"content":"A1 ' in summarize_span_text
         assert "U2-edited" not in summarize_span_text
 
         # ---- Step 5: next-send payload is compacted (built via the real
@@ -318,22 +378,20 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         outgoing_texts = _payload_texts(outgoing)
         # Pre-boundary rows (U1/A1) are gone; boundary + tail (edited U2,
         # A2-prime, the new U3) are kept.
-        assert "U1" not in outgoing_texts
-        assert "A1" not in outgoing_texts
+        assert u1_text not in outgoing_texts
+        assert a1_text not in outgoing_texts
         assert "U2-edited" in outgoing_texts
         assert "A2-prime" in outgoing_texts
         assert "U3" in outgoing_texts
-        assert outgoing[0]["role"] == "system"
-        assert "[Summary of earlier conversation]" in outgoing[0]["content"]
-        assert "SUMMARY TEXT" in outgoing[0]["content"]
+        preamble = gateway.prepared_calls[-1].system_message
+        assert MEMORY_OPEN_TAG in preamble
+        assert "SUMMARY TEXT" in preamble
         # Meanwhile the store's own transcript view is the FULL, uncompacted
         # history -- compaction only ever touches the provider payload.
-        full_transcript = [
-            m.content for m in store.messages_for_session(session.id)
-        ]
+        full_transcript = [m.content for m in store.messages_for_session(session.id)]
         assert full_transcript == [
-            "U1",
-            "A1",
+            u1_text,
+            a1_text,
             "U2-edited",
             "A2-prime",
             "U3",
@@ -341,13 +399,11 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         ]
 
         # ---- Step 6: persist -> DROP the store -> resume ----
-        resumed_store, resumed_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        resumed_store, resumed_session = _resume_into_fresh_store(db, conversation_id)
         resumed_transcript = resumed_store.messages_for_session(resumed_session.id)
         assert [m.content for m in resumed_transcript] == [
-            "U1",
-            "A1",
+            u1_text,
+            a1_text,
             "U2-edited",
             "A2-prime",
             "U3",
@@ -356,20 +412,12 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         resumed_u2_prime = resumed_transcript[2]
         assert resumed_u2_prime.content == "U2-edited"
 
-        # Summary + boundary restored, mapped to the RESUMED store's new
-        # native id for the same underlying (persisted) message.
-        resumed_summary, resumed_boundary_id = resumed_store.session_context_summary(
-            resumed_session.id
+        # Branch memory keeps durable ownership across newly allocated native IDs.
+        assert resumed_u2_prime.id != u2_prime_id
+        assert (
+            resumed_u2_prime.persisted_message_id == scope.selection_anchor_message_id
         )
-        assert resumed_summary == "SUMMARY TEXT"
-        assert resumed_boundary_id == resumed_u2_prime.id
-        assert resumed_boundary_id != u2_prime_id  # a genuinely new native id
-
-        # Banner state is derivable: the transcript renderer's own gate is
-        # "boundary set AND on the active path" -- true here.
-        assert resumed_boundary_id in resumed_store.active_path_message_ids(
-            resumed_session.id
-        )
+        assert resumed_store.session_context_summary(resumed_session.id) == (None, None)
 
         # Next payload (post-resume) is still compacted.
         resumed_controller = ConsoleChatController(
@@ -379,52 +427,56 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         resumed_payload = resumed_controller._provider_messages_for_session(
             resumed_session.id, annotate_ids=True
         )
-        resumed_compacted = resumed_controller._apply_context_summary_compaction(
-            resumed_session.id, resumed_payload
+        effective, resumed_projection = (
+            resumed_controller._project_session_effective_memory(
+                resumed_session.id, resumed_payload
+            )
         )
+        assert effective.memory.memory_id == memory.memory_id
+        assert effective.memory.summary_text == "SUMMARY TEXT"
+        assert (
+            effective.scope.selection_anchor_message_id
+            == resumed_u2_prime.persisted_message_id
+        )
+        resumed_compacted = [*resumed_projection.memory, *resumed_projection.rows]
         resumed_texts = _payload_texts(resumed_compacted)
-        assert "U1" not in resumed_texts
-        assert "A1" not in resumed_texts
+        assert u1_text not in resumed_texts
+        assert a1_text not in resumed_texts
         assert "U2-edited" in resumed_texts
         assert resumed_compacted[0]["role"] == "system"
-        assert "[Summary of earlier conversation]" in resumed_compacted[0]["content"]
+        assert MEMORY_OPEN_TAG in resumed_compacted[0]["content"]
 
         # ---- Step 7: restore to before the boundary -> summary inert ----
-        restore_target = _restore_to_prompt(
-            resumed_store, resumed_session.id, resumed_u2_prime.id
-        )
+        _restore_to_prompt(resumed_store, resumed_session.id, resumed_u2_prime.id)
         assert [
-            m.content
-            for m in resumed_store.messages_for_session(resumed_session.id)
-        ] == ["U1", "A1"]
-        # The stored summary/boundary is left in place (not cleared)...
-        assert resumed_store.session_context_summary(resumed_session.id) == (
-            "SUMMARY TEXT",
-            resumed_boundary_id,
-        )
-        # ...but the boundary is no longer on the active path, so it is INERT.
-        assert resumed_boundary_id not in resumed_store.active_path_message_ids(
+            m.content for m in resumed_store.messages_for_session(resumed_session.id)
+        ] == [u1_text, a1_text]
+        # Durable memory remains stored, but its selection anchor is off-path.
+        assert repository.list_active_memories(conversation_id)[0] == memory
+        assert resumed_u2_prime.id not in resumed_store.active_path_message_ids(
             resumed_session.id
         )
         inert_payload = resumed_controller._provider_messages_for_session(
             resumed_session.id, annotate_ids=True
         )
-        inert_compacted = resumed_controller._apply_context_summary_compaction(
-            resumed_session.id, inert_payload
+        inert_effective, inert_projection = (
+            resumed_controller._project_session_effective_memory(
+                resumed_session.id, inert_payload
+            )
         )
+        assert inert_effective.memory is None
+        assert inert_projection.memory == ()
+        inert_compacted = list(inert_projection.rows)
         # Byte-identical to the uncompacted payload -- the leak rule: a
         # summary covering LATER turns never reaches this EARLIER point.
         assert inert_compacted == inert_payload
         inert_texts = _payload_texts(inert_compacted)
-        assert "U1" in inert_texts and "A1" in inert_texts
-        assert not any(
-            "[Summary of earlier conversation]" in text for text in inert_texts
-        )
+        assert u1_text in inert_texts and a1_text in inert_texts
+        assert not any(MEMORY_OPEN_TAG in text for text in inert_texts)
 
         # ---- Step 8: sync_log purity for the summary writes ----
-        # `set_conversation_context_summary` is a bare UPDATE (no version /
-        # last_modified bump), so it must never emit a sync_log row -- same
-        # local-only contract as the active-leaf pointer (Task 1/2).
+        # Branch-memory writes remain local and do not rewrite legacy summary
+        # fields or emit synchronization payloads.
         with db.get_connection() as conn:
             conversation_sync_rows = conn.execute(
                 "SELECT operation, payload FROM sync_log "
