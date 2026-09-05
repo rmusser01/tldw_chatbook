@@ -9,6 +9,23 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## CSS ratchet paydown must preserve inherited subjects and specificity
+
+**PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a
+277-versus-274 bare-type selector breach, but the first narrowed selectors
+regressed the 80-column Models and F9 paint checks. A plain button ID lost to
+the launcher disabled-border rule and clipped Restore. Checkbox and
+CollapsibleTitle both inherit Static; excluding them lost height/wrapping
+behavior and left the focused checkbox text outside the painted viewport.
+Preserving button ancestor specificity and explicitly targeting those inherited
+subjects restored the checks without raising the boot budget.
+
+**What to do.** Pair parsed-selector census checks with actual small-terminal
+paint checks. When replacing a type selector, inspect its subclasses and preserve
+the relevant cascade precedence, not just the obvious direct widget instances.
+
+---
+
 ## Spend forecasts must test admitted media and durable recovery IDs
 
 **PR #2397, 2026-09-04.** The next-send estimate scanned every transcript

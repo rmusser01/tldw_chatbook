@@ -8308,8 +8308,20 @@ MediaDetailsWidget {
     background: $panel;
 }
 
-#llamacpp-snapshot-manager Static,
-#settings-snapshot-controls Static {
+#llamacpp-snapshot-manager .section-title,
+#llamacpp-snapshot-manager .snapshot-copy,
+#llamacpp-snapshot-manager .snapshot-keep-label,
+#snapshot-retention,
+#snapshot-operation-status,
+#snapshot-disabled-reason,
+#snapshot-details,
+#snapshot-preferences-result,
+#snapshot-enabled,
+#settings-snapshot-enabled,
+#settings-snapshot-controls CollapsibleTitle,
+#llamacpp-snapshot-manager CollapsibleTitle,
+#settings-snapshot-controls .settings-help-copy,
+#settings-snapshot-controls .settings-input-label {
     height: auto;
     text-wrap: wrap;
 }
@@ -8319,7 +8331,14 @@ MediaDetailsWidget {
     width: 100%;
 }
 
-#llamacpp-snapshot-manager .snapshot-actions Button {
+#llamacpp-snapshot-manager #snapshot-save,
+#llamacpp-snapshot-manager #snapshot-restore,
+#llamacpp-snapshot-manager #snapshot-delete,
+#llamacpp-snapshot-manager #snapshot-refresh,
+#llamacpp-snapshot-manager #snapshot-previous,
+#llamacpp-snapshot-manager #snapshot-next,
+#llamacpp-snapshot-manager #snapshot-apply,
+#llamacpp-snapshot-manager #snapshot-reload {
     min-width: 8;
     width: 1fr;
     margin: 0;
@@ -8331,11 +8350,19 @@ MediaDetailsWidget {
     max-height: 3;
 }
 
-#llamacpp-snapshot-manager .snapshot-actions Button:disabled {
+#llamacpp-snapshot-manager #snapshot-save:disabled,
+#llamacpp-snapshot-manager #snapshot-restore:disabled,
+#llamacpp-snapshot-manager #snapshot-delete:disabled,
+#llamacpp-snapshot-manager #snapshot-refresh:disabled,
+#llamacpp-snapshot-manager #snapshot-previous:disabled,
+#llamacpp-snapshot-manager #snapshot-next:disabled,
+#llamacpp-snapshot-manager #snapshot-apply:disabled,
+#llamacpp-snapshot-manager #snapshot-reload:disabled {
     border: none;
 }
 
-#llamacpp-snapshot-manager DataTable {
+#snapshot-slots,
+#snapshot-records {
     height: 5;
     width: 100%;
 }
