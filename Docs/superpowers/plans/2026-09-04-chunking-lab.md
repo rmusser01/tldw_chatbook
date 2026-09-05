@@ -406,6 +406,7 @@ WHERE id = ? AND uuid = ? AND version = ? AND deleted = 0 AND is_builtin = 0;
 
 - Create: `tldw_chatbook/Chunking/lab_comparison.py`.
 - Create: `tldw_chatbook/UI/Chunking_Lab_Modules/__init__.py`, `tldw_chatbook/UI/Chunking_Lab_Modules/results_region.py`.
+- Regenerate only task-derived changes via existing CSS builder: `tldw_chatbook/css/widget_defaults_self.tcss`, `tldw_chatbook/css/widget_defaults_scoped.tcss`. Use the incumbent BUNDLED_CSS declaration/harness; do not add ignored build manifests or hand-edit generated sheets.
 - Test: `Tests/Chunking/test_lab_comparison.py`, `Tests/UI/test_chunking_lab_results.py`.
 
 **Interfaces**
@@ -413,6 +414,7 @@ WHERE id = ? AND uuid = ? AND version = ? AND deleted = 0 AND is_builtin = 0;
 - Consumes `RunResult`, `PreparedRecipe`, verified chunk spans and runtime identities.
 - Produces `comparison_reason(a: RunResult, b: RunResult) -> str | None` (None means compatible), `summarize_result(result: RunResult, *, token_counts: tuple[int, ...] | None = None, measurement_id: str | None = None) -> dict`, and `diff_configs(a: RunResult, b: RunResult, *, authored: bool = False) -> tuple[dict, ...]` (path/kind/A/B entries).
 - Produces `ResultsRegion(Widget)` with `show_results(a: RunResult | None, b: RunResult | None, *, stale_ids: frozenset[str]) -> None`; emits selection and rerun requests, never executes/loads DB records itself.
+- Add `configure_view(view: dict, *, previous_ids: frozenset[str] = frozenset()) -> None` for restored inspection state and explicit Previous labels. Both ID sets identify run IDs; missing current members are None, never substituted. Emit `SelectionChanged(candidate_id, chunk_index, active_view)` for user changes. Task8 merges the documented small view schema into `session.view["results"]`, preserving sample/global state; restoring view state does not emit a content edit.
 - Character size uses Python Unicode code-point `len(text)`, words use `len(text.split())`, p95 uses nearest-rank `ceil(.95*n)-1`, empty distributions have unavailable quantiles. Token counts require an explicit available local measurement tokenizer identity; recomputation is separate from execution identity.
 
 - [ ] Write the failing compatibility test below; add snapshot diff, mismatched-unit, repeated-text mapping, zero-output distribution, and 10k-row navigation tests.
@@ -454,9 +456,10 @@ right = json.loads(b.request.recipe.authored_json if authored else b.request.rec
 
 - Create: `tldw_chatbook/UI/Screens/chunking_lab_screen.py`.
 - Create: `tldw_chatbook/UI/Chunking_Lab_Modules/editor_region.py`, `sample_region.py`, `dialogs.py` in the same package.
-- Modify: `tldw_chatbook/app.py` (lazy app/profile coordinator ownership and orderly close), `tldw_chatbook/UI/Screens/library_screen.py` (entry/handoff only).
-- Modify: `tldw_chatbook/UI/Navigation/screen_registry.py`, `shell_destinations.py`, `tldw_chatbook/UI/Workbench/route_inventory.py`, `tldw_chatbook/UI/stable_command_palette.py` (Library-owned tool route, not a global destination).
+- Modify: `tldw_chatbook/app.py` (lazy app/profile coordinator ownership, orderly close, and Library tool command provider), `tldw_chatbook/UI/Screens/library_screen.py` (entry/handoff only).
+- Modify: `tldw_chatbook/UI/Navigation/screen_registry.py`, `shell_destinations.py`, `tldw_chatbook/UI/Workbench/route_inventory.py` (Library-owned tool route, not a global destination). Leave `UI/stable_command_palette.py` unchanged: it owns keyboard selection, not command registration.
 - Modify: `tldw_chatbook/Widgets/Library/library_ingest_canvas.py` (saved-template refresh signal).
+- Regenerate only task-derived widget/screen default sheets with the existing CSS builder for new BUNDLED_CSS/BUNDLED_SCREEN_CSS declarations; no hand edits or ignored build-cache additions.
 - Test: `Tests/UI/test_chunking_lab_screen.py`, `Tests/UI/test_chunking_lab_recovery_flow.py`, existing `Tests/UI/test_library_ingest_canvas.py`, `test_screen_navigation.py`, `test_command_palette_shell_routes.py`, `test_workbench_route_inventory.py`.
 - Docs: create `Docs/Chunking_Lab.md`; reconcile dev's `backlog/tasks/task-24404 - Settings form for creating and editing chunking templates.md` through the CLI workflow.
 
@@ -465,7 +468,7 @@ right = json.loads(b.request.recipe.authored_json if authored else b.request.rec
 - Consumes `LabCoordinator`, pure editing transitions, `ResultsRegion`, `save_lab_template`, existing Library text read/source-path validation and lazy navigation seams.
 - Produces `ChunkingLabScreen(BaseAppScreen)` for route `chunking_lab`, canonical owner `library`; no new shell destination constant. Entry handoff contains `return_route: str` and optional `local_media_id: int`, not raw private text in navigation metadata.
 - Produces `EditorRegion`, `SampleRegion`, and task-local save/import/restore dialogs. Region messages request domain transitions; the screen delegates to the app-owned coordinator.
-- Add app `get_chunking_lab_coordinator() -> LabCoordinator` lazily for the active profile. On profile change close the old coordinator before opening the new profile store at `get_user_data_dir() / "chunking_lab.sqlite3"` through existing private-path helpers.
+- Add app `async get_chunking_lab_coordinator() -> LabCoordinator` lazily and single-flight for the active profile, awaiting the existing asynchronous load factory with path resolution off-loop. On profile change close the old coordinator before opening the new profile store at `get_user_data_dir() / "chunking_lab.sqlite3"` through existing private-path helpers; failed loading must not expose an empty writable placeholder.
 - Successful template save emits a local `ChunkingTemplatesChanged` Textual message carrying record ID/version only; the ingest canvas invalidates `_chunk_template_names` and refreshes on next display/currently mounted use.
 
 - [ ] Re-read the current TASK-24404 and ADR-003/078/118. Archive its superseded Settings proposal with a CLI note linking ADR-118 and the design (do not mark implementation Done). Keep the reverse task reference in TASK-31428; do not add a higher-ID task reference to TASK-24404. If someone has implemented it since planning, stop duplication, inspect the landed UI, and amend this integration task's AC/plan before moving it. Keep the newer work intact.
@@ -505,6 +508,7 @@ async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
 - [ ] Save A starts from its captured authored body (retaining metadata/classifier), then replaces only preprocessing/chunking/postprocessing with its captured effective sections so pinned defaults are explicit. Use captured record fields, with explicit save-dialog edits allowed; never borrow current B or catalog values. Save B uses its current validated authored body. Method changes preserve incompatible options and explain the required explicit edit rather than silently deleting them.
 - [ ] Add paste/file/local-Library sample flows with exact copied text, UTF-8 validation, size refusal and explicit excerpt choice; read files off the UI loop through existing path validation. Add JSON template import/export and save conflict/error dialogs. Save refreshes the ingest canvas without source re-chunking or default changes.
 - [ ] Wire restore-on-open, Saving/Saved locally/Save failed/Unsaved result labels, Retry, recovery Export/Restore/Undo restore, confirmed Clear, and navigation cancellation. Explain that full sample/results are stored locally. Export/restore file I/O uses explicit user-selected paths and existing overwrite/private-path safeguards; no writes to paths carried in imported data.
+- [ ] Keep off-loop authoring transitions serialized and retry their immutable edit requests against newer session state when a result arrives during computation. Drain queued edits before Run/Save/export/navigation captures; revision-fence delayed rendering. Verify rapid edits to different controls and typing during completion preserve both latest inputs and the newly installed result.
 - [ ] Run the focused integration set:
 
 ```bash

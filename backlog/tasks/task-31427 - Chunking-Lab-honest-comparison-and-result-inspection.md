@@ -1,11 +1,11 @@
 ---
 id: TASK-31427
 title: Chunking Lab - honest comparison and result inspection
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 02:36'
+updated_date: '2026-09-05 03:12'
 labels:
   - chunking
   - chunking-lab
@@ -41,6 +41,7 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented captured-result compatibility, Unicode/word distributions, explicit method budgets, separately identified token measurements, verified overlap, and effective/authored JSON Pointer diffs in `Chunking/lab_comparison.py`. Different methods/assets remain experimental variables; incompatible results receive reasons without comparative deltas.
 
 Added `UI/Chunking_Lab_Modules/results_region.py`: 100-row pages per candidate, one 8192-code-point paged literal inspector, off-loop summaries/diffs/selection preparation, source/transformed coordinates, runtime/metadata details, explicit Previous and Newer draft badges, and selection/rerun messages. View patches live under `session.view.results`; the owning screen supplies current-versus-previous records and persists navigation. No DB loads or recipe execution occur in the region. Regenerated only the changed `css/widget_defaults_self.tcss` using the existing builder.
@@ -48,3 +49,6 @@ Added `UI/Chunking_Lab_Modules/results_region.py`: 100-row pages per candidate, 
 Validation: 13 comparison and 11 mounted Textual cases pass (24 total), including 10000-row navigation, literal text tail access, restored selections without edit echoes, zero/failed inspection, and 80x24/120x40/160x50 geometry. Two bounded screenshot rounds confirmed the compact row fix, captured diff, and verified linked source highlights. Ruff lint/format and diff whitespace checks pass. Ten targeted CSS consolidation cases pass; the composed-class coverage and class-level allowlist nodes fail identically on the exact Task7 base archive, with unchanged offending Console/Library sources. These inherited failures remain outside scope; no full test sweep was run.
 
 ADR check: direct implementation of [ADR-118](../decisions/118-chunking-lab-local-execution-and-recovery.md); no new ADR. No new lesson added: encountered stylesheet and repeated-text mapping traps are already documented. Status remains In Progress pending independent review and screen integration. Task notes were edited directly under the documented five-digit Backlog CLI workaround.
+
+Independent Task7 review approved spec compliance and quality; no blocking findings. Final24 feature tests pass, scoped static checks clean; two inherited CSS guards reproduce identically on BASE and remain explicitly disclosed. Controller accepted two bounded viewport rounds, with80x24 table-height fix. Task8 owns complete screen routing, missing-member selection, view-state persistence and global keys. ADR-118 applies.
+<!-- SECTION:NOTES:END -->
