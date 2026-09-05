@@ -215,6 +215,18 @@ def test_system_source_state_reflects_tap(tmp_path):
     assert call_cap.system_source_state == "lost"
 
 
+def test_tap_that_fails_to_start_reports_lost_not_none(tmp_path):
+    # `start_recording` drops `self._tap` when the tap refuses to start, so
+    # the state used to read "none" -- indistinguishable from room mode,
+    # where the user never asked for system audio at all. The rail's "System
+    # source lost" indicator depends on telling those two apart.
+    cap, _, tap, _ = _capture(tmp_path, call_mode=True)
+    tap.start = lambda on_frames: False
+    assert cap.start_recording(callback=lambda b: None) is True
+    assert cap.mode == "room"          # capture degraded, as before
+    assert cap.system_source_state == "lost"
+
+
 def test_mic_frame_pulls_one_tap_frame_and_zero_fills(tmp_path):
     cap, recorders, tap, writers = _capture(tmp_path)
     cap.start_recording(callback=lambda b: None)

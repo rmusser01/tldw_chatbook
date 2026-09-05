@@ -241,8 +241,12 @@ class SubprocessTap:
                 stderr=subprocess.PIPE,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.error("system audio helper failed to start: {}", exc)
-            self._stderr_lines.append(str(exc))
+            # A spawn failure names the helper's absolute path (which sits
+            # under the user's data dir), and `last_stderr` is logged again
+            # by `_reader`, so redact once at the point of capture.
+            detail = redact_user_paths(str(exc))
+            logger.error("system audio helper failed to start: {}", detail)
+            self._stderr_lines.append(detail)
             self.state = "lost"
             return False
         self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True, name="audiotap-stderr")
@@ -341,6 +345,18 @@ class DeviceTap:
                     if str(device.get("name", "")) == self._device_name:
                         device_id = device.get("id", device.get("index"))
                         break
+                else:
+                    # The user named a loopback device (BlackHole, VB-Cable)
+                    # that is not plugged in. Falling through to the default
+                    # INPUT would silently record the room through the mic
+                    # a second time and label it "others" -- worse than no
+                    # system audio (final whole-branch review).
+                    logger.warning(
+                        "system audio device {!r} not found; not falling back to the default input",
+                        self._device_name,
+                    )
+                    self.state = "lost"
+                    return False
             if device_id is not None:
                 self._recorder.set_device(device_id)
             ok = bool(self._recorder.start_recording(callback=on_frames))

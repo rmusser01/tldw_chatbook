@@ -260,6 +260,24 @@ def test_device_tap_selects_device_by_name_and_forwards_frames():
     assert made[0].stopped == 1 and tap.state == "stopped"
 
 
+def test_device_tap_refuses_unknown_device():
+    # The user named a loopback device that is not plugged in. Falling
+    # through to the default INPUT (the old behaviour: device_id stayed
+    # None, so set_device was skipped and the recorder opened the default)
+    # would record the room through the mic a second time and label it
+    # "others" -- worse than having no system audio at all.
+    made: list[_Recorder] = []
+
+    def factory(**kwargs):
+        made.append(_Recorder(**kwargs))
+        return made[-1]
+
+    tap = sat.DeviceTap("VB-Cable (not plugged in)", recorder_factory=factory)
+    assert tap.start(lambda frame: None) is False
+    assert tap.state == "lost"
+    assert made[0].device is None and made[0].callback is None
+
+
 def test_build_tap_by_kind():
     assert sat.build_tap(sat.TapMode("unavailable", "x")) is None
     assert isinstance(sat.build_tap(sat.TapMode("native_parec", "x", command=("parec",))), sat.SubprocessTap)

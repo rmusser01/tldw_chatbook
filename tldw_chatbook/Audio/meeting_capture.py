@@ -168,6 +168,12 @@ class MeetingCapture:
             raise ValueError("writers must include 'mixed'")
         self._mic_factory = mic_recorder_factory
         self._tap = tap
+        # `start_recording` clears `self._tap` when the tap fails to start,
+        # which used to make `system_source_state` read "none" -- the same
+        # answer as room mode, where the user never asked for system audio
+        # at all. Remembering that a tap WAS configured lets the rail say
+        # "lost" (final whole-branch review).
+        self._tap_configured = tap is not None
         self._writers = dict(writers)
         self._vad_factory = vad_factory or _default_vad_factory
         self._silence_threshold_s = silence_threshold_s
@@ -246,15 +252,18 @@ class MeetingCapture:
     def system_source_state(self) -> str:
         """The system-audio tap's own state, for the rail's "lost" indicator.
 
-        ``"none"`` when there is no tap at all (room mode, or the tap failed
-        to start and ``start_recording`` already fell back to room mode);
-        otherwise the tap's own ``state`` (``"running"``, ``"lost"``, etc,
-        per ``system_audio_tap.py``) -- ``self._tap`` stays the SAME object
-        through a mid-session restart-once-then-give-up cycle, so its own
-        ``state`` is the only place "lost" is ever recorded.
+        ``"none"`` only in room mode -- the user never asked for system
+        audio. A tap that WAS configured but failed to start reports
+        ``"lost"``: ``start_recording`` drops ``self._tap`` in that case, so
+        the tap object itself is gone and ``_tap_configured`` is the only
+        remaining evidence that the degradation is worth telling the user
+        about. Otherwise this is the tap's own ``state`` (``"running"``,
+        ``"lost"``, etc, per ``system_audio_tap.py``) -- ``self._tap`` stays
+        the SAME object through a mid-session restart-once-then-give-up
+        cycle, so its own ``state`` is where a mid-session loss is recorded.
         """
         if self._tap is None:
-            return "none"
+            return "lost" if self._tap_configured else "none"
         return getattr(self._tap, "state", "unknown")
 
     @property
