@@ -256,9 +256,12 @@ examples):
    cause).
 
    **Fix round (post-landing review): ``focused`` was missing entirely --
-   a SIXTH unbound-attribute-escape hazard, distinct in shape from
-   exclusions 3e's bare-self-identity findings.** ``_sync_library_skills_
-   browse_result`` reads ``focused = getattr(self, "focused", None)`` --
+   recipe §3's sixth bypass shape's own "close cousin" sub-case, not a
+   distinct seventh shape: an unbound-attribute-escape hazard alongside
+   exclusions 3e's bare-self-identity findings (Forms A/B/C) under that
+   SAME shape -- the SEVENTH instance counted under it (6 identity-
+   argument names + this one).** ``_sync_library_skills_browse_result``
+   reads ``focused = getattr(self, "focused", None)`` --
    a literal-name ``getattr`` with a default, exactly the shape the
    recipe's own census (a plain ``self.<attr>`` ``ast.Attribute`` walk)
    cannot see, because the attribute name never appears as a literal
@@ -395,7 +398,6 @@ from ...Widgets.Library import (
 from .canvas_sync import _sync_library_canvas
 from .library_skills_state import LibrarySkillsState, skill_state_shim_attr
 from .screen_constants import (
-    LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
     LIBRARY_SKILLS_READER_PROFILE,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
     LIBRARY_SKILL_SAVE_STATUS_COPY,

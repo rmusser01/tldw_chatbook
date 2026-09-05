@@ -3061,20 +3061,49 @@ perl -e 'alarm 150; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_pr
 Every row is HIGHER than the wave-2 close band (§16: settle 264-485 ms, max
 gap 54-195 ms) — most sharply `notes (switch, 2nd)`'s 587 ms max gap versus
 §16's own highest recorded gap of 195 ms. This is NOT evidence of a
-code-level regression: this task's diff is documentation-only (recipe
-edits, two backlog filings, one comment-only docstring correction), and
-every prior wave-4 task's own report already confirms the skills move
-touches zero code on the Media/Notes rail-switch click path this probe
-exercises (a completely separate subsystem). The load evidence above is the
-far more plausible explanation — this probe measures wall-clock settle time
-and main-thread gap under whatever CPU contention exists at run time, and
-this session's own machine was running 8+ concurrent `pytest` processes and
-sitting at a load average of ~22.7 for the ENTIRE sweep window this probe
-ran inside of, versus wave-2 close's own probe run, which recorded "no
-prior run exists to diff against" and gives no load context of its own
-either way. Recorded here as this wave's own close-time baseline (like
-wave-2's), with the load caveat attached rather than either silently
-matched to the old band or wrongly flagged as a regression.
+code-level regression, but the "zero code on the probed path" framing this
+section originally used (corrected in the wave-4 final review) was FALSE:
+the skills cleanup (`ed4c29d45`) does touch this exact path, via mechanical
+receiver swaps of skills-field reads/writes INSIDE five of the probed
+path's own methods — `compose_content`,
+`_select_library_rail_row_after_source_admission`,
+`_toggle_library_media_reader_pane`, `restore_state`, and
+`_persist_library_reader_preference` (`self._library_skill(s)_<field>` →
+`self._skills_state.<field>`, dict/attribute lookups only, confirmed by
+diffing each hunk against every prior/subsequent commit's own claim on
+those line ranges — zero control-flow or logic changes anywhere in the
+five). That is nanosecond-scale work and cannot explain a ~3x max-gap
+delta on its own. The stronger evidence for "no structural regression" is
+the load-INDEPENDENT probe columns, which match wave-2's row-for-row:
+`recompose` is 0→0 on every row and `full-update` is identical row-for-row
+(2/2/2/1/1/1/1/1, both waves) — a real per-frame cost regression on this
+path would show up there, not only in wall-clock settle/gap numbers that
+scale with ambient CPU contention. The load evidence remains the far more
+plausible explanation for the timing delta itself — this probe measures
+wall-clock settle time and main-thread gap under whatever CPU contention
+exists at run time, and this session's own machine was running 8+
+concurrent `pytest` processes and sitting at a load average of ~22.7 for
+the ENTIRE sweep window this probe ran inside of, versus wave-2 close's own
+probe run, which recorded "no prior run exists to diff against" and gives
+no load context of its own either way. One further drift IS visible and
+worth naming rather than smoothing over: `mounts`/`nodes` counts rose
+slightly and unevenly — media mounts 163→173, nodes 113→115 (every media
+row gains exactly 2 nodes); `notes (switch, 2nd)` alone gains nodes
+110→115, while the other two notes rows stay at 110. This is small, does
+not track the settle/gap delta's shape, and is attributable to ordinary
+Media/Notes feature drift on this branch between wave-2 close (`09a5cadff`)
+and wave-4 close (`ed4c29d45`), not to this wave's own skills diff: 70
+non-doc commits touched `library_screen.py`/`Widgets/Library`/
+`Library_Modules` in that span, including several `origin/dev` merges and
+Media/Notes rail feature work with no connection to skills (e.g. `e34b11b23`
+"the media items pane gets a legible multi-row action grammar", `9c128c7ee`
+"the Reader carries a review-set banner", `35e9228df`/`c63e55cc0` review-set
+auto-resume/build-from-read-later) — any of which plausibly adds a handful
+of extra widgets/nodes to the Media pane and, specifically on a second
+notes switch, the notes canvas. Recorded here as this wave's own close-time
+baseline (like wave-2's), with both the load caveat and the corrected
+probed-path claim attached, rather than either silently matched to the old
+band or wrongly flagged as a regression.
 
 #### Lessons
 
@@ -3130,10 +3159,14 @@ matched to the old band or wrongly flagged as a regression.
    wave-2 close's recorded band, under a machine sitting at a ~22.7 load
    average with 8+ concurrent `pytest` processes running throughout — a
    condition wave-2's own probe run recorded no comparable load context
-   for. Because this task's diff touches zero code on the probe's own
-   Media/Notes rail-switch path, the honest read is ambient load, not
-   regression — but that conclusion is only defensible because the load was
-   actually measured and recorded at run time, not asserted after the fact.
+   for. This task's diff only makes mechanical receiver swaps of
+   skills-field reads/writes on the probe's own Media/Notes rail-switch
+   path (nanosecond-scale — see the correction above, this same section),
+   so the honest read is ambient load, not regression — corroborated by
+   the load-independent probe columns (recompose, full-update) matching
+   wave-2's row-for-row — but that conclusion is only defensible because
+   the load was actually measured and recorded at run time, not asserted
+   after the fact.
    A future controller-move PR's own before/after probe pair (§9) should
    capture the SAME `ps aux`/load-average snapshot each time, or a real
    regression and a noisy machine become indistinguishable from the numbers

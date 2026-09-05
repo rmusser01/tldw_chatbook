@@ -460,8 +460,9 @@ untouched), `60857a2be` (GREEN — the move, at its final 86-mover/
 A coordinator review of the landed commits found 1 CRITICAL + 1 IMPORTANT
 + 3 minor findings, all addressed in this fix round.
 
-### 12a. CRITICAL — `focused` unbound on the controller (a SEVENTH bare-self
-hazard instance, a NEW shape: unbound-attribute escape)
+### 12a. CRITICAL — `focused` unbound on the controller (recipe §3's sixth
+bypass shape, its own unbound-attribute-escape case — the seventh
+hazard instance counted under that one shape, not an eighth/new shape)
 
 `_sync_library_skills_browse_result` reads `focused = getattr(self,
 "focused", None)`. `LibrarySkillsController` had no `focused` property --
@@ -477,11 +478,13 @@ every committed-mutation refresh (`focus_identity=None` callers at this
 controller's own line ~1160 and the screen's `restore_state`/`_select_
 library_rail_row_after_source_admission` call sites).
 
-**This is a DISTINCT shape from exclusion 5's Forms A/B/C** (all three of
-which are bare `self` passed to something that does an IDENTITY
-comparison it can never satisfy). `getattr(self, "focused", None)` is not
-an identity comparison at all -- it is a plain attribute read with a
-silent default, invisible to BOTH the recipe's own `self.<attr>`
+**This is recipe §3's sixth bypass shape's own "close cousin" case, not a
+distinct seventh shape — but it IS a mechanically distinct FAILURE MODE
+from exclusion 5's Forms A/B/C** (all three of which are bare `self`
+passed to something that does an IDENTITY comparison it can never
+satisfy). `getattr(self, "focused", None)` is not an identity comparison
+at all -- it is a plain attribute read with a silent default, invisible
+to BOTH the recipe's own `self.<attr>`
 `ast.Attribute` census (the name never appears as a literal expression)
 and to any exception-based detection (no `AttributeError` is ever
 raised). A dedicated re-scan of the whole moved-body source for `getattr(

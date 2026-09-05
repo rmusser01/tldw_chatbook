@@ -69,13 +69,23 @@ Task 3). Contents:
   Every interaction came in slower than that band (e.g. `notes (switch,
   2nd)`'s 587 ms max gap vs. wave-2's highest recorded 195 ms) — recorded
   as evidence of ambient machine load (8+ concurrent `pytest` processes,
-  ~22.7 load average measured at run time), NOT a code regression: this
-  task's diff touches zero code on the Media/Notes rail-switch path the
-  probe exercises, and every prior wave-4 task's own report already
-  confirms the skills move touches none of that path either (a completely
-  separate subsystem). Recorded honestly with the load caveat attached,
-  neither silently matched to the old band nor wrongly flagged as a
-  regression.
+  ~22.7 load average measured at run time), NOT a code regression.
+  **Correction (wave-4 final review):** the "zero code on the probed path"
+  framing this bullet originally used was FALSE — the skills cleanup made
+  mechanical receiver swaps of skills-field reads/writes INSIDE five of the
+  probed path's own methods (`compose_content`,
+  `_select_library_rail_row_after_source_admission`,
+  `_toggle_library_media_reader_pane`, `restore_state`,
+  `_persist_library_reader_preference`); corrected in the recipe to "only
+  mechanical receiver swaps ... nanosecond-scale, cannot explain a ~3x
+  max-gap delta", with the load-independent probe columns (recompose 0→0,
+  full-updates identical row-for-row) added as the stronger evidence for no
+  structural regression, and the small mounts/nodes drift (media
+  163→173/113→115, notes-switch-2nd 110→115) remarked as attributable to
+  ordinary Media/Notes feature drift on this branch between wave-2 and
+  wave-4 close, not to this wave's own diff. Recorded honestly with the
+  load caveat attached, neither silently matched to the old band nor
+  wrongly flagged as a regression.
 - **Lessons** (2 new, both cross-referencing existing §3/§19 content rather
   than duplicating it): (1) a "count-accuracy discipline" lesson naming
   three separate wave-4 incidents (the "three pairs" arithmetic error, the

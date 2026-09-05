@@ -212,7 +212,18 @@ _BUDGETS: dict[str, int] = {
     # "LibraryScreen keeps one-line delegators under every one of these
     # original names" claim, now false for 16 of the 86 (this task's own
     # screen-side prune) -- both fixed in this task, +9 lines. 3131 -> 3140.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3140,
+    #
+    # 2026-09-04, wave-4 final review (fix wave): two comment/import-only
+    # changes, no method body touched. (1) Removed the dead
+    # `LIBRARY_SKILLS_IMPORT_WORKER_GROUP` import from `.screen_constants`
+    # (zero in-file uses -- the screen, not this controller, is the one
+    # consumer of that name), -1 line. (2) Reworded the `focused`-property
+    # fix-round docstring paragraph to align its "SIXTH ... distinct in
+    # shape" framing with recipe §3's landed "sixth bypass shape, close
+    # cousin" framing (the getattr/focused escape is that shape's own
+    # sub-case -- the seventh instance counted under it -- not an eighth/
+    # new shape), +3 lines. Net 3140 -> 3142.
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
