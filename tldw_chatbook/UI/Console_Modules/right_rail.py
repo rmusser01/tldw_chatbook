@@ -105,6 +105,10 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionState,
 )
+from ...Widgets.Console.console_send_authority_summary import (
+    CONSOLE_AUTHORITY_SUMMARY_HEIGHT,
+    CONSOLE_AUTHORITY_SUMMARY_ID,
+)
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
@@ -116,6 +120,21 @@ from .rail_section_layout import outer_hint_required
 INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
 INSPECTOR_SCROLL_OWNER_CLASS = "console-inspector-scroll-owner"
+
+#: Rows one Inspector section occupies at rest: its header, four rows, and
+#: the "Refresh" tail's own margin plus button. Measured by TASK-31662 (see
+#: `Tests/UI/test_console_environment_section.py::test_environment_at_rest_
+#: shows_its_four_top_level_rows_unscrolled`).
+INSPECTOR_SECTION_AT_REST_ROWS = 7
+
+#: Rail rows below which the pinned send-authority block gives up four of its
+#: six lines (TASK-31663 AC#5). Derived, not chosen: the full pinned stack
+#: (rail header 1 + project-instruction row 1 + the block's six) plus the
+#: one-row overflow hint plus one section at rest. At 80x24 the rail gets 12
+#: content rows, so it compacts; at 200x50 it gets 36 and does not.
+INSPECTOR_FULL_DENSITY_MIN_ROWS = (
+    1 + 1 + CONSOLE_AUTHORITY_SUMMARY_HEIGHT + 1 + INSPECTOR_SECTION_AT_REST_ROWS
+)
 
 
 @dataclass(frozen=True)
@@ -570,7 +589,36 @@ class ConsoleInspectorRail(Vertical):
     def on_mount(self) -> None:
         """Schedule the first owner pass after descendant layout settles."""
 
+        self._sync_authority_summary_density(self.size.height)
         self.request_outer_reconcile()
+
+    def _sync_authority_summary_density(self, rail_rows: int) -> None:
+        """Compact the pinned authority block when the rail cannot afford it.
+
+        TASK-31663 AC#5. Measured at 80x24: the rail's pinned stack was
+        EIGHT rows -- the header, the project-instruction row, and six for
+        `#console-send-authority-summary` -- over a THREE-row scroll body,
+        so the Environment section (``seven`` rows at rest since TASK-31662)
+        could not show even its four rows, let alone its Refresh tail. The
+        block gives up four of its six rows below the threshold, which turns
+        that 3-row body into a 7-row one.
+
+        The threshold is derived, not picked: the full pinned stack (8) plus
+        the overflow-hint row (1) plus one section's at-rest height (7).
+
+        Args:
+            rail_rows: The rail's own content height in rows.
+        """
+
+        if rail_rows <= 0:
+            return
+        try:
+            summary = self.query_one(
+                f"#{CONSOLE_AUTHORITY_SUMMARY_ID}", ConsoleSendAuthoritySummary
+            )
+        except (NoMatches, QueryError):
+            return
+        summary.set_compact(rail_rows < INSPECTOR_FULL_DENSITY_MIN_ROWS)
 
     def on_unmount(self) -> None:
         """Discard pending generations when the Inspector leaves the DOM."""
@@ -843,9 +891,10 @@ class ConsoleInspectorRail(Vertical):
             return
         hint.update(text, layout=False)
 
-    def on_resize(self, _event: Resize) -> None:
+    def on_resize(self, event: Resize) -> None:
         """Recompute fixed-child overflow on terminal grow and shrink."""
 
+        self._sync_authority_summary_density(event.size.height)
         self.request_outer_reconcile()
 
     @staticmethod

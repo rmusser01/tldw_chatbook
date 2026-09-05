@@ -1028,6 +1028,17 @@ $ds-library-source-browser-width: 31;
     padding: 0;
 }
 
+/* TASK-31663 AC#4: the thumb was `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track -- two near-identical dark greys
+   measuring 1.01:1 through the compositor at both 80x24 and 200x50, i.e.
+   a scroller that advertises a fold it cannot show a position for. The
+   thumb has to clear the 3:1 non-text floor against ITS OWN track, and on
+   this near-black theme nothing in the surface family does: $ds-column-line
+   reaches 1.28:1 and even $panel-lighten-3 only 2.16:1. `$ds-text-muted` is
+   the app's other established scrollbar thumb (seven rules across the
+   Library screen already use it) and is generated per theme polarity, so it
+   stays right on light themes too. `scrollbar-color-active` keeps the
+   accent, so dragging is still distinguishable from resting. */
 #console-inspector-rail-body {
     width: 100%;
     min-width: 0;
@@ -1038,8 +1049,8 @@ $ds-library-source-browser-width: 31;
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1277,8 +1288,13 @@ ConsoleTerminalWorkspace#console-main-column {
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    /* TASK-31663 AC#4: same 1.01:1 invisible thumb as the rail's outer
+       scroller above -- this is the SECTION-inner bar the critique
+       measured. Raised here too rather than only on the outer one: they
+       are the same convention, and fixing one would leave a rail with two
+       scrollbars whose thumbs disagree about whether they can be seen. */
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1330,6 +1346,52 @@ ConsoleTerminalWorkspace#console-main-column {
       not. */
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* TASK-31663 AC#1/AC#2: ONE focus carrier for the whole rail, and it is the
+   accent edge above -- extended from the two containers TASK-24702 styled
+   to every control in the ring. Measured through the compositor with focus
+   parked on the composer between stops (so a scroll-into-view cannot be
+   mistaken for a cue), SEVEN stops painted byte-identical text focused and
+   unfocused at both 80x24 and 200x50: the "▸ Inspect" header button, the
+   project-instruction status button, the section chevron, the section's
+   "Refresh" tail, "Search Library", "Narrow…" and the More toggle. Their
+   entire indication was Textual's own focus background swap -- #1e1e1e ->
+   #1c4666, measured 1.68:1, inside the 1.03-1.79:1 band the critique
+   reported. TASK-24702 already proved a tint cannot be rescued on this
+   near-black theme (opaque accent is 3.77:1; 45% is ~1.74:1), so the
+   carrier has to change CELLS.
+
+   Lossless, verified per button rather than assumed: every focusable
+   Button in this rail already paints at least one leading space -- Textual's
+   own `padding: 0 1`, or the centring of a fixed-width one (" ▾ ",
+   " Narrow… ") -- so `thick`'s block glyph lands on padding and no label
+   character is overwritten. `Tests/UI/test_console_inspector_focus_
+   carriers.py::test_rail_button_focus_edge_costs_no_label_character` pins
+   that for every button in the live ring, so a future label that fills its
+   own first column fails there rather than shipping as "█arrow…". */
+#console-right-rail Button:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* Same edge for a focused inspector ROW: `.console-inspector-section-row`
+   had `background: $ds-action-focus 20%` alone, which is the tint TASK-24702
+   ruled out. The row's own `padding: 0 1` gives the block a free column, so
+   this costs no row text either; the tint stays as a second, redundant cue. */
+.console-inspector-section-row:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* The rail's SCROLLER is the one stop the edge above cannot carry on its
+   own. Textual composites children OVER a container's own strips, so
+   `#console-inspector-rail-body:focus`'s edge is painted only in the gaps
+   BETWEEN sections -- visible at 200x50, and at 80x24 completely absent,
+   because all three of its rows are covered. The innermost widget with a
+   column no child occupies is the section body, whose `padding: 0 0 0 1`
+   reserves exactly one; putting the same edge there draws the accent down
+   the left of the focused scroller's content at every size. */
+#console-inspector-rail-body:focus .console-inspector-section-body {
     outline-left: thick $ds-action-focus;
 }
 

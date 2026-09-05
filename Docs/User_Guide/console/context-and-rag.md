@@ -32,7 +32,10 @@ Where this page's controls live:
   "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
-  summary (these two never scroll), then the scrolling body: the
+  summary (these two never scroll; on a short terminal the summary shrinks
+  to its heading and the **Run** line so the body below keeps room for a
+  whole section — see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)),
+  then the scrolling body: the
   **Environment**, **Tasks**, and **Agents** sections (see [The Environment
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the

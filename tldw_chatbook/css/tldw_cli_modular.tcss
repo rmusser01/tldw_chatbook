@@ -3084,6 +3084,21 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
     margin: 0;
 }
 
+/* TASK-31663 AC#5: the constrained-height form. At 80x24 the rail's pinned
+   stack was eight rows (header 1 + project instruction 1 + this block's 6)
+   over a THREE-row scroll body, so the Environment section -- seven rows at
+   rest since TASK-31662 -- could never show its four rows. Two rows here
+   makes that body seven. `ConsoleRightRail._sync_authority_summary_density`
+   flips this class and pins the same two numbers INLINE (inline wins over
+   CSS in Textual, and the widget has always carried its own geometry so a
+   bare harness measures the right box); the pair is kept in step so the
+   stylesheet never disagrees with the widget about how tall it is. */
+#console-send-authority-summary.-authority-compact {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+}
+
 ConsoleTerminalWorkspace Button {
     width: 100%;
     min-width: 0;

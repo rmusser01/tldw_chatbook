@@ -29,6 +29,29 @@ _FACTS = (
     ("Approvals", "approvals", "console-send-authority-approvals"),
 )
 
+#: Rows of the pinned block at its normal density: the heading plus all five
+#: facts.
+CONSOLE_AUTHORITY_SUMMARY_HEIGHT = 6
+
+#: Rows at constrained heights (TASK-31663 AC#5). Measured at 80x24 before
+#: this change: the rail's pinned stack was EIGHT lines -- header 1, project
+#: instruction 1, this block 6 -- over a THREE-line scroll body, so the
+#: Environment section (seven lines at rest) could never show its four rows.
+#: Two lines here turns that 3-line body into a 7-line one.
+CONSOLE_AUTHORITY_SUMMARY_COMPACT_HEIGHT = 2
+
+#: The one fact that keeps its own line when compact. `run` is deliberate: it
+#: is not one fact among five but the severity-ordered ROLLUP of all of them
+#: (incomplete data > recovery required > waiting for approval > blocked
+#: provider/retrieval > running > failed > ready), so the line that survives
+#: is the one that already answers the block's question. The other four stay
+#: reachable, unchanged, through the block's tooltip and through F1 while it
+#: has focus -- `ChatScreen.action_show_workbench_help` renders
+#: `contextual_help_rows()` under this block's own heading, and that method
+#: reads the PROJECTION, not the mounted rows, so hiding rows costs it
+#: nothing.
+_COMPACT_FACT_ATTRIBUTES = frozenset({"run"})
+
 
 @dataclass(frozen=True, slots=True)
 class ConsoleSendAuthorityProjection:
@@ -136,7 +159,13 @@ def project_console_send_authority(
 
 
 class ConsoleSendAuthoritySummary(Static):
-    """One focus stop containing six fixed, single-line physical rows."""
+    """One focus stop containing six fixed, single-line physical rows.
+
+    At constrained rail heights (TASK-31663 AC#5) it drops to two: the
+    heading and the ``Run`` rollup. All six Statics stay MOUNTED either way
+    -- ``sync_state`` patches them by id, and consumers query them by id --
+    so the compact form costs display, never structure.
+    """
 
     def __init__(self, state: ConsoleInspectorState, **kwargs: Any) -> None:
         super().__init__(id=CONSOLE_AUTHORITY_SUMMARY_ID, **kwargs)
@@ -144,9 +173,8 @@ class ConsoleSendAuthoritySummary(Static):
         self.last_state = state
         self._projection = project_console_send_authority(state)
         self.recompose_count = 0
-        self.styles.height = 6
-        self.styles.min_height = 6
-        self.styles.max_height = 6
+        self.compact = False
+        self._apply_density()
 
     def compose(self) -> ComposeResult:
         """Compose the heading and five fixed fact rows.
@@ -161,17 +189,81 @@ class ConsoleSendAuthoritySummary(Static):
         )
         for label, attribute, widget_id in _FACTS:
             value = getattr(self._projection, attribute)
-            yield self._row(f"{label}: {value}", widget_id)
+            # The other half of `_apply_density`'s display pass: a block
+            # built ALREADY compact (the rail sizes it before mount at
+            # 80x24) has to mount with the right rows hidden, or its first
+            # painted frame is six lines tall inside a two-line box.
+            yield self._row(
+                f"{label}: {value}", widget_id, hidden=self._fact_is_hidden(attribute)
+            )
 
     @staticmethod
-    def _row(copy: str, widget_id: str) -> Static:
+    def _row(copy: str, widget_id: str, *, hidden: bool = False) -> Static:
         row = Static(Text(copy), id=widget_id, classes="console-send-authority-row")
         row.styles.height = 1
         row.styles.min_height = 1
         row.styles.max_height = 1
         row.styles.text_wrap = "nowrap"
         row.styles.text_overflow = "ellipsis"
+        if hidden:
+            row.styles.display = "none"
         return row
+
+    def _fact_is_hidden(self, attribute: str) -> bool:
+        """Whether one fact gives up its line at the current density."""
+
+        return self.compact and attribute not in _COMPACT_FACT_ATTRIBUTES
+
+    def set_compact(self, compact: bool) -> None:
+        """Switch the block between its six-line and two-line densities.
+
+        Args:
+            compact: Whether the rail is too short to spend six rows here.
+        """
+
+        if compact == self.compact:
+            return
+        self.compact = compact
+        self._apply_density()
+
+    def _apply_density(self) -> None:
+        """Pin the block's height and row visibility to ``self.compact``."""
+
+        height = (
+            CONSOLE_AUTHORITY_SUMMARY_COMPACT_HEIGHT
+            if self.compact
+            else CONSOLE_AUTHORITY_SUMMARY_HEIGHT
+        )
+        # Inline as well as in the stylesheet: this widget has always pinned
+        # its own geometry (a bare harness loads no bundle), and inline wins
+        # over CSS in Textual, so the class flip below would be cosmetic on
+        # its own. Both halves are kept in step deliberately.
+        self.styles.height = height
+        self.styles.min_height = height
+        self.styles.max_height = height
+        self.set_class(self.compact, "-authority-compact")
+        if not self.is_mounted:
+            return
+        for _label, attribute, widget_id in _FACTS:
+            try:
+                row = self.query_one(f"#{widget_id}", Static)
+            except (NoMatches, QueryError):
+                continue
+            row.styles.display = "none" if self._fact_is_hidden(attribute) else "block"
+        self._sync_compact_tooltip()
+        self.recompute_tooltips()
+
+    def _sync_compact_tooltip(self) -> None:
+        """Carry the facts that gave up their line, on the block itself."""
+
+        if not self.compact:
+            self.tooltip = None
+            return
+        self.tooltip = Text(
+            "\n".join(
+                f"{label}: {value}" for label, value in self.contextual_help_rows()
+            )
+        )
 
     def sync_state(self, state: ConsoleInspectorState) -> None:
         """Patch all five facts from one new snapshot without recomposing.
@@ -199,6 +291,7 @@ class ConsoleSendAuthoritySummary(Static):
         for label, attribute, row in rows:
             value = getattr(projection, attribute)
             row.update(Text(f"{label}: {value}"))
+        self._sync_compact_tooltip()
         self.recompute_tooltips()
         self.refresh()
 
