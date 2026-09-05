@@ -109,6 +109,7 @@ async def test_library_reuse_and_suspend_timer_quiescence(
             "_library_prompts_debounce_timer",
             "_library_notes_autosave_timer",
             "_library_ingest_path_debounce_timer",
+            "_library_source_snapshot_timeout_timer",
             "_library_list_entry_focus_timer",
         ):
             assert getattr(library, attr, None) is None, (
@@ -181,3 +182,53 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
             "suspended gate skipped"
         )
         assert library._library_ingest_suspended_activity is False
+
+
+class _RecordingTimer:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
+    """Unit contract for the suspend hook, no Textual app involved.
+
+    (Qodo #2414 finding 1.) Every timer attribute the hook owns is armed
+    with a recording stub; one call must stop and clear all seven and set
+    the suspended flag. Enumerating them HERE too means a new timer added
+    to the hook without updating this table fails loudly.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = LibraryScreen.__new__(LibraryScreen)
+    timer_attrs = (
+        "_library_list_entry_focus_timer",
+        "_library_media_selection_timer",
+        "_library_media_filter_timer",
+        "_library_prompts_debounce_timer",
+        "_library_notes_autosave_timer",
+        "_library_ingest_path_debounce_timer",
+        "_library_source_snapshot_timeout_timer",
+    )
+    timers = {}
+    for attr in timer_attrs:
+        timers[attr] = _RecordingTimer()
+        setattr(screen, attr, timers[attr])
+    # State the focus-disarm helper resets alongside its timer.
+    screen._library_screen_suspended = False
+    screen._library_list_entry_focus_generation = 0
+    screen._library_pending_list_entry_focus = False
+    screen._library_pending_list_entry_media_return = None
+    screen._library_pending_list_entry_focus_anchor = None
+    screen._library_media_return_settlement = None
+    screen._library_media_last_exact_settlement = None
+    screen._library_media_last_successful_settlement = None
+
+    LibraryScreen.on_screen_suspend(screen)
+
+    assert screen._library_screen_suspended is True
+    for attr in timer_attrs:
+        assert timers[attr].stopped, f"{attr} was not stopped"
+        assert getattr(screen, attr) is None, f"{attr} was not cleared"

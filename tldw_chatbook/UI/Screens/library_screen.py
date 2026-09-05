@@ -3373,6 +3373,9 @@ class LibraryScreen(BaseAppScreen):
         # timer; its fire runs the pre-flight so feedback no longer waits
         # for blur.
         self._library_ingest_path_debounce_timer: Timer | None = None
+        #: The 5s first-load failsafe armed in ``on_mount``; retained so
+        #: ``on_screen_suspend`` can stop it (Qodo #2414 finding 3).
+        self._library_source_snapshot_timeout_timer: Timer | None = None
         #: TASK-31521 (screen reuse): True while this screen is covered by
         #: another. Gates the ingest listener's DOM/DB branches -- the
         #: listener itself stays registered across suspend (its counting and
@@ -9478,6 +9481,7 @@ class LibraryScreen(BaseAppScreen):
             "_library_prompts_debounce_timer",
             "_library_notes_autosave_timer",
             "_library_ingest_path_debounce_timer",
+            "_library_source_snapshot_timeout_timer",
         ):
             timer = getattr(self, attr, None)
             if timer is not None:
@@ -9604,7 +9608,17 @@ class LibraryScreen(BaseAppScreen):
         ):
             # One reconciliation pass for registry events that were gated
             # while suspended, instead of N wasted hidden-screen refreshes.
+            # Regions AND footer shortcuts together -- the visible handler
+            # updates them as a pair, and hidden-time state changes (a job
+            # becoming retryable) change the shortcut set too (Qodo #2414
+            # finding 2).
             self._update_library_ingest_dynamic_regions()
+            shortcuts = self._library_ingest_shortcuts_for_current_state()
+            registration = ("library", tuple(shortcuts))
+            if self._footer_shortcut_registration != registration:
+                self.register_footer_shortcuts(
+                    source="library", shortcuts=shortcuts
+                )
         self._library_ingest_suspended_activity = False
         self._library_visit_entered = True
 
@@ -9635,7 +9649,11 @@ class LibraryScreen(BaseAppScreen):
         # refresh_notes_sync_runtime is dispatched from on_screen_resume,
         # which also fires on the initial push (TASK-31521 single-seam).
         self._load_library_ingest_options_from_config()
-        self.set_timer(
+        # Handle retained so on_screen_suspend can stop it (Qodo #2414
+        # finding 3): un-retained, this 5s failsafe survived suspension and
+        # applied an error snapshot to the hidden screen. Resume's own
+        # snapshot re-kick owns freshness after a suspend.
+        self._library_source_snapshot_timeout_timer = self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
