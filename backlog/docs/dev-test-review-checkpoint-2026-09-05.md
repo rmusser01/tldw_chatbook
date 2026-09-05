@@ -355,3 +355,33 @@ the upstream tasks and their identities were left unchanged:
 This remains a draft progress checkpoint, not a complete test-suite or merge
 qualification. All current production files edited during conflict resolution
 parse, undefined-name checks pass, and `git diff --check` is clean.
+
+## Continued bounded repairs after the second rebase
+
+- TASK-31755: the remaining briefing-script scope fixture now creates completed
+  history, not competing active runs. Its original isolation assertion and the
+  production uniqueness guard are unchanged. Five complete briefing/feed/DB
+  files passed **101 tests** (4.39 seconds).
+- TASK-31776: cache regressions exercise both real character and bundled-tokenizer
+  tiers, with explicit failure on tokenizer fallback. Growing history requires
+  exactly 204 computations, not a ceiling that accepted zero. A process-local
+  cache-bypass mutation failed all four guards as intended (20,400 computations).
+- TASK-31777: corrected the stale sanitized credential-field expectation, exposing
+  a genuine missing credential-decision annotation. The runtime now carries only
+  a strict boolean into bounded annotation construction; credential fields stay
+  absent from stored boundary and handler projections. False/absent/nonboolean
+  inputs cannot fabricate a resolved annotation.
+- TASK-31753: the owning-turn summary/RAG fixture now uses real conversation and
+  workspace persistence, a completed selected turn, and the existing current
+  auxiliary gateway. Captured provider/model and RAG configuration assertions
+  remain intact, with controller and database cleanup.
+
+The seven complete affected Chat/summary/integration/token/credential files
+passed **205 tests** (58.30 seconds). This selection still reports the previously
+observed aggregate descriptor-growth warning of 209; it is not resource closure.
+Whole changed-file Ruff and changed-function formatting checks pass. The briefing
+file has unrelated pre-existing whole-file formatting drift. Independent scoped
+review found a tokenizer-fallback gap, which was repaired and re-reviewed with no
+remaining findings. All wider failure families above remain open unless explicitly
+superseded here. XML evidence: `/private/tmp/tldw-current-chat-repair-final.xml`
+and `/private/tmp/tldw-31755-script-scope-final.xml`.
