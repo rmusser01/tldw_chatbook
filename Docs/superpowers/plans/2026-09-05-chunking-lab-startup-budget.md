@@ -17,6 +17,16 @@ No raised limits, skipped guards, dependency changes, or full-suite sweep. Prese
 
 ## Correction and verification
 
+Measured refinement: the four original modules leave the mounted graph, but
+the immediate scheduler can legitimately add emergency-stop and heartbeat
+modules before readiness (observed 973 and 974). Preserve its time-sensitive
+start policy. Shed two further first-use dependencies instead: subscription
+credential support outside Anthropic readiness/dispatch, and the custom-PII
+regex worker when no custom detection runs. Move imports only, retain all
+credential opt-in/fail-closed and masking logic, and run their existing behavior
+tests plus isolated import regressions. This is ADR-097 response 2, not a change
+to authentication, privacy, or scheduler policy.
+
 - [x] Reproduce the census failure before production changes: 976 modules versus 972, matching dev CI run 33979515367 and PR run 33980917972.
 - [ ] Add isolated-import regressions in `Tests/Packaging/test_console_interaction_import_closure.py`: controller construction plus closed-rail refresh must not load `Workspaces.environment_status`/`git_workspace`; importing handoff contracts must not load `UI.LLM_Management.vllm_setup`. Observe both fail before changing production.
 - [ ] In `UI/Console_Modules/environment.py`, replace eager scanner construction with `self._scanner = None`; import gatherers and initialize the scanner once in `_dispatch_local`, after refresh admission and before worker dispatch. Import the net gatherer in `_dispatch_net`. Preserve the per-controller scanner cache and worker/landing semantics.

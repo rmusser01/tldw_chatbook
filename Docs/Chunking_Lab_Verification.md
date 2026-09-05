@@ -1,5 +1,49 @@
 # Chunking Lab verification record
 
+## PR #2421 startup-budget correction (2026-09-05)
+
+User authorized repairing the inherited startup breach before merge. Rebased
+onto dev `22006e84d8877813c3dc79cdd9ea2f72f68e102f`. Under existing ADR-097,
+Environment gatherers/scanner now load on admitted refresh, vLLM setup types on
+target validation, subscription support on Anthropic use, and the custom-PII
+worker only for runnable custom rules. Existing ownership, scheduler timing,
+credential opt-in/failure and masking policies remain unchanged. No budget was
+raised and no guard was skipped. Independent read-only reviews found no issues.
+
+The initial census reproduced dev/PR CI at976 against972. The first four-module
+deferral passed125 related tests but the census observed973, then974 after rebase:
+the immediate scheduler legitimately adds emergency-stop/heartbeat modules.
+Two further first-use deferrals removed that pressure; final census970/972.
+New isolated regressions failed on eager imports before correction. An initial
+vLLM regression fixture used a noncanonical URL; it was corrected before the
+valid RED run. The broad combined run stalled and was stopped; it is **not**
+acceptance evidence. Bounded independent selections on the integrated tree:
+
+| Selection | Result | Local JUnit artifact |
+|---|---|---|
+| Lab screen/recovery/results | 66 passed,72.41s | `pr-startup-lab-final.xml` |
+| Environment controller/wiring/state/gatherers, handoff store, vLLM setup | 322 passed,48.84s | `pr-startup-environment-final.xml` |
+| Import regressions, census, subscription/readiness, custom-PII/config/worker/masks | 274 passed,20.00s | `pr-startup-extra-green.xml` |
+| Exact Perf Guard selections | 27 passed,50.12s | `pr-startup-perf-final.xml` |
+| Gateway custom-PII batching consumer | 1 passed,426 deselected | Console output |
+| vLLM workflow handoff/intent selection | 12 passed,1 failed,93 deselected | `pr-startup-vllm-final.xml` |
+
+Artifacts are in the existing ignored `.superpowers/chunking-lab-uat-CdhW74/`.
+The vLLM failure is `test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff`:
+the pending Console handoff remains unconsumed at line2551. A clean archive of
+the exact dev base reproduces the identical assertion (`pr-startup-vllm-base.xml`);
+this unrelated route-reuse failure remains unfixed, not counted as a pass.
+
+All six preflight checks pass. Scoped Ruff/format and whitespace checks pass.
+The older API/readiness/subscription/gateway/masking files retain baseline static
+debt; differential lint introduced no findings (including the API module's same
+360 baseline findings). No broad API formatting rewrite was performed. Warnings
+remain unsuppressed: Requests compatibility, vendored datetime deprecation,
+invalid escape, and a joblib semaphore-space warning with serial fallback.
+The latter does not mean disk capacity or parallel execution was qualified.
+No full-suite, new live-UAT, or cross-platform claim. Current-head remote checks
+and Qodo review still gate merge; TASK-31645 AC19 remains pending those gates.
+
 ## Post-merge live UAT correction (2026-09-05)
 
 Normal Library entry could remain in loading because the lazy worker ran before

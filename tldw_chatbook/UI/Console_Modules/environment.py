@@ -65,12 +65,14 @@ tests could not exercise since jobs ran synchronously at dispatch time):
 The gatherer wrappers retain module-level test seams while loading their
 I/O implementation only when the panel requests work (ADR-097).
 """
+
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot,
@@ -127,7 +129,7 @@ class ConsoleEnvironmentController:
         self._workspace_root_accessor = workspace_root_accessor
         self._rail_open_accessor = rail_open_accessor
         self._on_snapshot = on_snapshot
-        self._now = now or (lambda: datetime.now(timezone.utc))
+        self._now = now or (lambda: datetime.now(UTC))
 
         self.snapshot = EnvironmentSnapshot()
         self._scanner: BacklogTaskScanner | None = None
@@ -152,7 +154,9 @@ class ConsoleEnvironmentController:
 
     # -- public API -------------------------------------------------------
 
-    def request_refresh(self, *, include_net: bool = False, force_net: bool = False) -> None:
+    def request_refresh(
+        self, *, include_net: bool = False, force_net: bool = False
+    ) -> None:
         """Dispatch a local refresh (and optionally a net refresh).
 
         Args:
@@ -183,7 +187,9 @@ class ConsoleEnvironmentController:
         if self._failures[_LOCAL_TIER] < self._MAX_FAILURES:
             self._dispatch_local(scope_root)
 
-        if include_net and (force_net or self._failures[_NET_TIER] < self._MAX_FAILURES):
+        if include_net and (
+            force_net or self._failures[_NET_TIER] < self._MAX_FAILURES
+        ):
             self._dispatch_net(scope_root, force_net=force_net)
 
     def poll_tick(self) -> None:
@@ -234,7 +240,9 @@ class ConsoleEnvironmentController:
                 self._land, scope_root, _LOCAL_TIER, (git_result, tasks_result), token
             )
 
-        self._run_worker(job, thread=True, exclusive=True, group=self.LOCAL_WORKER_GROUP)
+        self._run_worker(
+            job, thread=True, exclusive=True, group=self.LOCAL_WORKER_GROUP
+        )
 
     def _dispatch_net(self, scope_root: str, *, force_net: bool) -> None:
         if self._landed_root != scope_root:
@@ -253,7 +261,9 @@ class ConsoleEnvironmentController:
         key = (scope_root, branch)
         if not force_net and self._net_fetched_at is not None:
             prev_root, prev_branch, fetched_at = self._net_fetched_at
-            if (prev_root, prev_branch) == key and (self._now() - fetched_at) < self._NET_TTL:
+            if (prev_root, prev_branch) == key and (
+                self._now() - fetched_at
+            ) < self._NET_TTL:
                 return  # TTL still holds
         previous_pr = self.snapshot.pr
         self._net_fetched_at = (scope_root, branch, self._now())
@@ -290,7 +300,9 @@ class ConsoleEnvironmentController:
         if tier == _LOCAL_TIER:
             git_result, tasks_result = result
             self._record_outcome(_LOCAL_TIER, git_result.availability)
-            self.snapshot = dataclasses.replace(self.snapshot, git=git_result, tasks=tasks_result)
+            self.snapshot = dataclasses.replace(
+                self.snapshot, git=git_result, tasks=tasks_result
+            )
             self._landed_root = scope_root
             if self._net_pending and self._net_pending_scope == scope_root:
                 force = self._net_pending_force

@@ -39,14 +39,6 @@ from urllib3.util.retry import Retry
 
 #
 # Import Local libraries
-from tldw_chatbook.LLM_Calls.anthropic_subscription import (
-    MISSING_CREDENTIAL_MESSAGE,
-    STALE_CREDENTIAL_MESSAGE,
-    anthropic_auth_source,
-    read_claude_code_credential,
-    subscription_headers_for_token,
-    with_claude_code_identity,
-)
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -1359,6 +1351,15 @@ def chat_with_anthropic(
             request failure, or an unexpected exception while calling the
             API.
     """
+    from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+        MISSING_CREDENTIAL_MESSAGE,
+        STALE_CREDENTIAL_MESSAGE,
+        anthropic_auth_source,
+        read_claude_code_credential,
+        subscription_headers_for_token,
+        with_claude_code_identity,
+    )
+
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})

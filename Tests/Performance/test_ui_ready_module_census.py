@@ -185,6 +185,8 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Workspaces.git_workspace",
     "tldw_chatbook.UI.LLM_Management",
     "tldw_chatbook.UI.LLM_Management.vllm_setup",
+    "tldw_chatbook.LLM_Calls.anthropic_subscription",
+    "tldw_chatbook.Chat.console_trace_regex_worker",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount
@@ -209,6 +211,7 @@ enabled = false
 [api_settings.openai]
 api_key = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL"
 """
+
 
 def install_flag_time_snapshot(app_class: type, sink: list) -> None:
     """Make ``app_class._ui_ready = True`` copy ``sys.modules`` into ``sink``.

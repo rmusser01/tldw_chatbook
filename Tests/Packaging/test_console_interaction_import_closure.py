@@ -44,10 +44,34 @@ assert not owner_has_current_intent(object(), intent)
 assert intent.generation == 1
 assert 'tldw_chatbook.UI.LLM_Management.vllm_setup' not in sys.modules
 """,
-    ],
-    ids=["closed-environment-rail", "vllm-handoff-contract"],
+        """
+import sys
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+import tldw_chatbook.LLM_Calls.LLM_API_Calls
+
+assert get_provider_readiness('Ollama', {}, environ={}).ready
+assert 'tldw_chatbook.LLM_Calls.anthropic_subscription' not in sys.modules
+""",
+        """
+import sys
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    CustomPIIRuleset, redact_pii_value_with_custom_rules,
 )
-def test_console_services_load_only_on_first_use(tmp_path, code):
+
+ruleset = CustomPIIRuleset(1, 'c1d3b183-3887-4f44-a811-9c68d1cb4911', ())
+result = redact_pii_value_with_custom_rules('plain text', ruleset)
+assert result.available and result.value == 'plain text'
+assert 'tldw_chatbook.Chat.console_trace_regex_worker' not in sys.modules
+""",
+    ],
+    ids=[
+        "closed-environment-rail",
+        "vllm-handoff-contract",
+        "non-anthropic-readiness",
+        "no-custom-pii-rules",
+    ],
+)
+def test_console_services_load_only_on_first_use(tmp_path: Path, code: str) -> None:
     """Exercise boot-safe consumers without loading their interaction services.
 
     Args:
