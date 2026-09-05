@@ -455,7 +455,7 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
         ]
         assert narrowed_select.value == "approve_session"
 
-        # The row with no `options` key is untouched: full dev choices,
+        # The row with no `options` key is untouched: all default choices,
         # default `approve_once` (MCP behavior unchanged, byte-identical).
         assert [value for _label, value in unfiltered_select._options] == [
             "approve_once",
@@ -3501,21 +3501,7 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
 
 @pytest.fixture
 def mock_chat_host():
-    host = Mock()
-    host.chachanotes_db = None
-    host.app_config = {
-        "chat_defaults": {
-            "provider": "openai",
-            "model": "gpt-4.1",
-            "temperature": 0.7,
-        }
-    }
-    host.chat_sidebar_collapsed = False
-    host.chat_right_sidebar_collapsed = False
-    host.notify = Mock()
-    host.run_worker = Mock()
-    host.bell = Mock()
-    return host
+    return _build_test_app()
 
 
 def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):
