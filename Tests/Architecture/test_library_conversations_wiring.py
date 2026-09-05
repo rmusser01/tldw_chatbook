@@ -224,10 +224,9 @@ _BROWSE_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "use_selected_conversation_as_source",
 )
 
-#: Task 9 cleanup: same shape as `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED`
-#: above -- these 9 browse-cluster names have ZERO references anywhere
-#: except their own one-line screen delegator (repo-wide census). Their
-#: screen delegators were deleted; they remain in
+#: Task 9 removed nine unreferenced browse-cluster screen delegates.
+#: TASK-31734 migrated the remaining callers of eight more private names
+#: directly to their existing controller owner. All 17 names remain in
 #: `_BROWSE_CLUSTER_METHOD_NAMES` (still genuinely owned by the controller)
 #: but are excluded from the delegation check below.
 _BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
@@ -241,6 +240,15 @@ _BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_retry_pending_library_conversation_open",
         "_focus_library_conversations_filter",
         "_refocus_library_conversations_filter_after_sync",
+        # TASK-31734: remaining private callers now address the existing owner.
+        "_library_conversation_focus_region",
+        "_library_conversation_escape_label",
+        "_adopt_library_conversation_state_selection",
+        "_carry_selected_conversation_into_snapshot",
+        "_selected_conversation_record",
+        "_library_conversation_page_needs_recovery",
+        "_fail_library_conversation_request",
+        "_notify_library_conversation_unavailable",
     }
 )
 
@@ -285,8 +293,8 @@ def test_screen_delegates_browse_handlers() -> None:
     attribute), so the same-name forwarding check (task 9 strengthening,
     see `test_screen_delegates_reader_handlers`) accepts either spelling.
 
-    Skips `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 9 deleted those
-    9 screen delegators as dead weight -- zero external references) and
+    Skips `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 9 and TASK-31734
+    removed those 17 screen delegates after checking/migrating callers) and
     instead asserts those names are genuinely ABSENT from `LibraryScreen`.
     """
     import inspect
@@ -298,7 +306,7 @@ def test_screen_delegates_browse_handlers() -> None:
     for name in _BROWSE_CLUSTER_METHOD_NAMES:
         if name in _BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED:
             assert getattr(LibraryScreen, name, None) is None, (
-                f"{name!r} was pruned from the screen (task 9) but is back -- "
+                f"{name!r} was pruned from the screen but is back -- "
                 "either wire it as a delegator again or drop it from "
                 "_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED"
             )

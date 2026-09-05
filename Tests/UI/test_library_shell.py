@@ -16537,7 +16537,7 @@ def test_library_snapshot_carry_preserves_selection_without_exceeding_page_size(
     screen._selected_conversation_id = "chat-selected"
     screen._local_source_records = {"conversations": (selected,)}
 
-    merged = screen._carry_selected_conversation_into_snapshot(
+    merged = screen._conversations_controller._carry_selected_conversation_into_snapshot(
         {"conversations": incoming}
     )
 
