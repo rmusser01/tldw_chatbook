@@ -110,6 +110,7 @@ _RENDERER_CSP = (
     "frame-ancestors 'self'; sandbox allow-scripts"
 )
 _STATIC_ROOT = files("tldw_chatbook.Canvas").joinpath("static")
+_MOUNTED_RUNTIME_STATIC_PREFIX = "/static/chatbook-canvas"
 _SHELL_HTML = _STATIC_ROOT.joinpath("canvas_shell.html").read_bytes()
 _SHELL_ASSETS: Mapping[str, tuple[str, str]] = MappingProxyType(
     {
@@ -713,6 +714,25 @@ class ServedCanvasControlHandler:
                 bridge_request = CanvasBridgeRequest.from_wire(
                     request.payload["request"]
                 )
+                snapshot_reader = getattr(authority, "control_scope_snapshot", None)
+                canvas_scope = (
+                    await _maybe_await(snapshot_reader(scope))
+                    if callable(snapshot_reader)
+                    else None
+                )
+                conversation_id = getattr(
+                    canvas_scope,
+                    "conversation_id",
+                    scope.conversation_session_id,
+                )
+                if getattr(
+                    canvas_scope,
+                    "session_id",
+                    scope.conversation_session_id,
+                ) != scope.conversation_session_id or not isinstance(
+                    conversation_id, str
+                ):
+                    raise RuntimeError("Canvas bridge scope is unavailable")
                 prepared = await _maybe_await(
                     authority.prepare_bridge(scope, bridge_request)
                 )
@@ -728,7 +748,7 @@ class ServedCanvasControlHandler:
             if (
                 presentation.request_id != bridge_request.request_id
                 or presentation.kind != bridge_request.kind
-                or presentation.conversation_id != scope.conversation_session_id
+                or presentation.conversation_id != conversation_id
                 or presentation.canvas_id != scope.canvas_id
                 or presentation.revision_id != scope.revision_id
             ):
@@ -1789,10 +1809,15 @@ class CanvasGateway:
         integrity = base64.b64encode(
             hashlib.sha384(assets.renderer_javascript).digest()
         ).decode("ascii")
+        renderer_url = (
+            f"{_MOUNTED_RUNTIME_STATIC_PREFIX}/canvas_renderer.js"
+            if request.app is self._mounted_app
+            else f"{self._route_prefix(session.shell_incarnation_id)}/static/canvas_renderer.js"
+        )
         body = (
             '<!doctype html><html><head><meta charset="utf-8">'
             '<meta name="referrer" content="no-referrer">'
-            f'<script type="module" src="{self._route_prefix(session.shell_incarnation_id)}/static/canvas_renderer.js" '
+            f'<script type="module" src="{renderer_url}" '
             f'integrity="sha384-{integrity}" crossorigin="anonymous"></script>'
             '</head><body><div id="canvas-root"></div></body></html>'
         ).encode()
@@ -2209,6 +2234,32 @@ class CanvasGateway:
             return _error_response("asset_not_found", 404)
         return web.Response(
             body=inventory[name], content_type="text/javascript", charset="utf-8"
+        )
+
+    async def public_runtime_asset(self, request: web.Request) -> web.Response:
+        """Serve only integrity-verified, state-free modules to opaque renderers."""
+
+        name = request.match_info.get("name", "")
+        assets = self._runtime_assets()
+        inventory = {
+            "canvas_renderer.js": assets.renderer_javascript,
+            "canvas_runtime_worker.js": assets.worker_javascript,
+            "quickjs-runtime.js": assets.javascript,
+        }
+        body = inventory.get(name)
+        if body is None or not assets.enabled:
+            return _error_response("asset_not_found", 404)
+        return web.Response(
+            body=body,
+            content_type="text/javascript",
+            charset="utf-8",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-store",
+                "Cross-Origin-Resource-Policy": "cross-origin",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     async def _read_json(self, request: web.Request) -> object:

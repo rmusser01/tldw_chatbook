@@ -539,6 +539,11 @@ class ChatbookWebServerMixin:
                 self.handle_served_shell_asset,
                 name="served_shell_asset",
             ),
+            web.get(
+                "/static/chatbook-canvas/{name}",
+                self._served_canvas_gateway.public_runtime_asset,
+                name="served_canvas_runtime_asset",
+            ),
             web.get("/static/js/textual.js", self.handle_textual_js, name="textual_js"),
             web.static("/static", self.statics_path, show_index=False, name="static"),
         ]

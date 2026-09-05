@@ -42,11 +42,16 @@ from tldw_chatbook.Canvas.gateway import (
 )
 from tldw_chatbook.Canvas.limits import CanvasLimits, sha256_utf8
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
+from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Canvas.service import CanvasService
 from tldw_chatbook.Canvas.web_auth import (
     SESSION_COOKIE_NAME,
     RequestFacts,
     build_web_auth_policy,
 )
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Web_Server import serve
 
 pytestmark = [pytest.mark.loopback_network, pytest.mark.asyncio]
@@ -378,6 +383,144 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await broker.aclose()
         await test_server.close()
         await server._served_canvas_gateway.aclose()
+
+
+async def test_mounted_production_authority_renders_and_settles_submit(
+    tmp_path: Path, unused_tcp_port: int
+) -> None:
+    """Catch opaque-renderer auth and durable-conversation bridge mismatches."""
+
+    session_id = "runtime-session"
+    conversation_id = "durable-conversation"
+    child_id = "child-production-authority"
+    drafts: list[str] = []
+    db = CharactersRAGDB(tmp_path / "served-production.sqlite", "served-production")
+    conversations = ChatConversationService(db)
+    conversation_id = conversations.create_conversation(
+        id=conversation_id,
+        title="Served production",
+        scope_type="global",
+        state="in-progress",
+    )
+    user_id = db.add_message(
+        {
+            "id": "served-production-user",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": "Build the profile.",
+        }
+    )
+    assistant_id = db.add_message(
+        {
+            "id": "served-production-assistant",
+            "conversation_id": conversation_id,
+            "parent_message_id": user_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "Profile Canvas",
+        }
+    )
+    db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=assistant_id,
+        before_message_id=None,
+    )
+    controller = ConsoleCanvasController(durable_service=CanvasService(db))
+
+    def scope_resolver(requested: str) -> CanvasScope:
+        assert requested == session_id
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            active_message_ids=(user_id, assistant_id),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="served-production-run",
+        )
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=scope_resolver,
+        canvas_controller=controller,
+        bridge_prepare=lambda _target: drafts.append,
+    )
+    created = authority.import_html(
+        session_id=session_id,
+        source=(
+            "<!doctype html><h1 id='profile-identity'>Profile Alpha</h1>"
+            "<button id='send-result'>Send result</button>"
+            "<script>document.getElementById('send-result').addEventListener("
+            "'click', () => canvas.submit({profile: 'alpha'}));</script>"
+        ),
+        create_new=True,
+    )
+    child_scope = authority.gateway_scope(
+        session_id=session_id,
+        browser_session_id=child_id,
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    handler = ServedCanvasControlHandler()
+    handler.bind(authority, child_scope)
+
+    server = _server(tmp_path, port=unused_tcp_port)
+    app = await _browser_app(server)
+    test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
+    broker = CanvasControlBroker()
+    child: CanvasControlClient | None = None
+    await test_server.start_server()
+    await broker.start()
+    server._canvas_control_broker = broker
+    try:
+        child_launch = broker.issue_child(child_id)
+        child = CanvasControlClient(child_launch.environment, handler=handler.handle)
+        await child.start()
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            page.set_default_timeout(7_000)
+            await page.goto(str(test_server.make_url("/")))
+            outer_cookie = next(
+                cookie["value"]
+                for cookie in await page.context.cookies()
+                if cookie["name"] == SESSION_COOKIE_NAME
+            )
+            browser_session = server._web_auth.authenticate_request(
+                RequestFacts(
+                    method="GET",
+                    path="/",
+                    peer_ip="127.0.0.1",
+                    scheme="http",
+                    host=f"127.0.0.1:{unused_tcp_port}",
+                    cookie_value=outer_cookie,
+                )
+            )
+            server.bind_served_browser(browser_session.session_id, child_id)
+
+            canvas_shell = page.frame_locator("#served-canvas-frame")
+            preview = canvas_shell.frame_locator("#canvas-preview")
+            await expect(preview.locator("#profile-identity")).to_have_text(
+                "Profile Alpha"
+            )
+            await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
+
+            await preview.get_by_role("button", name="Send result").click()
+            await expect(canvas_shell.locator("#bridge-dialog")).to_be_visible()
+            await canvas_shell.get_by_role("button", name="Send to composer").click()
+            await expect(canvas_shell.locator("#bridge-dialog")).to_be_hidden()
+            assert drafts == ['{"profile":"alpha"}']
+            await browser.close()
+    finally:
+        if child is not None:
+            await child.aclose()
+        await broker.aclose()
+        await test_server.close()
+        await server._served_canvas_gateway.aclose()
+        db.close_connection()
 
 
 async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnects(
