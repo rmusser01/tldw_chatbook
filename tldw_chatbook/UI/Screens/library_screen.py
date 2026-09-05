@@ -437,6 +437,7 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -1394,6 +1395,8 @@ class LibraryScreen(BaseAppScreen):
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
     BUNDLED_CSS = """
+    LibraryScreen #library-chunking-tools { height: 1; }
+    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli
@@ -2583,8 +2586,19 @@ class LibraryScreen(BaseAppScreen):
             set_library_canvas_resync_pending=(
                 lambda value: setattr(self, "_library_canvas_resync_pending", value)
             ),
+            library_screen_suspended_accessor=(
+                lambda: self._library_screen_suspended
+            ),
             library_ingest_analyze_outcomes_accessor=(
                 lambda: self._library_ingest_analyze_outcomes
+            ),
+            library_ingest_suspended_activity_accessor=(
+                lambda: self._library_ingest_suspended_activity
+            ),
+            set_library_ingest_suspended_activity=(
+                lambda value: setattr(
+                    self, "_library_ingest_suspended_activity", value
+                )
             ),
             build_ingest_options_snapshot=(
                 lambda *a, **k: self._build_ingest_options_snapshot(*a, **k)
@@ -3454,6 +3468,22 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_status: str = ""
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
+        #: The 5s first-load failsafe armed in ``on_mount``; retained so
+        #: ``on_screen_suspend`` can stop it (Qodo #2414 finding 3).
+        self._library_source_snapshot_timeout_timer: Timer | None = None
+        #: TASK-31521 (screen reuse): True while this screen is covered by
+        #: another. Gates the ingest listener's DOM/DB branches -- the
+        #: listener itself stays registered across suspend (its counting and
+        #: cross-tab toast are ambient signals), but widget rebuilds and
+        #: snapshot re-reads are deferred to one resume-time pass.
+        self._library_screen_suspended: bool = False
+        #: Set when a gated registry event fired while suspended, so resume
+        #: runs exactly one ingest-UI reconciliation instead of N.
+        self._library_ingest_suspended_activity: bool = False
+        #: False until the first ScreenResume finishes its surface kicks;
+        #: distinguishes entry semantics (pristine trash state, entry focus)
+        #: from repeat-visit refresh (preserve the user's live context).
+        self._library_visit_entered: bool = False
         # Explicit user-started curated model install. It is separate from
         # inference: providers never acquire models on first use. The same
         # worker slot tracks BOTH the preflight step (plan computation) and
@@ -9008,9 +9038,36 @@ class LibraryScreen(BaseAppScreen):
         layout: bool = False,
         recompose: bool = False,
     ) -> "LibraryScreen":
-        """Capture one coordinator-safe seam around every screen recompose."""
+        """Capture one coordinator-safe seam around every screen recompose.
+
+        task-31567 (Qodo round): the Media focus restore rides here too.
+        The canvas-scoped seam covers ``_sync_library_canvas``'s ``kind ==
+        "media"`` branch and the viewer's own recompose, but a WHOLE-screen
+        ``refresh(recompose=True)`` -- what the screen's background workers
+        end in, and what ``_sync_library_canvas`` falls back to after
+        CLEARING the follow-up it had queued -- bypassed both and left
+        ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
+        This is the narrowest hook the screen already owns, so every such
+        call site is covered at once.
+
+        Gated on ``recompose`` (a plain repaint is the hot path and must
+        not capture, restore or queue anything) and on Media being the
+        active destination, so the other canvases are untouched. The
+        restore is queued with ``call_after_refresh`` -- correct for a
+        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
+        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
+        recompose has no such ordering and keeps riding
+        ``queue_after_recompose`` instead. Explicit targets still win
+        exactly as ``_restore_library_media_focus`` already decides.
+        """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
+        media_focus = (
+            self._capture_library_media_focus_identity()
+            if recompose
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            else None
+        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -9032,6 +9089,8 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
+        if media_focus is not None:
+            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
 
     async def action_library_notes_new(self) -> None:
@@ -9446,10 +9505,181 @@ class LibraryScreen(BaseAppScreen):
             # shell and races that reconciliation.
             _sync_library_canvas(self, "notes", allow_screen_fallback=False)
 
-    def on_screen_resume(self) -> None:
-        """Refresh lasting-sync availability whenever Library becomes current."""
+    def on_screen_suspend(self) -> None:
+        """Quiesce visit-scoped work while this screen is covered.
 
+        TASK-31521: the library route is reusable (`ScreenRoute.reusable`),
+        so navigation SUSPENDS this screen instead of unmounting it -- and
+        Textual only auto-cancels timers on a real removal, never on
+        suspend. Every armed debounce timer would otherwise fire against
+        the hidden screen (three of them relied entirely on the
+        real-unmount auto-cancel and had no explicit stop anywhere).
+
+        Deliberately NOT done here: cache wipes, generation bumps, or
+        authority-flag flips. Those exist in ``on_unmount`` because a
+        FRESH instance must not trust a dead visit's state; a suspended
+        instance is live, and a background result landing on it while
+        hidden simply means fresher data at resume. Rejecting in-flight
+        work at suspend would re-create the stranded-"Loading" class this
+        design avoids.
+
+        No super() call -- Textual's dispatcher invokes every handler
+        along the MRO separately for this event (the on_mount contract).
+        """
+        self._library_screen_suspended = True
+        self._disarm_library_list_entry_focus()
+        self._stop_library_media_selection_debounce()
+        self._stop_library_media_filter_timer()
+        for attr in (
+            "_library_prompts_debounce_timer",
+            "_library_notes_autosave_timer",
+            "_library_source_snapshot_timeout_timer",
+        ):
+            timer = getattr(self, attr, None)
+            if timer is not None:
+                timer.stop()
+                setattr(self, attr, None)
+        # The ingest path-debounce timer lives on ``_ingest_state``, not as a
+        # flat screen attribute, so the string loop above cannot reach it --
+        # a ``getattr`` for the old flat name silently returns None.
+        ingest_timer = self._ingest_state.path_debounce_timer
+        if ingest_timer is not None:
+            ingest_timer.stop()
+            self._ingest_state.path_debounce_timer = None
+
+    def on_screen_resume(self) -> None:
+        """Refresh every visible surface for this visit (initial and repeat).
+
+        TASK-31521: the ONLY dispatch seam for per-visit surface refresh --
+        Textual posts ``ScreenResume`` on the initial push too, so ``on_mount``
+        must not also dispatch (Qodo #2402 finding 4: worker exclusivity
+        cancels a superseded handle but cannot undo synchronous provider
+        work already running on its thread).
+        """
+        self._library_screen_suspended = False
         self.call_after_refresh(self.refresh_notes_sync_runtime)
+        self._refresh_library_visit_surfaces()
+
+    def _stop_library_media_selection_debounce(self) -> None:
+        """Stop the media-selection settle timer without dispatching."""
+        if self._library_media_selection_timer is not None:
+            self._library_media_selection_timer.stop()
+            self._library_media_selection_timer = None
+
+    def _refresh_library_visit_surfaces(self) -> None:
+        """Re-kick the active row's data surfaces for this visit.
+
+        Runs on every ``ScreenResume``. On the first visit this is the
+        initial load; on a repeat visit (screen reused, was suspended) it
+        refreshes what may have changed elsewhere while hidden -- new
+        conversations from Console, media from background ingest, notes
+        from file sync. Each kick keeps ``on_mount``'s original gating by
+        the selected rail row, so only the surface the user is looking at
+        re-fetches.
+        """
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            and self._pending_library_source_open is None
+        ):
+            self._start_library_conversation_page_request(
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
+            )
+        if (
+            self._library_media_list_surface_active(require_focus=False)
+            and self._pending_library_source_open is None
+        ):
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+            self._request_library_media_facets()
+            # task-28245: NO auto-resume kick here, deliberately. The first
+            # dispatch runs during boot when Library is the initial tab, and
+            # the worker's lazy review-set imports raced the _ui_ready module
+            # census on slow runners (977 > 972, flaky Perf Guard). The
+            # rail-select seam is the explicit user gesture that resumes a
+            # set (AC#3's cold-start concern is structurally avoided there).
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "trash"
+            and self._pending_library_source_open is None
+        ):
+            trash = self._library_media_trash_browse_controller
+            if not self._library_visit_entered:
+                # First visit: pristine entry state, entry focus.
+                self._library_media_trash_query_draft = ""
+                self._library_media_trash_input_error = ""
+                self._library_media_trash_type_choices_visible = False
+                trash.invalidate()
+                trash.state = MediaTrashBrowseState()
+                trash.request(
+                    MediaTrashScope(),
+                    origin="entry",
+                    focus_identity="#library-media-trash-row-0",
+                )
+            else:
+                # Repeat visit: refresh the scope the user was looking at
+                # WITHOUT resetting their filter draft or state -- the live
+                # instance's trash view is current context, not stale debris.
+                scope = (
+                    trash.state.applied_result.scope
+                    if trash.state.applied_result is not None
+                    else trash.state.requested_scope
+                )
+                trash.request(
+                    scope or MediaTrashScope(),
+                    origin="entry",
+                    focus_identity=None,
+                )
+        self._refresh_local_source_snapshot()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_initial_load()
+        if (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
+            and self._library_prompts_view == "list"
+        ):
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.scope,
+                focus_identity=None,
+            )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._skills_state.view == "list"
+        ):
+            self._request_library_skills_browse(
+                self._library_skills_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self.run_worker(
+                self._load_library_collections_capture_entry(),
+                exclusive=True,
+                group="library_collections_capture_entry",
+            )
+        if (
+            self._library_ingest_suspended_activity
+            and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        ):
+            # One reconciliation pass for registry events that were gated
+            # while suspended, instead of N wasted hidden-screen refreshes.
+            # Regions AND footer shortcuts together -- the visible handler
+            # updates them as a pair, and hidden-time state changes (a job
+            # becoming retryable) change the shortcut set too (Qodo #2414
+            # finding 2).
+            self._update_library_ingest_dynamic_regions()
+            shortcuts = self._library_ingest_shortcuts_for_current_state()
+            registration = ("library", tuple(shortcuts))
+            if self._footer_shortcut_registration != registration:
+                self.register_footer_shortcuts(
+                    source="library", shortcuts=shortcuts
+                )
+        self._library_ingest_suspended_activity = False
+        self._library_visit_entered = True
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -9475,77 +9705,25 @@ class LibraryScreen(BaseAppScreen):
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
         self.call_after_refresh(self._update_library_notes_responsive_state)
-        self.call_after_refresh(self.refresh_notes_sync_runtime)
+        # refresh_notes_sync_runtime is dispatched from on_screen_resume,
+        # which also fires on the initial push (TASK-31521 single-seam).
         self._load_library_ingest_options_from_config()
-        self.set_timer(
+        # Handle retained so on_screen_suspend can stop it (Qodo #2414
+        # finding 3): un-retained, this 5s failsafe survived suspension and
+        # applied an error snapshot to the hidden screen. Resume's own
+        # snapshot re-kick owns freshness after a suspend.
+        self._library_source_snapshot_timeout_timer = self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and self._pending_library_source_open is None
-        ):
-            self._start_library_conversation_page_request(
-                self._conversations_state.requested_page,
-                self._conversations_state.requested_query,
-            )
-        if (
-            self._library_media_list_surface_active(require_focus=False)
-            and self._pending_library_source_open is None
-        ):
-            self._request_library_media_browse(
-                self._library_media_browse_controller.mutation_refresh_scope,
-                focus_identity=None,
-            )
-            self._request_library_media_facets()
-            # task-28245: NO auto-resume kick here, deliberately. The mount
-            # leg runs during boot, and the worker's lazy review-set imports
-            # raced the _ui_ready module census on slow runners (977 > 972,
-            # flaky Perf Guard). The rail-select seam is the explicit
-            # user gesture that resumes a set (AC#3's cold-start concern is
-            # structurally avoided there).
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._library_media_view == "trash"
-            and self._pending_library_source_open is None
-        ):
-            self._library_media_trash_query_draft = ""
-            self._library_media_trash_input_error = ""
-            self._library_media_trash_type_choices_visible = False
-            self._library_media_trash_browse_controller.invalidate()
-            self._library_media_trash_browse_controller.state = MediaTrashBrowseState()
-            self._library_media_trash_browse_controller.request(
-                MediaTrashScope(),
-                origin="entry",
-                focus_identity="#library-media-trash-row-0",
-            )
-        self._refresh_local_source_snapshot()
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-        ):
-            self._request_library_notes_tree_initial_load()
-        if (
-            self._library_selected_row_id
-            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
-            and self._library_prompts_view == "list"
-        ):
-            self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.scope,
-                focus_identity=None,
-            )
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._skills_state.view == "list"
-        ):
-            # A restored Skills route may begin its exact page before mount,
-            # when Textual cannot own a worker yet. Re-kick the retained scope
-            # here just like Prompts, Media, and Collections so it cannot stay
-            # stranded in its Loading projection after a tab revisit.
-            self._request_library_skills_browse(
-                self._library_skills_browse_controller.mutation_refresh_scope,
-                focus_identity=None,
-            )
+        # TASK-31521: the per-visit surface re-kicks (conversations, media,
+        # media trash, source snapshot, notes tree, prompts, skills,
+        # collections) moved to `_refresh_library_visit_surfaces`, dispatched
+        # from `on_screen_resume` ONLY. Textual posts ScreenResume on the
+        # initial push too, so a mount-time dispatch would double-run them on
+        # every first visit (the exact Qodo #2402 finding-4 bug on Home) --
+        # and with the library route reusable, resume is the seam that fires
+        # per visit while this method fires once per app run.
         registry = self._library_ingest_registry()
         if registry is not None:
             counts_fn = getattr(registry, "counts", None)
@@ -9559,12 +9737,6 @@ class LibraryScreen(BaseAppScreen):
             add_progress_listener = getattr(registry, "add_progress_listener", None)
             if callable(add_progress_listener):
                 add_progress_listener(self._handle_library_ingest_progress_changed)
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-            self.run_worker(
-                self._load_library_collections_capture_entry(),
-                exclusive=True,
-                group="library_collections_capture_entry",
-            )
         if (
             self._library_notes_view == "editor"
             and self._selected_note_id
@@ -14444,6 +14616,9 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
+        with Horizontal(id="library-chunking-tools"):
+            yield Button("Chunking Lab", id="library-open-chunking-lab", compact=True)
+            yield Button("Try selected text", id="library-chunking-selected", compact=True)
         lifecycle_status_copy = self._library_lifecycle_status_copy()
         lifecycle_status = Static(
             lifecycle_status_copy,
@@ -23817,7 +23992,20 @@ class LibraryScreen(BaseAppScreen):
         # for that to be true. Live, focus sat on the Library pane grip and
         # the first Space collapsed the pane instead (critique #4, A cap
         # 31->32, B cap_69). Entry only -- exit keeps the user's focus.
-        _sync_library_canvas(self, "media", then=self._focus_library_media_items_pane)
+        #
+        # task-31631 AC#1: the ARMED list-entry seam, not the one-shot
+        # ``_focus_library_media_items_pane``. Both land on a row when the
+        # rows this sync mounts are the last word, but they are not: any of
+        # the screen's background workers ending in its own
+        # ``refresh(recompose=True)`` rebuilds the row Buttons underneath,
+        # and a one-shot focus dies with the widget it was set on
+        # (reproduced at 235x52 and 100x30 -- ``screen.focused`` is None
+        # after that recompose, which is critique #5's "F6, Down and Space
+        # all no-op with no focus painted anywhere"). ``_arm_...`` re-requests
+        # the row on every recompose while armed, and disarms itself the
+        # moment the user moves focus. It also prefers the first STILL-CHECKED
+        # row over the literal first row, which is what select mode wants.
+        _sync_library_canvas(self, "media", then=self._arm_library_list_entry_focus)
 
     def _library_media_select_enter_available(self) -> bool:
         """Whether ENTERING media Select mode is offered (task-28012).
@@ -38084,6 +38272,30 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            # task-31567: this recompose replaces every child, so whatever
+            # the user was standing on (the content box, the Find input, an
+            # action button) is about to be removed and Textual will pick
+            # the shell's first focusable widget -- a pane GRIP. The restore
+            # rides the viewer's own post-recompose hook rather than
+            # ``screen.call_after_refresh``: this rebuild is driven by the
+            # VIEWER's message pump, and the two have no ordering (the same
+            # trap ``PostRecomposeCallback`` exists for -- measured: the
+            # screen-level callback ran before the new children mounted and
+            # the grip still won).
+            # ...unless the Find token owns this recompose. It was consumed
+            # into ``find_focus_pending`` a few lines above, so the restore's
+            # own token guard reads False by the time it runs (review I2);
+            # read the viewer's copy here instead. Without this the seam
+            # re-focused the pressed Find BUTTON on the way through -- a
+            # third focus move, and a foreign ``DescendantFocus``, inside the
+            # window the token channel owns.
+            if not viewer.find_focus_pending:
+                viewer.queue_after_recompose(
+                    partial(
+                        self._restore_library_media_focus,
+                        self._capture_library_media_focus_identity(),
+                    )
+                )
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -38439,6 +38651,98 @@ class LibraryScreen(BaseAppScreen):
         if url.startswith(("http://", "https://")):
             webbrowser.open(url)
 
+    def _capture_library_media_focus_identity(self) -> str | None:
+        """Record what holds focus just before a media-path recompose.
+
+        task-31567. Returns an id selector (a media row, ``#library-media-
+        viewer-content``, the Find input, a toolbar button, ...) or ``None``
+        when nothing focusable-with-an-id owns focus. A pane GRIP is never
+        captured, so the restore below can never put focus back on one.
+        """
+        focused = self.focused
+        widget_id = getattr(focused, "id", None)
+        if not widget_id or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
+            return None
+        return f"#{widget_id}"
+
+    def _restore_library_media_focus(self, previous: str | None) -> None:
+        """Put focus back where a media recompose found it (task-31567 AC#1).
+
+        Textual re-picks focus when the widget holding it is recomposed
+        away, and the adaptive reader shell's two pane grips are the first
+        focusable widgets in it -- so EVERY media recompose that did not
+        name its own focus target landed the user on a grip, where Space
+        collapses a pane (wave 4 PR B) and the reading position is gone.
+        Measured before this seam, at 235x52 and 100x30 alike: a Reader
+        recompose from the content or the Find input landed on
+        ``library-media-items-grip``; a receipt repaint or leaving select
+        mode from a row landed on ``library-media-library-grip``.
+
+        An explicit target always WINS -- this only acts when nothing else
+        claimed focus:
+
+        * the two one-shot focus CHANNELS (task-31631's armed list-entry
+          request and task-31269's Find token) are checked directly,
+          because both land their focus in a LATER callback and would
+          otherwise be disarmed by a foreign ``set_focus`` here;
+        * any other explicit follow-up (PR E's ``focus_identity`` through
+          ``_complete_library_media_mutation``, a ``then=`` focus callback)
+          has already focused a real widget by the time this runs, which
+          the "focus is not a grip" check below detects generically.
+
+        Three choke points reach here, covering every media recompose: the
+        ``kind == "media"`` branch of ``_sync_library_canvas`` and
+        ``_sync_library_media_viewer_state`` (both canvas-scoped, via
+        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
+        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
+        Qodo round: background workers and ``_sync_library_canvas``'s own
+        failure fallback both take that bare path -- the fallback after
+        CLEARING the follow-up it had queued -- and left focus at ``None``.
+
+        Args:
+            previous: Identity captured by
+                ``_capture_library_media_focus_identity`` before the
+                recompose, or ``None`` to leave focus alone.
+        """
+        if previous is None:
+            return
+        if self._library_pending_list_entry_focus or (
+            self._library_media_find_focus_pending
+        ):
+            return
+        focused = self.focused
+        if focused is not None and not focused.has_class(
+            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        ):
+            return
+        try:
+            target = self.query_one(previous, Widget)
+        except (NoMatches, QueryError):
+            # The widget itself is gone (a row the write removed, the Find
+            # bar a mode switch closed): the list entry is the honest
+            # landing spot -- never the grip Textual would pick.
+            self._focus_library_list_entry()
+            return
+        if not target.focusable:
+            # Same failure, quieter: ``Screen.set_focus`` NO-OPS on a widget
+            # whose ``focusable`` is False, so treating this as success left
+            # focus on the grip. The media canvas and the viewer both
+            # compose gated actions disabled (Select all / Clear / Export /
+            # Analyze / Delete, Find, Generate) and those gates flip on
+            # exactly the recompose this seam wraps, so a captured id can
+            # come back unfocusable (review I1).
+            self._focus_library_list_entry()
+            return
+        # ``scroll_visible=False``: this seam restores FOCUS, never scroll
+        # position -- Media owns that separately (the stored viewer-return
+        # restore, and the wheel gesture that CANCELS it). Once the screen-
+        # level hook made this run after every whole-screen recompose, the
+        # default ``scroll_visible=True`` re-scrolled the focused row back
+        # into view and reinstated exactly the restore the user's wheel had
+        # just cancelled (``test_compact_media_viewer_back_wheel_scroll_
+        # cancels_stored_restore``, scroll_y 45 where the pin wants 0).
+        self.set_focus(target, scroll_visible=False)
+
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.
 
@@ -38478,6 +38782,11 @@ class LibraryScreen(BaseAppScreen):
         # here rather than in each of Escape's three branches so no future
         # sub-state can be added without it.
         self._register_footer_shortcuts()
+        # task-31567: the viewer-scoped branch queues its own restore from
+        # inside ``_sync_library_media_viewer_state`` (it alone knows whether
+        # a recompose actually happens). The whole-screen fallback needs
+        # nothing here -- ``LibraryScreen.refresh`` captures and restores
+        # around every screen recompose (Qodo round).
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
@@ -40669,6 +40978,40 @@ class LibraryScreen(BaseAppScreen):
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         return self._conversations_controller.use_selected_conversation_as_source(event)
 
+    def open_chunking_lab(self, *, use_selected: bool = False) -> None:
+        """Open the local tool directly, with only a local media ID as context."""
+        context = {"return_route": "library"}
+        if use_selected:
+            reader = self._library_media_reader_session
+            if reader.external_detail:
+                self.app_instance.notify(
+                    "Chunking Lab uses local extracted text. Copy server text explicitly or choose a local Library item.",
+                    severity="warning",
+                )
+                return
+            media_id = reader.loaded_backing_id
+            if (
+                type(media_id) is not int
+                or media_id < 1
+                or reader.pending_request is not None
+            ):
+                self.app_instance.notify(
+                    "Open a local media item with extracted text first.",
+                    severity="warning",
+                )
+                return
+            context["local_media_id"] = media_id
+        self.app_instance.post_message(NavigateToScreen("chunking_lab", context))
+
+    @on(Button.Pressed, "#library-open-chunking-lab")
+    def open_chunking_lab_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.open_chunking_lab()
+
+    @on(Button.Pressed, "#library-chunking-selected")
+    def selected_chunking_lab_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.open_chunking_lab(use_selected=True)
 
     def _open_selected_media_handoff(self) -> None:
         """Stage the media item open in the viewer into Console via the shared handoff.

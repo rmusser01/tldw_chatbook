@@ -426,6 +426,27 @@ def _detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal 
     )
 
 
+def linked_worktree_name(root: Path) -> str | None:
+    """Return the directory basename when ``root`` is a linked git worktree.
+
+    A linked worktree has ``--git-dir`` != ``--git-common-dir``. Returns
+    ``None`` for a primary checkout, a non-repo, or any git failure —
+    this is a display probe and must never raise.
+    """
+    try:
+        result = _run_user_git(root, "rev-parse", "--git-dir", "--git-common-dir")
+    except GitWorkspaceError:
+        return None
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) != 2:
+        return None
+    git_dir = (root / lines[0]).resolve() if not Path(lines[0]).is_absolute() else Path(lines[0]).resolve()
+    common_dir = (root / lines[1]).resolve() if not Path(lines[1]).is_absolute() else Path(lines[1]).resolve()
+    if git_dir == common_dir:
+        return None
+    return root.resolve().name
+
+
 # ---------------------------------------------------------------------------
 # Working-tree status, per-file diff, untracked preview (TASK-16801 T2).
 # ---------------------------------------------------------------------------

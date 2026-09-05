@@ -103,6 +103,13 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
     # reason as ``_ingest_controller`` itself.
     if not hasattr(screen, "_library_ingest_analyze_outcomes"):
         screen._library_ingest_analyze_outcomes = {}
+    # (round-2 origin/dev reconciliation merge) TASK-31521's two suspend
+    # flags are likewise flat ``__init__`` fields the controller's new
+    # accessors read; seed them with ``__init__``'s own ``False`` defaults.
+    if not hasattr(screen, "_library_screen_suspended"):
+        screen._library_screen_suspended = False
+    if not hasattr(screen, "_library_ingest_suspended_activity"):
+        screen._library_ingest_suspended_activity = False
     screen._ingest_controller = LibraryIngestController(
         screen,
         ingest_state_accessor=lambda: screen._ingest_state,
@@ -171,8 +178,19 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
         set_library_canvas_resync_pending=(
             lambda value: setattr(screen, "_library_canvas_resync_pending", value)
         ),
+        library_screen_suspended_accessor=(
+            lambda: screen._library_screen_suspended
+        ),
         library_ingest_analyze_outcomes_accessor=(
             lambda: screen._library_ingest_analyze_outcomes
+        ),
+        library_ingest_suspended_activity_accessor=(
+            lambda: screen._library_ingest_suspended_activity
+        ),
+        set_library_ingest_suspended_activity=(
+            lambda value: setattr(
+                screen, "_library_ingest_suspended_activity", value
+            )
         ),
         build_ingest_options_snapshot=(
             lambda *a, **k: screen._build_ingest_options_snapshot(*a, **k)

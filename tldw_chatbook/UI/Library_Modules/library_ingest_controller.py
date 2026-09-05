@@ -342,17 +342,21 @@ examples):
    reaches it, never moved itself --, ``_safe_text``, ``_select_library_
    rail_row``, ``_server_binding_is_shipped_placeholder``, ``_sync_library_
    emergency_guard_presentation``, ``_sync_library_landing_lifecycle_
-   presentation``); (b) 8 shared shell state accessors this cluster reads
+   presentation``); (b) 10 shared shell state accessors this cluster reads
    (``_library_selected_row_id``, ``_transcribe_cpp_configured``,
    ``_footer_shortcut_registration``, ``_library_canvas_projection_
-   depth``, ``_library_ingest_analyze_outcomes`` -- the last one added by
-   the ``origin/dev`` reconciliation merge, a live ``dict`` this cluster
-   mutates in place through its getter, see "One body follows a post-move
-   dev edit" below) and reads+writes (``_library_rail_collapsed``,
+   depth``, ``_library_screen_suspended``, ``_library_ingest_analyze_
+   outcomes`` -- the last two added by the ``origin/dev`` reconciliation
+   merges: the suspend flag is screen-wide TASK-31521 lifecycle state this
+   cluster only reads, and the outcomes map is a live ``dict`` this cluster
+   mutates in place through its getter; see "Three bodies follow post-move
+   dev edits" below) and reads+writes (``_library_rail_collapsed``,
    ``_library_landing_attention_signature``, ``_library_canvas_resync_
-   pending`` -- the last pair joining framework-service ``is_running``
+   pending`` -- that trio joining framework-service ``is_running``
    above for the identical ``_sync_library_canvas`` forwarding reason,
-   mirroring the skills/RAG controllers' own identical pair); (c) NONE --
+   mirroring the skills/RAG controllers' own identical pair -- plus
+   ``_library_ingest_suspended_activity``, TASK-31521's resume latch,
+   which two ported bodies SET); (c) NONE --
    no wiring accessor pair exists for this subsystem (task 1's own finding: "no
    field holds a live controller/coordinator instance"); (d) N/A -- no
    merely-delegate-to-existing-controller properties exist for Ingest
@@ -381,23 +385,43 @@ analogue of a state-PR's field deletion for a zero-external-reference
 field. ``LIBRARY_INGEST_SHORTCUTS`` is the one exception (see binding kind 1
 above): it keeps its screen-side test dependency and is never deleted.
 
-**One body follows a post-move dev edit (reconciliation merge).**
-``handle_library_ingest_clear_finished`` gained a 13-line stale-outcome
-prune on ``origin/dev`` (task-28007's Qodo review round, PR #2400 #2)
-AFTER this move landed. The reconciliation merge ports that block HERE
-rather than resurrecting the screen-side body: the screen keeps its
-one-line delegator, and the block reaches dev's new flat screen field
-``_library_ingest_analyze_outcomes`` (a plain ``__init__`` attribute, NOT
-one of the 20 ``LibraryIngestState`` fields) through the ``library_ingest_
-analyze_outcomes_accessor`` binding added for it. The ported lines are
-therefore byte-for-byte with dev's edited original -- the same trick
-``_library_canvas_resync_pending`` already plays for the shell's own
-state -- and the byte-for-byte invariant below now reads "against the
-current ``origin/dev`` body" for this one method. Folding that field into
-``LibraryIngestState`` as a 21st field, and censusing dev's two new
+**Three bodies follow post-move dev edits (reconciliation merges).**
+Three moved bodies were edited on ``origin/dev`` AFTER their move landed,
+across two reconciliation merges. In every case the edit FOLLOWS THE BODY:
+the screen keeps its one-line delegator and the edit is ported here, so
+the ported lines stay byte-for-byte with dev's edited original and the
+byte-for-byte invariant below reads "against the current ``origin/dev``
+body" for these three methods.
+
+1. ``handle_library_ingest_clear_finished`` gained a 13-line stale-outcome
+   prune (task-28007's Qodo review round, PR #2400 #2), reaching dev's new
+   flat screen field ``_library_ingest_analyze_outcomes`` through the
+   ``library_ingest_analyze_outcomes_accessor`` binding.
+2. ``_handle_library_ingest_registry_changed`` and
+3. ``_handle_library_ingest_progress_changed`` each gained TASK-31521
+   suspend gates (the Library route became reusable, so navigation
+   SUSPENDS the screen instead of unmounting it): the registry listener
+   defers its dynamic-region rebuild, footer re-registration, source
+   snapshot re-read and landing-attention sync while hidden, and the
+   progress handler skips pure DOM patching -- both latching
+   ``_library_ingest_suspended_activity`` so resume runs exactly one
+   reconciliation instead of N.
+
+The three fields those edits touch are all plain ``__init__`` screen
+attributes, NOT ``LibraryIngestState`` fields, and are bridged by
+accessors added in the same merges -- the same trick ``_library_canvas_
+resync_pending`` already plays for the shell's own state.
+``_library_screen_suspended`` is screen-wide lifecycle state (dev gates
+the media and notes surfaces on it too), so its accessor is PERMANENT.
+The other two are ingest-exclusive and therefore INTERIM: folding
+``_library_ingest_analyze_outcomes`` and ``_library_ingest_suspended_
+activity`` into ``LibraryIngestState`` as its 21st and 22nd fields,
+retiring their bindings (including the ``set_library_ingest_suspended_
+activity`` setter), simplifying ``on_screen_suspend``'s explicit
+``_ingest_state.path_debounce_timer`` stop, and censusing dev's two new
 screen-side ingest methods (``handle_library_ingest_analyze_skipped``,
 ``_record_library_ingest_analyze_outcome``) into the decomposition
-tables, is filed as task-31651; this accessor is the interim bridge.
+tables, is filed as task-31651.
 
 **Construction order -- the usual position.** ``LibraryScreen.__init__``
 builds ``self._ingest_controller`` right after ``self._skills_controller``,
@@ -522,11 +546,26 @@ class LibraryIngestController:
         library_canvas_projection_depth_accessor,
         library_canvas_resync_pending_accessor,
         set_library_canvas_resync_pending,
+        # -- TASK-31521 (screen reuse): True while the Library screen is
+        # covered by another. Screen-wide lifecycle state -- dev gates the
+        # media and notes surfaces on it too -- so an accessor is its
+        # PERMANENT shape here, like `library_canvas_resync_pending_
+        # accessor`. A getter only: the two ported gates read it, never
+        # write it (`on_screen_suspend`/`on_screen_resume` own the writes).
+        library_screen_suspended_accessor,
         # -- dev's task-28007 bulk-Analyze receipts, bridged by the
         # origin/dev reconciliation merge (module docstring: "One body
         # follows a post-move dev edit"). A getter only: the ported block
         # mutates the returned dict in place.
         library_ingest_analyze_outcomes_accessor,
+        # -- TASK-31521's suspended-activity latch: set by both ported
+        # gates so resume runs exactly ONE ingest reconciliation instead of
+        # N. Ingest-exclusive, so this is an INTERIM bridge like
+        # `library_ingest_analyze_outcomes_accessor` -- task-31651 folds it
+        # into `LibraryIngestState` and retires the pair. Read AND written
+        # by the ported code, hence the getter/setter shape.
+        library_ingest_suspended_activity_accessor,
+        set_library_ingest_suspended_activity,
         # -- named late-binding callables for the test-bypass/hazard
         # exclusions (group (e)) that a MOVER still calls/references
         # internally.
@@ -614,8 +653,15 @@ class LibraryIngestController:
             library_canvas_resync_pending_accessor
         )
         self._set_library_canvas_resync_pending_fn = set_library_canvas_resync_pending
+        self._library_screen_suspended_accessor = library_screen_suspended_accessor
         self._library_ingest_analyze_outcomes_accessor = (
             library_ingest_analyze_outcomes_accessor
+        )
+        self._library_ingest_suspended_activity_accessor = (
+            library_ingest_suspended_activity_accessor
+        )
+        self._set_library_ingest_suspended_activity_fn = (
+            set_library_ingest_suspended_activity
         )
         self._build_ingest_options_snapshot_fn = build_ingest_options_snapshot
         self._build_library_ingest_state_fn = build_library_ingest_state
@@ -750,6 +796,20 @@ class LibraryIngestController:
         self._set_library_canvas_resync_pending_fn(value)
 
     @property
+    def _library_screen_suspended(self) -> bool:
+        """Calls the injected ``library_screen_suspended_accessor``.
+
+        Getter only, deliberately: TASK-31521's suspend flag is owned by
+        the screen's ``on_screen_suspend``/``on_screen_resume`` pair, and
+        the two moved bodies that gained gates on it in the origin/dev
+        reconciliation merge only READ it. Screen-wide lifecycle state
+        (dev gates the media and notes surfaces on it too), so unlike the
+        ingest-exclusive bridges below this accessor is its permanent
+        shape -- the same standing as ``_library_canvas_resync_pending``.
+        """
+        return self._library_screen_suspended_accessor()
+
+    @property
     def _library_ingest_analyze_outcomes(self) -> dict[str, tuple[bool, str]]:
         """Calls the injected ``library_ingest_analyze_outcomes_accessor``.
 
@@ -760,6 +820,24 @@ class LibraryIngestController:
         needed and the ported lines stay byte-for-byte with dev's.
         """
         return self._library_ingest_analyze_outcomes_accessor()
+
+    @property
+    def _library_ingest_suspended_activity(self) -> bool:
+        """Calls the injected ``library_ingest_suspended_activity_accessor``.
+
+        Getter AND setter: both bodies the origin/dev reconciliation merge
+        re-ported (``_handle_library_ingest_registry_changed`` and
+        ``_handle_library_ingest_progress_changed``) SET this latch to
+        True, so a write path is required for the ported lines to stay
+        byte-for-byte with dev's. Ingest-exclusive, therefore an INTERIM
+        bridge -- task-31651 folds it into ``LibraryIngestState`` and
+        retires this pair alongside the analyze-outcomes one above.
+        """
+        return self._library_ingest_suspended_activity_accessor()
+
+    @_library_ingest_suspended_activity.setter
+    def _library_ingest_suspended_activity(self, value: bool) -> None:
+        self._set_library_ingest_suspended_activity_fn(value)
 
     # -- general Library-wide shell helpers (group (a)) --------------------
 
@@ -1051,11 +1129,19 @@ class LibraryIngestController:
             ):
                 self._disarm_library_ingest_start_confirm()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
-            self._update_library_ingest_dynamic_regions()
-            shortcuts = self._library_ingest_shortcuts_for_current_state()
-            registration = ("library", tuple(shortcuts))
-            if self._footer_shortcut_registration != registration:
-                self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
+            # TASK-31521: while suspended (screen reused, covered by another
+            # tab) the widget rebuild and footer re-registration are wasted
+            # work against a hidden screen -- defer to one resume-time pass.
+            if self._library_screen_suspended:
+                self._library_ingest_suspended_activity = True
+            else:
+                self._update_library_ingest_dynamic_regions()
+                shortcuts = self._library_ingest_shortcuts_for_current_state()
+                registration = ("library", tuple(shortcuts))
+                if self._footer_shortcut_registration != registration:
+                    self.register_footer_shortcuts(
+                        source="library", shortcuts=shortcuts
+                    )
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
@@ -1166,12 +1252,18 @@ class LibraryIngestController:
         if done_count != self._library_ingest_last_done_count:
             grew = done_count > self._library_ingest_last_done_count
             self._library_ingest_last_done_count = done_count
-            if grew:
+            # TASK-31521: while suspended, skip the snapshot re-read (real
+            # multi-source DB work per completed job); resume's own
+            # unconditional `_refresh_local_source_snapshot()` covers it.
+            if grew and not self._library_screen_suspended:
                 self._refresh_local_source_snapshot()
         attention = self._library_landing_attention_action()
         if attention != self._library_landing_attention_signature:
             self._library_landing_attention_signature = attention
-            if not self._library_selected_row_id:
+            if (
+                not self._library_selected_row_id
+                and not self._library_screen_suspended
+            ):
                 self._sync_library_landing_lifecycle_presentation()
 
     def _handle_library_ingest_progress_changed(
@@ -1190,10 +1282,16 @@ class LibraryIngestController:
             before: Job snapshot immediately before the progress mutation.
             after: Job snapshot immediately after the progress mutation.
         """
-        if (
-            not self.is_attached
-            or self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
-        ):
+        if not self.is_attached:
+            return
+        if self._library_screen_suspended:
+            # TASK-31521: pure DOM patching -- pointless against a hidden
+            # screen. Flag it so resume's single reconciliation pass
+            # rebuilds the dynamic regions with the final progress state.
+            if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+                self._library_ingest_suspended_activity = True
+            return
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             return
         if ingest_progress_action_signature(before) != ingest_progress_action_signature(
             after

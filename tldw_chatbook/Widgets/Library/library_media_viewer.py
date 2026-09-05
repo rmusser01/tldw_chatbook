@@ -19,13 +19,16 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaViewerState,
     find_content_matches,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
 )
 
 
-class LibraryMediaViewer(Vertical):
+class LibraryMediaViewer(PostRecomposeCallback, Vertical):
     """Render the full Library media item: metadata, content, and actions.
 
     DEFAULT_CSS pins the Rendered|Raw toggle's "|" separator to a width of

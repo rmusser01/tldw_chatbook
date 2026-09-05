@@ -474,7 +474,27 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # progress_action_signature`, were dropped -- their sole screen consumer
     # moved to the controller in task 2). Re-pinned to the merged tree's own
     # measured value, not carried forward from either side.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41028, 1313),
+    #
+    # 2026-09-05, wave-5 ROUND-2 `origin/dev` merge (72 commits since the
+    # previous reconciliation's merge-base 93388ba69; mostly TASK-31521 --
+    # the Library route becomes reusable, so navigation SUSPENDS this screen
+    # instead of unmounting it). Fresh `_measure()` on the merged tree:
+    # 41028/1313 -> 41371/1321 (+343 lines, +8 methods). The method delta is
+    # again EXACTLY dev's own base->dev delta on this class (1319 -> 1327 at
+    # 93388ba69 -> 2c9c14418): no moved body came back, no wave-5 delegator
+    # was lost. Line delta reconciles exactly as 346 - 20 + 11 + 6: dev's own
+    # +346, MINUS the +20 dev spent editing two MOVED bodies (`_handle_
+    # library_ingest_registry_changed`, `_handle_library_ingest_progress_
+    # changed` -- both gained suspend gates, both ported into the controller
+    # instead, screen keeps its one-line delegators), PLUS +11 for the three
+    # new accessor bindings at the construction site (`library_screen_
+    # suspended_accessor`, `library_ingest_suspended_activity_accessor`,
+    # `set_library_ingest_suspended_activity`), PLUS +6 for the `on_screen_
+    # suspend` fix (dev's string-loop `getattr` for `_library_ingest_path_
+    # debounce_timer` silently no-ops on this branch -- that field lives in
+    # `LibraryIngestState` now -- so the name leaves the tuple and the timer
+    # gets an explicit state-object stop).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41371, 1321),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

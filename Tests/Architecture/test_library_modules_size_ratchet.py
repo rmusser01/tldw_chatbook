@@ -194,7 +194,28 @@ _BUDGETS: dict[str, int] = {
     # divergence, the new group-(b) binding, and the follow-up task
     # (task-31651) that folds the field into `LibraryIngestState` proper.
     # No other body touched; 56 movers unchanged. 2569 -> 2623.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2623,
+    #
+    # 2026-09-05, wave-5 ROUND-2 `origin/dev` merge (72 commits since the
+    # previous reconciliation's merge-base 93388ba69). Dev edited TWO more
+    # already-moved bodies, both with TASK-31521 suspend gates (the Library
+    # route became reusable, so navigation suspends the screen instead of
+    # unmounting it): `_handle_library_ingest_registry_changed` defers its
+    # dynamic-region rebuild, footer re-registration, source-snapshot
+    # re-read and landing-attention sync while hidden, and `_handle_library_
+    # ingest_progress_changed` skips pure DOM patching. Same rule as last
+    # round -- the edit follows the body, the screen keeps its one-line
+    # delegators: +20 ported lines (exactly dev's own delta on those two
+    # bodies, so both port byte-for-byte), +15 for three new constructor
+    # parameters and their comments (`library_screen_suspended_accessor`,
+    # `library_ingest_suspended_activity_accessor`, `set_library_ingest_
+    # suspended_activity`), +7 for storing them, +32 for the two same-named
+    # properties (one getter-only, one getter/setter) that keep the ported
+    # lines byte-for-byte, and +24 of module docstring (group (b) 8 -> 10,
+    # and the divergence paragraph rewritten from one body to three).
+    # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
+    # total including `self` and `screen`). No other body touched; 56 movers
+    # unchanged. 2623 -> 2721.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

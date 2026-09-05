@@ -66,6 +66,10 @@ class ScreenRoute:
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "chunking_lab": ScreenRoute(
+        "chunking_lab", "library",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen", "ChunkingLabScreen",
+    ),
     "home": ScreenRoute(
         "home",
         "home",
@@ -78,10 +82,36 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         reusable=True,
     ),
     "chat": ScreenRoute(
-        "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
+        "chat",
+        "chat",
+        "tldw_chatbook.UI.Screens.chat_screen",
+        "ChatScreen",
+        # TASK-31520 (audited 2026-09-04, 19-step on_unmount disposition):
+        # per-visit timers stop and live audio abandons in
+        # `on_screen_suspend`; auto-speak/sync-timer/survivor-tick re-arm
+        # in `on_screen_resume`. The runtime view stays ATTACHED across a
+        # suspend -- runs and parked approvals survive navigation (the
+        # `confirm_navigation` gate is retired accordingly; quit still
+        # confirms). `on_unmount`'s remaining teardown (video drain,
+        # roleplay abandon, store-tap uninstall, runtime leave) now runs
+        # at true teardown only -- each was audited as breaking its
+        # feature if wired to suspend.
+        reusable=True,
     ),
     "library": ScreenRoute(
-        "library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"
+        "library",
+        "library",
+        "tldw_chatbook.UI.Screens.library_screen",
+        "LibraryScreen",
+        # TASK-31521 (audited 2026-09-04, 28-row on_unmount disposition):
+        # per-visit surface refresh runs from `on_screen_resume`; armed
+        # debounce timers stop in `on_screen_suspend` (Textual only
+        # auto-cancels timers on real removal); ingest-listener DOM/DB
+        # branches gate on the suspended flag with one resume-time
+        # reconciliation. `on_unmount`'s persistence drains and the
+        # file-notes DB-replica close now run at true teardown only --
+        # the per-visit connection churn reuse exists to retire.
+        reusable=True,
     ),
     "artifacts": ScreenRoute(
         "artifacts",
