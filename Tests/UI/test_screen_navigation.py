@@ -509,6 +509,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "watchlists_collections": "WatchlistsCollectionsScreen",
         "schedules": "SchedulesWorkbench",
         "workflows": "WorkflowsScreen",
+        "meetings": "MeetingsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
         "llm": "LLMScreen",
@@ -518,11 +519,6 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
 
     resolved = {}
     for destination in SHELL_DESTINATION_ORDER:
-        # meetings_screen.py does not exist yet (meeting-transcription task
-        # 11 creates it); the route is registered ahead of the screen module
-        # per that task's own instructions.
-        if destination.destination_id == "meetings":
-            continue
         _screen_name, _tab_id, screen_class = resolve_screen_target(
             destination.primary_route
         )

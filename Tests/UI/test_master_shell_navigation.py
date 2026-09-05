@@ -369,11 +369,6 @@ async def test_every_visible_master_shell_nav_destination_resolves():
     for destination in SHELL_DESTINATION_ORDER:
         if destination.destination_id == "research":
             continue
-        # meetings_screen.py does not exist yet (meeting-transcription task
-        # 11 creates it); the route is registered ahead of the screen module
-        # per that task's own instructions.
-        if destination.destination_id == "meetings":
-            continue
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
             destination.primary_route
         )
