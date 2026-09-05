@@ -339,7 +339,57 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: incl. Console-interaction PRD work landed inside the budgeted file):
     #: 42940/1304 -> 43225/1311. Post-merge re-measure per the standing
     #: dev-race protocol; the decomposition's own trajectory remains down.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43225, 1311),
+    #
+    # 2026-09-04, wave-4 task 1 (skills state PR, series 1/3): the 38-field
+    # skills `__init__` block (26 singular `_library_skill_*` + 9 plural
+    # `_library_skills_*` + 1 bare `_selected_skill_name`; 2 more --
+    # `_library_skill_import_coordinator`/`_library_skills_browse_
+    # controller` -- are WIRING and stay untouched) collapsed into one
+    # `LibrarySkillsState` constructor call plus a generated three-prefix
+    # shim loop; methods unchanged (pure field move, zero FunctionDefs
+    # touched). 43225/1311 -> 43179/1311.
+    #
+    # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): 86 of
+    # 127 "skill"-named methods moved to `LibrarySkillsController`
+    # (byte-for-byte; 41 excluded -- 6 merely-delegate-to-existing-
+    # controller properties, 27 unbound-fake-self, 1 instance-attribute
+    # monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-
+    # argument hazard: 1 found by static analysis, 5 found by the
+    # verification battery after a first draft moved them and broke real
+    # Pilot-driven / Tests/Skills tests -- see `library_skills_
+    # controller.py`'s own module docstring, exclusion 5). Methods
+    # unchanged (pure move: 86 FunctionDefs out, 86 one-line delegators
+    # in). 43179/1311 -> 41247/1311.
+    #
+    # 2026-09-04, wave-4 task 3 (skills cleanup, series 3/3): the generated
+    # skills-state shim block deleted wholesale (36 fields' worth of
+    # `_library_skill_<field>`/`_library_skills_<field>`/
+    # `_selected_skill_name` properties); every remaining screen-side flat
+    # reference retargeted to `self._skills_state.<field>` (121 attribute
+    # accesses + 5 dotted-vs-flat dispatch-dict string values across the
+    # `__init__` entangled-field lines, the two reader-preference dispatcher
+    # methods, and the skills choice-strip helper); 16 of the 86 moved
+    # delegators pruned (zero external references beyond the controller's
+    # own internal calls -- see `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` in
+    # `Tests/Architecture/test_library_skills_wiring.py`); 16 FunctionDefs
+    # out (86 -> 70 remaining skills delegators), no replacement. 28 dead
+    # imports pruned in total: 1 (`skill_state_shim_attr`) from the shim
+    # deletion itself, plus 27 more left dead by task 2's own move (15
+    # skill-trust/tool-picker pure-function+constant names from
+    # `Widgets.Library`, 10 names from `Library.library_skills_state`, 2
+    # skill-trust modal classes from `.skills_screen` -- all three left for
+    # this cleanup PR, per the export/collections series' own Task 3/Task 4
+    # split). 41247/1311 -> 41155/1295.
+    #
+    # 2026-09-04, wave-4 final review: `origin/dev` merge (106 commits since
+    # this branch's merge-base). Fresh `_measure()` on the merged tree:
+    # 41155/1295 -> 41574/1302 (+419 lines, +7 methods) -- ordinary
+    # dev-side feature drift landing in `LibraryScreen` while this wave's
+    # own series was in flight (unrelated to the skills move; the one
+    # merge conflict this dev-merge produced was in the diagnostic
+    # inventory pin, not in this file). Re-pinned to the merged tree's own
+    # measured value, not carried forward from either side.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41574, 1302),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

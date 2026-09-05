@@ -1,0 +1,493 @@
+# Review package: 679a90d1b..f472f7512
+
+## Commits
+f472f7512 docs(library): recipe §3 gains the screen-identity bypass class
+bf13b133b fix(library): bind focused on the skills controller; cover the focus-restore path
+
+## Files changed
+ .../test_library_modules_size_ratchet.py           |  24 ++--
+ Tests/UI/test_library_skills_canvas.py             | 137 +++++++++++++++++++++
+ backlog/docs/library-decomposition-recipe.md       |  85 +++++++++++++
+ .../Library_Modules/library_skills_controller.py   |  56 +++++++--
+ 4 files changed, 281 insertions(+), 21 deletions(-)
+
+## Diff
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+index 8d93a69ed..6d7fad565 100644
+--- a/Tests/Architecture/test_library_modules_size_ratchet.py
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -179,29 +179,35 @@ _BUDGETS: dict[str, int] = {
+     # deletion task 5 accounted for at the top of the file, missed at the
+     # bottom. Reworded to match the module docstring's corrected past-tense
+     # phrasing. Comment-only growth (+1 line); no method body touched.
+     # 1897 -> 1898.
+     "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1898,
+     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
+     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+     # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): born
+     # governed the moment this file existed (task-31203 AC#4's glob-based
+     # discovery, recipe §17) -- 86 moved methods (byte-for-byte) + a
+-    # ~38-parameter constructor (the largest single move of the effort;
+-    # see the module's own docstring for the full derivation) pinned at
+-    # its exact measured line count. 3181 -> 3113 -> 3099 (two fix
+-    # rounds: 5 methods total reverted to screen-resident after the
+-    # battery caught bare-self identity-comparison regressions --
+-    # `_library_screen_is_current(self)` in four Import-row handlers, and
+-    # `self.app.screen is self` inline in `_present_library_skills_
+-    # import_snapshot`; see the module's own docstring, exclusion 5).
+-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3099,
++    # 40-parameter constructor (self + screen + 38 named dependencies; the
++    # largest single move of the effort; see the module's own docstring
++    # for the full derivation) pinned at its exact measured line count.
++    # 3181 -> 3113 -> 3099 (two fix rounds: 5 methods total reverted to
++    # screen-resident after the battery caught bare-self identity-
++    # comparison regressions -- `_library_screen_is_current(self)` in
++    # four Import-row handlers, and `self.app.screen is self` inline in
++    # `_present_library_skills_import_snapshot`; see the module's own
++    # docstring, exclusion 5) -> 3131 (post-landing-review fix: a SIXTH
++    # bare-self hazard, an unbound-attribute escape via `getattr(self,
++    # "focused", None)` with no corresponding property, silently degraded
++    # the committed-mutation-refresh focus-restore path; fixed by adding
++    # the `focused` framework-service property every sibling controller
++    # already carries -- see the module's own docstring, exclusion 5).
++    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3131,
+ }
+ 
+ #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
+ #: tolerance for the same reasoning at a larger scale): ordinary in-file
+ #: edits — a strengthened comment, a docstring fix — must not fail this
+ #: check. It exists only to catch a budget left stale-high after a
+ #: controller shrinks (a cleanup PR that forgot to lower its row), not to
+ #: pin every file to its exact byte count at all times.
+ _SLACK_TOLERANCE_LINES = 50
+ 
+diff --git a/Tests/UI/test_library_skills_canvas.py b/Tests/UI/test_library_skills_canvas.py
+index eec691c99..f373be1f6 100644
+--- a/Tests/UI/test_library_skills_canvas.py
++++ b/Tests/UI/test_library_skills_canvas.py
+@@ -1518,20 +1518,54 @@ async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
+             ):
+                 break
+         assert screen.query_one("#library-skill-row-skill-000", Button)
+         assert not screen.query("#library-skill-row-skill-020")
+         assert "1-20 of 45" in str(
+             screen.query_one("#library-skills-range", Static).renderable
+         )
+         assert screen.query_one("#library-skills-page-previous", Button).disabled
+ 
+ 
++class _DelayedSkillsScopeService(_FakeSkillsScopeService):
++    """Every `list_skills` call sleeps `delay` seconds before delegating.
++
++    A bounded delay (never an indefinite wait -- avoids any risk of
++    deadlocking the harness) that separates the SYNCHRONOUS "loading"-round
++    settlement (and its own `queue_after_recompose`-scheduled focus
++    restore) from the async "ready" round's own near-simultaneous resync.
++    Against a near-instant fake service the two rounds' own focus-restore
++    callbacks race -- confirmed directly: `_sync_library_skills_browse_
++    result` runs FOUR times for one `focus_identity=None` refresh (an
++    initial pair from earlier route-navigation settling, then a "loading"
++    round that correctly derives `focus_identity="library-skills-filter"`
++    from the live read, immediately followed -- same event-loop turn, no
++    real service latency -- by a "ready" round that observes NOTHING
++    focused yet, since the loading round's own queued restore hasn't run,
++    and so re-derives `focus_identity=None`). `_sync_library_canvas`'s
++    `queue_after_recompose` holds only one pending callback per host;
++    the ready round's own resync overwrites the loading round's
++    still-pending, CORRECT restore before it ever fires -- a genuine,
++    pre-existing race in the production code, unrelated to whether
++    `focused` is bound, that a delay-free test flakily/deterministically
++    trips on regardless of which side of this pin's own fix it runs
++    against.
++    """
++
++    def __init__(self, *, available, blocked=(), delay: float = 0.2):
++        super().__init__(available=available, blocked=blocked)
++        self._delay = delay
++
++    async def list_skills(self, **kwargs):
++        await asyncio.sleep(self._delay)
++        return await super().list_skills(**kwargs)
++
++
+ class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
+     """Raises on the FIRST `list_skills` call, then delegates to the real
+     fake for every call after -- mirrors `_RecoveringLibraryNoteDetailService`
+     in `Tests/UI/test_library_shell.py` (same "fail once, then recover"
+     shape for a retry pin)."""
+ 
+     def __init__(self, *, available, blocked=()):
+         super().__init__(available=available, blocked=blocked)
+         self.failures_remaining = 1
+ 
+@@ -1666,20 +1700,123 @@ async def test_library_skills_filter_focus_survives_loading_ready_recompose():
+                 break
+ 
+         for _ in range(100):
+             current_filter = screen.query_one("#library-skills-filter", Input)
+             if current_filter.has_focus:
+                 break
+             await pilot.pause(0.01)
+         assert current_filter.has_focus
+ 
+ 
++@pytest.mark.asyncio
++async def test_committed_mutation_refresh_with_no_focus_identity_restores_live_focus():
++    """`_refresh_library_skills_after_committed_mutation` never passes an
++    explicit `focus_identity` -- unlike `test_library_skills_filter_focus_
++    survives_loading_ready_recompose` above (which exercises `handle_
++    library_skills_filter`'s EXPLICIT `focus_identity=LIBRARY_SKILLS_
++    FILTER_ID`, immune to this pin's own finding regardless of whether the
++    live read works), this path can only recover focus through `_sync_
++    library_skills_browse_result`'s own LIVE read of the currently-focused
++    widget (`focused = getattr(self, "focused", None)`). `LibrarySkills
++    Controller` had no `focused` property bound -- the `getattr` default
++    silently returned `None` on every call, so a committed-mutation
++    refresh (the delete/save/trust-reset completion path, and the
++    rail-switch/`restore_state` call sites on the screen) permanently
++    dropped whatever the user was focused on.
++
++    NOT a bare `.has_focus` check: Textual mounts the rebuilt canvas's
++    OWN first focusable descendant (this same filter Input, positionally)
++    on its own -- confirmed empirically, `.has_focus` alone stayed True
++    regardless of whether `focused` was bound, an unrelated, generic
++    Textual behaviour this pin must not accidentally ride. The
++    discriminating signal is instead a spy on `screen.query_one`: `_sync_
++    library_skills_browse_result`'s own `restore_focus()` closure only
++    ever calls `self.query_one(f"#{focus_identity}", Widget)` when
++    `focus_identity` is truthy -- i.e. only when the live read resolved a
++    focused `library-skills-*` control -- so observing that exact call is
++    a direct trace of the CODE PATH, immune to Textual's own independent
++    default-focus fallback landing on the same widget by coincidence.
++
++    Uses `_DelayedSkillsScopeService` (see its own docstring) so the
++    "loading" round's own queued restore is checked in isolation from the
++    "ready" round's own near-simultaneous, callback-clobbering resync.
++    """
++    app = _build_test_app()
++    app.notes_scope_service = StaticLibraryNotesListScopeService([])
++    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
++    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
++    app.skills_scope_service = _DelayedSkillsScopeService(
++        available=[
++            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
++            for index in range(45)
++        ],
++        delay=0.2,
++    )
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=(100, 30)) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-skills").press()
++        for _ in range(200):
++            await pilot.pause(0.01)
++            if len(screen.query(".library-skill-row")) == 20:
++                break
++
++        # Focus a `library-skills-*` control WITHOUT going through any
++        # handler that would set an explicit `focus_identity` (typing or
++        # submitting the filter would route through `handle_library_
++        # skills_filter`, defeating the point of this pin).
++        filter_input = None
++        for _ in range(100):
++            filter_input = screen.query_one("#library-skills-filter", Input)
++            filter_input.focus()
++            await pilot.pause(0.01)
++            if filter_input.is_mounted and filter_input.has_focus:
++                break
++        assert filter_input.has_focus
++
++        real_query_one = type(screen).query_one
++        queried_selectors: list[str] = []
++
++        def spying_query_one(self_screen, selector, *args, **kwargs):
++            if isinstance(selector, str):
++                queried_selectors.append(selector)
++            return real_query_one(self_screen, selector, *args, **kwargs)
++
++        screen.query_one = spying_query_one.__get__(screen, type(screen))
++
++        # The committed-mutation refresh path itself: no `focus_identity`
++        # anywhere in this call chain (mirrors this controller's own
++        # delete/save/trust-reset completion callers, and the screen's
++        # `restore_state`/`_select_library_rail_row_after_source_
++        # admission` call sites). The "ready" round's own `list_skills`
++        # call is held open by the delay, so only the "loading" round's
++        # own synchronous settlement + queued restore is observed here.
++        screen._refresh_library_skills_after_committed_mutation()
++
++        for _ in range(10):
++            await pilot.pause(0.01)
++            if "#library-skills-filter" in queried_selectors:
++                break
++
++        del screen.query_one
++
++        assert "#library-skills-filter" in queried_selectors, (
++            "restore_focus() never queried '#library-skills-filter' after "
++            "a focus_identity=None committed-mutation refresh -- the live "
++            "read of the currently-focused widget did not resolve it, "
++            "meaning `focused` is likely unbound on LibrarySkillsController "
++            "again"
++        )
++
++
+ _TAB_BAR_CLICK_BUG_SKILL_CONTENT = (
+     "---\ndescription: Summarize notes\n---\n# Summarize\nSummarize body text.\n"
+ )
+ 
+ 
+ @pytest.mark.asyncio
+ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_path):
+     """Regression lock for the Phase-2 gate's tab-bar-click finding.
+ 
+     Root cause: ``Widget.recompose()`` (what ``self.refresh(recompose=True)``
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index a6cee15c5..2a036f9cb 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -189,20 +189,105 @@ over the old file now finds zero matches. That distinction matters for
+ timing: every other bypass shape in this section is deliberately left for
+ the subsystem's cleanup PR to retarget, because until then the test still
+ *passes* (just without exercising what it thinks it does). A path-census
+ guard has no such grace period — it is red at the very commit boundary
+ that moves the code, so the no-red-ships precedence wins: retarget the
+ census in the SAME PR-stage that moved the code (to the new file, or to
+ whichever set of files best expresses the invariant), not deferred to
+ cleanup. Cleanup still handles the rest of that subsystem's routing work
+ as usual.
+ 
++**A sixth bypass shape, found by the skills series (wave-4 task 2): bare
++`self` used as an IDENTITY-COMPARED or SCREEN-IDENTITY argument, not
++merely as an attribute-lookup receiver — and its close cousin, an
++unbound-attribute escape that silently takes a `getattr` default.** Every
++prior shape in this section either fails loudly (a real exception) or is
++a test-only bypass safely deferred to cleanup. This shape is neither: it
++is a genuine, silent, PRODUCTION behavior change a pure move introduces,
++found only by running the full battery (a same-name-forwarding regex and
++a byte-for-byte body diff cannot see a semantic identity bug or a
++literal-string `getattr` that never resolves).
++
++- *Identity-compared/screen-identity `self`, three confirmed instances,
++  two exclusion-worthy forms:*
++  - **Form A — a framework API's own identity filter.** Textual's
++    `WorkerManager.cancel_group(node, group)` filters `worker.node ==
++    node` by identity. A moved body calling `self.workers.cancel_group(
++    self, ...)` compares the CONTROLLER against workers actually
++    registered with the SCREEN as their node (since `run_worker` always
++    forwards to `self._screen.run_worker(...)`) — permanently `False`,
++    silently making the cancellation a no-op. Found by reading the
++    framework's own source before moving, not by a test failure.
++  - **Form B — a shared shell helper's own screen-identity check.**
++    `_library_screen_is_current(screen)` (`screen_helpers.py`) does
++    `current_screen = getattr(screen.app, "screen", screen); return
++    current_screen is screen`. A moved body forwarding bare `self` makes
++    this permanently `False` (`real_screen is controller` can never be
++    true), silently no-opping every guarded branch. Found the hard way —
++    a first draft moved four such names, the wiring/ratchet battery
++    stayed green, and two real Pilot-driven UI tests (each pressing a
++    real button and asserting a real DOM mount) failed, confirmed via a
++    paired baseline (both pass on the pre-move tree, fail on the
++    four-moved draft).
++  - **Form C — the identical Form-B shape, inlined instead of routed
++    through the shared helper.** `self.app.screen is self`, found the
++    same way — a SECOND draft moved a method carrying this exact
++    comparison inline; 8 `Tests/Skills/` tests (the wave's own
++    fourth-root trap) failed, confirmed genuine via the same
++    paired-baseline method.
++
++  All three exclude the carrying method(s) entirely (keep them
++  screen-resident, full-bodied, untouched — no accommodation exists,
++  unlike duck-typed attribute access, because identity can never be
++  satisfied by a proxy object). Named late-binding dependencies (the
++  usual binding-kind-2 shape) cover any remaining mover that calls the
++  excluded method.
++
++- *Unbound-attribute escape via `getattr(self, "<literal>", default)` —
++  found by a THIRD draft's own post-landing review, not the move's own
++  battery.* `getattr` with a literal string name and a default is
++  invisible to the recipe's own `self.<attr>` `ast.Attribute` census (the
++  name never appears as a literal `self.<name>` expression) AND produces
++  no exception when unbound — it just silently returns the default,
++  forever. A controller missing the corresponding framework-service
++  property (here, `focused`) degrades a real behavior — permanently,
++  quietly — with no red test anywhere in the standard battery, because
++  `has_focus`-shaped DOM assertions can be satisfied by an UNRELATED
++  Textual default-focus fallback landing on the same widget by
++  coincidence (confirmed empirically: a `.has_focus`-only assertion
++  passed identically whether the property existed or not). **Any future
++  subsystem's controller-PR sweep should grep the WHOLE moved-body
++  source for `getattr(self, "<literal-string>"` (not just `self.<attr>`
++  accesses) and confirm each literal name actually resolves on the
++  controller** — a repeat scan after adding a name is cheap and closes
++  the whole class for that controller, per the skills series' own
++  precedent (found exactly one instance, `focused`, confirmed by re-scan
++  after the fix). The covering test for a finding in this class needs a
++  signal PROVABLY tied to the code path (e.g. a spy on the exact
++  `query_one`/method call the fix's own logic makes), not a bare DOM
++  end-state assertion — the same false-negative risk (an unrelated
++  framework fallback satisfying the assertion) applies to writing the
++  test as it did to finding the bug.
++
++- *A battery-found hazard shrinking the mover set legitimately amends the
++  RED tuple — expected, not a smell.* When a controller-PR's own
++  verification battery (not the static census) surfaces one of these
++  shapes after the RED wiring commit already pinned a cluster-name tuple,
++  correcting that tuple (and the accompanying "N of 127" counts) in the
++  same commit that lands the fix is the expected shape of the work, not
++  evidence the RED commit was wrong when it was written — the census that
++  produces the RED tuple is necessarily static, and these shapes are, by
++  definition, only found by running code. Re-deriving the exact final
++  counts (movers, exclusions, per-category tallies) after every such
++  correction — not just patching the number that changed — is what keeps
++  the tuple and its own docstring narrative from drifting apart.
++
+ ## 4. The transform whitelist
+ 
+ An extraction PR may contain **only**:
+ 
+ - Verbatim block moves (method/function bodies byte-for-byte, per §1's
+   canon).
+ - Import-path changes.
+ - Constructor/property bindings — the two binding kinds in §1, plus
+   generated controller-local `@property` accessors for the subsystem's own
+   state fields (same generator shape as the state-PR shim generator, §1
+diff --git a/tldw_chatbook/UI/Library_Modules/library_skills_controller.py b/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
+index 3cf031e37..5cc229fec 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
++++ b/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
+@@ -217,41 +217,69 @@ scale.
+ 
+ **86 of the 127 candidates move onto this controller.**
+ 
+ **Byte-for-byte canon** (moved bodies never edited -- every name they
+ reference that is not this controller's own state is rebound under the SAME
+ name, per the two binding kinds; see ``ConsoleDictationController.__init__``
+ and ``LibraryRagSearchController.__init__`` for the sibling worked
+ examples):
+ 
+ 1. **Framework services** (``app``, ``app_instance``, ``call_after_
+-   refresh``, ``is_mounted``, ``is_running``, ``query``, ``query_one``,
+-   ``refresh``, ``run_worker``) are live-read from the screen via
+-   ``@property`` on every access -- never snapshotted. ``is_running``/
+-   ``app``/``refresh``/``call_after_refresh``/``query``/``query_one`` exist
+-   partly because 15 movers forward ``self`` verbatim into the shared,
+-   multi-subsystem ``_sync_library_canvas(screen, "skills", ...)``
+-   dispatcher (``canvas_sync.py``) -- the SAME real shape the RAG
+-   controller's own docstring documents for its own ``search``-kind
++   refresh``, ``focused``, ``is_mounted``, ``is_running``, ``query``,
++   ``query_one``, ``refresh``, ``run_worker``) are live-read from the
++   screen via ``@property`` on every access -- never snapshotted. ``is_
++   running``/``app``/``refresh``/``call_after_refresh``/``query``/
++   ``query_one`` exist partly because 15 movers forward ``self`` verbatim
++   into the shared, multi-subsystem ``_sync_library_canvas(screen,
++   "skills", ...)`` dispatcher (``canvas_sync.py``) -- the SAME real shape
++   the RAG controller's own docstring documents for its own ``search``-kind
+    forwarding. Read that dispatcher's actual ``kind == "skills"`` branch
+    (not just its signature) before assuming a controller exposes
+    everything it touches: it reads ``query_one``/``query`` for the two
+    Skills widgets, calls two movers (``_library_skills_list_canvas_
+    kwargs``, ``_library_skill_work_pane_kwargs``, both resolve fine on
+    THIS controller), then falls into the function's own kind-independent
+    top/exception-handler code, which reads/writes ``is_running``,
+    ``app.capture_mouse(None)``, ``refresh``, ``call_after_refresh``, and
+    two SHARED shell fields this cluster's own moved bodies never otherwise
+    touch at all -- ``_library_canvas_projection_depth``/``_library_canvas_
+    resync_pending`` (group (b) below, bound purely for this reason, exactly
+    mirroring the RAG controller's own identical pair for the identical
+    cause).
++
++   **Fix round (post-landing review): ``focused`` was missing entirely --
++   a SIXTH unbound-attribute-escape hazard, distinct in shape from
++   exclusions 3e's bare-self-identity findings.** ``_sync_library_skills_
++   browse_result`` reads ``focused = getattr(self, "focused", None)`` --
++   a literal-name ``getattr`` with a default, exactly the shape the
++   recipe's own census (a plain ``self.<attr>`` ``ast.Attribute`` walk)
++   cannot see, because the attribute name never appears as a literal
++   ``self.<name>`` expression. With no ``focused`` property bound, the
++   call silently returns ``None`` on every invocation -- not an
++   ``AttributeError``, not a wrong value, just quiet, permanent
++   degradation of the two behaviors gated on it: the live-focus override
++   (`if isinstance(focused, (Button, Input)) and ... startswith
++   ("library-skills-"): focus_identity = live_focus_id`) and the live
++   caret-position read for the filter input (a deliberate fix, commit
++   ``8027e99f0``) both silently stop firing, so a committed-mutation
++   refresh with ``focus_identity=None`` (the caller shape at this
++   controller's own line ~1160, and at ``library_screen.py``'s
++   ``restore_state``/``_select_library_rail_row_after_source_admission``
++   call sites) can no longer recover focus from what the user was
++   actually on. Fixed by adding the same live-read ``@property`` every
++   other controller in this file already carries (``library_rag_search_
++   controller.py``, ``library_conversations_controller.py``). A repeat,
++   whole-file scan for EVERY ``getattr(self, "<literal-string>",
++   default)`` call (not just ``ast.Attribute`` accesses) found exactly
++   this one instance in the final 86-mover set -- confirmed, not assumed,
++   the fix closes the whole class for this controller. See recipe §3's
++   own updated bypass-shape catalogue for the general lesson.
+ 2. **Everything else** the cluster depends on that is not its own state is a
+    NAMED constructor dependency: (a) eight general Library-wide shell
+    helpers a moved body calls with explicit arguments (``_run_library_
+    service_call``, ``_sanitize_media_field``, ``_sanitize_note_content``,
+    ``_refresh_local_source_snapshot`` -- one of recipe §3's four
+    PERMANENTLY screen-routed monkeypatch names, reached here the same
+    accessor-callable way every other subsystem already reaches it, never
+    moved itself --, ``_library_entry_route_key``, ``_library_entry_
+    reconcile_is_current``, ``_capture_library_entry_focus``, ``_restore_
+    library_entry_focus``); (b) shared shell state this cluster reads
+@@ -444,25 +472,25 @@ class LibrarySkillsController:
+ 
+         Every one of the 86 method bodies below is a byte-for-byte copy of
+         the pre-extraction ``LibraryScreen`` method: no internal line was
+         edited to retarget a call or an attribute. That is possible because
+         this constructor binds every name those bodies reference that is
+         not this controller's own state, under the SAME name the original
+         method used. See the module docstring for the binding kinds this
+         follows and the full per-parameter derivation.
+ 
+         Args:
+-            screen: The Library screen. Used ONLY for the nine framework
++            screen: The Library screen. Used ONLY for the ten framework
+                 services below (``app``, ``app_instance``, ``call_after_
+-                refresh``, ``is_mounted``, ``is_running``, ``query``,
+-                ``query_one``, ``refresh``, ``run_worker``) -- this cluster
+-                owns no DOM of its own.
++                refresh``, ``focused``, ``is_mounted``, ``is_running``,
++                ``query``, ``query_one``, ``refresh``, ``run_worker``) --
++                this cluster owns no DOM of its own.
+             skills_state_accessor: Returns the live ``LibrarySkillsState``
+                 (``LibraryScreen._skills_state``, task 1). Backs every
+                 generated ``_library_skill_<field>``/``_library_skills_
+                 <field>``/``_selected_skill_name`` property below.
+         """
+         self._screen = screen
+         self._skills_state_accessor = skills_state_accessor
+         self._library_skill_import_coordinator_accessor = (
+             library_skill_import_coordinator_accessor
+         )
+@@ -540,20 +568,24 @@ class LibrarySkillsController:
+         return self._screen.app
+ 
+     @property
+     def app_instance(self) -> Any:
+         return self._screen.app_instance
+ 
+     @property
+     def call_after_refresh(self) -> Any:
+         return self._screen.call_after_refresh
+ 
++    @property
++    def focused(self) -> Any:
++        return self._screen.focused
++
+     @property
+     def is_mounted(self) -> bool:
+         return self._screen.is_mounted
+ 
+     @property
+     def is_running(self) -> bool:
+         return self._screen.is_running
+ 
+     @property
+     def query(self) -> Any:
