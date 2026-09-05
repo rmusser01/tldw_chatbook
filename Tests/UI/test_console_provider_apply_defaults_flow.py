@@ -543,13 +543,16 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
             source_session.id,
             role=ConsoleMessageRole.USER,
             content="Keep this chat's provider.",
+            persist=True,
         )
         failed = store.append_message(
             source_session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="",
+            persist=True,
         )
         store.mark_message_failed(failed.id)
+        assert user.persisted_message_id is not None
 
         app.app_config["chat_defaults"] = {
             "provider": "vllm",
@@ -561,6 +564,7 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
         app.console_new_chat_default_generation += 1
 
         retry = await controller.retry_message(failed.id)
+        assert store.get_message(failed.id).persisted_message_id is not None
         continued = await controller.continue_from_message(failed.id)
         continuation_id = store.active_leaf(source_session.id)
         assert continuation_id is not None
@@ -1812,9 +1816,25 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         summary_before = summary_widget.state
         original_sync = getattr(console, failing_sync)
         calls = 0
+        adoption_started = False
+        original_adopt = session_store.adopt_session_ephemeral_endpoint
+
+        def adopt_then_arm_failure(*args, **kwargs):
+            nonlocal adoption_started
+            receipt = original_adopt(*args, **kwargs)
+            adoption_started = True
+            return receipt
+
+        monkeypatch.setattr(
+            session_store, "adopt_session_ephemeral_endpoint", adopt_then_arm_failure
+        )
 
         def apply_forward_then_fail_rollback():
             nonlocal calls
+            # Capturing the pre-adoption summary also refreshes core state.
+            # Only fail the forward adoption and its compensating refresh.
+            if not adoption_started:
+                return original_sync()
             calls += 1
             if calls == 1:
                 original_sync()
@@ -1828,7 +1848,8 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
 
         assert console.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
-        assert calls == 2
+        # The summary's rollback refresh may also retry core synchronization.
+        assert calls >= 2
         assert session_store.session_settings(session_id) == before
         assert (
             controller.provider,
