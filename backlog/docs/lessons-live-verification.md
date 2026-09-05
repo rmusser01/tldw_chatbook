@@ -2067,3 +2067,74 @@ also establish the matching startup-ownership state. Keep this scoped to that
 fixture; tests of automatic startup must instead await the real startup boundary.
 Exercise the late callback deterministically, rather than assuming a fast pass or
 increasing sleeps proves that deferred startup cannot take over the screen.
+---
+
+## A scratch profile de-authenticates every keychain/XDG-backed CLI the feature shells out to (TASK-31450, 2026-09-04)
+
+**Incident.** Live-verifying the Console Inspect rail's Environment panel, whose
+PR and CI rows come from `gh pr view`. `gh auth status` in the ordinary shell
+reported a logged-in account, an open PR existed for the bound branch, and the
+same `gh pr view … --json …` command returned a full payload with a 13-check
+rollup in 0.7 s. Inside the app — launched with the mandatory scratch profile
+(`HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH` all redirected)
+— the PR and check rows never appeared. That is *exactly* what the feature's
+"no gh" degradation is supposed to look like, so the first reading was "the rows
+are correctly absent" and the second was "the gh gatherer is broken". Both were
+wrong. `gh` reads its own config from **`$XDG_CONFIG_HOME/gh`** and resolves its
+token through the macOS keychain in a context that follows the **real `HOME`**;
+the scratch profile redirects both, so `gh` exits 4 (`gh auth login`) and
+`gather_pr_env` reports `ERROR`. Setting `GH_CONFIG_DIR` back to the real
+directory was not enough — with `HOME` still redirected the keychain lookup
+returned an invalid token (`HTTP 401`). The two requirements are mutually
+exclusive: profile isolation and a working `gh` cannot both hold in one run.
+
+**What to do.** Before concluding anything about a feature that shells out to an
+external CLI, ask which of *its* configuration and credential paths your
+isolation just moved — `XDG_CONFIG_HOME` and `HOME` are not private to the app
+under test. Run the CLI itself once inside the isolated environment
+(`env HOME=<scratch> XDG_CONFIG_HOME=<scratch> gh auth status`) and record the
+result as a stated precondition of the run; a green "degraded" capture proves
+the degradation path only if you have shown the tool really is unavailable.
+Where isolation and the credential are irreconcilable, verify the success path
+**out of the app** against real data — gatherer plus pure projection, with the
+real profile's byte fingerprint checked before and after — and say in the report
+that the in-app render of that path was never observed. Do not relax the profile
+isolation to make the screenshot nicer.
+
+---
+
+## Killing the app mid-initialisation can permanently disable a feature, silently (TASK-31450, 2026-09-04)
+
+**Incident.** The same session's Environment panel sat on its muted
+"No git workspace" row for over 60 seconds against a workspace that was
+demonstrably a git repo, surviving the 10 s poll and a restart. It had rendered
+real counts minutes earlier. The panel reads the *change-review-admitted* roots,
+and root readiness is rebuilt in memory on every boot by
+`ChangeReviewConsentService`, which snapshots a shadow repo under
+`<data_dir>/change_review/<hash>/`. An earlier `kill-server` had interrupted that
+first snapshot on a 743 MB worktree, leaving a shadow repo with 129 MB of loose
+objects and no `HEAD`, refs, or index. Every later boot re-failed against it,
+recorded `FAILED` readiness, and **logged nothing** — so the honest empty state
+and a hard failure looked identical. `rm -rf` on that one shadow directory
+restored the panel on the next launch.
+
+**What to do.** When a feature's data depends on a background initialisation
+that persists to disk, do not interrupt the first run of it — and when a
+"correct empty state" persists past the point where data should have arrived,
+check the initialisation artifact on disk (here: does the shadow repo have a
+`HEAD`?) before filing a defect against the surface that is merely reporting it.
+An empty state that cannot distinguish "nothing to show" from "the thing that
+would show it is broken" is itself worth recording as a product concern.
+
+## Capture native-run revision and exit identity together (PR #2418, 2026-09-05)
+
+**Incident.** Migu move/resize/restart receipts captured geometry and PIDs but omitted
+the Git revision and dirty state. The separate exit file reported a null app exception
+without a PID, timestamp, or return code. Qodo review exposed that these artifacts
+could not establish the claimed exact tested revision or the preceding process's
+graceful exit; the published claims were narrowed rather than backfilled.
+
+**What to do.** At launch, capture the resolved source revision and dirty state with
+a run ID/PID. Bind the final exception and process-exit result to that same identity.
+Keep source-checkout paths distinct from runtime/evidence directories. When historical
+receipts omit these fields, preserve the originals and state the evidence limits.

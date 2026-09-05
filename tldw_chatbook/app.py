@@ -91,6 +91,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
+from textual.events import AppFocus
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -13080,14 +13081,16 @@ class TldwCli(
                 return False
 
         # TASK-1143 (F5): give the outgoing screen one awaited chance to
-        # ASK before it (and whatever it owns) is torn down -- e.g. Console
-        # unmounting cancels every in-flight run and denies every pending/
-        # parked approval round for its ConsoleChatController (see
-        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
-        # the flush-veto seam immediately above: False keeps the outgoing
-        # screen mounted exactly like a flush veto, only here the decision
-        # comes from a user-facing confirmation dialog rather than an
-        # unresolved save conflict.
+        # ASK before navigation proceeds. Mirrors the flush-veto seam
+        # immediately above: False keeps the outgoing screen in place,
+        # only here the decision comes from a user-facing confirmation
+        # dialog rather than an unresolved save conflict. TASK-31520 note:
+        # for REUSABLE routes leaving suspends rather than tears down, so
+        # a screen whose only stake was "leaving destroys my work" should
+        # return True unconditionally once flagged reusable (Console's
+        # does -- its runs and approvals survive navigation now); the seam
+        # itself stays for non-reusable screens and for hooks that gate on
+        # something other than teardown.
         confirm_navigation = getattr(current_screen, "confirm_navigation", None)
         if callable(confirm_navigation):
             try:
@@ -15601,6 +15604,19 @@ class TldwCli(
         self._ensure_screen_owned_css(resolved_tab)
 
         new_screen = screen_class(self)
+        # TASK-31520: retain the initial screen exactly like a navigated-to
+        # one. Without this, a reusable initial tab (chat is the default!)
+        # built here was never installed, so the first navigation away
+        # unmounted it and the first RETURN paid one full re-mint -- the
+        # exact cost reuse exists to retire, on the app's most common
+        # route, for every user.
+        initial_route = resolve_screen_route(resolved_screen_name)
+        if initial_route is not None and initial_route.reusable:
+            self._retain_reusable_navigation_screen(
+                resolved_tab,
+                self._current_runtime_identity(),
+                new_screen,
+            )
 
         # A configured default tab that is itself a legacy alias route (e.g.
         # "search"/"prompts"/"skills" -> Library) carries the same nav-context
@@ -16870,6 +16886,40 @@ class TldwCli(
             await self._stts_initialization_task
             return self._stts_handler
         return await self._initialize_stts_service()
+
+    def on_app_focus(self, event: AppFocus) -> None:
+        """Forward a terminal focus regain to the active screen that wants it.
+
+        ``AppFocus`` is declared ``bubble=False`` and the driver posts it ONLY
+        to the App -- and events travel UP the DOM, never down, so a
+        screen-level ``@on(AppFocus)`` handler can never fire. (task-13 review
+        C1: one shipped as dead code precisely because its test called the
+        handler method directly instead of posting the real event.) The App is
+        therefore the only place this can be observed, and forwarding is the
+        only way a screen can react to it.
+
+        Duck-typed rather than isinstance-checked against ChatScreen: this
+        stays a one-line opt-in for any future screen, and avoids importing a
+        screen module into the app's hot import path. Never raises -- a focus
+        event must not be able to take the app down.
+
+        Args:
+            event: The focus-regained event; not consumed, so Textual's own
+                ``App._on_app_focus`` still runs (both the private framework
+                handler and this public one are dispatched, from different
+                classes in the MRO).
+        """
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            return
+        notify = getattr(screen, "notify_terminal_focus_regained", None)
+        if notify is None:
+            return
+        try:
+            notify()
+        except Exception:  # noqa: BLE001 -- a focus nudge must never crash the app
+            logger.warning("app: terminal-focus-regained forwarding failed")
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
