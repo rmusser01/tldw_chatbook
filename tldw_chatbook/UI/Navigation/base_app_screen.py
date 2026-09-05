@@ -372,6 +372,22 @@ class BaseAppScreen(Screen):
         """
         logger.info(f"Screen {self.screen_name} mounted")
 
+    def on_screen_suspend(self) -> None:
+        """Release a live Buddy mouse capture when this screen is covered.
+
+        TASK-24452 (Qodo #2402 finding 3): reusable screens are SUSPENDED on
+        navigation, never unmounted, so the ``on_unmount`` release below no
+        longer runs between visits -- a Buddy drag in flight at the moment
+        of navigation would leave the hidden screen holding app-level mouse
+        capture and swallow input on the newly active screen. Releasing on
+        suspend covers every screen (a modal covering a mid-drag screen had
+        the same latent hold); the view itself is kept -- the resume
+        reconcile above replays its state on return.
+        """
+        view = self._persona_buddy_view
+        if view is not None:
+            view.release_interaction_capture()
+
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         logger.info(f"Screen {self.screen_name} unmounted")
