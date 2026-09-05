@@ -14,6 +14,7 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
   Textual used to add (with a full cold reparse) on a modal's first open.
 """
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -354,13 +355,81 @@ AGENTIC_SPLIT_PINNED_TOKENS = {
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * {owner}-owned rules split out of components/_agentic_terminal.tcss
- * by build_css.py (TASK-25812). Loaded via the owning screen's CSS_PATH,
- * so these bytes are parsed on first visit instead of before first paint.
- * Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * {owner}-owned rules split out of {module}
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit {module} and re-run build_css.py.
  * ======================================== */
 
 """
+
+
+@dataclasses.dataclass(frozen=True)
+class ScreenOwnedSplit:
+    """One bundle module whose single-owner rules move to lazy screen sheets.
+
+    TASK-24459 generalization of the TASK-25812 agentic split: the same
+    conservative classifier (a block moves only when EVERY ``#id``/``.class``
+    token in its selector belongs to one owner's prefix vocabulary), the same
+    demotion pass against later cascade order, one spec per module.
+
+    Attributes:
+        module: ``CSS_MODULES`` entry to split.
+        sheets: Owner key -> generated sheet filename.
+        prefixes: Owner key -> selector-token prefixes claiming that owner
+            (a token matches when equal to a prefix or starting with
+            ``prefix + "-"``).
+        pinned: Tokens force-kept in the bundle even though they prefix-match
+            an owner (composed by widgets on other surfaces).
+    """
+
+    module: str
+    sheets: dict[str, str]
+    prefixes: dict[str, tuple[str, ...]]
+    pinned: frozenset[str]
+
+
+#: Every screen-owned split the build performs. Adding a module here requires
+#: the owner audit the agentic split documented (AGENTIC_SPLIT_PINNED_TOKENS):
+#: verify each moved token's compose sites live only on the owning screen,
+#: with repo-relative paths. The build refuses cross-split selector overlap
+#: (see ``build_screen_owned_sheets``), because two lazily-loaded sheets have
+#: visit-order-dependent cascade order between them.
+SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
+    ScreenOwnedSplit(
+        module=AGENTIC_SPLIT_MODULE,
+        sheets=AGENTIC_SPLIT_SHEETS,
+        prefixes={owner: (owner,) for owner in AGENTIC_SPLIT_SHEETS},
+        pinned=frozenset(AGENTIC_SPLIT_PINNED_TOKENS),
+    ),
+    # TASK-24459: 39.7 KB of the 40.5 KB module is `evals-*`-pure; the two
+    # non-pure blocks (`ds-recovery-callout`, `is-active` tokens) stay in
+    # the bundle. EvalsScreen is the only compose surface -- every selector
+    # consumer lives under UI/Evals/ or UI/Screens/evals_screen.py
+    # (audited 2026-09-04 with repo-relative paths).
+    ScreenOwnedSplit(
+        module="features/_evals.tcss",
+        sheets={"evals": "screen_feature_evals.tcss"},
+        prefixes={"evals": ("evals",)},
+        pinned=frozenset(),
+    ),
+    # TASK-24459: the fastest-growing bundle module (5,994 -> 16,165 B in
+    # the four days before 2026-09-04). Only the `scheduling-*`/`schedules-*`
+    # pure half moves; helper classes the module also styles (`pane-hidden`,
+    # `detail-value-row-*`, bare status classes like `.completed`) stay in
+    # the bundle because their tokens carry no owner prefix -- the
+    # conservative classifier keeps them without needing a pin list.
+    ScreenOwnedSplit(
+        module="features/_scheduling.tcss",
+        sheets={"scheduling": "screen_feature_scheduling.tcss"},
+        prefixes={"scheduling": ("scheduling", "schedules")},
+        pinned=frozenset(),
+    ),
+)
+
+_SPLITS_BY_MODULE: dict[str, ScreenOwnedSplit] = {
+    split.module: split for split in SCREEN_OWNED_SPLITS
+}
 
 _VARIABLE_DEF_RE = re.compile(r"^\$[\w-]+\s*:[^;{}]*;\s*$", re.M)
 _SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z0-9_-]+)")
@@ -411,7 +480,7 @@ def _split_top_level_units(text: str) -> list[str]:
     return units
 
 
-def _unit_owner(unit: str) -> str | None:
+def _unit_owner(unit: str, split: ScreenOwnedSplit) -> str | None:
     """Which single owner a unit's selectors belong to, or ``None``.
 
     Only the text before the first ``{`` is inspected (the selector), with
@@ -426,10 +495,13 @@ def _unit_owner(unit: str) -> str | None:
     selector = stripped[:brace]
     owners = set()
     for token in _SELECTOR_TOKEN_RE.findall(selector):
-        if token in AGENTIC_SPLIT_PINNED_TOKENS:
+        if token in split.pinned:
             return None
-        for owner in AGENTIC_SPLIT_SHEETS:
-            if token == owner or token.startswith(owner + "-"):
+        for owner, prefixes in split.prefixes.items():
+            if any(
+                token == prefix or token.startswith(prefix + "-")
+                for prefix in prefixes
+            ):
                 owners.add(owner)
                 break
         else:
@@ -462,8 +534,10 @@ def _unit_selector_set(unit: str) -> set[str]:
     }
 
 
-def _later_module_selectors(css_dir: Path | None) -> set[str]:
-    """Selectors of every ``CSS_MODULES`` entry AFTER the agentic module.
+def _later_module_selectors(
+    css_dir: Path | None, after_module: str = AGENTIC_SPLIT_MODULE
+) -> set[str]:
+    """Selectors of every ``CSS_MODULES`` entry AFTER ``after_module``.
 
     A moved block parses after the whole bundle, so an equal-specificity
     selector in a LATER module (features, utilities -- the latter documented
@@ -475,6 +549,7 @@ def _later_module_selectors(css_dir: Path | None) -> set[str]:
         css_dir: Root of the modular stylesheets, or ``None`` when the
             caller has no tree (pure-text unit tests) -- then no cross-module
             selectors are known and only the intra-module pass applies.
+        after_module: The split module whose bundle position anchors "later".
 
     Returns:
         Whitespace-normalised selectors, comma members separately.
@@ -482,12 +557,12 @@ def _later_module_selectors(css_dir: Path | None) -> set[str]:
     if css_dir is None:
         return set()
     selectors: set[str] = set()
-    seen_agentic = False
+    seen_target = False
     for module in CSS_MODULES:
-        if module == AGENTIC_SPLIT_MODULE:
-            seen_agentic = True
+        if module == after_module:
+            seen_target = True
             continue
-        if not seen_agentic:
+        if not seen_target:
             continue
         source = css_dir / module
         if not source.is_file():
@@ -502,6 +577,9 @@ def split_agentic_terminal(
 ) -> tuple[str, dict[str, str]]:
     """Split the agentic-terminal module into a bundle remainder + sheets.
 
+    Back-compat entry for the TASK-25812 split; the general machinery is
+    ``split_owned_module``.
+
     Args:
         text: The full source text of ``AGENTIC_SPLIT_MODULE``.
         css_dir: Root of the modular stylesheets, used to seed the
@@ -515,12 +593,34 @@ def split_agentic_terminal(
     Raises:
         AssertionError: If the partition is not lossless.
     """
+    return split_owned_module(text, _SPLITS_BY_MODULE[AGENTIC_SPLIT_MODULE], css_dir)
+
+
+def split_owned_module(
+    text: str, split: ScreenOwnedSplit, css_dir: Path | None = None
+) -> tuple[str, dict[str, str]]:
+    """Split one screen-owned module into a bundle remainder + sheets.
+
+    Args:
+        text: The full source text of ``split.module``.
+        split: The split spec (owners, prefixes, pins).
+        css_dir: Root of the modular stylesheets, used to seed the
+            cascade-order demotion with LATER modules' selectors. ``None``
+            limits demotion to intra-module ordering (unit tests).
+
+    Returns:
+        ``(remainder, {owner: moved_css})``. Concatenating the remainder and
+        every moved block in original order reproduces ``text`` exactly.
+
+    Raises:
+        AssertionError: If the partition is not lossless.
+    """
     units = _split_top_level_units(text)
     assert "".join(units) == text, (
-        "agentic split partition is not lossless -- refusing to build, "
-        "because a lossy split silently drops live CSS"
+        f"{split.module} split partition is not lossless -- refusing to "
+        "build, because a lossy split silently drops live CSS"
     )
-    owners: list[str | None] = [_unit_owner(unit) for unit in units]
+    owners: list[str | None] = [_unit_owner(unit, split) for unit in units]
 
     # Cascade-order safety (found live: `#settings-category-pane`). A moved
     # block parses AFTER the whole bundle, so a kept block LATER in this
@@ -532,7 +632,7 @@ def split_agentic_terminal(
     # tokens), and kept-before-moved pairs keep their relative order, so
     # this is the only inversion the split can create within the module.
     unit_selectors = [_unit_selector_set(unit) for unit in units]
-    later_modules = _later_module_selectors(css_dir)
+    later_modules = _later_module_selectors(css_dir, split.module)
     changed = True
     while changed:
         changed = False
@@ -547,7 +647,7 @@ def split_agentic_terminal(
                 kept_later |= unit_selectors[index]
 
     remainder: list[str] = []
-    moved: dict[str, list[str]] = {owner: [] for owner in AGENTIC_SPLIT_SHEETS}
+    moved: dict[str, list[str]] = {owner: [] for owner in split.sheets}
     for unit, owner in zip(units, owners):
         if owner is None:
             remainder.append(unit)
@@ -561,17 +661,25 @@ def split_agentic_terminal(
 def _agentic_variables_preamble(css_dir: Path) -> str:
     """Every top-level ``$var: value;`` visible to the agentic module.
 
+    Back-compat entry; the general form is ``_module_variables_preamble``.
+    """
+    return _module_variables_preamble(css_dir, AGENTIC_SPLIT_MODULE)
+
+
+def _module_variables_preamble(css_dir: Path, module: str) -> str:
+    """Every top-level ``$var: value;`` visible to ``module`` in the bundle.
+
     Variable definitions inside one stylesheet source do not carry into
     another, so each split sheet must restate the definitions the module saw
     in the bundle: those of every module at or before it in ``CSS_MODULES``
     order (later definitions win, which re-ordering preserves).
     """
     defs: list[str] = []
-    for module in CSS_MODULES:
-        source = css_dir / module
+    for bundle_module in CSS_MODULES:
+        source = css_dir / bundle_module
         if source.is_file():
             defs.extend(_VARIABLE_DEF_RE.findall(source.read_text(encoding="utf-8")))
-        if module == AGENTIC_SPLIT_MODULE:
+        if bundle_module == module:
             break
     if not defs:
         return ""
@@ -588,35 +696,92 @@ def _agentic_variables_preamble(css_dir: Path) -> str:
     )
 
 
-def build_agentic_split(css_dir: Path, output_dir: Path) -> None:
-    """Write the three per-screen sheets split from the agentic module.
+def _build_one_split(
+    css_dir: Path, output_dir: Path, split: ScreenOwnedSplit
+) -> dict[str, set[str]] | None:
+    """Write one split's per-screen sheets; return moved selectors per sheet.
 
     Args:
         css_dir: Root directory containing the modular stylesheets.
         output_dir: Directory the sheets are written into (``css_dir`` in a
             real build; a temp dir when ``check_bundle_sync`` verifies).
+
+    Returns:
+        Mapping of sheet filename to the whitespace-normalised selectors it
+        carries (for the cross-split disjointness guard), or ``None`` when
+        the module is absent from this build.
     """
-    source = css_dir / AGENTIC_SPLIT_MODULE
-    if AGENTIC_SPLIT_MODULE not in CSS_MODULES or not source.is_file():
+    source = css_dir / split.module
+    if split.module not in CSS_MODULES or not source.is_file():
         # The manifest is the authority on what this build contains: a tree
         # built from a patched/partial CSS_MODULES (the staleness test's
         # scratch checkout, an embedder vendoring a subset) simply has no
-        # agentic module to split. Skipping is correct there; a REAL missing
-        # module is caught loudly by build_css()'s own missing-modules check.
-        print("Agentic split skipped: module not in this build")
-        return
+        # module to split. Skipping is correct there; a REAL missing module
+        # is caught loudly by build_css()'s own missing-modules check.
+        print(f"Screen-owned split skipped ({split.module}): not in this build")
+        return None
     text = source.read_text(encoding="utf-8")
-    _, moved = split_agentic_terminal(text, css_dir=css_dir)
-    preamble = _agentic_variables_preamble(css_dir)
-    for owner, filename in AGENTIC_SPLIT_SHEETS.items():
-        content = _SPLIT_HEADER.format(owner=owner) + preamble + moved[owner]
-        _atomic_write_text(output_dir / filename, content)
-    print(
-        "Agentic split complete: "
-        + ", ".join(
-            f"{owner}={len(moved[owner]):,}B" for owner in AGENTIC_SPLIT_SHEETS
+    _, moved = split_owned_module(text, split, css_dir=css_dir)
+    preamble = _module_variables_preamble(css_dir, split.module)
+    moved_selectors: dict[str, set[str]] = {}
+    for owner, filename in split.sheets.items():
+        content = (
+            _SPLIT_HEADER.format(owner=owner, module=split.module)
+            + preamble
+            + moved[owner]
         )
+        _atomic_write_text(output_dir / filename, content)
+        selectors: set[str] = set()
+        for unit in _split_top_level_units(moved[owner]):
+            selectors |= _unit_selector_set(unit)
+        moved_selectors[filename] = selectors
+    print(
+        f"Screen-owned split complete ({split.module}): "
+        + ", ".join(f"{owner}={len(moved[owner]):,}B" for owner in split.sheets)
     )
+    return moved_selectors
+
+
+def build_agentic_split(css_dir: Path, output_dir: Path) -> None:
+    """Write the three per-screen sheets split from the agentic module.
+
+    Back-compat entry for the TASK-25812 sheets only; a full build runs
+    ``build_screen_owned_sheets``.
+    """
+    _build_one_split(css_dir, output_dir, _SPLITS_BY_MODULE[AGENTIC_SPLIT_MODULE])
+
+
+def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
+    """Write every screen-owned split sheet (TASK-25812 + TASK-24459).
+
+    Refuses to build when two sheets from DIFFERENT lazily-loaded splits
+    carry the same selector: both sheets parse on first visit to their
+    owning screens, so which rule wins a specificity tie would depend on
+    which screen the user opened first -- a cascade order no audit can pin.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        output_dir: Directory the sheets are written into.
+
+    Raises:
+        AssertionError: On cross-split selector overlap.
+    """
+    seen: dict[str, str] = {}
+    for split in SCREEN_OWNED_SPLITS:
+        moved_selectors = _build_one_split(css_dir, output_dir, split)
+        if moved_selectors is None:
+            continue
+        for filename, selectors in moved_selectors.items():
+            for selector in selectors:
+                previous = seen.get(selector)
+                if previous is not None and previous != filename:
+                    raise AssertionError(
+                        f"cross-split selector overlap: {selector!r} appears "
+                        f"in both {previous} and {filename}; their cascade "
+                        "order depends on screen visit order. Demote the "
+                        "block in one split (pin a token) before building."
+                    )
+                seen[selector] = filename
 
 
 def build_css(css_dir: Path, output_file: Path) -> None:
@@ -656,13 +821,13 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     for index, module in enumerate(CSS_MODULES, start=1):
         print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
         content = (css_dir / module).read_text(encoding="utf-8")
-        if module == AGENTIC_SPLIT_MODULE:
-            # TASK-25812: only the multi-screen remainder rides the boot
-            # bundle; the console/library/settings rules ship as the
-            # per-screen sheets `build_agentic_split` writes, parsed on
-            # first visit to the owning screen instead of before first
-            # paint.
-            content, _ = split_agentic_terminal(content, css_dir=css_dir)
+        split = _SPLITS_BY_MODULE.get(module)
+        if split is not None:
+            # TASK-25812/TASK-24459: only the multi-screen remainder rides
+            # the boot bundle; the single-owner rules ship as the per-screen
+            # sheets `build_screen_owned_sheets` writes, parsed on first
+            # visit to the owning screen instead of before first paint.
+            content, _ = split_owned_module(content, split, css_dir=css_dir)
 
         # Add module separator
         combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
@@ -860,7 +1025,7 @@ def main():
         shutil.rmtree(stage)
     stage.mkdir()
     try:
-        build_agentic_split(css_dir, stage)
+        build_screen_owned_sheets(css_dir, stage)
         build_css(css_dir, stage / output_file.name)
         build_widget_defaults(
             css_dir,
@@ -873,7 +1038,14 @@ def main():
             stage / SCREEN_CSS_SCOPED_FILENAME,
         )
         publish_order = [
-            *AGENTIC_SPLIT_SHEETS.values(),
+            # Split sheets land before the bundle (see the loss-direction
+            # note above): a crash mid-swap duplicates moved rules in the
+            # old fat bundle rather than dropping them from the new one.
+            *(
+                filename
+                for split in SCREEN_OWNED_SPLITS
+                for filename in split.sheets.values()
+            ),
             output_file.name,
             WIDGET_DEFAULTS_SELF_FILENAME,
             WIDGET_DEFAULTS_SCOPED_FILENAME,

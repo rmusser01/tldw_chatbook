@@ -18219,16 +18219,18 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
         css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
         css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
-        # TASK-25812 (Qodo #2281): the per-screen sheets split from the
-        # agentic module are generated outputs too -- a missing or stale one
-        # must trigger the same rebuild, or visiting that screen loads
-        # nothing (the bundle no longer carries its rules). Required only
-        # when the SOURCE module is part of this tree, mirroring
-        # `build_agentic_split`'s own skip for partial/scratch checkouts.
+        # TASK-25812 (Qodo #2281) / TASK-24459: the per-screen sheets split
+        # from the screen-owned modules are generated outputs too -- a
+        # missing or stale one must trigger the same rebuild, or visiting
+        # that screen loads nothing (the bundle no longer carries its
+        # rules). Required only when the SOURCE module is part of this
+        # tree, mirroring the builders' own skip for partial/scratch
+        # checkouts.
         *(
-            (css_dir / name for name in build_css.AGENTIC_SPLIT_SHEETS.values())
-            if (css_dir / build_css.AGENTIC_SPLIT_MODULE).is_file()
-            else ()
+            css_dir / name
+            for split in build_css.SCREEN_OWNED_SPLITS
+            if (css_dir / split.module).is_file()
+            for name in split.sheets.values()
         ),
     ]
     missing = [path.name for path in generated if not path.is_file()]

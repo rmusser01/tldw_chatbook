@@ -17,6 +17,7 @@ with no shared state, is architecturally normal here.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -36,6 +37,20 @@ class WorkbenchHostScreen(Screen):
     know about the other's internals -- the staleness re-home consumer
     for later tasks, and this task's own conflicts-badge repoint.
     """
+
+    #: TASK-24459: the widgets this host receives are scheduling panes whose
+    #: `scheduling-*` rules live on the lazily-parsed scheduling sheet. The
+    #: host is only ever pushed from `SchedulesWorkbench` (whose own
+    #: `CSS_PATH` already loaded the sheet), so this is belt-and-braces for
+    #: any future direct push; Textual's `has_source` check makes the
+    #: duplicate declaration free.
+    CSS_PATH = [
+        str(
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "css"
+            / "screen_feature_scheduling.tcss"
+        )
+    ]
 
     BINDINGS: ClassVar = [Binding("escape", "dismiss_screen", "Back")]
 

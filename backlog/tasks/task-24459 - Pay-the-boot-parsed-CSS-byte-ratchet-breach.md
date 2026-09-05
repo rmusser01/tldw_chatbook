@@ -1,7 +1,7 @@
 ---
 id: TASK-24459
 title: Pay the boot parsed CSS byte ratchet breach
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-29'
 labels:
@@ -93,3 +93,23 @@ Two consequences for whoever picks this up:
    rise and the measurement does not move. The snapshot is refreshed only by
    `scripts/update_boot_budget_snapshots.py` AFTER the bytes are genuinely shed.
 <!-- SECTION:NOTES:END -->
+
+## Implementation Plan (the how)
+
+1. Generalize the TASK-25812 agentic split machinery in `css/build_css.py` to a
+   table of screen-owned splits; add `features/_evals.tcss` (owner prefix
+   `evals`, sheet `screen_feature_evals.tcss`) and `features/_scheduling.tcss`
+   (prefixes `scheduling`/`schedules`, sheet `screen_feature_scheduling.tcss`).
+   The proven conservative classifier moves only owner-pure blocks; the
+   demotion pass and later-module seeding apply per-module; add a cross-split
+   moved-selector disjointness assert.
+2. Wire the sheets onto `EvalsScreen.CSS_PATH`, `SchedulesWorkbench.CSS_PATH`
+   and `WorkbenchHostScreen.CSS_PATH` (parsed on first visit, not before first
+   paint -- the same mechanism as the library/settings agentic sheets).
+3. Rebuild, refresh boot-budget snapshots, TIGHTEN `MAX_BOOT_PARSED_CSS_BYTES`
+   to measured + 25,000 slack per ADR-097's convention.
+4. Add `Tests/Performance/test_boot_css_byte_budget.py` to perf-guard.yml's
+   ratchet step (the task-24461 join step) and update its exclusion comment.
+5. Extend the css-build integrity tests to the new sheets; unit-test the
+   generalized splitter (multi-prefix move, non-owner-token keep, synthetic
+   cross-split collision) and mutation-test the new guards.

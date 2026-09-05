@@ -17,15 +17,18 @@ _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
-# TASK-25812: the build now emits the bundle PLUS three per-screen sheets
-# split from the agentic-terminal module. "Reaches the generated output"
-# means the union -- a rule in a split sheet is exactly as live as one in
-# the bundle (the app loads it via the owning screen's CSS_PATH).
+# TASK-25812/TASK-24459: the build now emits the bundle PLUS per-screen
+# sheets split from the screen-owned modules (agentic terminal, evals,
+# scheduling). "Reaches the generated output" means the union -- a rule in
+# a split sheet is exactly as live as one in the bundle (the app loads it
+# via the owning screen's CSS_PATH).
 _GENERATED_SHEETS = (
     _BUNDLED_STYLESHEET,
     _CSS_ROOT / "screen_agentic_console.tcss",
     _CSS_ROOT / "screen_agentic_library.tcss",
     _CSS_ROOT / "screen_agentic_settings.tcss",
+    _CSS_ROOT / "screen_feature_evals.tcss",
+    _CSS_ROOT / "screen_feature_scheduling.tcss",
 )
 
 
@@ -803,3 +806,167 @@ def test_split_sheets_carry_only_their_own_owners_rules() -> None:
                     f"{filename}: token .{token} belongs to the {other} "
                     f"surface but was generated into the {owner} sheet"
                 )
+
+
+# --- TASK-24459: screen-owned split contracts (evals + scheduling) ----------
+
+
+def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
+    return css_builder._SPLITS_BY_MODULE[module]
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["features/_evals.tcss", "features/_scheduling.tcss"],
+)
+def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
+    """Every byte of a screen-owned module reaches exactly one output.
+
+    The same contract the agentic module carries: the bundle's module
+    section must equal the splitter's remainder, and each committed sheet
+    must EXACTLY equal a fresh rebuild (suffix checks accept stale CSS
+    ahead of the expected tail -- Qodo #2281).
+    """
+    spec = _split_spec(module)
+    source = (_CSS_ROOT / module).read_text(encoding="utf-8")
+    remainder, _ = css_builder.split_owned_module(source, spec, css_dir=_CSS_ROOT)
+
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert _bundled_module(bundle, module) == remainder.strip()
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_screen_owned_sheets(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in spec.sheets.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_screen_owned_sheets "
+                "-- regenerate with build_css.py and commit the result"
+            )
+
+
+def test_screen_owned_splitter_multi_prefix_and_keep_shapes() -> None:
+    """The scheduling spec's two prefixes are ONE owner; helpers stay.
+
+    `scheduling-*` and `schedules-*` tokens both belong to the single
+    scheduling sheet, so a selector mixing them still moves. A helper
+    class with no owner prefix (`pane-hidden` -- composed only by
+    scheduling screens today, but unprefixed) pins its block to the
+    bundle, conservatively.
+    """
+    spec = _split_spec("features/_scheduling.tcss")
+    css = (
+        "#scheduling-list-pane { padding: 1; }\n"
+        "#schedules-shell .scheduling-inspector-label { color: red; }\n"
+        "#scheduling-detail-pane.pane-hidden { display: none; }\n"
+        ".pane-hidden { display: none; }\n"
+    )
+    remainder, moved = css_builder.split_owned_module(css, spec)
+    sheet = moved["scheduling"]
+    assert "#scheduling-list-pane" in sheet
+    assert "#schedules-shell .scheduling-inspector-label" in sheet, (
+        "both prefixes belong to the one scheduling owner -- a mixed "
+        "selector must still move"
+    )
+    assert "#scheduling-detail-pane.pane-hidden" in remainder, (
+        "an unprefixed helper token anywhere in the selector pins the "
+        "block to the bundle"
+    )
+    assert ".pane-hidden { display: none; }" in remainder
+
+
+def test_cross_split_selector_overlap_refuses_to_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two lazy sheets carrying the same selector must fail the build.
+
+    Their cascade order depends on which screen the user visits first --
+    an ordering no audit can pin -- so `build_screen_owned_sheets` refuses.
+
+    Today the demotion pass makes this state unreachable through the
+    natural path: a moved unit colliding with ANY selector of a later
+    split's module is demoted to the bundle first (verified by writing this
+    test the natural way -- it did not raise). The guard is the backstop
+    for when that analysis rots (a future intra-module-only demotion, a
+    builder calling the splitter without `css_dir`), so it is exercised at
+    its own level: `_build_one_split` stubbed to report overlapping moved
+    selectors.
+    """
+    specs = (
+        css_builder.ScreenOwnedSplit(
+            module="features/_alpha.tcss",
+            sheets={"alpha": "screen_feature_alpha.tcss"},
+            prefixes={"alpha": ("alpha",)},
+            pinned=frozenset(),
+        ),
+        css_builder.ScreenOwnedSplit(
+            module="features/_beta.tcss",
+            sheets={"beta": "screen_feature_beta.tcss"},
+            prefixes={"beta": ("beta",)},
+            pinned=frozenset(),
+        ),
+    )
+    reported = {
+        "features/_alpha.tcss": {"screen_feature_alpha.tcss": {".shared-x"}},
+        "features/_beta.tcss": {"screen_feature_beta.tcss": {".shared-x"}},
+    }
+    monkeypatch.setattr(css_builder, "SCREEN_OWNED_SPLITS", specs)
+    monkeypatch.setattr(
+        css_builder,
+        "_build_one_split",
+        lambda css_dir, output_dir, split: reported[split.module],
+    )
+    with pytest.raises(AssertionError, match="cross-split selector overlap"):
+        css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+    # Mutation check the other direction: disjoint moved sets pass.
+    reported["features/_beta.tcss"] = {
+        "screen_feature_beta.tcss": {".beta-only"}
+    }
+    css_builder.build_screen_owned_sheets(tmp_path, tmp_path)
+
+
+def test_screen_owned_sheets_are_wired_to_their_screens() -> None:
+    """Each new sheet exists and is what the owning screen's CSS_PATH loads.
+
+    A split whose sheet no screen declares is dead CSS from the user's
+    point of view: the bundle no longer carries the rules and nothing ever
+    parses the sheet.
+    """
+    wirings = [
+        (
+            "features/_scheduling.tcss",
+            "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
+            "SchedulesWorkbench",
+        ),
+        (
+            "features/_scheduling.tcss",
+            "tldw_chatbook.UI.Screens.scheduling.workbench_host_screen",
+            "WorkbenchHostScreen",
+        ),
+        (
+            "features/_evals.tcss",
+            "tldw_chatbook.UI.Screens.evals_screen",
+            "EvalsScreen",
+        ),
+    ]
+    import importlib
+
+    for module, screen_module, screen_name in wirings:
+        spec = _split_spec(module)
+        (sheet_name,) = set(spec.sheets.values())
+        sheet_path = _CSS_ROOT / sheet_name
+        assert sheet_path.is_file(), f"{sheet_name} missing from css/"
+        try:
+            screen_cls = getattr(
+                importlib.import_module(screen_module), screen_name
+            )
+        except ImportError as exc:  # optional-deps environments
+            pytest.skip(f"{screen_module} unavailable here: {exc}")
+        css_paths = [Path(entry) for entry in screen_cls.CSS_PATH]
+        assert sheet_path.resolve() in [p.resolve() for p in css_paths], (
+            f"{screen_name}.CSS_PATH does not load {sheet_name} -- the "
+            "moved rules would never parse"
+        )
