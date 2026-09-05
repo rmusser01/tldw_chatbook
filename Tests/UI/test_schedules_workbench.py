@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from loguru import logger as _loguru_logger
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -25,6 +26,7 @@ from textual import on
 from tldw_chatbook.Scheduling.events import (
     DefinitionRunNowRequested,
     DeleteTaskRequested,
+    ReminderDispatched,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
@@ -45,9 +47,14 @@ from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
 from tldw_chatbook.Scheduling.services import (
     scheduling_service as scheduling_service_module,
 )
+from tldw_chatbook.Scheduling.services.sync_engine import SyncOutcome
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.results_tab import ResultsHostScreen, ResultsTab
-from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    NEXT_RUN_REFRESH_SECONDS,
+    SCHEDULER_LIVENESS_REFRESH_SECONDS,
+    SchedulesWorkbench,
+)
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -68,6 +75,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB as _MockSchedulingDB,
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
+    painted_glyphs_at,
     rendered_row_cells,
     settle_schedules_workbench,
 )
@@ -490,6 +498,39 @@ async def test_repeat_row_editor_opens_with_current_preset_preselected():
 
 
 @pytest.mark.asyncio
+async def test_repeat_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a): the test
+    above only proved ``editor.value`` -- a stored attribute the widget
+    can carry correctly while showing nothing at all. Uncompacted, a
+    `Select`'s own `border: tall` (3 rows) is clipped to 1 row by
+    `DetailValueRow`'s fixed-height line container
+    (`.detail-value-row-line { height: 1 }`), and the surviving row is
+    the border's TOP EDGE, not the label -- `editor.value` still reads
+    "monday" while the compositor paints only border glyphs. Fails
+    against the unfixed code (bare `Select(...)`, no `compact=True`) --
+    see the task-1 report's revert-check."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+        assert editor.has_class("-textual-compact"), (
+            "the Repeat row's Select editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "Every Monday" in painted, (
+            f"the Repeat editor's own value is not painted: {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_at_row_editor_opens_with_current_run_at_preselected():
     """A one-time reminder's At row opens an Input preloaded with the
     task's own `run_at.isoformat()` -- the same prefill shape the
@@ -514,6 +555,43 @@ async def test_at_row_editor_opens_with_current_run_at_preselected():
 
         editor = at_row.query_one(Input)
         assert editor.value == run_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_at_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a): an
+    uncompacted `Input`'s DEFAULT_CSS is `height: 3` (border + content +
+    border), clipped to 1 row by the same `.detail-value-row-line`
+    container -- the surviving row is the top border, so `editor.value`
+    reads the ISO timestamp correctly while the compositor paints only
+    border glyphs. Fails against the unfixed code (bare `Input(...)`, no
+    `compact=True`)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        run_at = datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc)
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=run_at,
+            )
+        )
+        await pilot.pause()
+
+        at_row = detail._at_row
+        await pilot.click(at_row)
+        await pilot.pause()
+
+        editor = at_row.query_one(Input)
+        assert editor.value == run_at.isoformat()
+        assert editor.has_class("-textual-compact"), (
+            "the At row's Input editor was constructed without compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert run_at.isoformat() in painted, (
+            f"the At editor's own value is not painted: {painted!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -1099,6 +1177,34 @@ async def test_model_row_editor_preselects_provider_slash_model_and_is_blank_whe
 
 
 @pytest.mark.asyncio
+async def test_model_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a), the
+    `DefinitionDetail` twin of `test_at_row_editor_paints_its_current_
+    value_when_focused` -- same `.detail-value-row-line { height: 1 }`
+    clip, a different pane class entirely, so the fix (`compact=True` at
+    this construction site) is pinned independently of `TaskDetail`'s
+    own."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == "openai/gpt-5"
+        assert editor.has_class("-textual-compact"), (
+            "the Model row's Input editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "openai/gpt-5" in painted, (
+            f"the Model editor's own value is not painted: {painted!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_generation_row_editor_preselects_current_value_defaulting_to_optional():
     async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
         detail = pilot.app.query_one(DefinitionDetail)
@@ -1121,6 +1227,30 @@ async def test_generation_row_editor_preselects_current_value_defaulting_to_opti
         await pilot.pause()
         editor = row.query_one(Select)
         assert editor.value == "optional"
+
+
+@pytest.mark.asyncio
+async def test_generation_row_editor_paints_its_current_value_when_focused():
+    """Geometry pin (schedules-UAT-remediation, finding 1a) -- the
+    `Select` case for `DefinitionDetail`, mirroring `TaskDetail`'s Repeat
+    row pin."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # generation_mode="required"
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "required"
+        assert editor.has_class("-textual-compact"), (
+            "the Generation row's Select editor was constructed without "
+            "compact=True"
+        )
+        painted = painted_glyphs_at(pilot.app, editor)
+        assert "Always generate a draft" in painted, (
+            f"the Generation editor's own value is not painted: {painted!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -2911,15 +3041,31 @@ async def test_follow_console_ignored_when_disabled():
 
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_notifies_and_uses_empty_state():
-    """A service failure surfaces an error notification and consistent empty copy."""
+    """A service failure surfaces an error notification; on the very
+    first (never-succeeded) load there is no prior state to preserve, so
+    the detail pane simply keeps its pre-load compose-time copy (UAT
+    Major 5: the fix is to stop DESTROYING good state on a later
+    failure, not to paint a bespoke first-failure copy). Review round 1
+    finding 1: the toast text itself must not claim a "last-loaded
+    queue" that never existed."""
     async with WorkbenchTestAppWithFailingService().run_test() as pilot:
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
+        errors = [message for severity, message in notify_calls if severity == "error"]
+        assert errors, notify_calls
+        assert "last-loaded queue" not in errors[0], (
+            "the first-ever load has no last-good queue to claim it is showing"
+        )
+        assert "Could not load tasks" in errors[0]
         empty_state = pilot.app.screen.query_one(
             "#scheduling-task-detail-empty-state", Static
         )
-        assert "No scheduled tasks yet" in empty_state.visual.plain
+        assert "Select a task from the queue" in empty_state.visual.plain
 
 
 # redesign PR-2, Task 2: the four watchlist-row tests that used to live
@@ -3005,23 +3151,62 @@ class WorkbenchTestAppWithToggleFailingService(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_load_tasks_service_error_clears_stale_rows():
-    """A service failure after data was loaded clears the table and internal task list."""
+async def test_load_tasks_service_error_keeps_the_last_good_rows():
+    """UAT Major 5: a service failure AFTER data was loaded must not
+    destroy the last-good display -- a read failure is not evidence the
+    queue is empty. This used to clear the table and the internal task
+    list on ANY exception here, with nothing short of a fresh mount able
+    to restore it; this test's own former name/assertions pinned that
+    bug."""
     async with WorkbenchTestAppWithToggleFailingService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 1
+        workbench = pilot.app.screen
+        tasks_before = list(workbench._tasks)
+        rows_before = list(workbench._all_rows)
 
-        await pilot.app.screen.load_tasks()
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
+        await workbench.load_tasks()
         await pilot.pause()
 
-        assert table.row_count == 0
-        empty_state = pilot.app.screen.query_one(
-            "#scheduling-task-detail-empty-state", Static
+        assert table.row_count == 1, "the table must keep the last-good rows"
+        assert workbench._tasks == tasks_before
+        assert workbench._all_rows == rows_before
+        errors = [message for severity, message in notify_calls if severity == "error"]
+        assert errors, notify_calls
+        assert "last-loaded queue" in errors[0], (
+            "a failure AFTER a real load must say so -- there IS a last-good queue"
         )
-        assert "No scheduled tasks yet" in empty_state.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_load_tasks_failure_logs_which_step_raised():
+    """UAT Major 5's logging hook: a bare `logger.exception("Failed to
+    load tasks")` covering three distinct calls (reminders listing,
+    definitions listing, row build) left no way to pin the raiser
+    without reproducing it live. The log line must now name the step,
+    the exception type, and enough context to find it without a repro."""
+    records: list[str] = []
+    sink_id = _loguru_logger.add(
+        lambda message: records.append(message.record["message"]), level="ERROR"
+    )
+    try:
+        async with WorkbenchTestAppWithFailingService().run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+    finally:
+        _loguru_logger.remove(sink_id)
+
+    assert any(
+        "listing tasks" in r and "RuntimeError" in r and "owner_id=" in r
+        for r in records
+    ), records
 
 
 class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
@@ -3295,7 +3480,7 @@ async def test_create_reminder_action_saves_new_reminder():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        pilot.app.screen.action_create_reminder()
+        await pilot.app.screen.action_create_reminder()
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, ReminderForm)
@@ -3392,7 +3577,7 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
 
-            pilot.app.screen.action_create_reminder()
+            await pilot.app.screen.action_create_reminder()
             await pilot.pause()
             assert isinstance(pilot.app.screen, ReminderForm)
 
@@ -3451,14 +3636,209 @@ def test_sync_failed_event():
 
 
 @pytest.mark.asyncio
+async def test_mixed_sync_cycle_toasts_success_and_surfaces_the_phase_failure():
+    """UAT finding 3c pin: a cycle whose reminder phase succeeded (and,
+    per the same-cycle scenario, a definition push too) alongside an
+    UNRELATED phase's failure (a business 404) must never toast "Sync
+    failed" -- and must never silently drop the failure either. Both
+    truths, as separate notices."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        notify_calls: list[tuple[str, str]] = []
+        pilot.app.notify = lambda message, severity="information", **_: (
+            notify_calls.append((severity, str(message)))
+        )
+        # Isolate the toast-mapping logic under test from the rest of
+        # this handler's refresh side effects (already covered by other
+        # tests in this file).
+        workbench._refresh_owner_select = lambda: None
+        workbench._request_tasks_refresh = lambda *a, **k: None
+        workbench._refresh_conflicts_badge = lambda: None
+        workbench._refresh_results_badge = lambda: None
+
+        outcome = SyncOutcome(
+            "ok",
+            pulled=0,
+            pushed=1,
+            phase_errors=("Automation results pull: business 404 (stale server)",),
+        )
+        workbench._on_sync_completed(SyncCompleted("local", conflict_count=0, outcome=outcome))
+
+        assert len(notify_calls) == 2, notify_calls
+        success_severity, success_message = notify_calls[0]
+        assert success_severity == "information"
+        assert "failed" not in success_message.lower(), (
+            "the success toast must never say 'failed'"
+        )
+        failure_severity, failure_message = notify_calls[1]
+        assert failure_severity == "warning"
+        assert "Automation results pull" in failure_message
+        assert "business 404" in failure_message
+
+
+def test_reminder_dispatched_relays_to_the_mounted_workbench():
+    """UAT finding 3a pin: `TldwCli.on_reminder_dispatched` (the `post_
+    message` fallback bridge -- `on_queue_changed` only reaches the
+    scheduler loop's own in-memory queue, never a screen) must find a
+    live `SchedulesWorkbench` on the screen stack and trigger a refresh,
+    the exact route a scheduled reminder fire otherwise has none of."""
+    from tldw_chatbook.app import TldwCli
+
+    workbench = SchedulesWorkbench(app_instance=SimpleNamespace(scheduling_service=None))
+    refresh_calls: list[bool] = []
+    workbench._request_tasks_refresh = lambda *, refresh_definitions=True: (
+        refresh_calls.append(refresh_definitions)
+    )
+    # A plain fake, not a real `App` -- `screen_stack` is a real Textual
+    # App's own read-only property, and this relay's only real contract
+    # is "reads `self.screen_stack`, finds the workbench, calls its
+    # refresh" -- no live app/message pump needed to pin that.
+    fake_app = SimpleNamespace(screen_stack=[object(), workbench])
+
+    TldwCli.on_reminder_dispatched(fake_app, ReminderDispatched("task-1"))
+
+    assert refresh_calls == [False], (
+        "a fired reminder must trigger a reminder-only refresh without navigating away and back"
+    )
+
+
+def test_reminder_dispatched_is_a_no_op_with_no_workbench_mounted():
+    """The relay must not raise when Schedules isn't the active screen."""
+    from tldw_chatbook.app import TldwCli
+
+    fake_app = SimpleNamespace(screen_stack=[object()])
+
+    TldwCli.on_reminder_dispatched(fake_app, ReminderDispatched("task-1"))
+
+
+def test_post_reminder_dispatched_posts_the_message():
+    """`SchedulerLoop.on_reminder_dispatched` is wired to this bound
+    method (`app.py`'s scheduler-loop construction) -- it must post a
+    real `ReminderDispatched` carrying the fired task's id."""
+    from tldw_chatbook.app import TldwCli
+
+    posted: list[object] = []
+    app = WorkbenchTestAppWithService()
+    app.post_message = lambda message: posted.append(message)
+
+    TldwCli._post_reminder_dispatched(app, "task-7")
+
+    assert len(posted) == 1
+    assert isinstance(posted[0], ReminderDispatched)
+    assert posted[0].task_id == "task-7"
+
+
+@pytest.mark.asyncio
+async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_pump():
+    """Review round 1 finding 3: the three other fanout tests each pin
+    one hop in isolation via direct calls (the loop's callback fires;
+    `TldwCli.on_reminder_dispatched` called directly against a fake app;
+    `_post_reminder_dispatched` checked to call `post_message`) -- none
+    of them actually run a message through a live Textual pump. This
+    posts a REAL `ReminderDispatched` on a RUNNING app and confirms
+    Textual's naming-convention dispatch (`on_reminder_dispatched`, no
+    `@on` decorator -- `Message.handler_name` resolves it purely by
+    class-name convention) really connects `TldwCli`'s production method
+    to a mounted `SchedulesWorkbench` at runtime, not just in theory."""
+    from tldw_chatbook.app import TldwCli
+
+    class _FanoutTestApp(WorkbenchTestAppWithService):
+        # The REAL production method, unbound onto this lightweight test
+        # app -- if Textual's dispatch did not route by name convention,
+        # this handler would simply never run.
+        on_reminder_dispatched = TldwCli.on_reminder_dispatched
+
+    app = _FanoutTestApp()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        refresh_calls: list[bool] = []
+        workbench._request_tasks_refresh = lambda *, refresh_definitions=True: (
+            refresh_calls.append(refresh_definitions)
+        )
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        # `on_mount` itself calls `_request_tasks_refresh()` (default
+        # True) as part of normal mounting -- irrelevant to this pin.
+        refresh_calls.clear()
+
+        pilot.app.post_message(ReminderDispatched("task-1"))
+        await pilot.pause()
+
+        assert refresh_calls == [False], (
+            "the live message pump must dispatch ReminderDispatched to "
+            "TldwCli.on_reminder_dispatched by naming convention alone"
+        )
+
+
+@pytest.mark.asyncio
+async def test_liveness_strip_gets_its_own_faster_interval_timer():
+    """UAT finding 3d pin: the scheduler-liveness strip used to be
+    repainted only as a side effect of the 60s next-run ticker, so a
+    0-30s value was static for up to a full minute between samples. It
+    must now be scheduled on its OWN interval, faster than that ticker,
+    calling `_refresh_scheduler_liveness` directly."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        scheduled: list[tuple[float, object]] = []
+        real_set_interval = workbench.set_interval
+
+        def fake_set_interval(seconds, callback, *a, **k):
+            scheduled.append((seconds, callback))
+            return real_set_interval(seconds, callback, *a, **k)
+
+        workbench.set_interval = fake_set_interval
+
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        liveness_timers = [s for s, cb in scheduled if cb == workbench._refresh_scheduler_liveness]
+        next_run_timers = [s for s, cb in scheduled if cb == workbench._refresh_next_run_rendering]
+        assert liveness_timers == [SCHEDULER_LIVENESS_REFRESH_SECONDS]
+        assert next_run_timers == [NEXT_RUN_REFRESH_SECONDS]
+        assert SCHEDULER_LIVENESS_REFRESH_SECONDS < NEXT_RUN_REFRESH_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume_pause_and_restart_the_liveness_timer_too():
+    """The liveness timer must follow the same hidden-clock discipline
+    (TASK-23022) the next-run timer already has -- paused while covered,
+    resumed (and refreshed immediately) on uncover."""
+    app = WorkbenchTestAppWithService()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        paused = []
+        resumed = []
+        workbench._liveness_refresh_timer.pause = lambda: paused.append(True)
+        workbench._liveness_refresh_timer.resume = lambda: resumed.append(True)
+        refreshed = []
+        workbench._refresh_scheduler_liveness = lambda: refreshed.append(True)
+
+        workbench.on_screen_suspend()
+        assert paused == [True]
+
+        workbench.on_screen_resume()
+        assert resumed == [True]
+        assert refreshed == [True]
+
+
+@pytest.mark.asyncio
 async def test_action_sync_now_notifies_when_no_service():
     app = WorkbenchTestApp()
     workbench = SchedulesWorkbench(app)
     # Should not crash and should not start a worker
-    workbench.action_sync_now()
+    await workbench.action_sync_now()
 
 
-def test_action_sync_now_guard_prevents_duplicate_workers():
+@pytest.mark.asyncio
+async def test_action_sync_now_guard_prevents_duplicate_workers():
     class FakeService:
         def __init__(self):
             self.owner_id = "local"
@@ -3470,7 +3850,10 @@ def test_action_sync_now_guard_prevents_duplicate_workers():
     app.scheduling_service = FakeService()
     workbench = SchedulesWorkbench(app)
     workbench._sync_running = True
-    workbench.action_sync_now()
+    # action_sync_now is now async (fix round 1) -- the _sync_running guard
+    # is the very first check, before any await, so this still exercises
+    # exactly what the test claims: the guard fires before anything else.
+    await workbench.action_sync_now()
     # The app should have received a warning notification.
     # Exact assertion depends on the test harness; at minimum it must not start a second worker.
 
@@ -3970,6 +4353,64 @@ async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
 
 
 @pytest.mark.asyncio
+async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
+    """Finding 6/Major 10 (root-causes.md, task-3): root-causes' own
+    verdict already REFUTES "clicks don't work" (a real synthesized
+    mouse click lands fine). It also proposed a residual worth-fixing
+    claim -- the buttons are "1 row tall... a 1-row-tall target at a
+    screen edge" (`btn.size == Size(16, 1)`, and its own report also
+    states `region: height=1`) -- and recommended widening via
+    `min-height: 3`.
+
+    Direct measurement against the CURRENT real bundle REFUTES that
+    residual claim too: `.size.height` is indeed 1 (content box only),
+    but `.region.height` -- the compositor's actual laid-out click
+    target, the attribute that matters for "does a click land" -- is
+    ALREADY 3 at every screen size probed (80x24, 120x40, 235x52,
+    verified interactively). The reason: Textual's own `Button.-style-
+    default` DEFAULT_CSS sets `border-top: tall` + `border-bottom: tall`
+    (1 row each) around the 1-row content, giving 3 laid-out rows
+    regardless of this app's CSS. Adding `min-height: 3` here was
+    therefore a no-op (confirmed by toggling it and rebuilding the CSS
+    bundle both ways -- `.region.height` stayed 3 either way), so no
+    source change was made; this test pins the ACTUAL state (a
+    comfortable click target) as a regression guard, not a fix."""
+    app = _RailTestApp(
+        _RailService(
+            conflicts=[{"id": "c1", "local_state": {"title": "Digest"}}]
+        )
+    )
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
+        badge.press()
+        await pilot.pause()
+
+        overlay_tab = pilot.app.screen.query_one(
+            "#scheduling-conflicts-overlay", ConflictsTab
+        )
+        use_server = overlay_tab.query_one("#scheduling-use-server", Button)
+        use_local = overlay_tab.query_one("#scheduling-use-local", Button)
+
+        # `.region`, not `.size`: a click's screen coordinates land in
+        # `.region` (the laid-out box including border chrome), which is
+        # what actually determines "does this click hit the button".
+        assert use_server.region.height >= 3, f"got {use_server.region.height}"
+        assert use_local.region.height >= 3, f"got {use_local.region.height}"
+
+        # Post-compositor confirmation (root-causes.md's own oracle): both
+        # buttons' labels are actually painted, not merely sized on paper.
+        strips = pilot.app.screen._compositor.render_strips()
+        painted = "\n".join(
+            "".join(seg.text for seg in strip) for strip in strips
+        )
+        assert "Use server" in painted
+        assert "Use local" in painted
+
+
+@pytest.mark.asyncio
 async def test_conflicts_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
     async with app.run_test() as pilot:
@@ -4214,6 +4655,17 @@ class _FakeConnectedServerClient:
     def __init__(self) -> None:
         self.notifications_service = object()
 
+    async def get_capabilities(self, *, force: bool = False):
+        """task-3 (ruling 4/5): `SchedulesWorkbench.on_mount` kicks a real
+        `refresh_server_reachability` probe, which calls this -- without
+        it, the mount-time worker's `AttributeError` gets caught as
+        "unreachable" and silently overwrites this fixture's whole
+        "looks connected" premise (`_server_reachable` back to `False`)
+        moments after `_connected_service` pre-seeds it `True`. Accepts
+        `force` (Qodo fix round finding 1) since the real probe always
+        passes it -- this fake has no cache to bypass."""
+        return {}
+
 
 def _connected_service(tmp_path, app):
     """A real `ScheduledTasksDB` + `SchedulingService`, wired to LOOK
@@ -4235,8 +4687,344 @@ def _connected_service(tmp_path, app):
         runtime_source="local",
         app_getter=lambda: app,
     )
+    # task-3 (ruling 4): `transfer_refusal`/`_server_available` now also
+    # gate on a real `refresh_server_reachability` probe (default
+    # `False`) -- this fixture's whole point is "look connected", so
+    # pre-seed the same verdict a probe would reach (same precedent as
+    # `test_scheduling_service.py`'s `_transfer_service`).
+    service._server_reachable = True
     app.scheduling_service = service
     return db, service
+
+
+# -- Final review finding 2: the header must not assert "not reachable"
+# before any probe has run. ---------------------------------------------
+
+
+class _SlowProbeServerClient:
+    """A server client whose `get_capabilities` blocks on a controllable
+    `asyncio.Event` -- lets a test observe the mount-time probe's
+    still-pending window deterministically instead of racing real time
+    (same idiom `test_schedules_notification_observer.py`'s own
+    `_GatedServerClient` uses)."""
+
+    def __init__(self) -> None:
+        self.notifications_service = object()
+        self.release = asyncio.Event()
+
+    async def get_capabilities(self, *, force: bool = False):
+        await self.release.wait()
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_header_paints_checking_not_a_false_unreachable_during_mount_probe(
+    tmp_path,
+):
+    """Final review finding 2: `on_mount` calls `_refresh_owner_select()`
+    one line before `_refresh_server_reachability()` kicks the probe
+    worker, and `server_reachable` used to default `False` (a two-state
+    bool with no "unprobed" value) -- so the header asserted "Server
+    configured but not reachable" (a negative network fact nothing had
+    established) for the whole still-pending window, then silently
+    corrected once the worker resolved. `server_reachable` is now
+    tri-state (`None` unprobed); the header must paint the existing
+    honest "Checking sync status…" copy instead, and correct to the true
+    state once the probe (blocked here on a controllable event, not real
+    time) actually resolves."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+
+    app = WorkbenchTestApp()
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    app.active_server_id = "1"
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="1")
+    )
+    server_client = _SlowProbeServerClient()
+    service = SchedulingService(
+        db=db,
+        server_client=server_client,
+        runtime_source="local",
+        app_getter=lambda: app,
+    )
+    app.scheduling_service = service
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            # No pause yet -- the mount-time probe worker has been
+            # scheduled but cannot possibly have resolved (it's blocked
+            # on `release`, which nothing has set).
+            header = pilot.app.screen.query_one(
+                "#schedules-destination-header", DestinationHeader
+            )
+            assert header.state.status_label == "Checking sync status…", (
+                f"got {header.state.status_label!r} -- must not assert "
+                "reachability nothing has established yet"
+            )
+            assert "not reachable" not in header.state.status_label
+
+            server_client.release.set()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert header.state.status_label == "Local schedules", (
+                f"got {header.state.status_label!r} -- must correct once "
+                "the probe actually resolves (owner stayed 'local' "
+                "throughout this test, so a resolved reachable server "
+                "reads 'Local schedules', not 'Synced with server' -- the "
+                "point under test is that it is no longer 'Server "
+                "configured but not reachable')"
+            )
+    finally:
+        db.close()
+
+
+# -- Fix round 1, finding 1: _on_owner_server / action_sync_now must
+# re-probe like _run_owner_transfer already did, not trust a stale
+# mount-time `server_reachable` while the background probe is still
+# pending. -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
+    """A genuinely configured, about-to-be-confirmed server must not get a
+    false "No server connection" refusal during the on-mount probe's
+    still-pending window. `_connected_service` wires a REAL, working
+    probe (`_FakeConnectedServerClient.get_capabilities` succeeds) --
+    `server_reachable` is forced back to its honest pre-probe default
+    right before the click (the mount-time background worker may already
+    have resolved it by then; this isolates the handler's OWN re-probe as
+    what's under test). `_set_owner` itself is spied out: its downstream
+    runtime-policy write needs a real `RuntimePolicyContext` this test's
+    fixtures don't build, and that machinery is unrelated to what's under
+    test here -- whether `_on_owner_server` reaches `_set_owner` at all,
+    not whether the write it performs afterward succeeds."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+
+            workbench = pilot.app.screen
+            set_owner_calls: list[str] = []
+            workbench._set_owner = set_owner_calls.append
+            notify_calls: list[str] = []
+            app.notify = lambda message, **kwargs: notify_calls.append(message)
+
+            server_button = workbench.query_one("#scheduling-owner-server", Button)
+            server_button.press()
+            await pilot.pause()
+
+            assert set_owner_calls == ["server:1"], (
+                "the re-probe must resolve to reachable before deciding, "
+                "not refuse on the stale pending default"
+            )
+            assert notify_calls == [], (
+                f"must not show the false refusal notice, got {notify_calls!r}"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
+    """Same probe-window bug as `_on_owner_server`, for the `s` key --
+    `action_sync_now` used to refuse ("Local only -- nothing to sync")
+    off a stale `server_reachable=False` without re-probing first."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+            workbench = pilot.app.screen
+
+            await workbench.action_sync_now()
+
+            assert workbench._sync_running is True, (
+                "the re-probe must resolve to reachable before deciding, "
+                "not refuse on the stale pending default"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_create_reminder_reprobes_during_the_mount_probe_window(
+    tmp_path,
+):
+    """Final review finding 3: `_runs_on_options` (read by `action_
+    create_reminder`/`action_create_automation`) was the one gate site
+    fix round 1 did not re-probe -- a create during the mount probe's
+    still-pending window silently offered only "This device" in the
+    runs-on Select, with no notice and no correction while the form
+    stayed open."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # simulate: probe still pending
+
+            await pilot.app.screen.action_create_reminder()
+            await pilot.pause()
+
+            form = pilot.app.screen
+            assert isinstance(form, ReminderForm)
+            runs_on = form.query_one("#reminder-runs-on", Select)
+            option_values = [value for _label, value in runs_on._options]
+            assert "server:1" in option_values, (
+                f"got {option_values!r} -- the re-probe must resolve to "
+                "reachable before building the runs-on options, not "
+                "silently offer only 'This device'"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
+    tmp_path,
+):
+    """Final review finding 1's own pinned scenario: a reminder is queued
+    `to_server_pending` while a server was configured, then the server is
+    REMOVED entirely (`active_server_id -> None`) -- the UAT's actual
+    core symptom, not merely a switch to another reachable server.
+
+    The row must settle to `to_server_failed` from `on_mount` ALONE, with
+    no sync ever running: no server is configured, so `_server_
+    configured`/`_server_available` both read `False`, `_start_server_
+    notification_observer`/`_schedule_catch_up_results_pull` both no-op,
+    and nothing in this test ever calls `action_sync_now`/presses `s` --
+    `_settle_orphaned_transfers` (kicked unconditionally from `on_mount`,
+    running on its own deferred worker since the Qodo fix round finding 2
+    fix -- `wait_for_complete()` below lets it actually finish) is the
+    only mechanism that could possibly settle it.
+    """
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Standup",
+        schedule_kind="one_time",
+        run_at="2099-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",  # the server _connected_service just configured
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    # The server is removed entirely.
+    app.runtime_policy.state.active_server_id = None
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row = db.get_reminder_task(local_id)
+            assert row["transfer_state"] == "to_server_failed", (
+                "must settle from on_mount alone -- no server is "
+                "configured, so no sync could ever have run"
+            )
+            pending = db.get_pending_mutations(
+                "server:1", primitive="reminder_task"
+            )
+            assert len(pending) == 1
+            assert pending[0]["payload"]["transfer_errors"]
+    finally:
+        db.close()
+
+
+def test_settle_orphaned_transfers_defers_to_a_worker_not_inline(tmp_path):
+    """Qodo fix round finding 2 (MEDIUM) pin: `_settle_orphaned_transfers`
+    must hand the actual local-DB sweep to a worker and return
+    immediately, never run it inline on the calling (UI) thread --
+    `run_worker` itself is substituted here so the assertion holds
+    regardless of when a real worker would actually get scheduled to
+    run (the concern the app-level test above can only prove after the
+    fact, via `wait_for_complete()`)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        workbench = SchedulesWorkbench(app_instance=app)
+
+        calls: list[str | None] = []
+        service.sync_engine._settle_orphaned_transfer_mutations = (
+            lambda target_owner: calls.append(target_owner)
+        )
+
+        captured = {}
+
+        def _fake_run_worker(work, *, exclusive=False, group=None, **_kwargs):
+            captured["work"] = work
+            captured["group"] = group
+
+        workbench.run_worker = _fake_run_worker
+
+        workbench._settle_orphaned_transfers()
+
+        assert calls == [], "must not run the sweep inline before returning"
+        assert captured["group"] == "schedules-orphan-sweep"
+        assert captured["work"] is not None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_sync_now_splits_configured_unreachable_from_unconfigured(
+    tmp_path,
+):
+    """Final review finding 4: `action_sync_now`'s refusal used the
+    conflated "Local only -- nothing to sync (no server connection)."
+    copy even when a server WAS configured (merely unreachable) -- the
+    exact conflation the branch removed two surfaces away (the header's
+    own split, `transfer_refusal`'s own distinct reason). A configured-
+    but-unreachable server must name THAT, not "no server connection"."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    service._server_reachable = False  # confirmed unreachable, not unprobed
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            service._server_reachable = False  # re-assert after mount's probe
+
+            # `_FakeConnectedServerClient.get_capabilities` always
+            # succeeds, so force the re-probe itself to fail this once --
+            # a genuinely unreachable server, not merely an unprobed one.
+            async def _fail_reachability():
+                service._server_reachable = False
+                return False
+
+            service.refresh_server_reachability = _fail_reachability
+
+            workbench = pilot.app.screen
+            await workbench.action_sync_now()
+            await pilot.pause()
+
+            messages = [n.message for n in pilot.app._notifications]
+            assert any(
+                "Server configured but not reachable" in m for m in messages
+            ), messages
+            assert not any("no server connection" in m for m in messages), messages
+    finally:
+        db.close()
 
 
 # -- bare-harness: widget mechanics, no service needed -----------------------

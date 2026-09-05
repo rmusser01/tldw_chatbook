@@ -10427,6 +10427,12 @@ class TldwCli(
             handler_timeout_seconds=get_cli_setting(
                 "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
             ),
+            # UAT finding 3a: `on_queue_changed` (above) only reloads the
+            # loop's OWN in-memory queue -- it never reaches a screen.
+            # This is the fallback the plan calls for: a lightweight
+            # `post_message` bridge so a fired reminder's row repaints
+            # without navigating away and back.
+            on_reminder_dispatched=self._post_reminder_dispatched,
         )
         # The report demo is opt-in. Keep its audio stack off first paint and
         # let the property above build it on the first demo entry-point read.
@@ -11003,6 +11009,39 @@ class TldwCli(
             )
             self._automation_definition_handler = handler
         return handler
+
+    def _post_reminder_dispatched(self, task_id: str) -> None:
+        """`SchedulerLoop.on_reminder_dispatched` callback (finding 3a).
+
+        Lazy import: `Scheduling.events` pulls in `Widgets.
+        detail_value_row` (ADR-097 boot-census ratchet), and this only
+        runs once a reminder has actually fired -- long after boot.
+        Posting to `self` (the App) is the only route available: the
+        loop is UI-agnostic and holds no screen reference, so
+        `on_reminder_dispatched` below relays this to whichever
+        `SchedulesWorkbench` is currently on the screen stack, if any.
+        """
+        from .Scheduling.events import ReminderDispatched
+
+        self.post_message(ReminderDispatched(task_id))
+
+    def on_reminder_dispatched(self, message: Any) -> None:
+        """Relay a scheduler-fired reminder into the live Schedules
+        workbench, if one is mounted (finding 3a).
+
+        A purely local scheduler fire has no other route to the UI --
+        the only existing push path is the server SSE observer, which
+        requires a server. Same `screen_stack` scan idiom as
+        `_mounted_chat_screen` above; a full `_request_tasks_refresh()`
+        rather than a targeted repaint, since the fired row's own
+        bucket/next-run text both change together.
+        """
+        from .UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+
+        for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+            if isinstance(screen, SchedulesWorkbench):
+                screen._request_tasks_refresh(refresh_definitions=False)
+                return
 
     def _backfill_subscription_items_fts(self) -> None:
         """Worker body: index subscription_items rows that predate the FTS
