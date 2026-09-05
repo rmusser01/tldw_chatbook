@@ -289,16 +289,14 @@ async def test_task_detail_renders_selected_task():
         assert delete_button.label.plain == "Delete"
         assert follow_button.label.plain == "Follow 'Test' in Console"
 
-        # schedules-redesign PR-1, task 3: the old combined Type/Schedule
-        # rows are hidden for a reminder now (they only remain visible for
-        # a `ScheduledTask` projection); the same "One-time"/"One-time at"
-        # facts render through the new Frequency group's Repeat/At rows
-        # instead -- painted-output assertions, not stored-attribute ones
-        # (last program's lesson), since a hidden widget's stored text
-        # would pass even if nothing were actually on screen.
-        legacy_fields = detail.query_one("#scheduling-task-detail-legacy-fields")
+        # task-31413: the old combined Type/Schedule rows (and the legacy
+        # container that held them) are deleted -- the same "One-time"/
+        # "One-time at" facts render through the new Frequency group's
+        # Repeat/At rows instead -- painted-output assertions, not
+        # stored-attribute ones (last program's lesson), since a hidden
+        # widget's stored text would pass even if nothing were actually on
+        # screen.
         groups = detail.query_one("#scheduling-task-detail-groups")
-        assert legacy_fields.display is False
         assert groups.display is True
         repeat_value = detail.query_one("#scheduling-detail-repeat", Static)
         at_value = detail.query_one("#scheduling-detail-at", Static)
@@ -336,6 +334,31 @@ def _frequency_reminder(**kwargs) -> ReminderTask:
     )
     defaults.update(kwargs)
     return ReminderTask(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_set_task_rejects_a_scheduled_task_projection():
+    """task-31413: `TaskDetail.set_task` only ever renders a `ReminderTask`
+    in production (both real construction sites in `schedules_workbench.py`
+    are fed through `_update_detail_for_index`, which asserts
+    `isinstance(task, ReminderTask)` before calling `set_task` at all). This
+    pins that claim directly, rather than restating it in a comment: a
+    `ScheduledTask` projection -- the shape the deleted legacy-fields layer
+    used to render -- must raise loudly here instead of silently painting a
+    near-empty pane."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        projection = ScheduledTask(
+            id="watchlist:1",
+            title="Watchlist Title",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            schedule_summary="Every 1h",
+            next_run_at=datetime(2026, 7, 20, 11, 0, tzinfo=timezone.utc),
+            owner_id="local",
+        )
+        with pytest.raises(AssertionError):
+            detail.set_task(projection)
 
 
 @pytest.mark.asyncio
@@ -3077,11 +3100,10 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
 # expected to filter list_tasks' spans-owners result down to real
 # ReminderTask instances") retire that: the unified Queue list is
 # reminders + automation definitions only. Replaced by the single
-# exclusion test below; the detail-pane/inspector rendering for a
-# `ScheduledTask` projection stays covered directly by `task_detail.py`'s
-# own unit tests (`TaskDetail.set_task`/`TaskInspector.set_task` are
-# still general-purpose, just no longer reachable with a projection FROM
-# this table).
+# exclusion test below. task-31413 later confirmed `TaskDetail` never
+# receives a `ScheduledTask` projection at all and deleted its
+# projection-rendering layer; `TaskInspector.set_task` alone stays
+# general-purpose for a `ScheduledTask` projection today.
 @pytest.mark.asyncio
 async def test_watchlist_projection_excluded_from_unified_queue():
     """A watchlist projection never appears in the unified Queue list."""

@@ -325,13 +325,6 @@ def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
     return isinstance(task, ReminderTask) and task.missed_at is not None
 
 
-def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return a readable type label for the task."""
-    if isinstance(task, ReminderTask):
-        return _humanize_schedule_kind(task.schedule_kind)
-    return task.type.replace("_", " ").title()
-
-
 #: Which screen owns each read-only projection row (task-23106). Briefings
 #: are configured from the Watchlists screen, so both point there.
 _PROJECTION_MANAGERS: dict[str, str] = {
@@ -355,13 +348,6 @@ def _managed_elsewhere_notice(
         f"Managed by another screen — this row is read-only here; "
         f"{verb} it where it was created."
     )
-
-
-def _task_schedule_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return a human-readable schedule summary for the task."""
-    if isinstance(task, ReminderTask):
-        return _humanize_schedule(task)
-    return task.schedule_summary or "-"
 
 
 def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
@@ -682,28 +668,12 @@ class TaskDetail(Vertical):
                     classes="scheduling-detail-value",
                 ),
             )
-            # task-3 brief: the old combined Type/Schedule rows only apply
-            # to a `ScheduledTask` projection (watchlist_job/briefing_job)
-            # now -- reminders render Repeat/At/Timezone/Notifications
-            # through the Frequency `DetailGroup` below instead. `set_task`
-            # toggles this container's `.display` per task type.
-            with Vertical(id="scheduling-task-detail-legacy-fields"):
-                yield Horizontal(
-                    Static("Type:", classes="scheduling-detail-label"),
-                    Static(
-                        "-",
-                        id="scheduling-task-detail-type",
-                        classes="scheduling-detail-value",
-                    ),
-                )
-                yield Horizontal(
-                    Static("Schedule:", classes="scheduling-detail-label"),
-                    Static(
-                        "-",
-                        id="scheduling-task-detail-schedule",
-                        classes="scheduling-detail-value",
-                    ),
-                )
+            # task-31413: the combined Type/Schedule rows this comment used
+            # to describe rendered a `ScheduledTask` projection
+            # (watchlist_job/briefing_job) -- deleted as provably
+            # unreachable (see the unreachability note in `set_task`
+            # below). Reminders render Repeat/At/Timezone/Notifications
+            # through the Frequency `DetailGroup` below instead.
             yield Horizontal(
                 Static("Status:", classes="scheduling-detail-label"),
                 Static("-", id="scheduling-task-status-badge"),
@@ -1328,7 +1298,7 @@ class TaskDetail(Vertical):
 
     def set_task(
         self,
-        task: ReminderTask | ScheduledTask | None,
+        task: ReminderTask | None,
         *,
         queue_empty: bool = False,
         run_history=None,
@@ -1339,9 +1309,11 @@ class TaskDetail(Vertical):
         """Update the detail view for the given task (or clear it).
 
         Args:
-            task: The row to paint, or ``None`` for the empty state. A
-                `ReminderTask` fills every group; a bare `ScheduledTask`
-                (the legacy shape) paints only what it carries.
+            task: The row to paint, or ``None`` for the empty state.
+                task-31413: only ever a `ReminderTask` in practice -- see
+                the unreachability note further down and the runtime
+                assert it backs. The old bare-`ScheduledTask` legacy shape
+                this docstring used to describe is no longer accepted.
             queue_empty: True when the queue has no rows at all, which
                 picks the "schedule your first task" empty copy over the
                 "select a task" one. Read only when ``task`` is ``None``.
@@ -1413,17 +1385,24 @@ class TaskDetail(Vertical):
 
         empty_state.display = False
         metadata.display = True
+        # task-31413: `TaskDetail(` is constructed in exactly TWO places in
+        # the repo (both in `schedules_workbench.py`), both fed through the
+        # same `_update_detail_for_index` seam, which asserts
+        # `isinstance(task, ReminderTask)` before ever calling `set_task`.
+        # A `ScheduledTask` projection provably never reaches here --
+        # regressing that is the ONE thing the deleted legacy-fields layer
+        # used to render, so guard it loudly instead of silently painting
+        # a near-empty pane. `test_set_task_rejects_a_scheduled_task_
+        # projection` pins this.
+        assert isinstance(task, ReminderTask), (
+            "TaskDetail only ever renders a ReminderTask (task-31413 "
+            "deleted the ScheduledTask projection-rendering layer)"
+        )
         lifecycle.display = isinstance(task, ReminderTask)
 
         # schedules-redesign PR-1, task 3: the Details/Frequency/History
-        # groups are reminder-only (spec §5's reminder column); a
-        # `ScheduledTask` projection (watchlist_job/briefing_job) keeps the
-        # legacy Type/Schedule rows instead, since this regrammar does not
-        # touch projection rendering.
+        # groups are reminder-only (spec §5's reminder column).
         is_reminder = isinstance(task, ReminderTask)
-        self.query_one("#scheduling-task-detail-legacy-fields", Vertical).display = (
-            not is_reminder
-        )
         self.query_one("#scheduling-task-detail-groups", Vertical).display = (
             is_reminder
         )
@@ -1497,10 +1476,6 @@ class TaskDetail(Vertical):
                 run_now_button.label = "Run now"
 
         self._update_static("scheduling-task-detail-title", task.title)
-        self._update_static("scheduling-task-detail-type", _task_type_label(task))
-        self._update_static(
-            "scheduling-task-detail-schedule", _task_schedule_label(task)
-        )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
         self._update_static(
