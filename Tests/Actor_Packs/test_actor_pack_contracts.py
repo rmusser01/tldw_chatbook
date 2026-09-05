@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from collections.abc import Mapping
 
 import pytest
@@ -339,6 +340,50 @@ def test_persona_projection_strips_linked_local_portrait_id() -> None:
     )
     assert payload == decoded
     assert b"character_card_id" not in payload
+
+
+def test_persona_projection_preserves_policy_rules() -> None:
+    policy_rules = [
+        {
+            "rule_kind": "mcp_tool",
+            "rule_name": "fs_write",
+            "allowed": False,
+            "require_confirmation": True,
+            "max_calls_per_turn": 2,
+        }
+    ]
+
+    payload = actor_pack_contracts.canonicalize_actor_payload(
+        "persona",
+        PORTABLE_UUID,
+        {"name": "Guide", "policy_rules": policy_rules},
+    )
+
+    assert json.loads(payload)["data"]["policy_rules"] == policy_rules
+
+
+@pytest.mark.parametrize(
+    "policy_rules",
+    [
+        "fs_write",
+        [{"rule_kind": "unknown", "rule_name": "fs_write"}],
+        [{"rule_kind": "mcp_tool", "rule_name": ""}],
+        [{"rule_kind": "skill", "rule_name": "x", "allowed": "yes"}],
+        [{"rule_kind": "skill", "rule_name": "x", "unexpected": True}],
+        [{"rule_kind": "skill", "rule_name": "x", "max_calls_per_turn": 0}],
+    ],
+)
+def test_persona_policy_rules_reject_values_outside_local_contract(
+    policy_rules: object,
+) -> None:
+    with pytest.raises(ActorPackValidationError) as caught:
+        actor_pack_contracts.canonicalize_actor_payload(
+            "persona",
+            PORTABLE_UUID,
+            {"name": "Guide", "policy_rules": policy_rules},
+        )
+
+    assert caught.value.category == "actor_pack_actor_invalid"
 
 
 @pytest.mark.parametrize(
