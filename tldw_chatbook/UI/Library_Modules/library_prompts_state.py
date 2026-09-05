@@ -121,8 +121,8 @@ cannot be passed as a constructor argument:
 
 All four dataclass defaults below are therefore momentary placeholders,
 overwritten through the generated property shim before anything else reads
-them. Every OTHER field's original line is deleted outright: 39 static
-literals plus two pure no-argument factory calls folded into
+them. Every OTHER field's original line is deleted outright -- 39 in total:
+37 static literals plus two pure no-argument factory calls folded into
 ``default_factory`` (``PromptSelectionBasket`` and ``local_prompt_
 capabilities`` -- both read only module constants and have no side effects,
 so calling them at the earlier construction point is behaviorally

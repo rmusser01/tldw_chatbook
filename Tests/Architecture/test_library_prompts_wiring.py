@@ -9,9 +9,19 @@ property shim on ``LibraryScreen``, resolved via ``prompt_state_shim_attr()``
 -- the single-source three-way prefix mapping (``_library_prompt_`` default,
 ``_library_prompts_`` for the plural-named subset, bare ``_`` for the one
 unprefixed field, ``selected_prompt_id``) documented in
-``library_prompts_state.py``'s own module docstring. Unlike a looser "either
-prefix works" check, these tests assert the EXACT expected shim name per
-field, and that each shim genuinely reads AND writes the state object rather
+``library_prompts_state.py``'s own module docstring.
+
+**What the per-field sweep can and cannot prove.** Because the screen's shim
+loop and this file's sweep both call ``prompt_state_shim_attr()``, the sweep
+proves the two are CONSISTENT -- it cannot prove the mapping is CORRECT. A
+review pass demonstrated this concretely: deleting the plural branch from
+``prompt_state_shim_attr()`` outright leaves the sweep at 5 passed, because
+screen and test then agree on the same wrong answer. ``test_prompt_state_
+shim_attr_maps_each_prefix_family_to_its_literal_name`` below closes that
+hole with hard-coded expected strings -- one per prefix family, including the
+bare-underscore one -- which is the only assertion here that would fail on
+such a mutation. The sweep still earns its place for the other half of the
+job: that each shim genuinely reads AND writes its own state field rather
 than merely existing as a property.
 
 The state module under test is ``tldw_chatbook.UI.Library_Modules.library_
@@ -108,6 +118,26 @@ def test_every_shim_reads_and_writes_its_own_state_field() -> None:
     # share one underlying field.
     written = [getattr(state, name) for name in field_names]
     assert len({id(value) for value in written}) == len(field_names)
+
+
+@pytest.mark.unit
+def test_prompt_state_shim_attr_maps_each_prefix_family_to_its_literal_name() -> None:
+    """The three-way mapping, pinned against LITERAL expected strings.
+
+    The only assertion in this file that is not self-referential: every
+    other check resolves the expected name by calling the same
+    `prompt_state_shim_attr()` the screen's own shim loop calls, so screen
+    and test agree even when the mapping is wrong. A review pass proved
+    that hole is real -- deleting the plural branch from
+    `prompt_state_shim_attr()` leaves the rest of this file at 5 passed.
+    One field per prefix family, spelled out:
+    """
+    # plural family -- `_library_prompts_` (the list/browse/import surface)
+    assert prompt_state_shim_attr("view") == "_library_prompts_view"
+    # singular family -- `_library_prompt_` (the cluster default)
+    assert prompt_state_shim_attr("dirty") == "_library_prompt_dirty"
+    # bare-underscore family -- the one field with no prompt(s) prefix word
+    assert prompt_state_shim_attr("selected_prompt_id") == "_selected_prompt_id"
 
 
 @pytest.mark.unit

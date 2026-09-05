@@ -8,13 +8,17 @@ mirrors). These pins exist BEFORE the Prompts extraction moves any state,
 so a later move that silently breaks one of these ``@on`` dispatch paths
 goes red rather than green-but-vacuous.
 
-Scope: the four ``@on``-bound Prompts handlers that touch moved
+Scope: **three** ``@on``-bound Prompts handlers that touch moved
 ``LibraryPromptsState`` fields and had NO real-dispatch coverage anywhere
-in ``Tests/`` before this file existed. The census walked all of
-``Tests/`` (including ``Tests/Prompt_Management/``, ``Tests/Prompt_Studio/``,
-``Tests/Internal_Prompts/`` and ``Tests/Prompts_DB/``, which turned out to
-carry zero ``LibraryScreen`` consumers at all) for each handler's own
-``@on`` selector, then read every hit rather than trusting the grep:
+in ``Tests/`` before this file existed, plus **one** already-covered
+handler this file deliberately deepens (see below). The census walked all
+of ``Tests/`` (including ``Tests/Prompt_Management/``,
+``Tests/Prompt_Studio/``, ``Tests/Internal_Prompts/`` and
+``Tests/Prompts_DB/``, which turned out to carry zero ``LibraryScreen``
+consumers at all) for each handler's own ``@on`` selector, then read every
+hit rather than trusting the grep.
+
+The three genuine gaps:
 
 - ``handle_library_prompts_import_path_changed``
   (``@on(Input.Changed, "#library-prompts-import-path")``) -- the Import
@@ -28,14 +32,37 @@ carry zero ``LibraryScreen`` consumers at all) for each handler's own
   row's own "Import" action was only ever queried for presence/parent, on
   a standalone canvas host (which cannot dispatch a SCREEN ``@on``
   handler at all).
-- ``handle_library_prompt_discard``
-  (``@on(Button.Pressed, "#library-prompt-discard")``) -- the editor's
-  Discard action had many label/disabled assertions and zero presses.
 
-Three near-misses this census deliberately does NOT pin, because reading
-the hits (not the same-line grep) proved them genuinely covered -- the
-same "a same-line-only grep undercounts coverage" trap the collections
-series' own report recorded:
+``handle_library_prompt_discard`` (``@on(Button.Pressed,
+"#library-prompt-discard")``) is **NOT a gap** -- this file's own first
+draft misclassified it as one, and a review pass corrected that. It is
+already genuinely covered by
+``Tests/UI/test_library_prompts_canvas.py::test_library_prompt_
+compatibility_editor_discard_returns_to_current_list`` (that file's
+lines 10310-10404), which dirties a real editor and presses the real
+button (``discard.press()``, line 10380) on a real ``LibraryScreen``; the
+review proved the coverage is load-bearing by MUTATION -- no-oping
+``_reset_library_prompt_editor_state`` makes that pre-existing test fail.
+The discard test below is kept anyway because it asserts strictly MORE
+than that one does: the editor projection is torn down
+(``_library_prompt_detail`` and ``_library_prompt_block_state`` both back
+to ``None``) and the discarded edit never reached the database (the stored
+``user_prompt`` still equals its seeded value). It is deepened coverage,
+not new coverage -- the distinction matters for anyone re-deriving this
+subsystem's coverage debt.
+
+**The census bug worth remembering** (it is what produced the
+misclassification): the press-detection pass looked for ``.press()``
+within a few lines of the SELECTOR string. Here the selector appears at
+line 10358 (``discard = screen.query_one("#library-prompt-discard",
+Button)``) and the press happens 22 lines later, at line 10380, through
+the local variable ``discard``. A proximity window around the selector cannot see a
+press made through a variable bound earlier -- the same family as the
+collections series' "same-line-only grep undercounts coverage" trap, one
+indirection further out.
+
+Three further near-misses this census deliberately does NOT pin, each
+confirmed covered by reading the hits rather than the grep:
 
 - ``handle_library_prompts_empty_new`` / ``handle_library_prompts_empty_
   clear_filter`` are both activated by a real focused-Button ``enter``
@@ -47,8 +74,9 @@ series' own report recorded:
   test_items_browse_settles_while_prompt_editor_remains_open`` -- a
   selector-string grep cannot see that.
 
-No live bugs were found writing these: all four are coverage gaps, not
-behavior bugs. Each test below asserts the SCREEN-owned state the handler
+No live bugs were found writing these: the three gaps are coverage gaps,
+not behavior bugs, and the fourth test deepens coverage that already
+existed. Each test below asserts the SCREEN-owned state the handler
 mutates, so it stays meaningful after the state PR reroutes those names
 through ``self._prompts_state``.
 """
@@ -229,13 +257,17 @@ async def test_import_path_enter_reaches_the_blank_path_gate(tmp_path) -> None:
 async def test_editor_discard_drops_the_dirty_draft_and_returns_to_the_list(
     tmp_path,
 ) -> None:
-    """``@on(Button.Pressed, "#library-prompt-discard")`` really fires.
+    """``@on(Button.Pressed, "#library-prompt-discard")`` tears the editor down.
 
-    Discard had label/disabled assertions across several files and zero
-    presses. Pressing it on a dirty editor must reach
-    ``handle_library_prompt_discard``: the editor state resets to the
-    list view, the dirty flag clears, and the unsaved edit never reaches
-    the database.
+    NOT a coverage gap -- see this module's docstring.
+    ``test_library_prompts_canvas.py::test_library_prompt_compatibility_
+    editor_discard_returns_to_current_list`` already presses this button on
+    a real dirty editor and pins the browse/refresh/focus side of the exit.
+    This test deepens that from the other side, asserting what the
+    pre-existing one does not: the editor PROJECTION is fully torn down
+    (``_library_prompt_detail`` and ``_library_prompt_block_state`` both
+    back to ``None`` -- two of the moved ``LibraryPromptsState`` fields),
+    and the discarded edit never reached the database.
     """
     db, prompt_id, service = _seed_prompt(tmp_path)
     app = _build_test_app()
