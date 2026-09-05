@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-31 18:31'
-updated_date: '2026-09-05 15:36'
+updated_date: '2026-09-05 15:42'
 labels:
   - maintenance
   - formatting
@@ -99,3 +99,5 @@ Both runs collected 452 tests, with 5 failures, 0 errors, 0 skips, and exit code
 Exact governance checks: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/CI/test_backlog_task_id_uniqueness.py` passed (3 passed, with two environment/dependency warnings); `git diff --check` exited 0; `python3.12 scripts/check_persistent_diagnostic_inventory.py --diff` exited 0 with no persistent-diagnostic drift. ADR required: no; ADR path: N/A. This is mechanical TASK-26000 formatter cleanup. Independent Task 1 review was clean after the report correction loop.
 
 Current-head evidence after rebase: the v3 structural guard matched all 16 paths; Ruff `check` passed and `format --check` reported 16 formatted; deterministic replay from `d0a0ab6ba32d4564c8a3872c3d97a986ad6e7739` matched 16/16, with assigned source blobs identical between old `6bc95d1cef001f76de65ba7e42a8723ebecab07b` and new `d0a0ab6ba32d4564c8a3872c3d97a986ad6e7739`. The exact existing 12-module focused command was rerun with JUnit `/tmp/task26948_rebased.xml`: 452 tests, 5 failures, 0 errors, 0 skips; the same five normalized failure keys as before/after evidence, not green. Backlog uniqueness was 3 passed with 2 warnings; `git diff --check origin/dev...HEAD` exited 0; diagnostic inventory exited 0 with no drift (580 owners / 1336 TASK-492 / 30 TASK-31551 / 7615 TASK-494 / 12 sink files). No full suite ran.
+
+Independent whole-branch review at `3cdc00fa24e3e6cc922cfd7ec81e02c36358771f` found no Critical, Important, or Minor issues and judged the formatter-only branch ready to merge; the plan's controller-owned review and integration-preparation step is complete.
