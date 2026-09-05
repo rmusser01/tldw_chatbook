@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolutio
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import with_destination
 from Tests.UI.app_factory import attach_chachanotes_db
+from tldw_chatbook.config import save_setting_to_cli_config
 
 
 @pytest.fixture
@@ -40,6 +41,20 @@ def dictionary_db(tmp_path):
 def _active_native_session(console):
     store = console._ensure_console_chat_store()
     return next(s for s in store.sessions() if s.id == store.active_session_id)
+
+
+async def _bind_existing_console_conversation(console, conversation_id: str):
+    """Bind an existing conversation with the durable Console policy it requires."""
+    store = console._ensure_console_chat_store()
+    session = _active_native_session(console)
+    session.persisted_conversation_id = conversation_id
+    result = store.persistence.console_library_policy_repository.insert(
+        conversation_id,
+        store.session_library_policy_candidate(session.id),
+    )
+    assert result.snapshot.policy_revision == 1
+    await store.hydrate_session_library_policy(session.id)
+    return session
 
 
 class _CapturingGateway:
@@ -78,6 +93,7 @@ def _final_user_content(messages):
 async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
 ):
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
     attach_chachanotes_db(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -93,15 +109,16 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
         entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")],
     )
     LocalChatDictionaryService(dictionary_db).attach_to_conversation(dict_id, conv_id)
+    gateway = _CapturingGateway()
+    app.console_provider_gateway_factory = lambda: gateway
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
-        gateway = _CapturingGateway()
-        controller.provider_gateway = gateway
+        assert controller.provider_gateway is gateway
         result = await controller.submit_draft("The Warden nods.")
         assert result.accepted
 
@@ -119,6 +136,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
+    assert save_setting_to_cli_config("console", "agent_runtime", True)
     app = _build_test_app()
     attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
@@ -133,15 +151,16 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
         entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")],
     )
     LocalChatDictionaryService(dictionary_db).attach_to_conversation(dict_id, conv_id)
+    gateway = _CapturingGateway()
+    app.console_provider_gateway_factory = lambda: gateway
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
-        gateway = _CapturingGateway()
-        controller.provider_gateway = gateway
+        assert controller.provider_gateway is gateway
 
         captured = {}
 
