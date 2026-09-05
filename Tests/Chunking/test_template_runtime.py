@@ -259,6 +259,42 @@ class TestApplyTemplate:
 
 
 # ---------------------------------------------------------------------------
+# Bounded Lab admission adapters — real vendor behavior stays runtime-owned
+# ---------------------------------------------------------------------------
+
+
+class TestAdmissionRuntimeAdapters:
+    def test_operation_preserves_string_output(self):
+        assert (
+            tr.run_template_preprocessing_operation(
+                "alpha   beta", "normalize_whitespace", {}
+            )
+            == "alpha beta"
+        )
+
+    def test_operation_preserves_structured_metadata(self):
+        text = "# Intro\nbody"
+        assert tr.run_template_preprocessing_operation(
+            text,
+            "extract_sections",
+            {"pattern": r"^#+\s+(.+)$"},
+        ) == {
+            "text": text,
+            "metadata": {"sections": [{"title": "Intro", "position": 0}]},
+        }
+
+    @pytest.mark.production_path
+    def test_sanitize_matches_engine_without_security_event(self):
+        from tldw_chatbook.Chunking.engine.security_logger import get_security_logger
+
+        security_logger = get_security_logger()
+        before = list(security_logger.get_events(limit=100_000))
+
+        assert tr.sanitize_template_input("alpha\x00 beta") == "alpha  beta"
+        assert security_logger.get_events(limit=100_000) == before
+
+
+# ---------------------------------------------------------------------------
 # resolve_template (AC 8) — the ONLY name→template resolution
 # ---------------------------------------------------------------------------
 

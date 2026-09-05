@@ -222,10 +222,11 @@ def _checked_request(request: RunRequest, limits: PreviewLimits) -> RunRequest:
 
 
 def _child_admission(request: RunRequest, limits: PreviewLimits) -> int:
-    from .engine.templates import TemplateProcessor
-    from .template_runtime import _ReportingChunker
+    from .template_runtime import (
+        run_template_preprocessing_operation,
+        sanitize_template_input,
+    )
 
-    processor = TemplateProcessor()
     text = request.sample.text
     metadata_bytes = 0
     pre_peak = len(text.encode("utf-8"))
@@ -257,7 +258,7 @@ def _child_admission(request: RunRequest, limits: PreviewLimits) -> int:
                     + 128
                 )
                 _check_working(metadata_bytes)
-        result = processor._operations[name](text, config)
+        result = run_template_preprocessing_operation(text, name, config)
         if isinstance(result, dict):
             text = result["text"]
             if name != "extract_sections":
@@ -269,7 +270,7 @@ def _child_admission(request: RunRequest, limits: PreviewLimits) -> int:
             text = result
         pre_peak = max(pre_peak, 2 * len(text.encode("utf-8")) + metadata_bytes)
         _check_working(pre_peak)
-    sanitized = _ReportingChunker()._sanitize_input(text, suppress_security_log=True)
+    sanitized = sanitize_template_input(text)
     return max(pre_peak, _admit_text(request, sanitized, limits, metadata_bytes))
 
 

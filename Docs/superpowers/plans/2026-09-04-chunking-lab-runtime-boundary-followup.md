@@ -53,7 +53,7 @@ def test_admission_runtime_operation_preserves_text():
     ) == "alpha beta"
 
 def test_admission_runtime_sanitizes_control_characters():
-    assert tr.sanitize_template_input("alpha\x00 beta") == "alpha beta"
+    assert tr.sanitize_template_input("alpha\x00 beta") == "alpha  beta"
 ```
 
 - [ ] Implement the narrow adapters beside `registered_template_operations`, with type hints/docstrings and no vendor re-export:

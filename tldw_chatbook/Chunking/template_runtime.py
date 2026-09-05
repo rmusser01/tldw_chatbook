@@ -610,6 +610,22 @@ def registered_template_operations() -> frozenset[str]:
     return frozenset(TemplateProcessor()._operations)
 
 
+def run_template_preprocessing_operation(
+    text: str, operation: str, config: dict[str, Any]
+) -> str | dict[str, Any]:
+    """Run one already-preflighted preprocessing operation for Lab admission.
+
+    Args:
+        text: Current preprocessing text.
+        operation: Registered preprocessing operation name.
+        config: Preflighted effective operation configuration.
+
+    Returns:
+        The vendor operation's unchanged string or structured result.
+    """
+    return TemplateProcessor()._operations[operation](text, config)
+
+
 class _ReportingChunker(Chunker):
     """Observe the engine's actual sanitation without copying its algorithm."""
 
@@ -628,6 +644,18 @@ class _ReportingChunker(Chunker):
         result = super()._resolve_method(method, language, options)
         self.resolved_method = result
         return result
+
+
+def sanitize_template_input(text: str) -> str:
+    """Apply the engine's real input sanitation without a security event.
+
+    Args:
+        text: Preprocessed template input.
+
+    Returns:
+        The engine-sanitized text used for resource admission.
+    """
+    return _ReportingChunker()._sanitize_input(text, suppress_security_log=True)
 
 
 def _execute_report(
