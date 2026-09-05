@@ -3,6 +3,14 @@
 Screens are never cached across tab switches, so the running session
 lives here. Textual-free: the app hands in `call_from_thread` and the
 ingest submit callable; everything else is injectable for tests.
+
+Import-graph rule (final whole-branch review, C1): `app.py` imports this
+module at MODULE SCOPE, so nothing imported here at module scope may need
+an optional dependency. `meeting_capture` (bare `import numpy`) and
+`recording_service` (sounddevice/pyaudio) are therefore imported inside
+the functions that need them -- `from __future__ import annotations`
+keeps their type hints working. `Tests/Audio/test_meeting_import_safety.py`
+pins this.
 """
 from __future__ import annotations
 
@@ -17,7 +25,6 @@ from typing import Any, Callable, Optional
 
 from loguru import logger
 
-from .meeting_capture import MeetingCapture
 from .meeting_session import (
     LocalMeetingSink,
     MeetingMeta,
@@ -28,6 +35,7 @@ from .meeting_session import (
 )
 from .system_audio_tap import TapMode, build_tap, probe
 from .wav_writer import PlaceholderWavWriter, patch_wav_header, wav_needs_patch
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 MEETINGS_DIRNAME = "meetings"
 DIARIZATION_MODULES = ("torch", "torchaudio", "speechbrain", "sklearn")
@@ -78,6 +86,10 @@ class PrepareResult:
     diarization_missing: tuple[str, ...]
     recoverable: tuple[Path, ...]
     input_devices: tuple[str, ...] = ()
+    #: Set when the mic recorder cannot be built at all (numpy missing, no
+    #: audio backend). The rail shows it and keeps Start disabled instead of
+    #: offering a Start that can only fail (final whole-branch review, C1).
+    capture_error: str | None = None
 
 
 def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
@@ -160,6 +172,26 @@ def _default_mic_factory(**kwargs):
     return AudioRecordingService(**kwargs)
 
 
+def _missing_recorder_message(exc: BaseException) -> str | None:
+    """First line of `exc` when it means "no usable recorder", else None.
+
+    `AudioRecordingError` is raised for a missing numpy and a missing
+    backend; anything else (a device-enumeration hiccup on a working
+    backend) leaves the pickers empty but must not block Start. The class
+    is imported here rather than at module scope: `recording_service`
+    pulls sounddevice/pyaudio (see this module's docstring).
+    """
+    if isinstance(exc, ImportError):
+        return str(exc).strip().splitlines()[0] or type(exc).__name__
+    try:
+        from .recording_service import AudioRecordingError
+    except Exception:  # noqa: BLE001 - can't classify it; treat as non-fatal
+        return None
+    if isinstance(exc, AudioRecordingError):
+        return str(exc).strip().splitlines()[0] or type(exc).__name__
+    return None
+
+
 class MeetingSessionOwner:
     def __init__(
         self,
@@ -216,15 +248,17 @@ class MeetingSessionOwner:
         missing = diarization_requirements()
         recoverable = tuple(scan_recoverable(self.settings.recordings_dir))
         devices: tuple[str, ...] = ()
+        capture_error: str | None = None
         try:
             probe_recorder = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
             devices = tuple(str(d.get("name", "")) for d in probe_recorder.get_audio_devices() if d.get("name"))
         except Exception as exc:  # noqa: BLE001 - no backend: pickers stay empty
             logger.info("meeting device enumeration unavailable: {}", exc)
+            capture_error = _missing_recorder_message(exc)
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing, recoverable=recoverable,
-            input_devices=devices,
+            input_devices=devices, capture_error=capture_error,
         )
         return self.prepared
 
@@ -238,6 +272,11 @@ class MeetingSessionOwner:
         return self._call_from_thread(self._submit_ingest, **kwargs)
 
     def start(self) -> MeetingSession:
+        # Late import (C1): `meeting_capture` needs numpy, and `app.py`
+        # imports this module at module scope. A meeting is the only thing
+        # that needs the mixer, so nothing pays for numpy until Start.
+        from .meeting_capture import MeetingCapture
+
         if self.prepared is None:
             self.prepare()
         # Held for the whole body, OUTSIDE `self._lock`: a Start landing
@@ -283,12 +322,23 @@ class MeetingSessionOwner:
                     sinks=[self.local_sink],
                 )
                 self.session = session
-                if not session.start():
+                # A RAISING start() has to run the same cleanup as a False
+                # one: `self.session` is already assigned, so leaving it set
+                # would wedge the owner -- `is_active` stays False (the
+                # session is in "error"/"idle"), yet a later stop() would
+                # drive a session that never started (final review, I3).
+                try:
+                    started = session.start()
+                    failure = "meeting failed to start (see log)"
+                except Exception as exc:  # noqa: BLE001 - re-raised below with cleanup done
+                    started = False
+                    failure = f"meeting failed to start: {exc}"
+                if not started:
                     capture.stop_recording()  # closes the writers; tolerates a never-started mic
                     shutil.rmtree(folder, ignore_errors=True)
                     self.session = None
                     self.local_sink = None
-                    raise RuntimeError("meeting failed to start (see log)")
+                    raise RuntimeError(failure)
                 self._start_watchdog()
                 return session
 
@@ -350,7 +400,9 @@ class MeetingSessionOwner:
                 return
             capture = session.capture
             if capture.fault is not None:
-                logger.error("meeting watchdog: capture fault {}", capture.fault)
+                # A disk fault names the meeting folder under the user's
+                # recordings dir; redact before it reaches the log file.
+                logger.error("meeting watchdog: capture fault {}", redact_user_paths(str(capture.fault)))
                 self.stop(reason="disk_error")
                 return
             pos = float(capture.audio_position_s)

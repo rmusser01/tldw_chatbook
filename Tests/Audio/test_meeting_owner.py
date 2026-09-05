@@ -299,6 +299,52 @@ def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
     assert list((tmp_path / "meetings").glob("*")) == []
 
 
+def test_raising_start_cleans_up_and_leaves_no_session(tmp_path, monkeypatch):
+    """I3: `self.session = session` is assigned BEFORE `session.start()`, and
+    only a `False` return used to run the cleanup path. A raising start (a
+    dictation service that blows up building its model, say) therefore left
+    the owner holding a session that never started, plus an orphan folder.
+    """
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+
+    def boom(self, **callbacks):
+        raise RuntimeError("model failed to load")
+
+    monkeypatch.setattr(FakeDictation, "start_dictation", boom)
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    with pytest.raises(RuntimeError, match="model failed to load"):
+        owner.start()
+    assert owner.session is None
+    assert not owner.is_active
+    assert list((tmp_path / "meetings").glob("*")) == []
+
+
+def test_prepare_reports_a_missing_recorder_as_capture_error(tmp_path, monkeypatch):
+    """C1: a numpy-less / backend-less install must say so on the rail rather
+    than offer a Start that can only fail. Only "no usable recorder" errors
+    qualify -- an ordinary enumeration hiccup still leaves Start available.
+    """
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    from tldw_chatbook.Audio.recording_service import AudioRecordingError
+
+    owner, _, _ = _owner(tmp_path)
+
+    def no_recorder(**kwargs):
+        raise AudioRecordingError("Audio recording functionality requires NumPy\nfor efficient processing.")
+
+    owner._mic_factory = no_recorder
+    assert owner.prepare().capture_error == "Audio recording functionality requires NumPy"
+
+    def flaky(**kwargs):
+        raise ValueError("device list temporarily unavailable")
+
+    owner.prepared = None
+    owner._mic_factory = flaky
+    prepared = owner.prepare()
+    assert prepared.capture_error is None and prepared.input_devices == ()
+
+
 def test_recover_folder_survives_missing_mixed_wav(tmp_path):
     folder = tmp_path / "meetings" / "2026-09-04_1100"
     folder.mkdir(parents=True)
