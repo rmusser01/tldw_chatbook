@@ -281,6 +281,81 @@ literal-string `getattr` that never resolves).
   correction — not just patching the number that changed — is what keeps
   the tuple and its own docstring narrative from drifting apart.
 
+**A seventh bypass shape, found by the ingest series' own state PR
+(wave-5 task 1) — and unlike every shape above, one a STATE PR can trigger,
+not only a controller PR.** A test builds a screen via
+`object.__new__(<Screen>)` or `<Screen>.__new__(<Screen>)`, skipping
+`__init__` entirely, then hand-sets a flat `_library_<subsystem>_<field>`
+name as a PLAIN instance attribute. This is safe before that subsystem's
+state PR lands (no property exists yet, so the assignment just creates an
+ordinary instance attribute) — but the instant the state PR's generated
+`@property` shim exists, the SAME assignment invokes the property setter,
+which reaches for `self._<subsystem>_state` to route the value into. A
+bypassed-`__init__` instance never had that attribute constructed, so every
+such test fails immediately: `AttributeError: '<Screen>' object has no
+attribute "_<subsystem>_state"`.
+
+This is categorically different from every prior shape in this section.
+Shapes 1–6 above are all either a real exception (caught immediately, at
+the point the flawed assumption fires) or a TEST-ONLY bypass that stays
+silently green until a CONTROLLER-PR's own method move reaches it later —
+which is exactly why the recipe defers fixing them to that subsystem's
+cleanup task. This shape fails at the STATE PR itself, for every affected
+test, the moment the shim installs — deferring it is not an option; the
+no-red-ships rule requires fixing it in the SAME commit that installs the
+shim. The fix is mechanical and minimal: one line inserted immediately
+after the bypassing construction (`screen._<subsystem>_state =
+<StateClass>()`), zero assertions or other lines touched. The ingest
+series found 27 such sites across 6 files (`Tests/App/test_submit_library_
+ingest_job.py` [5], `Tests/integration/test_library_ingest_flow.py` [2, the
+`<Screen>.__new__(<Screen>)` spelling], `Tests/UI/test_library_ingest_
+canvas.py` [16], `Tests/UI/test_library_ingest_inline_consent.py` [1],
+`Tests/UI/test_library_ingest_retry_last.py` [1], and — the one this
+series' own first sweep MISSED and a later review caught —
+`Tests/UI/test_parakeet_v2_install_ui.py` [2]); a 7th file,
+`Tests/UI/test_library_screen.py`, uses the identical `object.__new__`
+STRING in its own docstring prose (describing a PRIOR, already-fixed
+bypass, task-3022) but its actual fixture constructs a real
+`LibraryScreen(MagicMock())` — a false positive, confirmed by reading the
+fixture body, not the grep hit alone.
+
+**The filter-blindness lesson this shape's own miss teaches: the census for
+this shape must be a CONTENT grep across the WHOLE `Tests/` tree, never a
+`-k <subsystem-name-substring>` name-based sweep.** `Tests/UI/
+test_parakeet_v2_install_ui.py` touches `_library_ingest_form` directly
+(two Parakeet-v2-install-result tests stage ingest form state to assert it
+survives an install completion) but its own filename, its own test names,
+and its own `-k` keywords contain neither "ingest" nor "library" — every
+`-k "ingest and library"`/`-k "ingest"`-shaped sweep this task ran
+collected ZERO tests from it, so the file was never exercised post-move
+until a dedicated reviewer pass grepped by CONTENT (`object.__new__(
+LibraryScreen)` OR `LibraryScreen.__new__` co-occurring with
+`_library_ingest_` — or the equivalent for whichever subsystem is moving —
+across every file in `Tests/`, not a keyword-filtered subset) and caught
+it. **Any future subsystem's state-PR fix pass for this shape must run
+that content-grep repo-wide as its OWN closing verification step**, exactly
+the way this entry's own worked example does above — a name-based test
+filter is a discovery aid, never a completeness proof, for a shape whose
+defining characteristic is that the affected file need not mention the
+subsystem's name anywhere a keyword filter would see it.
+
+**A related, separately-recorded process lesson from the same task: an
+in-place `git checkout <base-commit> -- tldw_chatbook Tests` baseline
+overlay of the CURRENT worktree is interruption-unsafe for any
+long-running background sweep.** This task's own first pristine-baseline
+attempt used exactly that overlay; a session-usage-limit interruption's
+recovery step restored the shared worktree back to `HEAD` while the
+overlay's sweep was still reading files in the background, silently
+invalidating every result it would have produced with no error of its own.
+Redone with an isolated `git worktree add <scratch-path> <base-commit>`
+plus its own `uv venv`/`pip install -e ".[dev]"` — a directory no other
+recovery action in the SAME worktree can touch. See §7's own sweep-evidence
+entry for this task's full before/after numbers; the standing rule this
+generalizes to: **an isolated worktree, not a same-tree checkout overlay,
+is the default method for any baseline comparison expected to run
+unattended for more than a couple of minutes**, regardless of which
+subsystem's task is running it.
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:

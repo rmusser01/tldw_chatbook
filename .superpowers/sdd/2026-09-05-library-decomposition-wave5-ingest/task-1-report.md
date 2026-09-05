@@ -241,6 +241,13 @@ setter))`, `_n=` binding on both lambdas.
 
 ## 5. A new bypass shape, found by the battery (not by static census)
 
+**Corrected in fix round 1 (§11) — this section's ORIGINAL count was wrong
+by both digits ("24 sites across 4 files"); see §11 for the verified true
+numbers (27 sites across 6 files) and the count-accuracy incident itself.
+Left below in its original, uncorrected form except for this notice, per
+the review's own instruction to fix the count rather than quietly patch
+history.**
+
 Not in recipe §3's prior catalogue: **`object.__new__(LibraryScreen)` /
 `LibraryScreen.__new__(LibraryScreen)` `__init__`-bypass fixtures.**
 24 call sites across 4 test files (`Tests/UI/test_library_ingest_canvas.py`
@@ -260,18 +267,26 @@ identity, unbound-attribute escape — all of which stay latent until a
 CONTROLLER-PR's method move, deferred to that series' own cleanup task by
 design), this one fails immediately, at the STATE PR itself, for every
 affected test — a no-red-ships violation if shipped unfixed. **63 tests
-were RED** after the screen edit landed, before this fix.
+were RED** after the screen edit landed, before this fix (this count is
+ALSO incomplete — see §11: it is the count `-k "ingest and library"`
+could see, and 2 more RED tests existed in a file that filter could not
+collect at all).
 
 Fixed mechanically and minimally, in the same GREEN commit: one line
 inserted after each `__new__` call (`screen._ingest_state =
 LibraryIngestState()`), zero assertions, call sites, or other lines
 touched anywhere. Re-ran the same 63 (and the surrounding `-k "ingest and
 library"` sweep) after the fix: **0 failures caused by this shape
-remained.** Recorded in `library-decomposition-recipe.md`'s own §3-shaped
-catalogue is left as a forward note here rather than a formal new
-numbered entry (out of this task's own file-edit scope — the recipe edit
-in this task's third commit is scoped to §7's sweep-evidence list per its
-own explicit "add to it" instruction, not a new bypass-shape entry).
+remained** *within that sweep's own reach* (§11 corrects this claim: 2
+more remained, outside that sweep's reach, until fix round 1). Recorded in
+`library-decomposition-recipe.md`'s own §3-shaped catalogue is left as a
+forward note here rather than a formal new numbered entry (out of this
+task's own file-edit scope — the recipe edit in this task's third commit
+is scoped to §7's sweep-evidence list per its own explicit "add to it"
+instruction, not a new bypass-shape entry). **Also corrected in fix round
+1**: this shape IS now a formal, numbered §3 catalogue entry (the
+"seventh bypass shape") — the review's own Important #2 overrode the
+scope call made here.
 
 ## 6. TDD evidence
 
@@ -468,12 +483,16 @@ table allowlist [105 tables], index plan pins [270/270, 57 pinned]).
   full `-k "ingest and library"` sweep post-fix: 0 attributable failures).
 - **Known, intentional gap**: 5 handlers (cancel/force-stop/retry-faster-
   whisper/option-reset/directory-browse) remain covered only by raw
-  handler calls, not real `.press()`. This is a deliberate, documented
-  scope boundary for a "spot-check," not an oversight — flagged plainly in
-  the new characterization file's own docstring for whoever runs Task 2.
-  If the reviewer wants this closed now rather than left as debt, it is
-  tractable using the same registry-injection technique the 2 new
-  per-job-row pins already demonstrate.
+  handler calls, not real `.press()`. **Condition confirmed in fix round 1
+  (§11): the reviewer endorsed deferring these 5 past this task ONLY on
+  the condition that Task 2 (the controller-move PR) pins all 5 via a real
+  `.press()` BEFORE any of their bodies move** — the same registry-
+  injection technique the 2 new per-job-row pins in this task's own
+  characterization file already demonstrate is tractable. This is a hard
+  precondition for Task 2's own RED wiring commit, not optional cleanup;
+  Task 2 must not move `handle_library_ingest_cancel`/`_force_stop`/
+  `_retry_faster_whisper`/`_option_reset`/`_directory_browse` until each
+  has a genuine DOM-press pin passing pre-move.
 - **Sweep baseline method**: the first attempt (in-place checkout) was
   invalidated by a session interruption; redone correctly with an isolated
   worktree per the coordinator's explicit direction, and the lesson is
@@ -481,3 +500,171 @@ table allowlist [105 tables], index plan pins [270/270, 57 pinned]).
   used to isolate the `object.__new__` bypass fix (short-lived,
   foreground, `git stash pop`ped immediately after each) are unaffected by
   that risk class — verified clean (`git status`) after each pop.
+
+## 11. Fix round 1 (post-review)
+
+Coordinator review found 1 CRITICAL + 2 Important issues against the
+original report/commits above. All three addressed in commit
+`fix(library): seed the missed object.__new__ fixtures; recipe gains the
+fixture-bypass shape (fix round 1)`.
+
+### CRITICAL — 1 missed file, 2 RED tests at HEAD (no-red-ships violation)
+
+`Tests/UI/test_parakeet_v2_install_ui.py` has 11 total `object.__new__(
+LibraryScreen)` constructions, but only 2 (lines 482 and 517 in the
+pre-fix file) touch `_library_ingest_form` — the other 9 construct a
+screen only to exercise `_parakeet_v2_install_worker`
+(`handle_parakeet_v2_install_requested`/preflight-result-modal/GGUF-picker
+tests), confirmed unrelated by reading each. Those 2 sites never got a
+`screen._ingest_state = LibraryIngestState()` seed line in the original
+GREEN commit and were RED at HEAD:
+`test_install_result_notify_text_uses_mapped_message_not_raw_exception`
+and `test_successful_install_prefers_managed_and_clears_external_override`,
+both failing with the exact same `AttributeError: 'LibraryScreen' object
+has no attribute '_ingest_state'` signature as the 63 originally caught.
+
+**Root cause of the miss**: every sweep this task ran to hunt for this
+bypass shape's fallout (`-k "ingest and library"`, `-k "ingest"`) is a
+NAME-based pytest filter, and `test_parakeet_v2_install_ui.py`'s own
+filename and test names contain neither "ingest" nor "library" — 0 tests
+from this file were ever collected by any of those filters, so the 2 RED
+tests were invisible to every verification this task ran, despite genuinely
+touching ingest state. Only a repo-wide CONTENT grep (`object.__new__(
+LibraryScreen)` OR `LibraryScreen.__new__` co-occurring with
+`_library_ingest_`, across ALL of `Tests/`, not a keyword subset) finds it
+— exactly the check the reviewer ran and this fix round re-ran to confirm
+completeness:
+
+```
+$ grep -rlE "\.__new__\(\s*LibraryScreen\s*\)|LibraryScreen\.__new__" Tests/ \
+    | xargs grep -l "_library_ingest_"
+Tests/App/test_submit_library_ingest_job.py
+Tests/integration/test_library_ingest_flow.py
+Tests/UI/test_library_ingest_canvas.py
+Tests/UI/test_library_ingest_inline_consent.py
+Tests/UI/test_library_ingest_retry_last.py
+Tests/UI/test_library_screen.py          # false positive, see below
+Tests/UI/test_parakeet_v2_install_ui.py  # the miss
+```
+
+`Tests/UI/test_library_screen.py` reconfirmed a false positive by reading
+its fixture body, not just the grep hit: its own docstring mentions
+`object.__new__(LibraryScreen)` in PROSE (describing a PRIOR, already-fixed
+bypass, task-3022), but the actual fixture (`_minimal_ingest_screen`) calls
+`screen = LibraryScreen(MagicMock())` — a real, `__init__`-routed
+constructor, so `_ingest_state` is genuinely present and every subsequent
+flat-name write already routes through a working shim. **7 files matched
+the content grep; exactly 1 (`test_parakeet_v2_install_ui.py`) needed a
+fix; the reviewer's own scan result is confirmed correct.**
+
+Fix: added `LibraryIngestState` to the file's existing `from
+tldw_chatbook.UI.Screens.library_screen import (...)` block, and inserted
+`screen._ingest_state = LibraryIngestState()` immediately after each of the
+2 affected `object.__new__(LibraryScreen)` calls. Zero assertions or other
+lines touched.
+
+```
+$ .venv/bin/python -m pytest Tests/UI/test_parakeet_v2_install_ui.py -p no:randomly -q
+25 passed
+```
+
+### IMPORTANT — recipe §3 permanent catalogue entry
+
+Added a new, formally numbered "seventh bypass shape" entry to
+`backlog/docs/library-decomposition-recipe.md` §3 (previously left as an
+informal forward note in this report's own §5, out-of-scope per the
+original commit's own file-edit boundary — the review overrode that scope
+call, correctly: this shape is now proven to recur across an entire
+subsystem's test suite regardless of controller/state-PR boundary, and
+belongs in the permanent, cross-subsystem catalogue, not one task's
+report). The entry states: the shape itself (`object.__new__(<Screen>)`/
+`<Screen>.__new__(<Screen>)` bypass + flat-attribute hand-set, breaking the
+instant a state-PR shim installs, unlike every prior shape which stays
+latent until a controller-PR's method move); why it cannot be deferred to
+cleanup (no-red-ships fires at the state PR itself); the filter-blindness
+lesson stated as its own standing rule (a content-grep across all of
+`Tests/`, never a `-k` name filter, is the only sound completeness check
+for this shape — the exact rule whose absence let the Critical ship); and
+the corrected 27-sites/6-files accounting. Folded into the same entry: the
+interruption/isolated-worktree lesson already recorded in this task's own
+prior commit (`3b83eab93`, §7's sweep-evidence list) is cross-referenced
+and restated as a general, standing rule ("an isolated worktree, not a
+same-tree checkout overlay, is the default method for any baseline
+comparison expected to run unattended for more than a couple of minutes"),
+rather than left as a footnote local to one task's own sweep entry.
+
+### IMPORTANT — count accuracy
+
+The original §5 said "24 call sites across 4 test files" while its own
+bracketed list named 5 files summing to 25 (5 + 16 + 1 + 1 + 2) — an
+arithmetic error in the prose, not the list. Re-verified the TRUE numbers
+by direct count (`grep -c` per file, cross-checked against the actual
+`_ingest_state = ...`/`_ingest_state = library_screen_module.
+LibraryIngestState()` seed lines present):
+
+| File | Bypass constructions | Touch `_library_ingest_*`? | Seeded |
+|---|---|---|---|
+| `Tests/App/test_submit_library_ingest_job.py` | 5 | yes (5) | 5 |
+| `Tests/integration/test_library_ingest_flow.py` | 2 | yes (2) | 2 |
+| `Tests/UI/test_library_ingest_canvas.py` | 16 | yes (16) | 16 |
+| `Tests/UI/test_library_ingest_inline_consent.py` | 1 | yes (1) | 1 |
+| `Tests/UI/test_library_ingest_retry_last.py` | 1 | yes (1) | 1 |
+| `Tests/UI/test_parakeet_v2_install_ui.py` | 11 | only 2 of 11 | 2 |
+| `Tests/UI/test_library_screen.py` | 0 (prose-only mention) | n/a | n/a (real constructor) |
+
+**True total: 27 seeded sites across 6 files** (25 in the original GREEN
+commit + 2 in this fix round), not "24 across 4." Corrected in §5 above
+(left the original wrong sentence in place with a notice, per not quietly
+rewriting a discovered error) and in this section's own accounting. No
+other report section restated the wrong count as a hard number requiring
+its own correction (§8's "63 failed"/"63 tests" language is now annotated
+in §5 as ALSO incomplete — that count was always accurate for what `-k
+"ingest and library"` could see, 63, but incomplete as a total, since 2
+more existed outside that filter's reach; both counts, "63" and "then 2
+more," are separately true and are kept distinct rather than merged into
+a single revised number, since they were found via different methods at
+different times and merging them would obscure exactly the filter-
+blindness lesson this fix round exists to record).
+
+### Verification (fix round 1)
+
+```
+$ .venv/bin/python -m pytest Tests/UI/test_parakeet_v2_install_ui.py -p no:randomly -q
+25 passed
+
+$ .venv/bin/python -m pytest Tests/Architecture/test_library_ingest_wiring.py -p no:randomly -q
+1 passed
+
+$ .venv/bin/python -m pytest Tests/Architecture/test_screen_size_ratchet.py Tests/Architecture/test_library_modules_size_ratchet.py -p no:randomly -q
+# both library_screen.py ratchet rows pass; pre-existing chat_screen.py
+# failures only; controller-file governance ratchet unaffected (29 passed)
+
+$ PYTHON=.venv/bin/python ./scripts/preflight.sh
+preflight: all derived-artifact checks passed.
+```
+
+Repo-wide content-grep re-run one final time after the fix (shown above,
+§ "Root cause of the miss") to confirm zero remaining `object.__new__`/
+`_library_ingest_` co-occurrences without a seed line anywhere in `Tests/`.
+
+### Files changed (fix round 1)
+
+- `Tests/UI/test_parakeet_v2_install_ui.py` — import + 2 seed lines.
+- `backlog/docs/library-decomposition-recipe.md` — new §3 "seventh bypass
+  shape" entry (fixture bypass + filter-blindness lesson + isolated-
+  worktree cross-reference).
+- `.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/
+  task-1-report.md` — this section, plus in-place correction notices in
+  §5.
+
+### Confirmation for Task 2 dispatch
+
+The 5 deferred handlers (`handle_library_ingest_cancel`,
+`_force_stop`, `_retry_faster_whisper`, `_option_reset`,
+`_directory_browse`) must each get a real `.press()`-driven characterization
+pin — using the same `LibraryIngestJobRegistry.submit()`/`mark_failed()`/
+direct-state-injection technique this task's own 2 new per-job-row pins
+already establish as tractable — BEFORE Task 2 moves any of their bodies
+into the controller. This is a precondition on Task 2's own RED wiring
+commit, not a nice-to-have; Task 2 should not proceed past its own census
+step until these 5 pins exist and pass pre-move.

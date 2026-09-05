@@ -36,6 +36,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryIngestState,
     LibraryScreen,
     _ParakeetV2NoPendingReportError,
 )
@@ -480,6 +481,7 @@ def test_preflight_result_notify_text_uses_mapped_message_not_raw_exception() ->
 def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
     mapped = _failure(GatedRepositoryError(_RAW_MARKER))
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
     screen._library_ingest_form = LibraryIngestFormState(
         type_options={
             "audio_video": {
@@ -515,6 +517,7 @@ def test_successful_install_prefers_managed_and_clears_external_override(
 ) -> None:
     installed = tmp_path / "parakeet-v2"
     screen = object.__new__(LibraryScreen)
+    screen._ingest_state = LibraryIngestState()
     screen._library_ingest_form = LibraryIngestFormState(
         type_options={
             "audio_video": {
