@@ -526,6 +526,25 @@ def test_raising_start_cleans_up_and_leaves_no_session(tmp_path, monkeypatch):
     assert list((tmp_path / "meetings").glob("*")) == []
 
 
+def test_raising_capture_constructor_leaks_no_folder(tmp_path, monkeypatch):
+    """The capture constructor resolves numpy AFTER the folder and its WAV
+    handles exist; a raise there must not leave them behind."""
+    import tldw_chatbook.Audio.meeting_capture as mc
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+
+    def boom(**kwargs):
+        raise ImportError("numpy is required")
+
+    monkeypatch.setattr(mc, "MeetingCapture", boom)
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    with pytest.raises(ImportError, match="numpy"):
+        owner.start()
+    assert owner.session is None
+    assert list((tmp_path / "meetings").glob("*")) == []
+
+
 def test_prepare_reports_a_missing_recorder_as_capture_error(tmp_path, monkeypatch):
     """C1: a numpy-less / backend-less install must say so on the rail rather
     than offer a Start that can only fail. Only "no usable recorder" errors

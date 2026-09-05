@@ -443,11 +443,19 @@ class MeetingSessionOwner:
                 if tap is not None:
                     writers["you"] = PlaceholderWavWriter(folder / "you.wav")
                     writers["others"] = PlaceholderWavWriter(folder / "others.wav")
-                capture = MeetingCapture(
-                    mic_recorder_factory=self._mic_factory, tap=tap, writers=writers,
-                    vad_factory=self._vad_factory,
-                    mic_device_name=self.settings.mic_device or None,
-                )
+                try:
+                    capture = MeetingCapture(
+                        mic_recorder_factory=self._mic_factory, tap=tap, writers=writers,
+                        vad_factory=self._vad_factory,
+                        mic_device_name=self.settings.mic_device or None,
+                    )
+                except Exception:
+                    # The constructor resolves numpy; a raise here would
+                    # otherwise leak the folder and three open WAV handles.
+                    for writer in writers.values():
+                        writer.close()
+                    shutil.rmtree(folder, ignore_errors=True)
+                    raise
                 meta = MeetingMeta(
                     folder=folder, mode=capture.mode,
                     started_at=datetime.now().isoformat(timespec="seconds"),
