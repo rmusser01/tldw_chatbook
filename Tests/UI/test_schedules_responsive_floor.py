@@ -12,9 +12,11 @@ vanishing, so every spec-named operation stays reachable at 80x24.
 Real `ScheduledTasksDB` + `SchedulingService` throughout (the same
 rationale `test_schedules_keyboard_map.py` gives: routing correctness is
 proven against the real facade, not a stub of it), and
-`CSS_PATH = BUNDLED_STYLESHEET` so the width-driven `display` rules this
+`CSS_PATH = APP_STYLESHEETS` so the width-driven `display` rules this
 file asserts on actually resolve -- without the app tier every `.compact`
-rule is absent and the geometry claims measure nothing.
+rule is absent and the geometry claims measure nothing (TASK-24459 moved
+the scheduling rules off the bundle onto a split sheet, so the bundle
+alone stopped being the app tier for this file).
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, DataTable, Input, Select
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import settle_schedules_workbench
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
@@ -51,9 +53,15 @@ WIDE = (220, 60)
 
 
 class BundledCSSWorkbenchApp(ConsolidatedCSSApp):
-    """Harness with the app CSS tier, where the `.compact` rules live."""
+    """Harness with the app CSS tier, where the `.compact` rules live.
 
-    CSS_PATH = BUNDLED_STYLESHEET
+    TASK-24459: the scheduling rules this file asserts on moved off the
+    bundle onto `screen_feature_scheduling.tcss` (app-loaded on first
+    visit), so the app tier here is the full `APP_STYLESHEETS` set, not
+    the bundle alone.
+    """
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
     scheduling_service = None
 
 

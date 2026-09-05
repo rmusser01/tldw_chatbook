@@ -1,7 +1,7 @@
 ---
 id: TASK-24452
 title: Console re-mints 559 widgets on every visit with no warm benefit
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-29'
 labels:
@@ -30,11 +30,21 @@ separate `update_nodes` passes into a batched update during construction.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Repeat visits to the Console construct materially fewer widgets than the first visit
-- [ ] #2 The number of `update_nodes` passes during a Console screen switch is reduced relative to the pre-change baseline
-- [ ] #3 Console screen-switch wall time improves measurably in an interleaved A/B on the same machine
-- [ ] #4 A guard pins the per-visit widget construction count so the warm path cannot silently regress
-- [ ] #5 Console behaviour and focus placement are unchanged across a switch-away-and-back cycle
+Re-scoped 2026-09-04 (owner call: "tackle 24452"): the root cause is the
+fresh-screen-instance-per-navigation architecture, and flipping Console to
+reuse safely requires a per-subsystem lifecycle audit of its ~dozen
+`on_unmount` teardowns. THIS task delivers the reuse mechanism, proven
+end-to-end on the lowest-risk route; the Console and Library enablements
+(where the measured wins are -80% and -95% switch CPU) are task-31520 and
+task-31521, gated on their audits.
+
+- [x] #1 An opt-in per-route screen-instance reuse mechanism exists (`ScreenRoute.reusable`): the instance is installed, suspended instead of unmounted on switch-away, and resumed on return
+- [x] #2 Repeat visits to a reusable route resume the SAME instance with no widget re-mint, pinned by a guard test
+- [x] #3 Reuse is scoped to the runtime identity that built the instance; an identity flip invalidates the cache (guard-tested)
+- [x] #4 Per-visit refresh for the enabled route runs from `on_screen_resume`, guard-tested by mutation (deleting the hook fails a test)
+- [x] #5 Non-reusable routes keep today's fresh-instance lifecycle, pinned by a guard test
+- [x] #6 The enabled route's behaviour is unchanged across a switch-away-and-back cycle (screen-reuse suite + home/master-shell/navigation-recovery suites green; nav-suite reds shown identical to pristine dev)
+- [ ] #7 Console re-mint elimination itself: moved to task-31520 (measured headroom recorded there); Library: task-31521
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -58,3 +68,51 @@ the 402 separate `update_nodes` passes -- remains available and independent, and
 Note that task-24450 already took ~175 ms off the Console switch (1.96 -> 1.78 s mean of 6) by
 making each of those style applications cheaper rather than fewer.
 <!-- SECTION:NOTES:END -->
+
+
+## Implementation Plan (the how)
+
+1. Measure whether Textual installed-screen reuse avoids the 2026-07-11
+   freeze class and what it buys: bypass-probe Chat/Library instance
+   switching + typing-cost check with a suspended screen mounted.
+2. Add `ScreenRoute.reusable` (opt-in) + an app-side identity-scoped
+   instance cache; integrate at `_complete_screen_navigation` (skip
+   construction and snapshot-restore on a cache hit; install on first
+   build).
+3. Enable for Home (no unmount teardown, no timers); move its per-visit
+   refresh to `on_screen_resume`.
+4. Guard tests + mutation-test the flag and the resume hook.
+5. Interleaved A/B through the real navigation handler; file the Console/
+   Library enablement follow-ups with the measured headroom.
+
+## Implementation Notes
+
+Mechanism: `ScreenRoute.reusable` (default False) + TASK-24452 helpers in
+`app.py` (`_reusable_navigation_screen` / `_retain_reusable_navigation_
+screen`). A reusable route's screen is constructed once, INSTALLED
+(`App.install_screen`), and re-switched to on later visits -- Textual
+suspends installed screens instead of unmounting them, so the 2026-07-11
+re-mount-races-teardown freeze cannot start (no teardown ever runs
+mid-session). The cache is scoped to `RuntimeIdentity`; a local<->server
+flip drops and disposes the instance (bounded documented leak if the flip
+happens while the screen is current). Snapshot-restore is skipped on a
+cache hit (the live instance IS the state); the outgoing save_state path
+is unchanged (projection consumers).
+
+Enabled for Home; its three refresh workers re-trigger from
+`on_screen_resume` (exclusive groups coalesce the first-visit
+mount+resume double-fire). Guard suite `Tests/UI/test_screen_reuse.py`
+(5 tests); the route flag and the resume hook were each mutation-tested
+red. Honest measurement note: Home arrivals show NO wall/CPU win through
+the real nav handler -- the arrival window is dominated by the OUTGOING
+screen's teardown, and Home was always cheap to build. The wins live in
+Chat (-80% switch CPU) and Library (-95%), measured via installed-instance
+bypass probes on 2026-09-04, and land with task-31520/31521 after their
+lifecycle audits. Verified: screen-reuse + home + master-shell +
+navigation-recovery suites green (142 passed); full test_screen_navigation
+red set shown IDENTICAL to pristine dev (31 pre-existing, membership
+flake-stable); perf-guard suite 26 passed.
+
+Files: `UI/Navigation/screen_registry.py`, `app.py`,
+`UI/Screens/home_screen.py`, `Tests/UI/test_screen_reuse.py`,
+`backlog/tasks/task-31520`, `backlog/tasks/task-31521`.
