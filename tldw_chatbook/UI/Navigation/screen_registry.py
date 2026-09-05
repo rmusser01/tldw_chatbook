@@ -92,6 +92,9 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.workflows_screen",
         "WorkflowsScreen",
     ),
+    "meetings": ScreenRoute(
+        "meetings", "meetings", "tldw_chatbook.UI.Screens.meetings_screen", "MeetingsScreen"
+    ),
     "mcp": ScreenRoute(
         "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
     ),

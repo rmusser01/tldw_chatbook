@@ -285,6 +285,33 @@ def test_recover_folder_survives_missing_mixed_wav(tmp_path):
     assert not wav_needs_patch(folder / "others.wav")
 
 
+def test_start_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    first = owner.start()
+    gate = threading.Event()
+    real_stop = first.stop
+
+    def slow_stop(reason="user"):
+        gate.wait(2.0)
+        return real_stop(reason=reason)
+
+    first.stop = slow_stop
+    stopper = threading.Thread(target=owner.stop)
+    stopper.start()
+    time.sleep(0.05)                      # stop() is now blocked inside session.stop under _stop_lock
+    started: list = []
+    starter = threading.Thread(target=lambda: started.append(owner.start()))
+    starter.start()
+    time.sleep(0.1)
+    assert started == []                  # start() is waiting on _stop_lock
+    gate.set()
+    stopper.join(2.0); starter.join(2.0)
+    assert len(started) == 1 and started[0] is owner.session and owner.is_active
+    owner.stop()
+
+
 def test_stop_does_not_hold_owner_lock_during_session_stop(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)

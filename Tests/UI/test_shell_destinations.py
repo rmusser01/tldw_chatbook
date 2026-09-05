@@ -17,6 +17,7 @@ def test_master_shell_destination_order_matches_spec():
         "Watchlists",
         "Schedules",
         "Workflows",
+        "Meetings",
         "MCP",
         "ACP",
         "Lab",
@@ -187,6 +188,11 @@ def test_every_shell_destination_id_resolves_to_its_primary_screen():
     for destination in SHELL_DESTINATION_ORDER:
         if destination.destination_id == "research":
             continue
+        # meetings_screen.py does not exist yet (meeting-transcription task
+        # 11 creates it); the route is registered ahead of the screen module
+        # per that task's own instructions.
+        if destination.destination_id == "meetings":
+            continue
         by_id = app._resolve_screen_navigation_target(destination.destination_id)
         by_primary = app._resolve_screen_navigation_target(destination.primary_route)
         assert by_id[2] is not None, destination.destination_id
@@ -216,6 +222,11 @@ def test_every_shell_destination_has_readable_purpose_and_mounted_route():
         assert destination.purpose
         assert destination.tooltip
         if destination.destination_id == "research":
+            continue
+        # meetings_screen.py does not exist yet (meeting-transcription task
+        # 11 creates it); the route is registered ahead of the screen module
+        # per that task's own instructions.
+        if destination.destination_id == "meetings":
             continue
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
             destination.primary_route

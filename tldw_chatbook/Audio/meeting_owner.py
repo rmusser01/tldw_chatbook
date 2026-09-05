@@ -224,51 +224,57 @@ class MeetingSessionOwner:
     def start(self) -> MeetingSession:
         if self.prepared is None:
             self.prepare()
-        with self._lock:
-            if self.is_active:
-                raise RuntimeError("a meeting is already running")
-            base = datetime.now().strftime("%Y-%m-%d_%H%M")
-            folder = Path(self.settings.recordings_dir) / base
-            suffix = 1
-            while folder.exists():
-                suffix += 1
-                folder = Path(self.settings.recordings_dir) / f"{base}-{suffix}"
-            folder.mkdir(parents=True, exist_ok=True)
-            tap = self._tap_builder(self.prepared.tap_mode, recorder_factory=self._mic_factory)
-            writers = {"mixed": PlaceholderWavWriter(folder / "mixed.wav")}
-            if tap is not None:
-                writers["you"] = PlaceholderWavWriter(folder / "you.wav")
-                writers["others"] = PlaceholderWavWriter(folder / "others.wav")
-            capture = MeetingCapture(
-                mic_recorder_factory=self._mic_factory, tap=tap, writers=writers,
-                vad_factory=self._vad_factory,
-            )
-            meta = MeetingMeta(
-                folder=folder, mode=capture.mode,
-                started_at=datetime.now().isoformat(timespec="seconds"),
-                mic_device=self.settings.mic_device or "default",
-                system_source=self.prepared.tap_mode.reason,
-                provider=self.prepared.provider, model=self.prepared.model,
-            )
-            self.local_sink = LocalMeetingSink(
-                folder, submit=self._submit_on_ui_thread,
-                post_transcribe=self.settings.post_transcribe, post_diarize=self.settings.post_diarize,
-            )
-            facade, cfg = self._facade, self._cfg
-            session = MeetingSession(
-                meta=meta, capture=capture,
-                dictation_factory=lambda cap: self._dictation_factory(cap, facade, cfg),
-                sinks=[self.local_sink],
-            )
-            self.session = session
-            if not session.start():
-                capture.stop_recording()  # closes the writers; tolerates a never-started mic
-                shutil.rmtree(folder, ignore_errors=True)
-                self.session = None
-                self.local_sink = None
-                raise RuntimeError("meeting failed to start (see log)")
-            self._start_watchdog()
-            return session
+        # Held for the whole body, OUTSIDE `self._lock`: a Start landing
+        # during an in-flight stop() blocks here until that stop has fully
+        # finalised the old session, instead of racing it to open a second
+        # one. stop() takes `_lock` only briefly and releases it before
+        # taking `_stop_lock`, so there is no lock-order cycle.
+        with self._stop_lock:
+            with self._lock:
+                if self.is_active:
+                    raise RuntimeError("a meeting is already running")
+                base = datetime.now().strftime("%Y-%m-%d_%H%M")
+                folder = Path(self.settings.recordings_dir) / base
+                suffix = 1
+                while folder.exists():
+                    suffix += 1
+                    folder = Path(self.settings.recordings_dir) / f"{base}-{suffix}"
+                folder.mkdir(parents=True, exist_ok=True)
+                tap = self._tap_builder(self.prepared.tap_mode, recorder_factory=self._mic_factory)
+                writers = {"mixed": PlaceholderWavWriter(folder / "mixed.wav")}
+                if tap is not None:
+                    writers["you"] = PlaceholderWavWriter(folder / "you.wav")
+                    writers["others"] = PlaceholderWavWriter(folder / "others.wav")
+                capture = MeetingCapture(
+                    mic_recorder_factory=self._mic_factory, tap=tap, writers=writers,
+                    vad_factory=self._vad_factory,
+                )
+                meta = MeetingMeta(
+                    folder=folder, mode=capture.mode,
+                    started_at=datetime.now().isoformat(timespec="seconds"),
+                    mic_device=self.settings.mic_device or "default",
+                    system_source=self.prepared.tap_mode.reason,
+                    provider=self.prepared.provider, model=self.prepared.model,
+                )
+                self.local_sink = LocalMeetingSink(
+                    folder, submit=self._submit_on_ui_thread,
+                    post_transcribe=self.settings.post_transcribe, post_diarize=self.settings.post_diarize,
+                )
+                facade, cfg = self._facade, self._cfg
+                session = MeetingSession(
+                    meta=meta, capture=capture,
+                    dictation_factory=lambda cap: self._dictation_factory(cap, facade, cfg),
+                    sinks=[self.local_sink],
+                )
+                self.session = session
+                if not session.start():
+                    capture.stop_recording()  # closes the writers; tolerates a never-started mic
+                    shutil.rmtree(folder, ignore_errors=True)
+                    self.session = None
+                    self.local_sink = None
+                    raise RuntimeError("meeting failed to start (see log)")
+                self._start_watchdog()
+                return session
 
     def pause(self) -> None:
         if self.session is not None:
@@ -346,3 +352,35 @@ class MeetingSessionOwner:
             if path.exists():
                 path.unlink()
         return True
+
+
+def _config_accessors():
+    """Late import seam (tests monkeypatch this)."""
+    from tldw_chatbook.config import get_cli_setting, get_user_data_dir
+
+    return get_cli_setting, get_user_data_dir
+
+
+def build_meeting_session_owner(app: Any) -> "MeetingSessionOwner":
+    """Wire the owner to a `TldwCli`: config, ingest registry, UI-thread marshalling."""
+    get_setting, get_data_dir = _config_accessors()
+    settings = MeetingSettings.from_config(get_setting, get_data_dir())
+
+    def marshal(fn, *args, **kwargs):
+        # Textual's call_from_thread raises when already on the app thread.
+        if threading.get_ident() == getattr(app, "_thread_id", None):
+            return fn(*args, **kwargs)
+        return app.call_from_thread(fn, *args, **kwargs)
+
+    def submit_ingest(**kwargs):
+        job = app.library_ingest_jobs.submit(**kwargs)
+        return getattr(job, "job_id", None)
+
+    def job_state(job_id: str):
+        job = app.library_ingest_jobs.get_job(job_id)
+        state = getattr(job, "state", None)
+        return getattr(state, "value", state)
+
+    return MeetingSessionOwner(
+        settings=settings, call_from_thread=marshal, submit_ingest=submit_ingest, job_state=job_state,
+    )

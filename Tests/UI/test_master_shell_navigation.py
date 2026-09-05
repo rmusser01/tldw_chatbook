@@ -116,6 +116,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-watchlists_collections", "\u23036 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
+        ("nav-meetings", "F11 Meetings"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F7 Lab"),
@@ -368,6 +369,11 @@ async def test_every_visible_master_shell_nav_destination_resolves():
     for destination in SHELL_DESTINATION_ORDER:
         if destination.destination_id == "research":
             continue
+        # meetings_screen.py does not exist yet (meeting-transcription task
+        # 11 creates it); the route is registered ahead of the screen module
+        # per that task's own instructions.
+        if destination.destination_id == "meetings":
+            continue
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
             destination.primary_route
         )
@@ -452,6 +458,7 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "logs": "f8",
         "settings": "f9",
         "research": "f10",
+        "meetings": "f11",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for binding in hotkey_bindings:

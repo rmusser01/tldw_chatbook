@@ -177,6 +177,7 @@ from tldw_chatbook.Constants import (
     TAB_ACP,
     TAB_SKILLS,
     TAB_SETTINGS,
+    TAB_MEETINGS,
     TAB_STTS,
     TAB_STUDY,
     TAB_WRITING,
@@ -542,6 +543,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
     seed_builtin_content,
 )
+from .Audio.meeting_owner import build_meeting_session_owner
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
@@ -1258,6 +1260,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, storage, and app behavior",
+        TAB_MEETINGS: "Open Meetings to record a call or a room with a live transcript",
         TAB_CCP: "Switch to Roleplay for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to Library search and RAG",
@@ -7326,6 +7329,12 @@ class TldwCli(
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
 
+    # Canonical tab help text and navigable-tab order live on
+    # TabNavigationProvider (the command-palette tab-search Provider);
+    # aliased here so the app class itself exposes them too (task 10).
+    TAB_HELP_TEXT = TabNavigationProvider.TAB_HELP_TEXT
+    NAVIGATION_TABS = TabNavigationProvider.NAVIGATION_TABS
+
     def action_command_palette(self) -> None:
         """Open the app's stable Textual command palette."""
         if self.use_command_palette and not StableCommandPalette.is_open(self):
@@ -7687,6 +7696,7 @@ class TldwCli(
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
         self.audio_cpp_model_install_owner = AudioCppModelInstallOwner()
+        self.meeting_session_owner = build_meeting_session_owner(self)
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         #: TASK-1143 (F5): count of Console agent runs/rounds the last
@@ -16999,6 +17009,7 @@ class TldwCli(
         if coordinator is not None:
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
+        await asyncio.to_thread(self.meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
 
