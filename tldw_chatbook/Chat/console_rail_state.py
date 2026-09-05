@@ -11,6 +11,8 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
+ENVIRONMENT_SECTION_ID = "environment"
+TASKS_SECTION_ID = "tasks"
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
 # TASK-23199: "session" was retired. It rendered a header plus one row

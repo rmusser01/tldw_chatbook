@@ -78,7 +78,7 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
-from ...Chat.console_environment_state import ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID
+from ...Chat.console_rail_state import ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState

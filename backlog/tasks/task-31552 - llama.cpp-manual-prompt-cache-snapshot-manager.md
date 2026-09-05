@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 01:15'
-updated_date: '2026-09-05 16:59'
+updated_date: '2026-09-05 17:23'
 labels: []
 dependencies: []
 references:
@@ -66,6 +66,7 @@ Recheck allocation before integration.
 - [x] #9 Successful and acknowledged terminal operations and proven pre-submission failures release safe working files; repeated restores do not accumulate copies, cleanup failures expose residual bytes, and uncertain operations retain files until safe.
 - [x] #10 Five-second probe deadlines are separate from explicit ten-minute Save/Restore submission deadlines; preparation and elapsed operation status remain visible and slow valid operations are not failed at the probe deadline.
 - [x] #11 The Save area visibly states the effective newest-N retention limit across all models, including count changes and narrow terminal layouts.
+- [x] #12 The integrated Console keeps Environment collectors off closed-Inspect startup while first-open, refresh, and reopen behavior remain usable
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -156,6 +157,17 @@ apply; no budget change or broad test sweep. GitHub review/check settlement and
 the requested remote merge remain the external integration steps.
 <!-- SECTION:NOTES:END -->
 
+Owner-approved inherited Console fix: first-use Environment ownership keeps the
+four collectors/projection modules off closed-Inspect startup. First-open paints
+the no-workspace state; reopens retain controller state; callbacks to an existing
+owner preserve their original policy. Warm census restored from 976 to 972 with
+an explicit absence guard. Scoped evidence: 226 passed plus two corrected
+callback failures; final complete wiring 24 passed, boot/snapshot service 59
+passed, projection/census 32 passed. Independent review and re-review clear;
+generated artifacts, whitespace, and baseline-relative lint verified. ADR-097
+applies, no budget increase. Latest additional dev delta e49a7a16d is docs/assets
+only. GitHub check settlement and requested merge remain integration steps.
+
 UAT remediation plan (2026-09-05): reproduce overlapping background readiness and
 Save/Restore staging with deterministic barriers; distinguish a pending refresh
 from failed/invalidated readiness without removing each operation's fresh probe;
@@ -182,3 +194,13 @@ snapshot IDs/classes, rebuild generated CSS, and rerun the boot budgets and
 mounted Models/F9 tests. Regenerate the merged diagnostic inventory summary
 (12 sink files: dev's 11 plus snapshot_store) without changing sink rows.
 ADR required: no new ADR; existing ADR-097 and ADR-119 apply.
+
+Owner-approved Console startup remediation plan (2026-09-05): defer the
+Environment controller and projections until Inspect first opens; retain the
+same controller and snapshot thereafter. Keep closed-panel focus/fleet/poll
+callbacks cold. Place the existing rail section IDs with rail state and preserve
+their environment-state exports. Verify the existing failing warm census,
+first-open empty-state rendering, reopening, controller/wiring tests, and PR CI.
+ADR required: no new ADR. ADR path: backlog/decisions/097-boot-budget-ratchets.md.
+Reason: first-use deferral restores TASK-31450 AC6 within existing ownership;
+no storage, network, display-policy or boot-budget change.
