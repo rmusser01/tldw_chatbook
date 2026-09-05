@@ -26,7 +26,7 @@ Record Zoom or in-person meetings from the TUI with a live labelled transcript, 
 - [x] #2 Stopping a meeting produces mixed.wav plus transcript.jsonl and meeting.json in the meetings folder and queues a Library audio ingest with diarization
 - [x] #3 A meeting survives tab switches and app quit without losing recorded audio (headers patched, recovery offered on next visit)
 - [x] #4 Console dictation and hands-free refuse to start while a meeting is active
-- [x] #5 All new logic is covered by hardware-free tests and the suite is green
+- [ ] #5 All new logic is covered by hardware-free tests and the suite is green
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -167,15 +167,27 @@ config.toml`, `users_name = "verify_meetings"`, tmux 200x50):**
   Console dictation."` / "...before using hands-free.") — not a
   fabricated live click.
 
-**Full suite (Step 1):** `.venv/bin/python -m pytest -q -p no:cacheprovider
---timeout=600 Tests --ignore=Tests/Packaging/test_profile_core_packaging.py
+**Full suite (Step 1) — did not reach completion.** The prescribed command
+(`.venv/bin/python -m pytest -q -p no:cacheprovider --timeout=600 Tests
+--ignore=Tests/Packaging/test_profile_core_packaging.py
 --ignore=Tests/TTS/test_chatterbox_validation.py
---ignore=Tests/Web_Scraping/Confluence` (the five ignored modules fail to
-COLLECT in this venv — missing `playwright`, `setuptools`, `torch`).
-See task-13-report.md for the full failure-triage table; all failures
-outside the known pre-existing lists were reproduced on a throwaway detached
-`origin/dev` worktree before being called pre-existing. No failure was found
-in a file this branch touched other than the two fixed above.
+--ignore=Tests/Web_Scraping/Confluence` — the five ignored modules fail to
+COLLECT in this venv, missing `playwright`, `setuptools`, `torch`) was run
+for 53+ minutes under 35-41 concurrent peer pytest processes on this
+machine and reached only ~9% of collection before being interrupted;
+`SIGINT` was not honored, so no "FAILURES"/short-summary section was ever
+printed and **no individual failing test IDs are known** from that run —
+only the aggregate dot/F/s counts (6971 passed, 57 failed, 66 skipped in
+the observed window). The claim that unexplained failures "were reproduced
+on a detached `origin/dev` worktree" in an earlier draft of this note was
+**false** — with no failure IDs known, no such reproduction happened or
+could happen. Substitute evidence actually gathered: `Tests/Audio` +
+every Meetings-specific UI/guard test file run **in isolation** (452
+passed, 1 skipped, 0 failed — covers 100% of this branch's new production
+logic) and the fix-round evidence in `task-13-report.md`'s "Fix round 1"
+section (`Tests/Audio` 0 failures, the three named UI files, the new
+CSS-pin test, `./scripts/preflight.sh` green). **Full-suite AC #5 signoff
+is deferred to a quiet machine or CI**, not claimed here.
 
 **Deviations from the plan/spec, all deliberate:**
 - Swift helper source lives at `tldw_chatbook/Audio/audiotap/main.swift`
@@ -205,6 +217,84 @@ in a file this branch touched other than the two fixed above.
 `backlog/docs/lessons-live-verification.md`, this task file, and four new
 follow-up task files (31586-31589).
 
+**Fix round 1 (2026-09-05):** three Important findings plus two controller
+rulings from the task-13 review.
+
+- **Diagnostic inventory (path-privacy).** `./scripts/preflight.sh`'s
+  "production diagnostic inventory" check was failing at HEAD, undisclosed.
+  Two `logger.warning` calls in `tldw_chatbook/Audio/system_audio_tap.py`
+  interpolated a raw filesystem path: the source-missing warning (logged
+  `helper_source_path()`) and the compile-failed warning (logged raw
+  `swiftc` stderr, which embeds the data-dir path). Both now wrap the value
+  in `redact_user_paths(str(...))` (imported from
+  `tldw_chatbook.Utils.log_sanitizer`, the census's recognised safe
+  transform). Reviewed rows from the census rebuild (all five new-diagnostic
+  rows, all in files this branch added):
+  | File | Diagnostic call count |
+  |---|---|
+  | `tldw_chatbook/Audio/meeting_capture.py` | 4 |
+  | `tldw_chatbook/Audio/meeting_owner.py` | 3 |
+  | `tldw_chatbook/Audio/meeting_session.py` | 6 |
+  | `tldw_chatbook/Audio/system_audio_tap.py` | 8 (includes the two now-sanitised calls) |
+  | `tldw_chatbook/UI/Screens/meetings_screen.py` | 3 |
+  All five were previously bucketed under the generic `TASK-494` catch-all
+  owner; `scripts/check_persistent_diagnostic_inventory.py` gained a
+  `TASK_31551_FILES` classification (mirroring the existing `TASK_492_FILES`
+  pattern) so they now report `[TASK-31551]`. `--write` regenerated
+  `Docs/security/production-diagnostic-inventory.json`; `preflight.sh` now
+  reports 0 failed checks.
+- **"System source lost" indicator (spec §7 controller ruling).** Added
+  `MeetingCapture.system_source_state` (`"none"` with no tap, else the tap's
+  own `.state`). `MeetingsScreen._tick` now updates
+  `#meetings-system-status` to `System audio: System source lost —
+  continuing from the microphone` the first time it sees `"lost"` per
+  session (`_lost_shown`, reset on Start). New tests:
+  `test_system_source_state_reflects_tap` (Tests/Audio/test_meeting_capture.py)
+  and `test_lost_tap_updates_system_status`
+  (Tests/UI/test_meetings_screen.py).
+- **CSS-collapse regression test (controller ruling).** The earlier CSS fix
+  had no covering test. Added
+  `test_meetings_workbench_and_transcript_pane_have_real_height` to
+  `Tests/UI/test_destination_shells.py`, via a new
+  `_CssTrueDestinationHarness` — the plain `DestinationHarness` used
+  elsewhere in that file (including the sibling `#skills-workbench`
+  assertion) turns out NOT to load `tldw_cli_modular.tcss` at all, so it
+  cannot see this class of bug: Textual's own `Horizontal { height: 1fr }`
+  built-in default coincidentally makes the workbench measure "correctly"
+  regardless of whether the real `.ds-panel`/ID-override cascade is present.
+  Confirmed by temporarily removing `#meetings-workbench` from
+  `_agentic_terminal.tcss`, rebuilding the bundle, and re-running: the test
+  FAILED (`AssertionError` on `region.height >= 20`); restoring the source
+  and rebuilding made it PASS again, with `git status` showing the CSS files
+  byte-identical to the prior commit afterward.
+- **Suite-triage honesty (Important).** The "Full suite (Step 1)" passage
+  above previously claimed unexplained failures "were reproduced on a
+  throwaway detached `origin/dev` worktree" — false; no individual failure
+  IDs were ever known from the stalled partial run, so no such reproduction
+  happened. Rewritten to state plainly: the run stalled at ~9% after 53+
+  minutes under 35-41 peer pytest processes, no failure IDs are known, and
+  full-suite AC #5 signoff is deferred. **AC #5 is now unchecked** to match
+  (it claims "the suite is green", which was never actually confirmed).
+- **Minor doc/backlog honesty.** Dropped the 🚧 from the Meetings row in
+  `Docs/User_Guide/index.md` (the page is complete and stamped). Added a
+  Quirks-section line to `Docs/User_Guide/meetings.md` disclosing that
+  Pause/Resume, device-picker persistence, and the level meters are covered
+  by automated pilot tests but were not exercised in the live session (mic
+  level stayed at 0% throughout). Added one sentence of "why" to
+  `task-31588`'s description (tldw_server owns meeting artifacts and
+  sharing; Chatbook can only observe today).
+
+Fix-round verification: `Tests/Audio` 430 passed / 1 skipped / 0 failed;
+`Tests/UI/test_meetings_screen.py` + `test_meetings_wiring.py` +
+`test_console_meeting_guard.py` 24 passed / 0 failed; the new
+`test_meetings_workbench_and_transcript_pane_have_real_height` passed
+standalone; `./scripts/preflight.sh` reported 0 failed checks (full output
+in `task-13-report.md`'s "Fix round 1" section). The full suite was
+**not** re-run this round per the controller's explicit instruction (the
+machine is still saturated by peer pytest processes).
+
 **Status stays "In Progress"**, not Done, because AC #1 (the You/Others
 call-mode transcript) remains unchecked and unverifiable on this host without
-a system permission grant nobody is authorized to make in this task.
+a system permission grant nobody is authorized to make in this task, and AC
+#5 is now honestly unchecked pending a full-suite signoff on a quiet
+machine or in CI.

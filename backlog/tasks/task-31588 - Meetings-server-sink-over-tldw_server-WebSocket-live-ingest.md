@@ -13,7 +13,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Meeting spec §9 item 3.
+Meeting spec §9 item 3. tldw_server owns meeting artifacts and sharing them across users/devices; today Chatbook can only observe (record locally and hand off to Library) with no server-side session another client or user could see live.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -178,6 +178,12 @@ what happens to a meeting once it's queued.
   progressing to "done"** if your install lacks the optional audio
   transcription dependencies (e.g. `faster-whisper`); the meeting's own
   files and metadata are unaffected either way.
+- **Pause/Resume, the device pickers' remembered choice, and the level
+  meters are covered by automated pilot tests, not by this page's live
+  session** — the mic level stayed at 0% throughout live verification (no
+  audio input reached the terminal running the app), so those three
+  behaviors were exercised only in the test suite, not watched moving on a
+  real screen.
 
 —
 *Verified against dev @ ac6c511cb6 — 2026-09-04*
