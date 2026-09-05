@@ -115,6 +115,9 @@ def ensure_helper(
     bundled = bundled_helper_path(executable)
     if bundled is not None:
         return bundled
+    if not helper_source_path().exists():
+        logger.warning("audiotap helper source missing: {}", helper_source_path())
+        return None
     target = dev_helper_path(data_dir)
     if target.exists():
         return target
@@ -274,8 +277,14 @@ class SubprocessTap:
                 self.restarts = 1
                 logger.warning("system audio helper exited ({}); restarting once", self.exit_code)
                 self._sleep(self._restart_delay_s)
-                if not self._stopping and self._launch():
+                if self._stopping:
+                    self.state = "stopped"
+                    return
+                if self._launch():
                     continue
+            if self._stopping:
+                self.state = "stopped"
+                return
             self.state = "lost"
             logger.error("system audio source lost (exit {}): {}", self.exit_code, self.last_stderr)
             return

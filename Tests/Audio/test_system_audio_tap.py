@@ -104,6 +104,14 @@ def test_ensure_helper_prefers_bundled_then_dev_then_compiles(tmp_path, monkeypa
     ) is None
 
 
+def test_ensure_helper_returns_none_when_source_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(sat, "helper_source_path", lambda: tmp_path / "absent.swift")
+    assert sat.ensure_helper(
+        tmp_path, which=lambda n: "/usr/bin/swiftc", executable=str(tmp_path / "nowhere")
+    ) is None
+    assert sat.probe(platform="darwin", mac_ver="15.0", data_dir=tmp_path).kind == "unavailable"
+
+
 # ---- probe ----------------------------------------------------------------
 
 def test_probe_virtual_device_wins_over_platform():
@@ -187,6 +195,19 @@ def test_subprocess_tap_restarts_once_then_reports_lost():
     assert len(frames) == 6 and tap.restarts == 1 and tap.state == "lost"
     assert tap.exit_code == 1
     tap.stop()
+
+
+def test_stop_during_restart_delay_reports_stopped():
+    tap = sat.SubprocessTap(
+        _fake_cmd("--frames", "3", "--exit-code", "1"), restart_delay_s=0.5,
+    )
+    _collect(tap, 3)
+    deadline = time.monotonic() + 2
+    while tap.restarts != 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert tap.restarts == 1
+    tap.stop()
+    assert tap.state == "stopped" and tap.restarts == 1
 
 
 def test_subprocess_tap_start_false_when_spawn_fails():

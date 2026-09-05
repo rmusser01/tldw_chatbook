@@ -567,6 +567,9 @@ exclude = [
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
 "tldw_chatbook.css.layout" = ["*.tcss"]
+# Ship the macOS system-audio helper's Swift source: `ensure_helper()` compiles
+# it with swiftc on first use when no prebuilt binary is bundled.
+"tldw_chatbook.Audio.audiotap" = ["*.swift"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
