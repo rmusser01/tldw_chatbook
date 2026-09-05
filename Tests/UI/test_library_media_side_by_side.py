@@ -1216,7 +1216,6 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 message="Compact double shrink never reached stale recovery.",
             )
             for selector in (
-                "#library-media-row-0",
                 "#library-media-select-toggle",
                 "#library-media-export",
                 "#library-media-bulk-delete-undo",
@@ -1227,24 +1226,28 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 assert action.tooltip == controller.stale_copy, selector
             assert not screen.query_one("#library-media-retry", Button).disabled
             assert not screen.query_one("#library-media-type-filter", Button).disabled
+            # task-31220: rows carry the mutation gate only -- reading an item
+            # is how you recover from a stale page, so it is never gated by
+            # that staleness.
+            assert not screen.query_one("#library-media-row-0", Button).disabled
 
-            await pilot.resize_terminal(*WIDE_SIZE)
-            await _wait_for_compact_class(screen, pilot, compact=False)
-            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
-                "○"
-            )
-            await pilot.resize_terminal(*NARROW_SIZE)
-            await _wait_for_compact_class(screen, pilot, compact=True)
-            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
-                "○"
-            )
+            # The density crossings still matter: ``apply_compact_presentation``
+            # re-gates every row IN PLACE, so a crossing must not re-disable
+            # (or re-mark) a row the stale gate no longer owns.
+            for size, compact in ((WIDE_SIZE, False), (NARROW_SIZE, True)):
+                await pilot.resize_terminal(*size)
+                await _wait_for_compact_class(screen, pilot, compact=compact)
+                row = screen.query_one("#library-media-row-0", Button)
+                assert not row.disabled
+                assert not str(row.label).startswith("○")
 
             screen._sync_library_media_browse_state(None)
             await _wait_for_condition(
                 pilot,
-                lambda: screen.query_one("#library-media-row-0", Button).disabled,
+                lambda: screen.query_one("#library-media-export", Button).disabled,
                 message="Compact stale action gate did not survive recompose.",
             )
+            assert not screen.query_one("#library-media-row-0", Button).disabled
     finally:
         service.page_two_release.set()
 
