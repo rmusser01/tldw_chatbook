@@ -289,19 +289,49 @@ def _load_qualification_module(name: str) -> object:
     module_path = QUALIFICATION_ROOT / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"task22512_{name}", module_path)
     assert spec is not None and spec.loader is not None
-    sys.path.insert(0, str(QUALIFICATION_ROOT))
-    previous = sys.modules.get(spec.name)
-    try:
+    with pytest.MonkeyPatch.context() as imports:
+        imports.syspath_prepend(str(QUALIFICATION_ROOT))
+        if name != "common":
+            # These standalone scripts import their sibling by its bare name.
+            # Bind that exact module only while loading, preserving any foreign
+            # common module already imported by another suite.
+            imports.setitem(sys.modules, "common", _load_qualification_module("common"))
         module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
+        imports.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
         return module
-    finally:
-        if previous is None:
-            sys.modules.pop(spec.name, None)
-        else:
-            sys.modules[spec.name] = previous
-        sys.path.remove(str(QUALIFICATION_ROOT))
+
+
+@pytest.mark.parametrize(
+    "name", ("pyte_probe", "environment_probe", "pywinpty_probe", "format_ratchet")
+)
+@pytest.mark.parametrize("preexisting_common", (False, True))
+def test_qualification_loader_scopes_sibling_imports(
+    monkeypatch: pytest.MonkeyPatch, name: str, preexisting_common: bool
+) -> None:
+    foreign_common = ModuleType("common")
+    monkeypatch.setitem(sys.modules, "common", foreign_common)
+    if not preexisting_common:
+        monkeypatch.delitem(sys.modules, "common")
+    for alias in ("task22512_common", f"task22512_{name}"):
+        monkeypatch.setitem(sys.modules, alias, ModuleType(alias))
+    aliases_before = {
+        key: value for key, value in sys.modules.items() if key.startswith("task22512_")
+    }
+    path_before = sys.path[:]
+
+    module = _load_qualification_module(name)
+
+    assert module.QualificationError.__module__ == "task22512_common"
+    assert Path(module.__file__) == QUALIFICATION_ROOT / f"{name}.py"
+    if preexisting_common:
+        assert sys.modules["common"] is foreign_common
+    else:
+        assert "common" not in sys.modules
+    assert {
+        key: value for key, value in sys.modules.items() if key.startswith("task22512_")
+    } == aliases_before
+    assert sys.path == path_before
 
 
 def test_qualification_scripts_do_not_import_product_code() -> None:
