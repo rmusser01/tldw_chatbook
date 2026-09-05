@@ -1036,6 +1036,35 @@ _FILE_CONTENT_TOOL_NAMES = frozenset(
 )
 
 
+#: task-31382: a task-derived sub-agent label is cut here so a card title or
+#: marker header stays one line.
+SUBAGENT_LABEL_MAX_CHARS = 40
+
+
+def subagent_display_label(agent_name: str | None, task: str | None) -> str | None:
+    """Return the display label for a sub-agent run (task-31382).
+
+    The named agent's name wins when the spawn named one; otherwise the
+    first line of the child's task, cut to ``SUBAGENT_LABEL_MAX_CHARS``.
+
+    Args:
+        agent_name: The resolved named-agent name, or None.
+        task: The child's task text, or None.
+
+    Returns:
+        A one-line label, or None when neither source has text.
+    """
+    name = (agent_name or "").strip()
+    if name:
+        return name
+    first_line = (task or "").strip().splitlines()[0].strip() if (task or "").strip() else ""
+    if not first_line:
+        return None
+    if len(first_line) > SUBAGENT_LABEL_MAX_CHARS:
+        return first_line[: SUBAGENT_LABEL_MAX_CHARS - 1].rstrip() + "…"
+    return first_line
+
+
 def _is_file_content_tool(tool_name: str) -> bool:
     """Return whether a tool result may contain local filesystem content."""
     return tool_name.startswith("fs_") or tool_name in _FILE_CONTENT_TOOL_NAMES
@@ -6126,6 +6155,11 @@ class AgentService:
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary",
             run_id,
             parent_run_id,
+            label=(
+                subagent_display_label(agent_definition, task)
+                if agent_kind == AGENT_KIND_SUBAGENT
+                else None
+            ),
         )
         builtin_invoke_tool = self._make_invoke_tool(
             config,

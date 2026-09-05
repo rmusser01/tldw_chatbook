@@ -79,6 +79,11 @@ class CurrentRunActor:
     kind: Literal["primary", "subagent"]
     run_id: str
     parent_run_id: str | None
+    #: task-31382: a display label for a sub-agent (the named agent's name,
+    #: else a short form of its task) so surfaces that attribute a run's
+    #: work to the user -- the ask_user card and marker first -- can name
+    #: WHICH child. None for the primary and for callers that never set it.
+    label: str | None = None
 
 
 _CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(

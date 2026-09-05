@@ -268,7 +268,11 @@ class ChatQuestionCard(Container):
         except NoMatches:
             return
         payload = self._payload or {}
-        who = "A sub-agent" if payload.get("asked_by") == "sub-agent" else "The agent"
+        label = str(payload.get("asker_label") or "").strip()[:40]
+        if payload.get("asked_by") == "sub-agent":
+            who = f"Sub-agent '{label}'" if label else "A sub-agent"
+        else:
+            who = "The agent"
         count = len(self._questions)
         title.update(f"{who} has {count} question{'s' if count != 1 else ''} for you:")
         self._sync_deadline(deadline)
