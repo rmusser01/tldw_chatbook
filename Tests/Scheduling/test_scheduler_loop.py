@@ -168,9 +168,15 @@ async def test_scheduler_periodically_reloads_queue(db):
 
     with patch.object(loop.queue, "load") as mock_load:
         task = asyncio.create_task(loop.run())
-        await asyncio.sleep(0.01)
+        # TASK-31507 moved each tick's heartbeat write and stop read onto
+        # asyncio.to_thread; at this test's 1ms poll interval those two
+        # thread-pool round-trips dominate the tick, so the old 0.01s
+        # window fit fewer than the 4 ticks two reloads need. Nothing at
+        # the production 30s cadence changed -- this is wall-clock budget,
+        # not behavior.
+        await asyncio.sleep(0.1)
         loop.stop()
-        await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(task, timeout=2.0)
 
     assert mock_load.call_count >= 2
 
