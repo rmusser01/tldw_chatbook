@@ -35026,7 +35026,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         baseline_timer_ref = screen._notes_state.autosave_timer
         assert baseline_active_groups == set()
         assert baseline_timer_ref is None
-        assert screen._notes_state.auto_sync_timer is None
+        assert not hasattr(screen._notes_state, "auto_sync_timer")
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
 
         exercised_groups = set()
@@ -35245,7 +35245,7 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
         await pilot.pause()
         assert screen._notes_state.autosave_timer is not None
 
-        assert screen._notes_state.auto_sync_timer is None
+        assert not hasattr(screen._notes_state, "auto_sync_timer")
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
         screen.run_worker(asyncio.sleep(30), group="library_note_create")
         await pilot.pause()
