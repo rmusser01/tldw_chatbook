@@ -76,3 +76,12 @@ worker result. Details and exact RED/GREEN commands are recorded in
 Changed runner/coordinator, narrowly extended Lab preflight, added their targeted
 tests, and recorded the proven early-RSS-measurement trap in testing lessons.
 Status remains In Progress pending the controller's independent review.
+
+Review fix round 1: quiescence now waits for a dedicated Run completion signal
+resolved after Run cleanup, rather than retaining the caller's entire task.
+Clear/restore/close finish while a Run caller continues unrelated work; a caller
+may also join an already pending close without forming a circular wait. Close
+rechecks its completed state after joining another transition. Four regressions
+failed before the fix; the covering coordinator file now passes 22 tests with one
+known Requests warning in 4.73s. Scoped Ruff/format/diff checks pass. No process,
+storage, resource-policy, or public-interface changes; ADR-118 still applies.

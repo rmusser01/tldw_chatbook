@@ -581,3 +581,68 @@ async def test_real_worker_completion_is_durable_and_reopens_without_dispatch(tm
     assert result["report"]["chunks"][0]["text"] == "durable real preview"
     assert not recording.requests
     await reopened.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["clear", "replace_recovery", "close"])
+async def test_transition_waits_for_run_not_its_callers_remaining_lifetime(
+    tmp_path, action
+):
+    coordinator, runner, _writer, _store, _events = setup(tmp_path)
+    runner.release.clear()
+    run_returned = asyncio.Event()
+    caller_release = asyncio.Event()
+
+    async def caller():
+        await coordinator.run(tuple(coordinator.session.candidates))
+        run_returned.set()
+        await caller_release.wait()
+
+    caller_task = asyncio.create_task(caller())
+    await runner.started.wait()
+    if action == "replace_recovery":
+        transition = asyncio.create_task(
+            coordinator.replace_recovery(export_recovery(new_session("imported")))
+        )
+    else:
+        transition = asyncio.create_task(getattr(coordinator, action)())
+    try:
+        await asyncio.wait_for(run_returned.wait(), 3)
+        assert runner.stopped and not caller_task.done()
+        # The caller intentionally stays alive: this wait must not depend on it.
+        await asyncio.wait_for(asyncio.shield(transition), 1)
+        assert not coordinator.guarded
+        assert not caller_task.done()
+    finally:
+        caller_release.set()
+        await asyncio.wait_for(caller_task, 3)
+        await asyncio.wait_for(transition, 3)
+        await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_run_caller_can_join_the_close_already_waiting_for_its_run(tmp_path):
+    coordinator, runner, _writer, _store, _events = setup(tmp_path)
+    runner.release.clear()
+    run_returned = asyncio.Event()
+
+    async def caller():
+        await coordinator.run(tuple(coordinator.session.candidates))
+        run_returned.set()
+        await coordinator.close()
+
+    caller_task = asyncio.create_task(caller())
+    await runner.started.wait()
+    close = asyncio.create_task(coordinator.close())
+    try:
+        await asyncio.wait_for(run_returned.wait(), 3)
+        await asyncio.wait_for(asyncio.shield(close), 1)
+        await asyncio.wait_for(asyncio.shield(caller_task), 1)
+        assert not coordinator.guarded
+    finally:
+        # Break the pre-fix dependency cycle so a RED run releases its real DB.
+        if not caller_task.done():
+            caller_task.cancel()
+        await asyncio.gather(caller_task, return_exceptions=True)
+        await asyncio.wait_for(close, 3)
+        await coordinator.close()

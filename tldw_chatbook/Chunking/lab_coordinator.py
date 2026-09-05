@@ -43,7 +43,7 @@ class LabCoordinator:
         self._session = session
         self._writer = writer
         self._runner = runner
-        self._run_task: asyncio.Task | None = None
+        self._run_done: asyncio.Future[None] | None = None
         self._transition: asyncio.Task | None = None
         self._stop = False
         self._guarded = False
@@ -73,7 +73,7 @@ class LabCoordinator:
 
     @property
     def busy(self) -> bool:
-        return self._run_task is not None or self._transition is not None
+        return self._run_done is not None or self._transition is not None
 
     @property
     def guarded(self) -> bool:
@@ -125,7 +125,7 @@ class LabCoordinator:
         self._session = session
         self._writer.submit(session)
         if (
-            self._run_task is not None
+            self._run_done is not None
             and old.batch is not None
             and (
                 session.batch is None
@@ -133,7 +133,7 @@ class LabCoordinator:
             )
         ):
             self._stop = True
-            # Own this stop through the running task, which cannot finish until
+            # Own this stop through the Run operation, which cannot finish until
             # runner.run has reaped. No second Run can enter in that interval.
             asyncio.create_task(self._runner.cancel())
 
@@ -170,7 +170,8 @@ class LabCoordinator:
         """Persist one exact manifest, then execute A and B sequentially."""
         if self.busy or self._closed or self._guarded:
             raise RuntimeError("Lab is busy")
-        self._run_task = asyncio.current_task()
+        completed = asyncio.get_running_loop().create_future()
+        self._run_done = completed
         self._stop = False
         self._guarded = True
         requests = ()
@@ -216,19 +217,22 @@ class LabCoordinator:
                     if launched:
                         await self._writer.flush()
             finally:
-                self._run_task = None
+                self._run_done = None
                 if self._transition is None:
                     self._guarded = False
+                # The caller can continue arbitrary work after awaiting run().
+                # Quiescence owns only this operation's cleanup, not that caller.
+                completed.set_result(None)
 
     async def _quiesce(self) -> None:
         self._stop = True
+        completed = self._run_done
         await self._runner.cancel()
-        owner = self._run_task
-        if owner is not None and owner is not asyncio.current_task():
+        if completed is not None:
             # Save failure belongs to the writer's retry status. Replacement can
             # still preserve the latest in-memory checkpoint transactionally.
             with contextlib.suppress(Exception, asyncio.CancelledError):
-                await asyncio.shield(owner)
+                await asyncio.shield(completed)
 
     async def cancel(self) -> None:
         """Stop active work and queued members, then checkpoint navigation."""
@@ -289,6 +293,8 @@ class LabCoordinator:
             return
         if self._transition is not None:
             await asyncio.shield(self._transition)
+            if self._closed:
+                return
 
         async def operation():
             self._writer.submit(self._session, immediate=True)
