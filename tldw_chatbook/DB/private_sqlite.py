@@ -161,6 +161,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Evaluation storage supports private files and exact in-memory targets.",
     ),
+    "db.chunking_lab": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Chunking_Lab_DB",
+        _PRIVATE_FILE,
+        "Chunking Lab owns profile-local recovery checkpoints and immutable payloads.",
+    ),
     "db.library_ingest_jobs": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Library_Ingest_Jobs_DB",
         _PRIVATE_OR_MEMORY,

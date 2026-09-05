@@ -101,6 +101,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-113](113-collections-capture-authority-and-legacy-boundary.md) | Accepted | Separate Local and Server Collections capture authority from Media and preserve obsolete generic containers as explicit read-only legacy data. |
 | [ADR-114](114-llamacpp-lab-console-connection-authority.md) | Accepted | Keep llama.cpp process ownership, HTTP/model readiness, Console session adoption, and durable provider defaults separate behind one sanitized connection target. |
 | [ADR-117](117-vllm-lab-console-readiness-and-profiles.md) | Accepted | Treat vLLM setup as a generation-fenced launch-or-connect workflow with verified Console adoption and device-local non-secret launch profiles. |
+| [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab local-first, with faithful full-recipe previews, immutable A/B results, conflict-safe catalog saves, and private recoverable session checkpoints. |
 
 ## Historical Decision Material
 

@@ -23,6 +23,12 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 
 LIBRARY_ARROW_UPPER_POSITION_RATIO = 0.35
 
+#: Shared class every adaptive reader shell puts on BOTH of its pane grips.
+#: Named here so focus code can recognise a grip without a magic string
+#: (task-31567: the grips are the shell's first focusable widgets, so a
+#: recompose hands them focus unless someone puts it back).
+LIBRARY_ADAPTIVE_READER_GRIP_CLASS = "library-adaptive-reader-pane-grip"
+
 
 class PaneToggleRequested(Message):
     """Request a manual toggle of one optional pane."""
@@ -52,7 +58,7 @@ class LibraryAdaptiveReaderPaneGrip(Button):
     ) -> None:
         self.pane = pane
         self.pane_label = pane_label
-        classes = "library-adaptive-reader-pane-grip"
+        classes = LIBRARY_ADAPTIVE_READER_GRIP_CLASS
         if extra_classes:
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)

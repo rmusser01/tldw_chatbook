@@ -208,14 +208,14 @@ async def test_non_reusable_route_still_gets_fresh_instances(
 ) -> None:
     """Reuse stays opt-in: an unflagged route constructs per visit.
 
-    Console (chat) is the deliberate probe: its ``on_unmount`` tears down
-    a dozen subsystems per visit today, and flipping it to reuse without
-    that audit is exactly the change this guard exists to make loud.
+    Settings is the probe (Console was, until its TASK-31520 audit flipped
+    it): flipping a route to reuse without dispositioning its
+    ``on_unmount`` teardown is exactly the change this guard makes loud.
     """
     _scratch_env(monkeypatch, tmp_path)
     from tldw_chatbook.app import TldwCli
 
-    route = resolve_screen_route("chat")
+    route = resolve_screen_route("settings")
     assert route is not None and route.reusable is False
 
     app = TldwCli()
@@ -223,8 +223,8 @@ async def test_non_reusable_route_still_gets_fresh_instances(
         await _boot_settled(app)
         await _settle(pilot, passes=20)
 
-        await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
-        first_chat = app.screen
+        await _press_until_screen(pilot, "f9", "SettingsScreen")
+        first_settings = app.screen
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
-        await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
-        assert app.screen is not first_chat
+        await _press_until_screen(pilot, "f9", "SettingsScreen")
+        assert app.screen is not first_settings

@@ -1798,6 +1798,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         """Schedule (once per visibility) the template-list fetch worker."""
         if str(self.state.ingest_backend).strip().lower() == "server":
             return
+
         try:
             self.run_worker(
                 self._fetch_chunk_templates(),
@@ -1807,6 +1808,17 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         except Exception:
             # A worker-scheduling failure must never break the canvas.
             return
+
+    def invalidate_chunk_templates(self) -> None:
+        """Forget saved names and refresh the mounted local picker in place."""
+        self._chunk_template_names = []
+        if self.is_mounted:
+            self._request_chunk_template_refresh()
+
+    def on_chunking_templates_changed(self, event) -> None:
+        """Consume the app's local record-ID/version-only invalidation."""
+        event.stop()
+        self.invalidate_chunk_templates()
 
     async def _fetch_chunk_templates(self) -> None:
         """Query the live chunking-template names via the scope service.
@@ -1853,14 +1865,18 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             (INGEST_CHUNK_TEMPLATE_AUTO_LABEL, INGEST_CHUNK_TEMPLATE_AUTO_VALUE),
             *[(escape_markup(name), name) for name in names],
         ]
-        # Preserve the current choice; ``set_options`` resets the value only
-        # when it disappears (a deleted template falls back to None here,
-        # and §9.1's not-found ruling fires at submit for stale snapshots).
-        if picker.value not in {value for _label, value in options}:
+        # Textual 8 set_options always resets selection. A saved Lab recipe
+        # refresh must not replace an existing user's ingest choice/default.
+        selected = picker.value
+        if selected in {value for _label, value in options}:
+            with picker.prevent(Select.Changed):
+                picker.set_options(options)
+                picker.value = selected
+        else:
             self._reported_option_values[
                 ("generic", INGEST_CHUNK_TEMPLATE_FIELD)
             ] = INGEST_CHUNK_TEMPLATE_NONE_VALUE
-        picker.set_options(options)
+            picker.set_options(options)
 
     def on_resize(self, _event: Any) -> None:
         """A viewport change can (un)cover the fold -- re-derive the hint."""

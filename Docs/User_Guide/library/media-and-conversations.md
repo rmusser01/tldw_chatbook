@@ -68,7 +68,12 @@ list-and-preview layout.
   below). The button relabels to **"Done"** to exit; entering or leaving
   select mode clears the selection, and leaving with items still checked
   shows a quiet "Selection discarded (N items)" notice so exiting is never a
-  silent no-op.
+  silent no-op. In Media, entering select mode this way (or with **s**, see
+  below) also puts keyboard focus on a row, so Down and Space work right
+  away, and clicking anywhere on a row — not just its checkbox — toggles it,
+  including a fast second click on the same row. "Done" renders on its own
+  row below the other select-mode actions rather than sharing a browse-mode
+  slot such as "sort:".
 - **Disabled actions announce themselves.** While nothing is checked,
   "Export selected"/"Delete selected" read **"○ Export selected"** /
   **"○ Delete selected"** — the leading **○** is the Library's disabled
@@ -211,6 +216,13 @@ all stay gated with a reason — and added the failed-undo receipt
 and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
 above. Confirmed against the product code and its tests, not re-verified
 live for this doc-only pass.)*
+
+*Verified against fix/media-wave5-f @ 1b1d8b8d84 — 2026-09-05 (tasks
+31631 / 31634 / 31567: select mode now focuses a row on entry so Down and
+Space work immediately, any click on a row toggles it in select mode,
+"Done" moved off the "sort:" slot to its own row, the Reader's focus cue is
+a heavy border rather than a colour tint, and focus survives a Reader
+recompose instead of falling to a pane grip).*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."
@@ -452,15 +464,18 @@ collapsed: the control and the key still register the exit, but nothing on
 screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
 stop working until you re-enter Media from the rail. A follow-up will open
 the Items pane on that exit.
-**F6** cycles Library → Items → the Reader's content box, which tints its
-own border in the accent colour while it holds focus (no overlay, so the
-text stays readable).
+**F6** cycles Library → Items → the Reader's content box, which draws a
+heavy border while it holds focus, so the state is visible in a plain-text
+capture and not by colour alone (no overlay, so the text stays readable).
 From a focused Items row beside the Reader, the Reader's own keys stay
 live and are advertised with it: **]** / **[** walk items, **l** toggles
 read-later, **c** sends the item to Console, **t** arms Move to trash, and
-**s** enters Select mode (where Space toggles a row and **s** again is
-Done). On the last item of an active review set **]** reads "finish
-review" and marks it done in place.
+**s** enters Select mode — focus lands on the first (or first
+still-checked) row, so Down and Space work immediately, and Space toggles
+a row while **s** again is Done. On the last item of an active review set
+**]** reads "finish review" and marks it done in place. Focus survives a
+Reader recompose (loading a new item, a background refresh, an Undo
+receipt) and never lands on a pane's collapse/expand grip.
 While a review set is active, the Reader adds **]** (next in
 set, marking the item you leave), **[** (previous, never marks), **m**
 (toggle reviewed), and **R** (exit review, keeping the set resumable); the

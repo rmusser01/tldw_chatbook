@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:32'
-updated_date: '2026-09-05 05:24'
+updated_date: '2026-09-05 16:30'
 labels: []
 dependencies: []
 priority: high
@@ -44,6 +44,8 @@ Rebased live Kokoro playback exposed a missing Manual Speak-to-Buddy event. Bind
 Broader mounted voice checks exposed 80-column clipping after the Send width stabilization and an overridden unavailable-mic CSS rule. Budget the busy chip against current action width, retain the stable Send control, and strengthen the unavailable selector; preserve click-to-reprobe behavior. These are bounded layout repairs under existing Console UX conventions; no new ADR.
 
 Qodo review follow-up: reproduce history loss for keyboard and mouse sends; restore captured history under session/edit ownership guards; extract the existing strict root check into central path validation; add bounded view context without exception capture. Run targeted undo, publication, path and diagnostic tests plus preflight. ADR required: no new ADR; existing ADR-074/069/029 govern unchanged root authority, recovery and privacy contracts.
+
+PR #2418 evidence review: compare all Qodo findings with the original launcher, receipts, and worktree history; correct unsupported revision/exit claims and clarify runtime versus source directories; validate JSON, links, and derived-artifact checks. ADR required: no. ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md. Reason: documentation corrections only under the existing Buddy boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -56,4 +58,14 @@ Qodo review: restore captured undo/redo on post-acceptance refusal only for the 
 Qodo follow-up final checks: all six derived-artifact preflight gates and scoped fatal-rule Ruff checks pass. Physical dragging/OpenAI realtime AC9 remains open as explicitly documented.
 
 Latest-dev CI exposed TASK-31585 collision with PR #2403 Console closeout. Applied the TASK-19601 older-created-date rule: Buddy at 03:32 retains TASK-31585; Console closeout at 03:40 moves to TASK-31591 with provenance and both plan/spec references updated. This is metadata-only; no new ADR. Local backlog guard rerun before publication.
+
+2026-09-05 native follow-up targeting merged dev f8cb939e2b (session attribution; the native receipts did not record Git revision or dirty state): foreground Terminal UAT delivered real mouse-down/move/up events. Migu moved from (41,31) to (69,25); physical lower-right resize changed rendered size from 28x15 to 40x21. Fresh PID 46565 restored (69,25,40,21). The native exit outcome is unverified: the surviving exit.json reports app_exception null but records no PID, timestamp, or process return code to bind it to the earlier run. All 22 PTY protocol checks passed separately, including release, viewport bounds, modal/navigation and geometry restore. Background per-PID drag delivered no app mouse events; foreground authorization resolved the native input limitation without another production fix. Durable receipts and screenshots are under qa/buddy-uat-2026-09-05/native-followup/. The original runtime/receipt directory was /private/tmp/migu-dragging-uat-20260905; /private/tmp/chatbook-migu-dragging-20260905 was the separate source checkout recorded as source_root. AC9 remains open for the separate application-configured OpenAI realtime check; exact native revision and exit evidence remain qualified as described above. The long-lived harness detected normal config changed since its prior-day baseline, so no normal-config-unchanged claim is made for that interval; fresh restart baseline remained unchanged. Existing ADR-074 applies; no new ADR.
+
+Publish native follow-up receipts and screenshots under qa/buddy-uat-2026-09-05/native-followup with explicit limits on tested-commit provenance. This PR adds evidence only; production fixes landed in PR2404. Native move, resize, and restored geometry are recorded; exact tested revision and native exit outcome are not independently established. Combined AC9 remains open for application-configured OpenAI realtime UAT. Existing ADR074 applies; no new ADR.
+
+Native evidence publication PR: https://github.com/rmusser01/tldw_chatbook/pull/2418 against dev93388ba69b. Evidence JSON, local links, all22 recorded terminal checks, backlog ID guard, and diff checks pass. Production fixes are already in PR2404; this follow-up remains evidence-only.
+
+PR #2418 Qodo remediation: preserved raw native receipts; narrowed unsupported exact-revision and graceful-exit assertions; documented the distinct source checkout and runtime directories and the durable repository evidence path. No new native run is claimed. Task stays In Progress with AC9 unchecked. ADR required: no; existing backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md applies to unchanged Buddy behavior.
+
+Review validation: all six scripts/preflight.sh guards pass; four evidence JSON files parse; all local README links exist; all 22 recorded protocol checks are true; native geometry, release events, and distinct restart PID are consistent; git diff --check passes. Added the PR2418 receipt-identity incident to backlog/docs/lessons-live-verification.md. These are evidence/static checks, not a fresh native UAT or full test suite.
 <!-- SECTION:NOTES:END -->

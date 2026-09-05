@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## Send synthetic Paste through the app, not directly to TextArea
+
+**TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
+unforwarded `events.Paste` directly to TextArea. Textual inserted it, bubbled
+the event to `App.on_event`, then forwarded it back to the focused TextArea,
+inserting it again. Depending on scheduling, Run captured the first insertion
+and Pin correctly refused the later doubled sample as stale. The captured hash
+`3cc894cc23cca5b36707b14e37ee4c59905b1dc276a3892619b9364ea796a3a0`
+matched the intended sample; current hash
+`895e98e9a2050a04891df2b276b4884983d0054182ea74c988a639e5ea7de382`
+matched that exact sample concatenated with itself. Posting Paste to the app,
+which performs the normal driver forwarding, removed the extra insertion.
+
+**What to do.** Inject driver events at the app boundary and assert exact text
+before executing. A synthetically doubled paste is a fixture defect, not grounds
+to weaken a production stale-result guard. Wait for the Lab-owned render workers
+and assert the editor is enabled/focused first: the load-complete event can precede
+the initial render. A later failed-write transfer fixture injected text into that
+disabled editor and exported an empty sample until the readiness/exact-copy
+preconditions were made explicit.
+
 Traps found by running the app and talking to a real server, which the test suite
 structurally could not surface. Every entry states the incident that produced it.
 
@@ -2024,3 +2045,96 @@ from the current PR tree: older live evidence can exercise a superseded host.
 **The incident.** Critique #5 ran its two assessment agents in parallel, each launching the real app under its own tmux socket against the same real profile and media DB. The app's startup guard — "Another copy of tldw is already using this profile" — fired in both and both continued. Both then hit the same P0 within minutes: a bulk delete painted `✓ deleted` while the DB row stayed untouched, and the bulk-mutation interlock left Undo, Retry, every row and `s` inert until the process was killed. That is task-31220's storage wedge, which a 24-round single-instance repro had never triggered. Concurrent writers made the failed-write path reachable; the product's dishonest presentation of it is what the critique scored.
 
 **What to do.** Never run two live-app assessments concurrently on one profile: serialize their live phases, or give the second a scratch profile (`TLDW_CONFIG_PATH`, and note the keyring caveat above). When the app's own guard fires, treat it as a real signal and stop. And when a wedge is only reachable under contention, say so in the finding — the trigger is the environment, the presentation is the product's — and file the mechanism, not just the symptom.
+
+## A manually mounted test screen must claim initial-screen ownership (TASK-31645)
+
+**Incident, 2026-09-04.** Chunking Lab's combined verification passed 470 tests but
+failed its narrow workflow after `pilot.click` found ChatScreen instead of the Lab.
+Both local fixtures constructed the real app and tests directly pushed their own
+Lab screen. The factory's settings patch ended before Textual `compose`, so the
+real seven-second splash remained enabled. When it closed, the still-unclaimed
+initial-screen callback pushed Chat over the Lab. The isolated workflow passed
+before seven seconds; that pass did not disprove the slower combined failure.
+
+An isolated diagnostic with a 0.5-second enabled splash observed the actual
+Lab-to-Chat push. Keeping that setup but claiming `_initial_screen_pushed`
+preserved the Lab. Permanent regressions then called the real startup callback
+directly: both local fixtures failed before the ownership flag and passed after it.
+No production startup, shared factory, timer, or splash-setting change was needed.
+
+**What to do.** A fixture that deliberately supplies its own initial screen must
+also establish the matching startup-ownership state. Keep this scoped to that
+fixture; tests of automatic startup must instead await the real startup boundary.
+Exercise the late callback deterministically, rather than assuming a fast pass or
+increasing sleeps proves that deferred startup cannot take over the screen.
+---
+
+## A scratch profile de-authenticates every keychain/XDG-backed CLI the feature shells out to (TASK-31450, 2026-09-04)
+
+**Incident.** Live-verifying the Console Inspect rail's Environment panel, whose
+PR and CI rows come from `gh pr view`. `gh auth status` in the ordinary shell
+reported a logged-in account, an open PR existed for the bound branch, and the
+same `gh pr view … --json …` command returned a full payload with a 13-check
+rollup in 0.7 s. Inside the app — launched with the mandatory scratch profile
+(`HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH` all redirected)
+— the PR and check rows never appeared. That is *exactly* what the feature's
+"no gh" degradation is supposed to look like, so the first reading was "the rows
+are correctly absent" and the second was "the gh gatherer is broken". Both were
+wrong. `gh` reads its own config from **`$XDG_CONFIG_HOME/gh`** and resolves its
+token through the macOS keychain in a context that follows the **real `HOME`**;
+the scratch profile redirects both, so `gh` exits 4 (`gh auth login`) and
+`gather_pr_env` reports `ERROR`. Setting `GH_CONFIG_DIR` back to the real
+directory was not enough — with `HOME` still redirected the keychain lookup
+returned an invalid token (`HTTP 401`). The two requirements are mutually
+exclusive: profile isolation and a working `gh` cannot both hold in one run.
+
+**What to do.** Before concluding anything about a feature that shells out to an
+external CLI, ask which of *its* configuration and credential paths your
+isolation just moved — `XDG_CONFIG_HOME` and `HOME` are not private to the app
+under test. Run the CLI itself once inside the isolated environment
+(`env HOME=<scratch> XDG_CONFIG_HOME=<scratch> gh auth status`) and record the
+result as a stated precondition of the run; a green "degraded" capture proves
+the degradation path only if you have shown the tool really is unavailable.
+Where isolation and the credential are irreconcilable, verify the success path
+**out of the app** against real data — gatherer plus pure projection, with the
+real profile's byte fingerprint checked before and after — and say in the report
+that the in-app render of that path was never observed. Do not relax the profile
+isolation to make the screenshot nicer.
+
+---
+
+## Killing the app mid-initialisation can permanently disable a feature, silently (TASK-31450, 2026-09-04)
+
+**Incident.** The same session's Environment panel sat on its muted
+"No git workspace" row for over 60 seconds against a workspace that was
+demonstrably a git repo, surviving the 10 s poll and a restart. It had rendered
+real counts minutes earlier. The panel reads the *change-review-admitted* roots,
+and root readiness is rebuilt in memory on every boot by
+`ChangeReviewConsentService`, which snapshots a shadow repo under
+`<data_dir>/change_review/<hash>/`. An earlier `kill-server` had interrupted that
+first snapshot on a 743 MB worktree, leaving a shadow repo with 129 MB of loose
+objects and no `HEAD`, refs, or index. Every later boot re-failed against it,
+recorded `FAILED` readiness, and **logged nothing** — so the honest empty state
+and a hard failure looked identical. `rm -rf` on that one shadow directory
+restored the panel on the next launch.
+
+**What to do.** When a feature's data depends on a background initialisation
+that persists to disk, do not interrupt the first run of it — and when a
+"correct empty state" persists past the point where data should have arrived,
+check the initialisation artifact on disk (here: does the shadow repo have a
+`HEAD`?) before filing a defect against the surface that is merely reporting it.
+An empty state that cannot distinguish "nothing to show" from "the thing that
+would show it is broken" is itself worth recording as a product concern.
+
+## Capture native-run revision and exit identity together (PR #2418, 2026-09-05)
+
+**Incident.** Migu move/resize/restart receipts captured geometry and PIDs but omitted
+the Git revision and dirty state. The separate exit file reported a null app exception
+without a PID, timestamp, or return code. Qodo review exposed that these artifacts
+could not establish the claimed exact tested revision or the preceding process's
+graceful exit; the published claims were narrowed rather than backfilled.
+
+**What to do.** At launch, capture the resolved source revision and dirty state with
+a run ID/PID. Bind the final exception and process-exit result to that same identity.
+Keep source-checkout paths distinct from runtime/evidence directories. When historical
+receipts omit these fields, preserve the originals and state the evidence limits.

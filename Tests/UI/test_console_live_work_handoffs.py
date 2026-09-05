@@ -2704,9 +2704,10 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
 
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the
-    tray is a direct child of the inspector rail body, pinned as its FIRST
-    child. Live-work cards keep anchoring after the run-inspector block at
-    the bottom. This drives the real swap seam both directions.
+    tray is a direct child of the inspector rail body, mounted right after
+    the task-9 Environment/Tasks sections. Live-work cards keep anchoring
+    after the run-inspector block at the bottom. This drives the real swap
+    seam both directions.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2720,10 +2721,11 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         tray = screen.query_one("#console-staged-context-tray")
         run_inspector = screen.query_one("#console-run-inspector")
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
-        # body (no frame wrapper), composed at the very top.
+        # body (no frame wrapper), composed right after the task-9
+        # Environment/Tasks sections.
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
-        assert list(rail_body.children).index(tray) == 0
+        assert list(rail_body.children).index(tray) == 2
 
         # Readiness -> pending-launch swap mounts after the run inspector.
         screen._retrieval._stage_console_library_rag_launch(
