@@ -1,5 +1,5 @@
 ---
-id: task-22062
+id: TASK-22062
 title: A hanging Console stop test destroys the whole pytest run
 status: To Do
 labels:

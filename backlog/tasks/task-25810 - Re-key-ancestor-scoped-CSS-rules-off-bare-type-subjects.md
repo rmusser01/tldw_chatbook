@@ -1,5 +1,5 @@
 ---
-id: task-25810
+id: TASK-25810
 title: Re-key ancestor-scoped CSS rules off bare-type subjects
 status: Done
 assignee: []
