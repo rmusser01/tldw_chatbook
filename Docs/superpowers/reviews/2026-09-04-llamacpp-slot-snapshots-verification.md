@@ -8,7 +8,12 @@ reviews, including accepted fix rounds. Task6 supplies an opt-in real-server
 harness and honest evidence closeout; it is not evidence that the live scenario
 has run. The integrated final review identified three important boundary omissions
 and two minor issues; the one bounded fix wave below addresses them. A scoped
-re-review of that wave remains required.
+re-review of commit `a5268225df` closed all five findings with no new breakage.
+The code-review gate is complete; the independent live AC5 gate remains open.
+
+Controller checks at that revision also compiled all changed Python files and
+passed Ruff lint/format for all 17 added Python files. Generated CSS reproduction
+and branch-wide whitespace checks passed. These checks do not supply live counters.
 
 ## Evidence boundaries
 
