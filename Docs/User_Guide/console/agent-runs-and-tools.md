@@ -368,6 +368,12 @@ marker stays the durable pointer to what finished.
   they never resolve themselves.
 - A background run that ends also toasts once: "Agent in <tab> (<workspace>)
   finished." (or "failed.").
+- A round that blocks on you — an approval, a skill or worktree confirm, or
+  a question — while you are on **another screen** (Library, Settings, …) or
+  Console has not been opened this launch rings the terminal bell once, and
+  the **Console** entry in the top navigation carries a `◆` badge until the
+  round resolves. `[console] interrupt_bell = false` silences the bell; the
+  badge stays. A round raised while Console is in front rings nothing.
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
 - Open session tabs show `Qn`, and open conversation rows show `Queue n`,

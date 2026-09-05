@@ -3241,6 +3241,7 @@ rail_layout_scope = "global"  # Share Console rail disclosure across workspaces;
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+interrupt_bell = true           # Ring the terminal bell when an agent blocks on you (approval, confirm, question) while Console is not the visible screen; the Console nav badge shows regardless
 # ask_user_timeout_seconds = 0  # ask_user question card auto-continue: 0 (default) waits for an answer indefinitely; e.g. 120 continues the run without an answer after 120s. Environment override: TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS
 raw_cli_permitted = false       # Persisted unlock only; every app launch still starts unarmed
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).

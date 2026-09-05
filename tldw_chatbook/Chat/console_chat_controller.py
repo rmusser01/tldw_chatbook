@@ -11807,6 +11807,52 @@ class ConsoleChatController:
         """
         return self.set_pending_approval is None and self.park_pending_approval is None
 
+    def on_pending_rounds_changed(self, total: int, kind: str, raised: bool) -> None:
+        """task-31385: attention when a round blocks on the user off-screen.
+
+        WORKER THREAD; the host calls this after every round arms (mounted
+        or parked) and after every teardown. Two effects, both on the UI
+        thread: the Console entry in the app navigation carries a
+        pending-interrupt badge while ``total`` is non-zero, and a round
+        that ARMS while no Console view is attached -- the user is on
+        another screen, or Console has not been opened this launch --
+        rings the terminal bell once. The bell is governed by
+        ``[console] interrupt_bell`` (default on) and never fires in a
+        headless app, so tests and embedded runs emit no control bytes.
+        Visibility is read from the view seams (``_approval_view_is_
+        detached``): ``detach_view`` clears every slot together, so the
+        approval pair stands for all five kinds.
+
+        Args:
+            total: Rounds of every kind registered after this change.
+            kind: The round kind that changed (unused; kept for callers
+                that want to specialise).
+            raised: True for an arm, False for a teardown.
+        """
+        app = self.app
+        if app is None:
+            return
+        setting = get_cli_setting("console", "interrupt_bell", True)
+        bell_on = setting if isinstance(setting, bool) else True
+        ring = (
+            raised
+            and bell_on
+            and self._approval_view_is_detached()
+            and not bool(getattr(app, "is_headless", False))
+        )
+
+        def _apply() -> None:
+            from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+
+            set_console_attention(app, total)
+            bell = getattr(app, "bell", None) if ring else None
+            if callable(bell):
+                bell()
+
+        marshal = getattr(app, "call_from_thread", None)
+        if callable(marshal):
+            marshal(_apply)
+
     def _announce_detached_approval(self, session_id: str) -> None:
         """Raise the app-wide toast for a round armed with no Console view.
 

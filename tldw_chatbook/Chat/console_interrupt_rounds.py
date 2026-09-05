@@ -274,6 +274,27 @@ class InterruptRoundHost:
 
         app.call_from_thread(_apply)
 
+    def pending_total(self) -> int:
+        """How many rounds of every kind are registered right now."""
+        with self.lock:
+            return sum(len(rounds) for rounds in self.registries.values())
+
+    def _note_pending(self, kind: str, *, raised: bool) -> None:
+        """task-31385: tell the seams the pending-round total changed.
+
+        Late-bound like every other seam: a controller (or test double)
+        without ``on_pending_rounds_changed`` hears nothing. ``raised`` is
+        True right after a round mounted or parked and False after its
+        registry entry was popped in teardown.
+
+        Args:
+            kind: The round kind that changed.
+            raised: Whether this is the arm (True) or the teardown (False).
+        """
+        hook = getattr(self._seams, "on_pending_rounds_changed", None)
+        if hook is not None:
+            hook(self.pending_total(), kind, raised)
+
     def revoke_for_run(
         self,
         run_id: str,
@@ -445,6 +466,7 @@ class InterruptRoundHost:
                 setter = self._setter(kind)
                 if app is not None and setter is not None:
                     app.call_from_thread(setter, payload)
+            self._note_pending(kind, raised=True)
             outcome = "decided"
             wait_cm = (
                 use_human_input_wait(human_wait_run_id)
@@ -483,6 +505,7 @@ class InterruptRoundHost:
         finally:
             with self.lock:
                 self.registries[kind].pop(round_id, None)
+            self._note_pending(kind, raised=False)
             # task-31384: a kind may RETAIN its payload past teardown (the
             # approvals bridge keeps a definitive-after-start batch mounted
             # in its "finishing" phase). The hook runs OUTSIDE the lock and
