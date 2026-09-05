@@ -346,6 +346,30 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     build_builtin_gate,
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+#: task-31385: environment override for ``[console] interrupt_bell``
+#: (environment -> config.toml -> default, like every other setting).
+INTERRUPT_BELL_ENV_VAR = "TLDW_CONSOLE_INTERRUPT_BELL"
+
+
+def _bool_or_none(value: object) -> bool | None:
+    """Coerce a setting to bool with ``load_settings``' rules, or None when unset.
+
+    An unset source (None or an empty string) yields None so the next
+    source decides; any other value is read with the app-wide rule
+    (``coerce_bool_setting``: the usual truthy spellings are True and
+    everything else is False), so a present override always decides.
+
+    Args:
+        value: The raw environment or config value.
+
+    Returns:
+        The parsed bool, or None when ``value`` is None or empty.
+    """
+    if value is None or value == "":
+        return None
+    parsed = coerce_bool_setting(value, True)
+    return None if parsed is None else bool(parsed)
+
 # task-31384: `Chat.console_interrupt_rounds` is imported lazily (constructor
 # and shims) so the host module stays off the UI-ready census (ADR-097);
 # this module is boot-resident, the controller instance is not.
@@ -11806,6 +11830,73 @@ class ConsoleChatController:
         still surface nothing while claiming a view.
         """
         return self.set_pending_approval is None and self.park_pending_approval is None
+
+    def on_pending_rounds_changed(self, total: int, kind: str, raised: bool) -> None:
+        """task-31385: attention when a round blocks on the user off-screen.
+
+        WORKER THREAD; the host calls this after every round arms (mounted
+        or parked) and after every teardown. Two effects, both on the UI
+        thread: the Console entry in the app navigation carries a
+        pending-interrupt badge while ``total`` is non-zero, and a round
+        that ARMS while no Console view is attached -- the user is on
+        another screen, or Console has not been opened this launch --
+        rings the terminal bell once. The bell is governed by
+        ``[console] interrupt_bell`` (default on) and never fires in a
+        headless app, so tests and embedded runs emit no control bytes.
+        Visibility is read from the view seams (``_approval_view_is_
+        detached``): ``detach_view`` clears every slot together, so the
+        approval pair stands for all five kinds.
+
+        Args:
+            total: Rounds of every kind registered after this change.
+            kind: The round kind that changed (unused; kept for callers
+                that want to specialise).
+            raised: True for an arm, False for a teardown.
+        """
+        app = self.app
+        if app is None:
+            return
+        ring = (
+            raised
+            and total > 0
+            and self._interrupt_bell_enabled()
+            and self._approval_view_is_detached()
+            and not bool(getattr(app, "is_headless", False))
+        )
+        host = getattr(self, "_interrupt_host", None)
+
+        def _apply() -> None:
+            from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+
+            # Re-read the total on the UI thread: two workers' updates may
+            # be marshalled out of order, and the badge must show the
+            # host's current truth, not whichever dispatch ran last.
+            current = host.pending_total() if host is not None else total
+            set_console_attention(app, current)
+            bell = getattr(app, "bell", None) if ring else None
+            if callable(bell):
+                bell()
+
+        marshal = getattr(app, "call_from_thread", None)
+        if not callable(marshal):
+            return
+        try:
+            marshal(_apply)
+        except Exception:  # noqa: BLE001 -- attention is best-effort, never the round
+            logger.opt(exception=True).debug("Console attention marshal failed")
+
+    def _interrupt_bell_enabled(self) -> bool:
+        """Resolve ``[console] interrupt_bell``: environment, then config, then on.
+
+        Returns:
+            False only when ``TLDW_CONSOLE_INTERRUPT_BELL`` (a non-empty
+            value) or the config key coerces to False.
+        """
+        env_value = _bool_or_none(os.environ.get(INTERRUPT_BELL_ENV_VAR, "").strip())
+        if env_value is not None:
+            return env_value
+        config_value = _bool_or_none(get_cli_setting("console", "interrupt_bell", None))
+        return True if config_value is None else config_value
 
     def _announce_detached_approval(self, session_id: str) -> None:
         """Raise the app-wide toast for a round armed with no Console view.
