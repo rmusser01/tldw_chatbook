@@ -741,52 +741,66 @@ qualification, not a multi-platform benchmark: macOS 26.5.2 arm64, Python
 3.12.11, Chromium 145.0.7632.6, Playwright 1.58.0, Textual 8.2.8,
 html5lib 1.1, and tinycss2 1.5.1.
 
-The 15-sample compiler arm produced the following content-free measurements.
-Plan expansion is serialized typed-plan bytes divided by UTF-8 source bytes.
+The initial and review-fix 15-sample compiler arms ran on 2026-09-04 and
+produced the following content-free measurements. Plan expansion is serialized
+typed-plan bytes divided by UTF-8 source bytes.
 
-| Synthetic fixture | Source / plan | Expansion | Nodes / CSS / script | Compile median / p95 / max |
-| --- | ---: | ---: | ---: | ---: |
-| Representative cards (small) | 2,353 B / 11,248 B | 4.78x | 127 / 2 / 171 B | 1.503 / 2.125 / 2.125 ms |
-| Representative cards (large) | 10,341 B / 52,741 B | 5.10x | 607 / 2 / 171 B | 7.222 / 7.692 / 7.692 ms |
-| Combined adversarial ceiling | 328,883 B / 454,811 B | 1.38x | 1,800 / 900 / 256 KiB | 83.857 / 97.181 / 97.181 ms |
-| DOM ceiling | 43,857 B / 167,115 B | 3.81x | 1,800 / 0 / 0 B | 41.197 / 53.878 / 53.878 ms |
-| CSS ceiling | 22,919 B / 25,971 B | 1.13x | 3 / 900 / 0 B | 14.545 / 25.032 / 25.032 ms |
-| Script ceiling | 262,215 B / 262,569 B | 1.00x | 3 / 0 / 256 KiB | 9.333 / 9.540 / 9.540 ms |
+| Synthetic fixture | Source / plan | Expansion | Nodes / CSS / script | Initial median / p95 / max | Review-fix median / p95 / max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Representative cards (small) | 2,353 B / 11,248 B | 4.78x | 127 / 2 / 171 B | 1.503 / 2.125 / 2.125 ms | 1.944 / 2.396 / 2.396 ms |
+| Representative cards (large) | 10,341 B / 52,741 B | 5.10x | 607 / 2 / 171 B | 7.222 / 7.692 / 7.692 ms | 8.974 / 10.388 / 10.388 ms |
+| Combined adversarial ceiling | 328,883 B / 454,811 B | 1.38x | 1,800 / 900 / 256 KiB | 83.857 / 97.181 / 97.181 ms | 107.189 / 124.874 / 124.874 ms |
+| DOM ceiling | 43,857 B / 167,115 B | 3.81x | 1,800 / 0 / 0 B | 41.197 / 53.878 / 53.878 ms | 54.065 / 77.715 / 77.715 ms |
+| CSS ceiling | 22,919 B / 25,971 B | 1.13x | 3 / 900 / 0 B | 14.545 / 25.032 / 25.032 ms | 17.649 / 34.149 / 34.149 ms |
+| Script ceiling | 262,215 B / 262,569 B | 1.00x | 3 / 0 / 256 KiB | 9.333 / 9.540 / 9.540 ms | 10.105 / 10.728 / 10.728 ms |
 
 Exact one-over fixtures returned `dom-limit`, `css-rule-limit`, and
 `script-limit`. Earlier candidate measurements rejected 5,000 nodes (207.840
 ms median), the combined 5,000-node/2,000-rule/256-KiB ceiling (370.544 ms),
 and even a 2,000-node/1,000-rule/256-KiB candidate (98.299 ms median, 101.556
 ms maximum in 12 fresh interpreters). The frozen defaults are therefore 1,800
-DOM nodes and 900 CSS rules, retaining the 256-KiB script ceiling. Compilation
-still belongs off the UI/event loop; the measured ceiling is a conservative
-budget, not permission to block an interactive caller.
+DOM nodes and 900 CSS rules, retaining the 256-KiB script ceiling. An earlier
+15-sample qualification stayed below 100 ms at the combined ceiling, but the
+review rerun shown above did not. The ceiling reduces worst-case work; it does
+not guarantee a host-latency threshold. Compilation still belongs off the
+UI/event loop and the scheduling remediation is a release gate.
 
-Five real-Chromium samples used the production renderer and pinned QuickJS
-worker. Median/p95 were 1.6/2.0 ms for representative generated startup,
-251.4/251.4 ms for a 250-ms runaway-startup interrupt, 55.0/57.4 ms end to end
-for a 50-ms runaway-event interrupt, and 17.2/18.8 ms to validate and commit
-500 patches. A 501-patch event failed with `patch-limit`; 500 patches completed
-at a measured median 29,070 patches/s. The combined near-limit plan's trusted
-WASM/plan preparation was 76.3/78.2 ms and generated startup was 4.4/4.7 ms.
-These clocks are separate from the 10-second trusted worker preparation and
-native image-decode deadlines.
+Five real-Chromium samples per 2026-09-04 run used the production renderer and
+pinned QuickJS worker. The initial run measured 1.6/2.0 ms for representative
+generated startup, 251.4/251.4 ms for runaway startup, 55.0/57.4 ms for the
+runaway event, 17.2/18.8 ms for 500 patches, and 76.3/78.2 ms for combined-plan
+trusted preparation (median/p95). The review-fix rerun measured 1.7/2.2 ms for
+representative generated startup, 251.4/251.7 ms for a 250-ms runaway-startup
+interrupt, 59.1/60.6 ms end to end for a 50-ms runaway-event interrupt, and
+19.7/21.7 ms to validate and commit 500 patches. A 501-patch event failed with
+`patch-limit`; 500 patches completed at a measured median 25,381 patches/s. The
+combined near-limit plan's trusted WASM/plan preparation was 91.3/93.1 ms and
+generated startup was 5.4/5.7 ms. These clocks are separate from the 10-second
+trusted worker preparation and native image-decode deadlines.
 
 A trusted direct-engine arm, which is not exposed to generated code, measured
 86,214 bytes of QuickJS memory before allocation and 16,863,782 bytes after an
 accepted 16-MiB typed-array allocation under the retained 32-MiB heap ceiling;
-a single 32-MiB allocation was refused. Under the retained 512-KiB stack
-ceiling, recursion depth 1,819 completed and 1,820 was refused in a 10.6-ms
-binary-search probe. The production-facade heap-pressure fixture failed closed
-as `runtime-error` (142.4/144.8 ms median/p95); that status is termination
+a single 32-MiB allocation returned the allowlisted QuickJS guest error
+`InternalError: out of memory`. With a configured 512-KiB stack, recursion
+depth 1,818 completed and 1,819 produced the engine's exact native WASM
+`RangeError: Maximum call stack size exceeded` in a 10.6-ms binary-search
+probe. This `stack-engine-trap` is containment evidence under that
+configuration, not independent proof that the configured QuickJS stack cap
+caused the refusal. A trapped runtime is not reusable or safely disposable;
+the trusted probe abandons it and closes the owning page context after the
+measurement. The initial catch-all probe's apparent 1,819/1,820 recursion
+boundary is superseded and is not stack-cap evidence. The production-facade
+heap-pressure fixture failed closed as
+`runtime-error` (152.2/166.5 ms median/p95); that status is termination
 evidence, not a claim that the public failure code distinguishes OOM.
 
-Comparable warmed Chromium process-tree RSS was 700.469 MiB for a blank page,
-941.000 MiB with the trusted runtime, 971.859 MiB for the large representative
-page, and 1,021.156 MiB for the combined near-limit page. These are sums across
-owned Chromium processes on macOS, where shared pages may be counted more than
-once. They are not Canvas-only resident memory and do not prove the QuickJS
-heap ceiling. No browser-memory security ceiling was raised from these results.
+The initial warmed/trusted/representative/near-limit Chromium process-tree RSS
+values were 700.469/941.000/971.859/1,021.156 MiB. The review-fix rerun values
+were 699.641/944.125/976.797/1,023.234 MiB. These are sums across owned Chromium
+processes on macOS, where shared pages may be counted more than once. They are
+not Canvas-only resident memory and do not prove the QuickJS heap ceiling. No
+browser-memory security ceiling was raised from these results.
 
 The resulting reduced defaults are 1,800 DOM nodes, 900 CSS rules, and 500
 patches per operation. All other fixed V1 runtime ceilings are retained. Python,

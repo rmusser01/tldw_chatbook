@@ -90,28 +90,24 @@ def test_content_free_summary_excludes_fixture_source_and_runtime_messages() -> 
     fixture = probe.ProbeFixture(
         identifier="synthetic-summary-contract",
         category="representative",
-        source="PRIVATE-SENTINEL",
+        source=(
+            "<!doctype html><html><head></head><body>"
+            "<p>PRIVATE-SENTINEL</p></body></html>"
+        ),
         expected="accepted",
     )
     summary = probe.build_summary(
-        compiler_results=[
-            probe.CompilerResult(
-                fixture_id=fixture.identifier,
-                category=fixture.category,
-                source_bytes=len(fixture.source),
-                plan_bytes=42,
-                plan_nodes=7,
-                css_rules=2,
-                script_bytes=3,
-                median_milliseconds=1.25,
-                p95_milliseconds=1.5,
-                maximum_milliseconds=1.75,
-            )
-        ],
-        compiler_boundaries={"dom_over_limit": "dom-limit"},
-        browser_results={"fixture_id": fixture.identifier, "state": "ready"},
-        environment={"platform": "synthetic-test"},
-        mirrors={"python.dom_nodes": 1_800},
+        compiler_results=[probe.measure_compiler(fixture, samples=1)],
+        compiler_boundaries={
+            "adversarial-dom-over-limit": "dom-limit",
+            "PRIVATE-SENTINEL": "runtime-message",
+        },
+        browser_results={"status": "not-run", "messages": "PRIVATE-SENTINEL"},
+        environment={"platform": "synthetic-test", "source": "PRIVATE-SENTINEL"},
+        mirrors={
+            "python.dom_nodes": 1_800,
+            "runtime_messages": "PRIVATE-SENTINEL",
+        },
     )
     encoded = json.dumps(summary, sort_keys=True)
 
@@ -119,6 +115,12 @@ def test_content_free_summary_excludes_fixture_source_and_runtime_messages() -> 
     assert "PRIVATE-SENTINEL" not in encoded
     assert "source" not in summary["compiler"]["fixtures"][0]
     assert "messages" not in encoded
+    assert summary["browser"] == {"status": "not-run"}
+    assert summary["environment"] == {"platform": "synthetic-test"}
+    assert summary["limits"] == {"python.dom_nodes": 1_800}
+    assert summary["compiler"]["boundaries"] == {
+        "adversarial-dom-over-limit": "dom-limit"
+    }
 
 
 def test_percentile_uses_nearest_rank_without_interpolating_measurements() -> None:

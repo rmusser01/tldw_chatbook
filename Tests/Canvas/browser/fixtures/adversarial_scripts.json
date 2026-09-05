@@ -108,7 +108,8 @@
   },
   {
     "name": "bridge_rate_limit",
-    "expected": "failed-after-three-clicks",
+    "expected": "failed-after-clicks",
+    "click_count": 3,
     "expected_code": "bridge-rate-limit",
     "script": "document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 16; index += 1) canvas.submit(index); });"
   },
@@ -138,7 +139,8 @@
   },
   {
     "name": "mutation_rate_limit",
-    "expected": "failed-after-five-clicks",
+    "expected": "failed-after-clicks",
+    "click_count": 5,
     "expected_code": "mutation-rate-limit",
     "script": "const node = document.getElementById('status'); document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 401; index += 1) node.textContent = String(index); });"
   },

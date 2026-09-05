@@ -43,6 +43,89 @@ STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
 FIXTURE_PROVENANCE = "synthetic-agent-authored"
 SUMMARY_SCHEMA_VERSION = 1
 
+_ENVIRONMENT_FIELDS = (
+    "platform",
+    "machine",
+    "python",
+    "html5lib",
+    "tinycss2",
+    "textual",
+    "qualification_scope",
+)
+_LIMIT_MIRROR_FIELDS = (
+    "python.html_bytes",
+    "python.dom_nodes",
+    "python.css_rules",
+    "python.script_bytes",
+    "python.runtime_memory_bytes",
+    "python.stack_bytes",
+    "python.startup_milliseconds",
+    "python.event_milliseconds",
+    "python.patches_per_event",
+    "worker.dom_nodes",
+    "worker.script_bytes",
+    "worker.runtime_memory_bytes",
+    "worker.stack_bytes",
+    "worker.startup_milliseconds",
+    "worker.event_milliseconds",
+    "worker.patches_per_event",
+    "virtual_facade.dom_nodes",
+    "virtual_facade.patches_per_event",
+    "renderer.html_bytes",
+    "renderer.dom_nodes",
+    "renderer.css_rules",
+    "renderer.script_bytes",
+    "renderer.patches_per_event",
+)
+_COMPILER_BOUNDARY_FIELDS = (
+    "adversarial-dom-over-limit",
+    "adversarial-css-over-limit",
+    "adversarial-script-over-limit",
+)
+_BROWSER_FIELDS = (
+    "status",
+    "browser_engine",
+    "browser_version",
+    "playwright_version",
+    "samples",
+    "process_tree_rss_note",
+)
+_PROCESS_RSS_FIELDS = (
+    "warmed_blank_mib",
+    "trusted_runtime_mib",
+    "representative_mib",
+    "near_limit_mib",
+)
+_QUICKJS_RESOURCE_FIELDS = (
+    "probe_scope",
+    "heap_limit_bytes",
+    "baseline_memory_used_bytes",
+    "accepted_allocation_bytes",
+    "accepted_allocation_outcome",
+    "accepted_memory_used_bytes",
+    "oversized_allocation_bytes",
+    "oversized_allocation_outcome",
+    "stack_limit_bytes",
+    "recursion_outcome",
+    "recursion_depth",
+    "maximum_accepted_recursion_depth",
+    "recursion_probe_milliseconds",
+)
+_RUNTIME_CASE_FIELDS = (
+    "fixture_id",
+    "state",
+    "code",
+    "scripts_disabled",
+    "patches",
+)
+_RUNTIME_METRIC_FIELDS = (
+    "trusted_prepare_milliseconds",
+    "generated_startup_milliseconds",
+    "event_round_trip_milliseconds",
+    "patches_per_second",
+)
+_STATISTIC_FIELDS = ("median", "p95", "maximum")
+
 
 class ProbeError(RuntimeError):
     """Raised when qualification cannot produce trustworthy bounded evidence."""
@@ -394,6 +477,46 @@ def validate_runtime_limit_mirrors(
     return observed
 
 
+def _allowlisted_fields(
+    values: Mapping[str, Any], fields: Sequence[str]
+) -> dict[str, Any]:
+    """Project a producer result onto the persisted content-free schema."""
+
+    return {field: values[field] for field in fields if field in values}
+
+
+def _content_free_browser_result(browser_results: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove producer diagnostics that are not part of qualification evidence."""
+
+    result = _allowlisted_fields(browser_results, _BROWSER_FIELDS)
+    process_rss = browser_results.get("process_tree_rss")
+    if isinstance(process_rss, Mapping):
+        result["process_tree_rss"] = _allowlisted_fields(
+            process_rss, _PROCESS_RSS_FIELDS
+        )
+    quickjs_resources = browser_results.get("quickjs_resources")
+    if isinstance(quickjs_resources, Mapping):
+        result["quickjs_resources"] = _allowlisted_fields(
+            quickjs_resources, _QUICKJS_RESOURCE_FIELDS
+        )
+    runtime_cases = browser_results.get("runtime_cases")
+    if isinstance(runtime_cases, list):
+        safe_cases: list[dict[str, Any]] = []
+        for runtime_case in runtime_cases:
+            if not isinstance(runtime_case, Mapping):
+                raise ProbeError("browser runtime evidence must contain mappings")
+            safe_case = _allowlisted_fields(runtime_case, _RUNTIME_CASE_FIELDS)
+            for metric_name in _RUNTIME_METRIC_FIELDS:
+                metric = runtime_case.get(metric_name)
+                if isinstance(metric, Mapping):
+                    safe_case[metric_name] = _allowlisted_fields(
+                        metric, _STATISTIC_FIELDS
+                    )
+            safe_cases.append(safe_case)
+        result["runtime_cases"] = safe_cases
+    return result
+
+
 def build_summary(
     *,
     compiler_results: Sequence[CompilerResult],
@@ -408,13 +531,15 @@ def build_summary(
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "fixture_provenance": FIXTURE_PROVENANCE,
         "provider_sampling": "none",
-        "environment": dict(environment),
-        "limits": dict(mirrors),
+        "environment": _allowlisted_fields(environment, _ENVIRONMENT_FIELDS),
+        "limits": _allowlisted_fields(mirrors, _LIMIT_MIRROR_FIELDS),
         "compiler": {
             "fixtures": [asdict(result) for result in compiler_results],
-            "boundaries": dict(compiler_boundaries),
+            "boundaries": _allowlisted_fields(
+                compiler_boundaries, _COMPILER_BOUNDARY_FIELDS
+            ),
         },
-        "browser": dict(browser_results),
+        "browser": _content_free_browser_result(browser_results),
     }
 
 
@@ -494,21 +619,58 @@ def _engine_probe_html() -> bytes:
 <script type="module">
 import {newQuickJSWASMModule} from "/static/quickjs-runtime.js";
 
-function disposeResult(result) {
+function disposeResult(context, result, expectedRefusal) {
   if (result.error) {
-    result.error.dispose();
-    return "rejected";
+    let error;
+    try {
+      error = context.dump(result.error);
+    } finally {
+      result.error.dispose();
+    }
+    const name = error && typeof error === "object" ? error.name : null;
+    const message = error && typeof error === "object" ? error.message : null;
+    if (
+      expectedRefusal === "heap-limit" &&
+      name === "InternalError" &&
+      message === "out of memory"
+    ) return expectedRefusal;
+    throw new Error("trusted guest returned an unexpected error category");
   }
   result.value.dispose();
   return "accepted";
 }
 
-function evaluateOutcome(context, source, filename) {
+function evaluateOutcome(context, source, filename, expectedRefusal = null) {
+  let result;
   try {
-    return disposeResult(context.evalCode(source, filename));
-  } catch (_) {
-    return "rejected";
+    result = context.evalCode(source, filename);
+  } catch (error) {
+    if (
+      expectedRefusal === "stack-engine-trap" &&
+      error instanceof RangeError &&
+      error.message === "Maximum call stack size exceeded"
+    ) return {outcome: expectedRefusal, reusable: false};
+    throw error;
   }
+  return {
+    outcome: disposeResult(context, result, expectedRefusal),
+    reusable: true,
+  };
+}
+
+function disposeEngine(context, runtime) {
+  let firstFailure = null;
+  try {
+    context.dispose();
+  } catch (error) {
+    firstFailure = error;
+  }
+  try {
+    runtime.dispose();
+  } catch (error) {
+    if (firstFailure === null) firstFailure = error;
+  }
+  if (firstFailure !== null) throw firstFailure;
 }
 
 function memoryUsed(runtime) {
@@ -528,38 +690,53 @@ window.runTrustedQuickJSQuotaProbe = async (limits) => {
   let deadline = performance.now() + 1000;
   runtime.setInterruptHandler(() => performance.now() > deadline);
   const context = runtime.newContext();
-  const baseline = memoryUsed(runtime);
-  const acceptedOutcome = evaluateOutcome(
-    context,
-    `globalThis.__probeRetained = new Uint8Array(${limits.acceptedBytes});`,
-    "trusted-heap-accepted.js",
-  );
-  const acceptedMemory = memoryUsed(runtime);
-  deadline = performance.now() + 1000;
-  const oversizedOutcome = evaluateOutcome(
-    context,
-    `globalThis.__probeOversized = new Uint8Array(${limits.oversizedBytes});`,
-    "trusted-heap-oversized.js",
-  );
-  context.dispose();
-  runtime.dispose();
+  let baseline;
+  let acceptedOutcome;
+  let acceptedMemory;
+  let oversizedOutcome;
+  try {
+    baseline = memoryUsed(runtime);
+    acceptedOutcome = evaluateOutcome(
+      context,
+      `globalThis.__probeRetained = new Uint8Array(${limits.acceptedBytes});`,
+      "trusted-heap-accepted.js",
+    ).outcome;
+    acceptedMemory = memoryUsed(runtime);
+    deadline = performance.now() + 1000;
+    oversizedOutcome = evaluateOutcome(
+      context,
+      `globalThis.__probeOversized = new Uint8Array(${limits.oversizedBytes});`,
+      "trusted-heap-oversized.js",
+      "heap-limit",
+    ).outcome;
+  } finally {
+    disposeEngine(context, runtime);
+  }
 
   function acceptsDepth(depth) {
     const candidateRuntime = quickJS.newRuntime();
     candidateRuntime.setMemoryLimit(limits.heapBytes);
     candidateRuntime.setMaxStackSize(limits.stackBytes);
     const candidateContext = candidateRuntime.newContext();
-    const outcome = evaluateOutcome(
-      candidateContext,
-      `function descend(n){if(n>0)descend(n-1)}descend(${depth});`,
-      "trusted-stack-depth.js",
-    );
-    try { candidateContext.dispose(); } catch (_) {}
-    try { candidateRuntime.dispose(); } catch (_) {}
-    return outcome === "accepted";
+    let evaluation;
+    try {
+      evaluation = evaluateOutcome(
+        candidateContext,
+        `function descend(n){if(n>0)descend(n-1)}descend(${depth});`,
+        "trusted-stack-depth.js",
+        "stack-engine-trap",
+      );
+    } finally {
+      if (evaluation === undefined || evaluation.reusable) {
+        disposeEngine(candidateContext, candidateRuntime);
+      }
+      // An exact native stack trap poisons this runtime; page teardown owns it.
+    }
+    return evaluation.outcome === "accepted";
   }
   const recursionStarted = performance.now();
-  let acceptedDepth = 0;
+  if (!acceptsDepth(1)) throw new Error("trusted stack positive control was refused");
+  let acceptedDepth = 1;
   let rejectedDepth = 16384;
   if (acceptsDepth(rejectedDepth)) throw new Error("trusted stack probe ceiling was too low");
   while (acceptedDepth + 1 < rejectedDepth) {
@@ -573,7 +750,7 @@ window.runTrustedQuickJSQuotaProbe = async (limits) => {
     acceptedAllocationOutcome: acceptedOutcome,
     acceptedMemoryUsedBytes: acceptedMemory,
     oversizedAllocationOutcome: oversizedOutcome,
-    recursionOutcome: "rejected",
+    recursionOutcome: "stack-engine-trap",
     recursionDepth: rejectedDepth,
     maximumAcceptedRecursionDepth: acceptedDepth,
     recursionProbeMilliseconds: performance.now() - recursionStarted,
@@ -979,27 +1156,30 @@ def _run_trusted_quickjs_probe(
     context = browser.new_context()
     page = context.new_page()
     try:
-        page.goto(f"{origin}/engine-probe.html", wait_until="load")
-        page.wait_for_function(
-            "window.__trustedQuickJSQuotaProbeReady === true", timeout=10_000
-        )
-        observed = page.evaluate(
-            "limits => window.runTrustedQuickJSQuotaProbe(limits)",
-            {
-                "heapBytes": limits.runtime_memory_bytes,
-                "stackBytes": limits.stack_bytes,
-                "acceptedBytes": accepted_bytes,
-                "oversizedBytes": oversized_bytes,
-            },
-        )
-    finally:
-        context.close()
+        try:
+            page.goto(f"{origin}/engine-probe.html", wait_until="load")
+            page.wait_for_function(
+                "window.__trustedQuickJSQuotaProbeReady === true", timeout=10_000
+            )
+            observed = page.evaluate(
+                "limits => window.runTrustedQuickJSQuotaProbe(limits)",
+                {
+                    "heapBytes": limits.runtime_memory_bytes,
+                    "stackBytes": limits.stack_bytes,
+                    "acceptedBytes": accepted_bytes,
+                    "oversizedBytes": oversized_bytes,
+                },
+            )
+        finally:
+            context.close()
+    except Exception:  # noqa: BLE001 - never expose browser/host diagnostics
+        raise ProbeError("trusted QuickJS resource probe failed unexpectedly") from None
     if observed["acceptedAllocationOutcome"] != "accepted":
         raise ProbeError("trusted QuickJS accepted allocation was refused")
-    if observed["oversizedAllocationOutcome"] != "rejected":
-        raise ProbeError("trusted QuickJS oversized allocation was not refused")
-    if observed["recursionOutcome"] != "rejected":
-        raise ProbeError("trusted QuickJS stack pressure was not refused")
+    if observed["oversizedAllocationOutcome"] != "heap-limit":
+        raise ProbeError("trusted QuickJS oversized allocation was not a heap refusal")
+    if observed["recursionOutcome"] != "stack-engine-trap":
+        raise ProbeError("trusted QuickJS stack pressure did not reach the engine trap")
     return {
         "probe_scope": "trusted-direct-engine; not exposed to generated code",
         "heap_limit_bytes": limits.runtime_memory_bytes,

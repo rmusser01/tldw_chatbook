@@ -37,8 +37,8 @@ class CanvasLimits:
     html_bytes: int = 512 * 1024
     asset_bytes: int = 1024 * 1024
     aggregate_asset_bytes: int = 4 * 1024 * 1024
-    # Task 7.2's single-host qualification retained practical margin below the
-    # 100 ms compiler worker threshold at the combined source ceilings.
+    # Task 7.2's single-host qualification reduced worst-case compiler work;
+    # host latency still requires the separate interactive scheduling gate.
     dom_nodes: int = 1_800
     css_rules: int = 900
     script_bytes: int = 256 * 1024
