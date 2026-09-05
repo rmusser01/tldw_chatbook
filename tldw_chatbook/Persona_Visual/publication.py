@@ -16,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+from tldw_chatbook.Utils.path_validation import validate_canonical_directory
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 from . import assets as asset_boundary
@@ -443,7 +444,7 @@ def cleanup_persona_visual_publication_candidate(
     cleanup_path, cleanup_secret = capability
     _require_idle_repository(repository)
     try:
-        profile_path = _canonical_root(profile_root, must_exist=True)
+        profile_path = validate_canonical_directory(profile_root)
     except (OSError, TypeError, ValueError):
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
     candidate_path = profile_path / cleanup_path
@@ -777,8 +778,8 @@ def _publication_roots(
     profile_root: os.PathLike[str] | str,
 ) -> tuple[Path, Path]:
     try:
-        source = _canonical_root(source_root, must_exist=True)
-        profile = _canonical_root(profile_root, must_exist=True)
+        source = validate_canonical_directory(source_root)
+        profile = validate_canonical_directory(profile_root)
         # Authoring sources live inside the profile, including existing versions.
         # Publication copies pinned files into a fresh immutable directory; it
         # never renames or recursively copies the source root itself.
@@ -789,22 +790,6 @@ def _publication_roots(
         raise PersonaVisualPublicationError(
             "persona_visual_publication_denied"
         ) from None
-
-
-def _canonical_root(value: os.PathLike[str] | str, *, must_exist: bool) -> Path:
-    raw = os.fspath(value)
-    if type(raw) is not str or not raw or "\x00" in raw:
-        raise ValueError
-    path = Path(raw)
-    if not path.is_absolute() or str(path) != raw:
-        raise ValueError
-    resolved = path.resolve(strict=must_exist)
-    if resolved != path:
-        raise ValueError
-    metadata = os.lstat(path)
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError
-    return path
 
 
 def _open_absolute_directory_chain(path: Path) -> list[int]:

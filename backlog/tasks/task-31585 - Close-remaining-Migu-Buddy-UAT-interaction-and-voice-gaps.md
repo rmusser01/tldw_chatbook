@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:32'
-updated_date: '2026-09-05 04:29'
+updated_date: '2026-09-05 04:56'
 labels: []
 dependencies: []
 priority: high
@@ -28,6 +28,8 @@ Port the remaining reproducible Buddy UAT fixes onto current dev while preservin
 - [x] #7 Real Manual Speak and readback playback makes Buddy speaking only during playback, releases on terminal acknowledgement after context changes, and preserves another voice owner.
 - [x] #8 At 80 columns a busy local transcription keeps the microphone reachable for cancel and preserves attachments; unavailable microphone state is visually distinct and remains clickable to retry.
 - [ ] #9 Final native dragging and OpenAI realtime UAT are verified on the PR branch with an application-configured credential.
+- [x] #10 Post-acceptance refusal preserves undo and redo for unchanged visible drafts without making successfully sent content undoable.
+- [x] #11 Publication roots use centralized path validation with existing canonical-directory and descriptor safeguards preserved, and lazy mount errors retain safe view context only.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,10 +42,16 @@ Rebased first onto dev b52080fee0. Investigate and repair the eight baseline ver
 Rebased live Kokoro playback exposed a missing Manual Speak-to-Buddy event. Bind a content-free, request-unique voice lease to existing trusted playback start/terminal callbacks, releasing exact ownership even after session invalidation; verify state transitions and concurrent voice ownership. Existing ADR-074 lifecycle leases and ADR-037 trusted playback govern this repair.
 
 Broader mounted voice checks exposed 80-column clipping after the Send width stabilization and an overridden unavailable-mic CSS rule. Budget the busy chip against current action width, retain the stable Send control, and strengthen the unavailable selector; preserve click-to-reprobe behavior. These are bounded layout repairs under existing Console UX conventions; no new ADR.
+
+Qodo review follow-up: reproduce history loss for keyboard and mouse sends; restore captured history under session/edit ownership guards; extract the existing strict root check into central path validation; add bounded view context without exception capture. Run targeted undo, publication, path and diagnostic tests plus preflight. ADR required: no new ADR; existing ADR-074/069/029 govern unchanged root authority, recovery and privacy contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Rebased first onto dev b52080fee0. Repaired all eight baseline verification failures without disabling privacy checks, and restored the missing Library Iterable import. Real rebased Kokoro UAT exposed a missing Buddy speech lease: actual Manual Speak playback now owns a request-unique lease with exact terminal cleanup, including stale contexts. Real Kokoro drained 128000 bytes with idle/speaking/idle; DeepSeek returned the expected synthetic reply with thinking/speaking/idle. Normal settings unchanged. Fixed actual 80-column busy microphone clipping while retaining stable Send width; compact copy and full tooltip preserve meaning at narrow widths. Investigation found unavailable-mic failures came from bare test harnesses missing the split Console stylesheet; no production CSS change was needed. Final voice UI 103 passed; speech/autoplay/Buddy adapters 102 passed; diagnostic suite 69 passed and 1 historical-object skip; all six preflight guards and scoped fatal lint pass. Independent review has no actionable findings. Existing ADR-074/037/069/029 apply. Evidence: qa/buddy-uat-2026-09-05/README.md and rebased-live-evidence.json. Keep In Progress/draft until physical macOS dragging is confirmed with Terminal foreground and OpenAI realtime UAT has a configured credential.
+Rebased first onto dev b52080fee0. Repaired all eight baseline verification failures without disabling privacy checks, and restored the missing Library Iterable import. Real rebased Kokoro UAT exposed a missing Buddy speech lease: actual Manual Speak playback now owns a request-unique lease with exact terminal cleanup, including stale contexts. Real Kokoro drained 128000 bytes with idle/speaking/idle; DeepSeek returned the expected synthetic reply with thinking/speaking/idle. Normal settings unchanged. Fixed actual 80-column busy microphone clipping while retaining stable Send width; compact copy and full tooltip preserve meaning at narrow widths. Investigation found unavailable-mic failures came from bare test harnesses missing the split Console stylesheet; no production CSS change was needed. Final voice UI 103 passed; speech/autoplay/Buddy adapters 102 passed; diagnostic suite 69 passed and 1 historical-object skip; all six preflight guards and scoped fatal lint pass. Independent review has no actionable findings. Existing ADR-074/037/069/029 apply. Evidence: qa/buddy-uat-2026-09-05/README.md and rebased-live-evidence.json. Keep In Progress until physical macOS dragging is confirmed with Terminal foreground and OpenAI realtime UAT has a configured credential. User subsequently authorized review and merge of the verified fixes with these UAT limits recorded.
+
+Qodo review: restore captured undo/redo on post-acceptance refusal only for the unchanged visible draft, preserving successful-send history barriers and newer edits. Centralized the existing canonical-directory root policy in Utils/path_validation.py; publication and cleanup consume its returned paths while retaining descriptor/identity/containment checks. Lazy mount failure records only an allowlisted view key (unknown otherwise), with no exception capture. 174 focused undo/draft/LLM/publication/path tests and two diagnostic privacy guards passed. Diagnostic statement review: exactly one 14-call LLM owner signature changed to add safe_view, with unchanged sink topology. Existing ADR-074/069/029 apply; no new ADR.
+
+Qodo follow-up final checks: all six derived-artifact preflight gates and scoped fatal-rule Ruff checks pass. Physical dragging/OpenAI realtime AC9 remains open as explicitly documented.
 <!-- SECTION:NOTES:END -->

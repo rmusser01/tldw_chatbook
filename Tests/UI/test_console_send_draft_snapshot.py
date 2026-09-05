@@ -603,3 +603,47 @@ async def test_setup_refusal_does_not_restore_consumed_stash_into_other_visible_
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
         await console._submit_console_native_draft("A private draft", session.id)
         assert composer.draft_text() == "B private draft"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyboard", [False, True])
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_post_acceptance_refusal_restores_undo_redo_only_for_unsent_draft(
+    monkeypatch, keyboard, accepted
+):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        controller = console._ensure_console_chat_controller()
+        session = controller.store.ensure_session()
+        console._session._sync_console_session_draft()
+        composer.insert_text("original")
+        composer.insert_text(" draft")
+        composer.insert_text(" extra")
+        assert composer.undo()
+        assert composer.draft_text() == "original draft"
+        if keyboard:
+            console._console_inflight_send_stashes[session.id] = (
+                composer.stash_draft_for_send()
+            )
+
+        async def finish_after_setup(draft, *, session_id=None):
+            controller.on_submission_accepted()
+            return ConsoleSubmitResult(accepted, False, "Setup result")
+
+        monkeypatch.setattr(controller, "run_prompt_chain", finish_after_setup)
+        await console._submit_console_native_draft("original draft", session.id)
+        if accepted:
+            assert composer.draft_text() == ""
+            assert not composer.undo()
+            assert not composer.redo()
+        else:
+            assert composer.draft_text() == "original draft"
+            assert composer.redo()
+            assert composer.draft_text() == "original draft extra"
+            assert composer.undo()
+            assert composer.undo()
+            assert composer.draft_text() == "original"

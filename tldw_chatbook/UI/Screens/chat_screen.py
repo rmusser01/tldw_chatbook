@@ -16455,6 +16455,11 @@ class ChatScreen(BaseAppScreen):
             and self._console_visible_draft_session_id == session_id
             else None
         )
+        dispatch_history = (
+            dispatch_composer.export_undo_history()
+            if dispatch_snapshot is not None
+            else None
+        )
         dispatch_draft_revision = (
             (
                 dispatch_composer.edit_serial,
@@ -16544,6 +16549,11 @@ class ChatScreen(BaseAppScreen):
             # Controller-level refusal of a keyboard send: the composer was
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
+            if (
+                dispatch_snapshot is not None
+                and composer.edit_serial == dispatch_snapshot.edit_serial
+            ):
+                composer.restore_undo_history(dispatch_history)
             composer.restore_stashed_draft(stash)
         elif (
             not result.accepted
@@ -16555,6 +16565,7 @@ class ChatScreen(BaseAppScreen):
             # Setup may refuse after the accepted hook cleared this draft.
             # A newer edit or another visible session retains ownership.
             composer.restore_snapshot(dispatch_snapshot)
+            composer.restore_undo_history(dispatch_history)
         if result.session_closed:
             # Task 4 (D2 fix wave): `_session_closed_result` is `accepted`
             # (see its own docstring) so the restore above never fires, and

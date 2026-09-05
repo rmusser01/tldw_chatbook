@@ -6,6 +6,7 @@ escape allowed directories.
 """
 
 import os
+import stat
 import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
@@ -51,6 +52,37 @@ ROOT_DENIAL_RECOVERY_HINT = (
     "private scratch, bind that folder in Settings > Workspaces and use a "
     "chat in that Workspace."
 )
+
+
+def validate_canonical_directory(value: os.PathLike[str] | str) -> Path:
+    """Validate an existing absolute directory without normalizing aliases.
+
+    Args:
+        value: Directory spelling that must already be canonical, including
+            every ancestor. Hidden profile directories are permitted.
+
+    Returns:
+        The validated canonical directory. Callers must still pin descriptors
+        and enforce their own authority and containment during filesystem use.
+
+    Raises:
+        ValueError: If the value is not an existing canonical directory. The
+            error contains no path content.
+    """
+    try:
+        raw = os.fspath(value)
+        if type(raw) is not str or not raw or "\x00" in raw:
+            raise ValueError
+        path = Path(raw)
+        if not path.is_absolute() or str(path) != raw:
+            raise ValueError
+        if path.resolve(strict=True) != path:
+            raise ValueError
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            raise ValueError
+        return path
+    except (OSError, TypeError, ValueError, RuntimeError):
+        raise ValueError("Canonical directory required") from None
 
 
 def validate_path(

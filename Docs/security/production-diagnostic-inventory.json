@@ -2568,7 +2568,7 @@
     },
     {
       "call_count": 14,
-      "diagnostic_digest": "a50acef38af041324bbf",
+      "diagnostic_digest": "868dbc1c5a3b51e12cec",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/LLM_Management_Window.py",
       "reason": "remaining Chatbook production diagnostic owner"

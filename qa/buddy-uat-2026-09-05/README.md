@@ -1,6 +1,7 @@
 # Migu Buddy UAT fixes on current dev
 
-Rebased before follow-up repairs onto `dev` at `b52080fee0`.
+Latest review rebase: `dev` at `d9e2e3d507`.
+Earlier follow-up repairs were rebased onto `b52080fee0`.
 Original PR verification base: `68f9d865fad623db6ec02e19632090c1140b3c89`.
 Work branch: `codex/migu-buddy-uat-fixes`. Task: TASK-31585.
 
@@ -112,3 +113,22 @@ Before final sign-off: finish physical dragging on the final branch, review
 updated CI, then run live OpenAI realtime UAT with a credential configured in
 the application's settings. That provider was not configured during this UAT. Local speech success
 does not validate the OpenAI realtime transport.
+
+
+## Qodo review follow-up
+
+All three initial Qodo findings were addressed: refusal restores captured
+undo/redo only when the same visible draft has not been edited; successful
+sends remain history barriers. Publication and cleanup now consume the shared
+`validate_canonical_directory` result, preserving the existing strict spelling,
+symlink, descriptor, identity and containment policy. Lazy mount errors retain
+an allowlisted view identifier (unknown otherwise) without exception capture.
+
+The latest-dev rebase passed 74 Console regressions and 150 Buddy/publication/
+setup regressions. Review fixes passed 174 undo/draft/LLM/publication/path tests
+and two diagnostic privacy guards. The diagnostic statement change is exactly
+one safe-view argument on the existing 14-call LLM owner; no sink changed.
+Live provider/playback records above predate these review-only follow-ups and
+retain their original source digests. TASK-31585 remains In Progress for the
+explicit native-dragging and OpenAI realtime UAT gaps; the user authorized
+review and merge of the verified fixes with those follow-ups recorded.
