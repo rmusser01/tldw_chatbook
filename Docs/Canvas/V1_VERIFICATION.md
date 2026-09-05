@@ -178,6 +178,24 @@ and the six startup files plus Canvas first-use tests pass **36 tests,
 The subsequent PR preparation edits are documentation/task bookkeeping only.
 Qodo feedback and protected CI are not yet received and remain merge gates.
 
+PR2432 opened at745964fa1 against dev. During creation, dev advanced to66a1cbf8f
+with Stop-dispatch drain and interaction import deferrals. The117-commit rebase
+to1d5cc62c8 preserved all feature patches except additive lesson context; both
+sets of lessons remain. The published initial tip is retained on
+`codex/canvas-v1-pr2432-initial`. Post-rebase preflight passes all categories.
+The first targeted command used a nonexistent Performance path and ran no tests;
+the correct new closure test is in Packaging. The corrected selection initially
+passed59/failed2 at out-of-band fixture UPDATEs; both failures reproduce on
+untouched dev. Exact-message setup authorization, revoked before reconcile,
+restores the tests without changing production guards. Final whole affected
+module plus Stop/Canvas/startup controls: **61 passed, 2 warnings, 18.95s**,
+first paint969/972. Independent integration and fixture reviews pass; formatter
+passes and two preexisting unused-variable lint findings are unchanged.
+Qodo then posted eight findings on the initial PR head; their remediation is
+tracked separately and remains open. No merge has occurred. An attempted
+unattended five-minute review/merge heartbeat was rejected by the safety check;
+no automation was created and work continues in the active session.
+
 ## Earlier V1 checkpoints
 
 This is targeted evidence, **not full-suite, release, or integration approval**.
