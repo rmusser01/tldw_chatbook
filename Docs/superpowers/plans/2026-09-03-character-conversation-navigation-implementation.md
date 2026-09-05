@@ -1257,8 +1257,12 @@ every manifest field shown above: Data Profile authority, local content
 authority, model ID and local artifact digest, vector shape, complete chunk
 configuration digest/version, eligibility and projection versions, cosine
 distance/aggregation semantics, and source content watermark. Prove that
-changed artifact bytes under the same model ID and a changed source watermark
-both reject publication/query rather than reusing the generation.
+changed artifact bytes under the same model ID reject publication/query. A
+source watermark rejects publication/query only when the manifest is
+inconsistent with the generation's captured and validated source snapshot or
+with the ready-pointer publication metadata. Later authoritative source
+advancement is not whole-generation incompatibility; it follows the
+per-conversation outbox, ready-revision, and candidate-fence contract below.
 
 - [ ] **Step 3: Implement contracts and deterministic chunking**
 
@@ -1292,8 +1296,12 @@ prove the whole conversation is suppressed until idempotent replay completes.
 Rebuild failure must leave the prior generation queryable. Change the active
 Data Profile authority during a build and after switching away then reselecting;
 assert neither case can resume or publish a job/generation owned by a different
-authority. A manifest whose artifact digest or captured source watermark no
-longer matches must remain staging/rejected and must not move the ready pointer.
+authority. A manifest whose artifact digest no longer matches the installed
+artifact, or whose source watermark disagrees with the build's captured and
+validated snapshot, must remain staging/rejected and must not move the ready
+pointer. After publication, a manifest watermark inconsistent with the
+ready-pointer publication record rejects that generation, but ordinary later
+source advancement does not.
 
 - [ ] **Step 7: Implement durable jobs, per-conversation fences, and cutover**
 
@@ -1305,6 +1313,12 @@ new generation ready only after every included conversation is fenced; cutover
 is one SQLite transaction and happens only after the complete manifest and
 captured Data Profile authority are revalidated. Candidate suppression happens
 immediately from authoritative revision state, before vector cleanup.
+
+Cover the incremental boundary with a ready generation containing conversations
+A and B: after an authoritative edit to A, unchanged B remains queryable from
+the ready snapshot while stale A hits are suppressed by its pending
+outbox/revision/digest fence. Idempotent incremental replay replaces A and
+restores its eligibility without requiring a full-generation rebuild.
 
 - [ ] **Step 8: Write failing direct ANN query tests**
 
@@ -1318,9 +1332,11 @@ prefilter or lexical rerank.
 
 Reject remote provider kinds and models requiring a network fetch. Read only
 the ready compatible manifest, including matching the installed local artifact
-digest and the ready generation's source watermark, query the vector store,
-filter every hit through current authority/revision/digest fences, aggregate by
-minimum raw distance,
+digest and verifying that its source watermark matches the ready-pointer
+publication metadata. Do not compare that watermark to the current global
+source revision as a whole-generation compatibility gate. Query the vector
+store, filter every hit through current authority/revision/digest fences,
+aggregate by minimum raw distance,
 and join titles/excerpts from the authoritative projection only after ranking.
 Any backend failure returns a non-RESULTS status.
 

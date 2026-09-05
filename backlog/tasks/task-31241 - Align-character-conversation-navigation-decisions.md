@@ -4,7 +4,7 @@ title: Align character conversation navigation decisions
 status: Done
 assignee: []
 created_date: '2026-09-04 02:03'
-updated_date: '2026-09-05 19:57'
+updated_date: '2026-09-05 20:02'
 labels:
   - architecture
   - console
@@ -55,10 +55,10 @@ created at 02:03 and moves with all plan and dependency references.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- ADR required: yes. ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md. Reason: ADR-120 remains the programme authority for identity, pagination, semantic-index ownership, and lifecycle; no new ADR was required for this review correction.
+- ADR required: yes. ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md. Reason: ADR-120 remains the programme authority for identity, pagination, semantic-index ownership, and lifecycle; no new ADR was required for these review corrections.
 - Created ADR-120 and the six scoped amendments, preserving ADR-031 and ADR-033, with documentation-only governance and no runtime or dependency changes.
 - Incorporated PR #2429 review corrections after rebasing the six governance commits onto current origin/dev without conflicts. The implementation plan now carries created_at in CharacterConversationCursor and CharacterConversationRow, specifies descending last_modified/created_at/conversation_id keyset ordering, and requires equal-timestamp and unchanged-page no-skip/no-repeat regressions.
-- Completed the semantic manifest example with local content authority, installed model artifact digest, chunk-configuration digest, and source content watermark. Compatibility, publication, and query checks now reject changed artifact bytes under the same model ID and changed source watermarks while retaining atomic ready-generation fencing and selected-content exclusions.
+- Completed the semantic manifest example with local content authority, installed model artifact digest, chunk-configuration digest, and source content watermark. Changed artifact bytes under the same model ID remain incompatible. Source-watermark rejection is limited to inconsistency with a generation’s captured/validated snapshot or ready-publication metadata; later source advancement uses per-conversation outbox/revision/digest fences so unchanged snapshot hits remain queryable, stale hits are suppressed, and incremental replay restores eligibility without a full rebuild.
 - Added durable data_authority_id to semantic index, saved, and draft configuration examples. Build/rebuild and lifecycle checks fail closed across active Data Profile changes and prevent reuse of another authority’s jobs or generations.
 - Rechecked ADR-120 and TASK-31241 acceptance wording; neither contradicted the approved spec, so no additional ADR or acceptance-criterion amendment was needed.
 - Scoped contract assertions, relative-link checks, git diff --check, and the repository backlog-ID guard passed. The correction diff remains documentation-only. Application tests were intentionally not rerun because runtime was unchanged.
