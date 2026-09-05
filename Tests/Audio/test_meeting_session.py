@@ -240,13 +240,10 @@ def test_stop_twice_is_a_no_op(tmp_path):
     assert first is second and capture.stops == 1
 
 
-def test_start_failure_sets_error_state(tmp_path):
+def test_start_failure_sets_error_state(tmp_path, monkeypatch):
     session, capture, built = _session(tmp_path)
-    FakeDictation.start_dictation = lambda self, **cb: False  # type: ignore[assignment]
-    try:
-        assert session.start() is False and session.state == "error"
-    finally:
-        del FakeDictation.start_dictation
+    monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **cb: False)
+    assert session.start() is False and session.state == "error"
 
 
 # ---- LocalMeetingSink ----------------------------------------------------
