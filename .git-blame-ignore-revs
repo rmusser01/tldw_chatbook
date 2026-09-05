@@ -184,3 +184,20 @@ e6148e29acf10fe1b74f6098bf8775136e1234e6
 # assertions touched. Filed in the SAME series that made the move, per the
 # gap wave 5 had to backfill for four earlier state PRs.
 f59db7c94dec199a5f3f418191febf050812a03a
+
+# Wave-6 task 2: prompts controller (prompts series 2/3). 139 of the 161
+# "prompt"-named LibraryScreen methods relocated byte-for-byte into
+# LibraryPromptsController (UI/Library_Modules/library_prompts_controller.py),
+# each replaced by a one-line screen delegator; the 22 exclusions stay on
+# the screen untouched. The largest single move of this program. Verified
+# by tooling rather than by eye: every moved segment was extracted by its
+# ORIGINAL line offset and re-compared after assembly -- 139/139 identical
+# as raw text AND as a normalized ast dump, with all 22 excluded methods
+# byte-identical too. The only non-move lines in the commit are the
+# born-lazy controller import, its construction site, the two size-ratchet
+# re-pins, the derived diagnostic-inventory regeneration (9 logger
+# statements relocated, digest-for-digest identical), and a same-commit
+# owner retarget of the two test_prompt_review_docstrings.py parametrize
+# rows (assertions byte-for-byte unchanged) that a delegator's absent
+# docstring makes loudly RED at this exact boundary.
+d0ec95b16f17668af9e32725eed788aeeed1d991
