@@ -17,11 +17,11 @@ const LIMITS = Object.freeze({
   timers: 64,
   timerFiresPerSecond: 100,
   listeners: 500,
-  patchesPerEvent: 1000,
+  patchesPerEvent: 500,
   mutationsPerSecond: 2000,
   bridgeRequestsPerOperation: 16,
   bridgeRequestsPerSecond: 32,
-  domNodes: 5000,
+  domNodes: 1800,
   scriptBytes: 256 * 1024,
   submitBytes: 16 * 1024,
   downloadBytes: 10 * 1024 * 1024,
@@ -373,8 +373,8 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   const HTML = "http://www.w3.org/1999/xhtml";
   const SVG = "http://www.w3.org/2000/svg";
   const MAX = Object.freeze({
-    nodes: 5000,
-    patches: 1000,
+    nodes: 1800,
+    patches: 500,
     listeners: 500,
     timers: 64,
     bridges: 16,

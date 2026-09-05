@@ -731,6 +731,68 @@ current/maximum values. Chatbook never silently deletes committed history.
 Repeated identical full documents may be deduplicated later by digest without
 changing revision semantics; V1 does not require content-addressed storage.
 
+### 13.1 Measured V1 defaults
+
+Task 7.2 froze the initial runtime defaults using
+`scripts/canvas_runtime_quota_probe.py`. The fixtures are deterministic,
+agent-authored synthetic pages; no live provider output, user content, source,
+runtime messages, credentials, or tokens are retained. This is one-host
+qualification, not a multi-platform benchmark: macOS 26.5.2 arm64, Python
+3.12.11, Chromium 145.0.7632.6, Playwright 1.58.0, Textual 8.2.8,
+html5lib 1.1, and tinycss2 1.5.1.
+
+The 15-sample compiler arm produced the following content-free measurements.
+Plan expansion is serialized typed-plan bytes divided by UTF-8 source bytes.
+
+| Synthetic fixture | Source / plan | Expansion | Nodes / CSS / script | Compile median / p95 / max |
+| --- | ---: | ---: | ---: | ---: |
+| Representative cards (small) | 2,353 B / 11,248 B | 4.78x | 127 / 2 / 171 B | 1.503 / 2.125 / 2.125 ms |
+| Representative cards (large) | 10,341 B / 52,741 B | 5.10x | 607 / 2 / 171 B | 7.222 / 7.692 / 7.692 ms |
+| Combined adversarial ceiling | 328,883 B / 454,811 B | 1.38x | 1,800 / 900 / 256 KiB | 83.857 / 97.181 / 97.181 ms |
+| DOM ceiling | 43,857 B / 167,115 B | 3.81x | 1,800 / 0 / 0 B | 41.197 / 53.878 / 53.878 ms |
+| CSS ceiling | 22,919 B / 25,971 B | 1.13x | 3 / 900 / 0 B | 14.545 / 25.032 / 25.032 ms |
+| Script ceiling | 262,215 B / 262,569 B | 1.00x | 3 / 0 / 256 KiB | 9.333 / 9.540 / 9.540 ms |
+
+Exact one-over fixtures returned `dom-limit`, `css-rule-limit`, and
+`script-limit`. Earlier candidate measurements rejected 5,000 nodes (207.840
+ms median), the combined 5,000-node/2,000-rule/256-KiB ceiling (370.544 ms),
+and even a 2,000-node/1,000-rule/256-KiB candidate (98.299 ms median, 101.556
+ms maximum in 12 fresh interpreters). The frozen defaults are therefore 1,800
+DOM nodes and 900 CSS rules, retaining the 256-KiB script ceiling. Compilation
+still belongs off the UI/event loop; the measured ceiling is a conservative
+budget, not permission to block an interactive caller.
+
+Five real-Chromium samples used the production renderer and pinned QuickJS
+worker. Median/p95 were 1.6/2.0 ms for representative generated startup,
+251.4/251.4 ms for a 250-ms runaway-startup interrupt, 55.0/57.4 ms end to end
+for a 50-ms runaway-event interrupt, and 17.2/18.8 ms to validate and commit
+500 patches. A 501-patch event failed with `patch-limit`; 500 patches completed
+at a measured median 29,070 patches/s. The combined near-limit plan's trusted
+WASM/plan preparation was 76.3/78.2 ms and generated startup was 4.4/4.7 ms.
+These clocks are separate from the 10-second trusted worker preparation and
+native image-decode deadlines.
+
+A trusted direct-engine arm, which is not exposed to generated code, measured
+86,214 bytes of QuickJS memory before allocation and 16,863,782 bytes after an
+accepted 16-MiB typed-array allocation under the retained 32-MiB heap ceiling;
+a single 32-MiB allocation was refused. Under the retained 512-KiB stack
+ceiling, recursion depth 1,819 completed and 1,820 was refused in a 10.6-ms
+binary-search probe. The production-facade heap-pressure fixture failed closed
+as `runtime-error` (142.4/144.8 ms median/p95); that status is termination
+evidence, not a claim that the public failure code distinguishes OOM.
+
+Comparable warmed Chromium process-tree RSS was 700.469 MiB for a blank page,
+941.000 MiB with the trusted runtime, 971.859 MiB for the large representative
+page, and 1,021.156 MiB for the combined near-limit page. These are sums across
+owned Chromium processes on macOS, where shared pages may be counted more than
+once. They are not Canvas-only resident memory and do not prove the QuickJS
+heap ceiling. No browser-memory security ceiling was raised from these results.
+
+The resulting reduced defaults are 1,800 DOM nodes, 900 CSS rules, and 500
+patches per operation. All other fixed V1 runtime ceilings are retained. Python,
+the worker, the private virtual facade, and the renderer carry matching values,
+and runtime-asset integrity metadata is regenerated and checked after changes.
+
 ## 14. Export and Import
 
 Canvas-bearing exports use Chatbook archive format 3.0. Archives without

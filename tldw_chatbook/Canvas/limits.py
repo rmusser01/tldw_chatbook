@@ -37,14 +37,16 @@ class CanvasLimits:
     html_bytes: int = 512 * 1024
     asset_bytes: int = 1024 * 1024
     aggregate_asset_bytes: int = 4 * 1024 * 1024
-    dom_nodes: int = 5_000
-    css_rules: int = 2_000
+    # Task 7.2's single-host qualification retained practical margin below the
+    # 100 ms compiler worker threshold at the combined source ceilings.
+    dom_nodes: int = 1_800
+    css_rules: int = 900
     script_bytes: int = 256 * 1024
     runtime_memory_bytes: int = 32 * 1024 * 1024
     stack_bytes: int = 512 * 1024
     startup_milliseconds: int = 250
     event_milliseconds: int = 50
-    patches_per_event: int = 1_000
+    patches_per_event: int = 500
     submit_payload_bytes: int = 16 * 1024
     json_depth: int = 16
     download_payload_bytes: int = 10 * 1024 * 1024

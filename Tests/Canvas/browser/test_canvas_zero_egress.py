@@ -860,6 +860,14 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
                     "window.__canvasHarness.status.state === 'failed'", timeout=10_000
                 )
                 status = page.evaluate("window.__canvasHarness.status")
+            elif case["expected"] == "failed-after-five-clicks":
+                assert status["state"] == "ready", case["name"]
+                for _ in range(5):
+                    frame.locator("#attack").click(no_wait_after=True)
+                page.wait_for_function(
+                    "window.__canvasHarness.status.state === 'failed'", timeout=10_000
+                )
+                status = page.evaluate("window.__canvasHarness.status")
             elif case["expected"] == "failed-after-ready":
                 assert status["state"] == "ready", case["name"]
                 page.wait_for_function(

@@ -71,7 +71,7 @@ dimensions. SVG animation and link elements are not supported.
 | Aggregate decoded image pixels | 16,777,216 px |
 | Image frames | 1; GIF/APNG/WebP animation is rejected |
 | Native image decode | 1 s each / 3 s total preparation |
-| DOM nodes / CSS rules / generated script text | 5,000 / 2,000 / 256 KiB |
+| DOM nodes / CSS rules / generated script text | 1,800 / 900 / 256 KiB |
 | Node/asset/patch/bridge identifier | 256 UTF-8 bytes |
 | Event value / event key | 16 KiB / 64 UTF-8 bytes |
 | QuickJS heap / stack | 32 MiB / 512 KiB |
@@ -81,12 +81,34 @@ dimensions. SVG animation and link elements are not supported.
 | Live timers / timer firings | 64 / 100 per second |
 | One timer delay | 2,147,483,647 ms |
 | Event listeners / queued native events | 500 / 100 |
-| Typed patches / accepted mutations | 1,000 per operation / 2,000 per second |
+| Typed patches / accepted mutations | 500 per operation / 2,000 per second |
 | Typed bridge requests | 16 per operation / 32 per second |
 | Submit request / download request | 16 KiB / 10 MiB JSON |
 | JSON structural depth | 16 |
 | QuickJS console | 100 entries and 16 KiB total text |
 | One worker transaction / one renderer plan or message | 12 MiB |
+
+The DOM, CSS-rule, and per-operation patch ceilings were reduced after the
+single-host Task 7.2 qualification. The remaining ceilings were retained; no
+security ceiling was raised. The reproducible probe uses only explicitly
+identified, agent-authored synthetic documents and does not call or sample an
+LLM provider.
+
+## What users see when a quota is exceeded
+
+| Exceeded boundary | Result visible to the user |
+| --- | --- |
+| Source bytes, DOM nodes, CSS rules, script bytes, asset count/bytes/pixels/frames, or unsupported image decode | The document is refused before it can render or stage. The Canvas error identifies the bounded category and offers the normal repair path; no partial preview is committed. |
+| Conversation Canvas count, revision count, committed bytes, or staged bytes | The create/update is refused. Existing committed Canvases and history remain unchanged; Chatbook never deletes history to make room. |
+| QuickJS heap or stack | The worker is discarded, the last inert committed preview remains, and Canvas reports that scripts are disabled for the load. No native-JavaScript fallback runs. |
+| Generated startup, event, timer, or pending-job budget | Canvas stops the worker and reports a bounded runtime-timeout/job failure. The shell stays responsive and the inert document remains available. Trusted WASM loading and native image preparation use their separate, longer clocks shown above. |
+| Timer, listener, event-queue, patch, mutation-rate, or bridge-rate budget | The operation fails closed. A rejected patch transaction is all-or-nothing, so none of that operation's DOM mutations appear; scripts are disabled for the load. |
+| Submit bytes/JSON depth or download bytes/type | No confirmation or host effect occurs. The invalid bridge request is refused inside the disposable worker and the user sees the bounded Canvas failure state. |
+| Browser delivery cache or frame-capability capacity | The affected load is unavailable or must be retried; another conversation or Canvas is never substituted. |
+
+These messages deliberately omit generated source and arbitrary runtime output.
+Safe category, current size/count where available, and maximum are sufficient
+for an assistant-authored repair without putting document contents into logs.
 
 Plans and worker transactions use two phases. A complete plan is decoded and
 validated as detached assets, CSS, and DOM before one live commit. A complete

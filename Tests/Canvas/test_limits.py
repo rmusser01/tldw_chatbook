@@ -105,14 +105,14 @@ def test_runtime_limits_have_the_documented_canvas_v1_values() -> None:
     assert limits.html_bytes == 512 * 1024
     assert limits.asset_bytes == 1024 * 1024
     assert limits.aggregate_asset_bytes == 4 * 1024 * 1024
-    assert limits.dom_nodes == 5_000
-    assert limits.css_rules == 2_000
+    assert limits.dom_nodes == 1_800
+    assert limits.css_rules == 900
     assert limits.script_bytes == 256 * 1024
     assert limits.runtime_memory_bytes == 32 * 1024 * 1024
     assert limits.stack_bytes == 512 * 1024
     assert limits.startup_milliseconds == 250
     assert limits.event_milliseconds == 50
-    assert limits.patches_per_event == 1_000
+    assert limits.patches_per_event == 500
     assert limits.submit_payload_bytes == 16 * 1024
     assert limits.json_depth == 16
     assert limits.download_payload_bytes == 10 * 1024 * 1024
@@ -184,8 +184,8 @@ def test_data_url_rejects_malformed_base64_and_unknown_parameters() -> None:
 @pytest.mark.parametrize(
     ("field_name", "count", "limit"),
     [
-        ("DOM nodes", 5_000, 5_000),
-        ("CSS rules", 2_000, 2_000),
+        ("DOM nodes", 1_800, 1_800),
+        ("CSS rules", 900, 900),
         ("script bytes", 256 * 1024, 256 * 1024),
     ],
 )
@@ -198,8 +198,8 @@ def test_count_validation_accepts_exact_ceiling(
 @pytest.mark.parametrize(
     ("field_name", "count", "limit"),
     [
-        ("DOM nodes", 5_001, 5_000),
-        ("CSS rules", 2_001, 2_000),
+        ("DOM nodes", 1_801, 1_800),
+        ("CSS rules", 901, 900),
         ("script bytes", 256 * 1024 + 1, 256 * 1024),
     ],
 )

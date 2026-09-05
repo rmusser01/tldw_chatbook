@@ -138,9 +138,9 @@
   },
   {
     "name": "mutation_rate_limit",
-    "expected": "failed-after-three-clicks",
+    "expected": "failed-after-five-clicks",
     "expected_code": "mutation-rate-limit",
-    "script": "const node = document.getElementById('status'); document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 1000; index += 1) node.textContent = String(index); });"
+    "script": "const node = document.getElementById('status'); document.getElementById('attack').addEventListener('click', () => { for (let index = 0; index < 401; index += 1) node.textContent = String(index); });"
   },
   {
     "name": "dom_growth_hits_stricter_patch_limit",
