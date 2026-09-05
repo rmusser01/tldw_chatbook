@@ -8,9 +8,10 @@ This is targeted evidence, **not full-suite, release, or integration approval**.
 Latest scoped rereview (`648530ac6..03cd979df`) closes both remaining I2 DOM
 cases with spec and quality gates passing and no new Critical/Important
 fix-diff issue identified. Those final-review implementation findings are
-closed. TASK-31232 remains In Progress with AC9 open and AC10 checked: the
-subsequent six-baseline repair resolves its original six failures but identifies
-two additional pre-existing Canvas retry check failures, detailed below.
+closed. TASK-31232 remains In Progress pending the final retry scoped review.
+The six-baseline repair resolved its original six failures; the subsequent
+user-authorized retry correction now passes all 970 directly affected tests,
+including both newly identified retry failures. AC9 remains open until review.
 Details below preserve
 earlier findings chronologically rather than representing every historical
 finding as still open.
@@ -20,8 +21,8 @@ the scoped verdict passed. This does not waive AC9's six characterized
 baseline failures or authorize a full sweep.
 The user subsequently approved repair of those six baseline failures. Diagnosis
 reproduced all six in one isolated pytest run (6 failed, 1 warning, 5.94 s).
-The original six repaired cases now pass; independent review passed and
-two additional failures keep AC9 open. The scope is
+The original six repaired cases passed independent review. The user then
+authorized the two additional retry repairs recorded below. The scope remains
 those causes and directly affected regressions, not a full repository sweep.
 
 During that diagnosis, a direct Library descriptor import outside pytest
@@ -45,6 +46,84 @@ corrections recorded below; the clean task gate does not close these new gaps.
 TASK-31232 remains
 In Progress; its requirement that every selected suite passes is not satisfied
 by the baseline characterization below. No full repository sweep was authorized.
+
+## User-authorized retry correction
+
+Implementation: `5bba89d3a` (two Python paths). The static-only worker used
+`--no-verify`; root rechecked the configured hooks directory and found no
+installed `pre-commit` hook. No hook pass is claimed.
+
+The subsequent user approval covers the two retry cases and directly affected
+regressions. Planning commit `61a27e887` precedes the correction; ADR-115 applies.
+Fresh exact-two RED: **2 failed, 1 warning, 1.17 s**.
+
+Source-free test observations established that attempt 1 is discarded correctly
+and attempt 2 registers a distinct run, but its tool invocation returns
+`invalid_scope` before finish. The controller accepts the retry request yet marks
+the assistant failed; accepted alone is not completion evidence. The durable
+scope contains three path nodes: two saved messages with valid ownership,
+deletion state and parent chain, plus one native-only SYSTEM failure notice.
+The service correctly rejects that unsaved ID. This is a path-projection defect,
+not legitimate committed-stage cleanup or lost settlement bookkeeping.
+
+The correction is limited to excluding native-only SYSTEM notices from durable
+tool scope. Temporary paths, saved system messages, missing user/assistant
+origin rejection, quota admission and service validation must remain intact.
+All diagnostics were root-run under isolated pytest. Their intermediate results
+were 2 failed/1 warning/1.54 s and single failures/1 warning in 0.78 s, 0.98 s,
+0.93 s, 1.07 s and 0.91 s while improving only the source-free observations.
+An intervening 1.14 s diagnostic failed on a nonexistent fixture lookup method;
+it yielded no product evidence.
+
+Definitive RED/control run: **3 failed, 4 passed, 1 warning, 3.15 s**. The
+new durable-native-SYSTEM case failed at the actual tool rejection; both retry
+cases failed at the strengthened terminal-completion assertion. Persisted
+SYSTEM inclusion, temporary native-path preservation, and missing USER/ASSISTANT
+`invalid_scope` controls passed. All diagnostic scaffolding was removed.
+The first focused GREEN was **11 passed, 1 warning, 4.11 s**; root then removed
+an unnecessary candidate change to temporary alias handling before final checks.
+The final production change is only the six-line durable-native-SYSTEM guard;
+the existing persisted-ID-or-native fallback is unchanged.
+
+Final affected coverage: **970 passed, 2 warnings, 193.75 s**. This includes the
+original six baseline repairs, both retry failures, all five new scope cases,
+atomic rollback/restart assertions and surrounding Console/Canvas behavior.
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no \
+  Tests/Chatbooks/test_chatbook_thinking_round_trip.py \
+  Tests/Chat/test_console_chat_controller.py \
+  Tests/Chat/test_console_chat_store.py \
+  Tests/UI/test_settings_raw_cli.py \
+  Tests/Chat/test_console_trace_privacy_owners.py \
+  Tests/Chat/test_console_semantic_writer_routing.py \
+  Tests/Chat/test_console_canvas_controller.py \
+  Tests/Canvas/test_service.py Tests/Canvas/test_staging.py \
+  Tests/Agents/test_canvas_tool_provider.py
+```
+
+The warnings are the known Requests mismatch and descriptor growth of 207
+(start 25, end 232, limit 200). The earlier six-module run recorded growth of
+204; neither warning has been causally attributed, and this correction does
+not claim to fix resource cleanup. No browser, network, permission or runtime
+boundary changed. Prior live/browser/packaging evidence remains separately
+qualified below; test counts across overlapping runs must not be summed.
+After two formatting-only line joins in the new test, the final focused command
+passed **11 tests, 1 warning, 4.88 s**:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no \
+  Tests/Chat/test_console_chat_controller.py::test_canvas_scope_projects_only_native_system_rows_by_durability \
+  Tests/Chat/test_console_chat_controller.py::test_real_canvas_controller_allows_exact_failed_assistant_retry
+```
+
+Final two-path Ruff `(code, message)` Counters match `b125832cb`: 172/172 for
+the controller and 17/17 for its test, zero added/removed findings. No formatter
+diff overlaps changed ranges; inherited whole-file debt was not rewritten.
+Both-file `compileall` and `git diff --check` returned zero. The worker remains
+static-only; all executable tests and static orchestration were root-run without
+application imports. Independent scoped review remains pending; TASK-31232 AC9
+is not yet closed.
 
 ## User-authorized six-baseline repair evidence
 

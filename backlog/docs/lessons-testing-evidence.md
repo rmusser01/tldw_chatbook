@@ -11689,3 +11689,19 @@ test-function count. Use parameter IDs that do not collide with keyword-based
 suite gates; do not opt into external/live suites to rescue a local case.
 Independently parameterize distinct required failures when an earlier assertion
 would otherwise prevent a later one from running.
+
+## Accepted retry requests are not successful generation evidence
+
+Incident (TASK-31232 Canvas retry correction, 2026-09-05): two real-controller
+tests reported a missing committed settlement. Bounded lifecycle observations
+showed the second run never finished: `canvas_create` rejected `invalid_scope`,
+the synthetic bridge assertion raised, and the controller returned an accepted
+request with a failed assistant. The actual scope bug was a native-only SYSTEM
+failure notice being projected as a durable message ID. Both saved path nodes
+and the conversation owner were valid; changing settlement cleanup would have
+treated the downstream symptom rather than the cause.
+
+Rule: check terminal generation state and tool outcomes before diagnosing
+postcommit state. Native transcript paths may contain unsaved UI notices; test
+their projection separately from durable graph validation, without dropping
+missing user/assistant origins or weakening the validator.

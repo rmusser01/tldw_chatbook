@@ -727,10 +727,13 @@ ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sa
 Reason: restore or correctly verify existing exact-run settlement, atomic message/
 artifact commit, retry and staged-history cleanup contracts without new boundaries.
 
-- [ ] Reproduce both failing retry parameter cases, trace settlement ownership
+- [x] Reproduce both failing retry parameter cases, trace settlement ownership
   through failure, successful retry and persistence, and distinguish missing
   durable results from legitimate staging cleanup or stale test expectations.
-- [ ] Correct the cause with regression evidence while preserving stale-run
+  Source-free observation identified a native-only SYSTEM failure notice included
+  in the durable tool scope. Omit only that class of notice for durable sessions;
+  preserve persisted messages, temporary native paths and service validation.
+- [x] Correct the cause with regression evidence while preserving stale-run
   fencing, discarded failed revisions, atomic rollback and restart hydration.
 - [ ] Run the complete retry parameter group and affected Canvas/Console checks,
   static analysis and independent scoped review, then reconcile AC9 honestly.
