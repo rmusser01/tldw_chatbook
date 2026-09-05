@@ -41,6 +41,40 @@ async def settle(app, pilot):
 
 
 @pytest.mark.asyncio
+async def test_exclusive_workers_are_lazy_when_canceled_before_start(monkeypatch):
+    import inspect
+
+    from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
+
+    app = ResultsApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        region = app.query_one(ResultsRegion)
+        pending = []
+
+        def defer(work, **kwargs):
+            pending.append(work)
+
+        monkeypatch.setattr(region, "run_worker", defer)
+        try:
+            region.show_results(None, make_result(), stale_ids=frozenset())
+            region._inspect()
+            assert len(pending) >= 2
+            # A canceled-before-start worker never needs to close an eagerly
+            # created coroutine; no body exists until Textual actually starts it.
+            assert all(inspect.iscoroutinefunction(work) for work in pending)
+            await region.remove()
+            # A lazy worker may be started after its region was pruned; it must
+            # abandon preparation/publication without querying removed children.
+            for work in tuple(pending):
+                await work()
+        finally:
+            for work in pending:
+                if inspect.iscoroutine(work):
+                    work.close()
+
+
+@pytest.mark.asyncio
 async def test_ten_thousand_chunks_last_page_keyboard_selection_and_restore():
     from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
 

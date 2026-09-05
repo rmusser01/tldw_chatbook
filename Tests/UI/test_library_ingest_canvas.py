@@ -91,6 +91,41 @@ class _CanvasHost(ConsolidatedCSSApp):
         yield LibraryIngestCanvas(self._state, **kwargs)
 
 
+@pytest.mark.asyncio
+async def test_chunking_template_save_invalidates_mounted_picker_cache():
+    from tldw_chatbook.UI.Chunking_Lab_Modules import ChunkingTemplatesChanged
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        INGEST_CHUNK_TEMPLATE_PICKER_ID,
+    )
+
+    assert hasattr(LibraryIngestCanvas, "invalidate_chunk_templates")
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _CanvasHost(state)
+    names = ["before"]
+
+    class Catalog:
+        async def list_templates(self, *, mode):
+            assert mode == "local"
+            return [{"name": name} for name in names]
+
+    host.rag_admin_scope_service = Catalog()
+    async with host.run_test() as pilot:
+        canvas = host.query_one(LibraryIngestCanvas)
+        await canvas._fetch_chunk_templates()
+        picker = canvas.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}", Select)
+        picker.value = "before"
+        await pilot.pause()
+        names.append("after")
+        canvas.post_message(ChunkingTemplatesChanged(1, 2))
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        assert canvas._chunk_template_names == ["before", "after"]
+        assert picker.value == "before"
+        picker.value = "after"
+        await pilot.pause()
+        assert picker.value == "after"
+
+
 class _QueuePanelHost(ConsolidatedCSSApp):
     """Mount only the real queue panel with the shipped app stylesheet."""
 

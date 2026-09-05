@@ -1416,6 +1416,8 @@ class LibraryScreen(BaseAppScreen):
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
     BUNDLED_CSS = """
+    LibraryScreen #library-chunking-tools { height: 1; }
+    LibraryScreen #library-chunking-tools Button { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli
@@ -14456,6 +14458,9 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
+        with Horizontal(id="library-chunking-tools"):
+            yield Button("Chunking Lab", id="library-open-chunking-lab", compact=True)
+            yield Button("Try selected text", id="library-chunking-selected", compact=True)
         lifecycle_status_copy = self._library_lifecycle_status_copy()
         lifecycle_status = Static(
             lifecycle_status_copy,
@@ -42169,6 +42174,40 @@ class LibraryScreen(BaseAppScreen):
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         return self._conversations_controller.use_selected_conversation_as_source(event)
 
+    def open_chunking_lab(self, *, use_selected: bool = False) -> None:
+        """Open the local tool directly, with only a local media ID as context."""
+        context = {"return_route": "library"}
+        if use_selected:
+            reader = self._library_media_reader_session
+            if reader.external_detail:
+                self.app_instance.notify(
+                    "Chunking Lab uses local extracted text. Copy server text explicitly or choose a local Library item.",
+                    severity="warning",
+                )
+                return
+            media_id = reader.loaded_backing_id
+            if (
+                type(media_id) is not int
+                or media_id < 1
+                or reader.pending_request is not None
+            ):
+                self.app_instance.notify(
+                    "Open a local media item with extracted text first.",
+                    severity="warning",
+                )
+                return
+            context["local_media_id"] = media_id
+        self.app_instance.post_message(NavigateToScreen("chunking_lab", context))
+
+    @on(Button.Pressed, "#library-open-chunking-lab")
+    def open_chunking_lab_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.open_chunking_lab()
+
+    @on(Button.Pressed, "#library-chunking-selected")
+    def selected_chunking_lab_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.open_chunking_lab(use_selected=True)
 
     def _open_selected_media_handoff(self) -> None:
         """Stage the media item open in the viewer into Console via the shared handoff.

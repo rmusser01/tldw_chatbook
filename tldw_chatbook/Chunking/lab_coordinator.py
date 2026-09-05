@@ -83,6 +83,11 @@ class LabCoordinator:
     def save_status(self) -> SaveStatus:
         return self._writer.status
 
+    @property
+    def recovery_warning(self) -> str | None:
+        """Expose the existing content-free previous-checkpoint fallback warning."""
+        return self._writer.recovery_warning
+
     def subscribe(self, callback: Callable[[LabEvent], None]) -> Callable[[], None]:
         """Subscribe to small copied events; returned function detaches on unmount."""
         self._subscribers.add(callback)

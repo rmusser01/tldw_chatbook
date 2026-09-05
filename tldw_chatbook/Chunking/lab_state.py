@@ -379,11 +379,100 @@ def replace_template(
         record_fields=record_fields,
         expected_record=expected_record,
     )
-    return _with_candidate_draft(
+    changed = _with_candidate_draft(
         session,
         candidate_id,
         draft,
         undo_draft=candidate["draft"],
+    )
+    candidates = dict(changed.candidates)
+    candidates[candidate_id] = {
+        **candidates[candidate_id],
+        "draft_generation": str(uuid.uuid4()),
+    }
+    return changed.model_copy(update={"candidates": candidates})
+
+
+def edit_record_fields(
+    session: LabSession, candidate_id: str, changes: dict
+) -> LabSession:
+    """Edit authored record fields without changing JSON/control authority.
+
+    Args:
+        session: Current immutable session.
+        candidate_id: Editable B identity.
+        changes: Name, description and/or tags to merge.
+
+    Returns:
+        Detached, undoable authoring transition.
+    """
+    if set(changes) - {"name", "description", "tags"}:
+        raise ValueError("Unknown template record field")
+    for key, value in changes.items():
+        if key == "tags":
+            if not isinstance(value, list) or any(
+                not isinstance(tag, str) for tag in value
+            ):
+                raise ValueError("Tags must be a list of text")
+        elif not isinstance(value, str):
+            raise ValueError("Record fields must be text")
+    candidate = _require_b(session, candidate_id)
+    previous = _draft(candidate)
+    fields = {**previous.record_fields, **json.loads(canonical_json(changes))}
+    draft = DraftState.model_validate(
+        {**previous.model_dump(mode="json"), "record_fields": fields}
+    )
+    return _with_candidate_draft(
+        session, candidate_id, draft, undo_draft=candidate["draft"]
+    )
+
+
+def associate_saved_record(
+    session: LabSession,
+    candidate_id: str,
+    record: dict,
+    *,
+    captured_draft: dict,
+    captured_generation: str | None = None,
+) -> LabSession:
+    """Associate an actual save only with its originating draft lineage.
+
+    Newer authored values and undo remain intact. The association changes recovery
+    metadata only; captured runs never read it retroactively.
+
+    Args:
+        session: Latest session, potentially edited while saving.
+        candidate_id: Editable B identity captured before saving.
+        record: Successful catalog result.
+        captured_draft: Draft from the save request.
+        captured_generation: Candidate draft_generation captured with that draft.
+
+    Returns:
+        A detached identity association preserving newer edits.
+
+    Raises:
+        ValueError: If a different template was loaded/imported while saving.
+    """
+    candidate = _require_b(session, candidate_id)
+    previous = _draft(candidate)
+    if candidate.get(
+        "draft_generation"
+    ) != captured_generation or previous.expected_record != captured_draft.get(
+        "expected_record"
+    ):
+        raise ValueError(
+            "The save completed, but the draft was replaced; reload its saved record explicitly"
+        )
+    expected = {key: record[key] for key in ("id", "uuid", "version")}
+    draft = DraftState.model_validate(
+        {**previous.model_dump(mode="json"), "expected_record": expected}
+    )
+    candidates = dict(session.candidates)
+    candidates[candidate_id] = {**candidate, "draft": draft.model_dump(mode="json")}
+    return _publish(
+        session,
+        update={"revision": session.revision + 1, "candidates": candidates},
+        content=False,
     )
 
 
@@ -503,12 +592,10 @@ def _template_record(candidate: dict) -> dict | None:
         record = candidate.get("template_record")
         return None if record is None else json.loads(json.dumps(record))
     draft = _draft(candidate)
-    if draft.expected_record is None:
-        return None
     record = {
-        key: draft.expected_record[key]
+        key: (draft.expected_record or {})[key]
         for key in ("id", "uuid", "version")
-        if key in draft.expected_record
+        if key in (draft.expected_record or {})
     }
     record.update(
         {

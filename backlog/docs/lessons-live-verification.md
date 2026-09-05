@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## Send synthetic Paste through the app, not directly to TextArea
+
+**TASK-31428, 2026-09-04.** The Chunking Lab viewport harness posted an
+unforwarded `events.Paste` directly to TextArea. Textual inserted it, bubbled
+the event to `App.on_event`, then forwarded it back to the focused TextArea,
+inserting it again. Depending on scheduling, Run captured the first insertion
+and Pin correctly refused the later doubled sample as stale. The captured hash
+`3cc894cc23cca5b36707b14e37ee4c59905b1dc276a3892619b9364ea796a3a0`
+matched the intended sample; current hash
+`895e98e9a2050a04891df2b276b4884983d0054182ea74c988a639e5ea7de382`
+matched that exact sample concatenated with itself. Posting Paste to the app,
+which performs the normal driver forwarding, removed the extra insertion.
+
+**What to do.** Inject driver events at the app boundary and assert exact text
+before executing. A synthetically doubled paste is a fixture defect, not grounds
+to weaken a production stale-result guard. Wait for the Lab-owned render workers
+and assert the editor is enabled/focused first: the load-complete event can precede
+the initial render. A later failed-write transfer fixture injected text into that
+disabled editor and exported an empty sample until the readiness/exact-copy
+preconditions were made explicit.
+
 Traps found by running the app and talking to a real server, which the test suite
 structurally could not surface. Every entry states the incident that produced it.
 

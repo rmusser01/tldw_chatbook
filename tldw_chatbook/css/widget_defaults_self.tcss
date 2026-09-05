@@ -37,6 +37,25 @@
     }
 
 
+/* ===== WIDGET: LabDialog (UI/Chunking_Lab_Modules/dialogs.py) ===== */
+
+    LabDialog { align: center middle; background: $background 70%; }
+    LabDialog > VerticalScroll { width: 70; max-width: 96%; height: auto; max-height: 90%; padding: 1 2; background: $surface; border: solid $primary; }
+    LabDialog Static { height: auto; }
+    LabDialog Input { width: 100%; }
+    LabDialog Horizontal { height: auto; }
+    LabDialog Button { width: auto; min-width: 12; }
+
+
+/* ===== WIDGET: EditorRegion (UI/Chunking_Lab_Modules/editor_region.py) ===== */
+
+    EditorRegion { height: 1fr; min-height: 0; padding: 0 1; }
+    EditorRegion Static { height: auto; }
+    EditorRegion Input, EditorRegion Select { width: 100%; }
+    EditorRegion TextArea { height: 12; min-height: 6; }
+    EditorRegion Button { min-width: 12; width: auto; }
+
+
 /* ===== WIDGET: ResultsRegion (UI/Chunking_Lab_Modules/results_region.py) ===== */
 
     ResultsRegion { height: 1fr; min-height: 18; background: $background; }
@@ -57,6 +76,13 @@
     ResultsRegion #chunk-inspector { height: 1fr; min-height: 3; border: round $surface-lighten-1; }
     ResultsRegion #chunk-inspector:focus { border: round $accent; }
     ResultsRegion #text-page { width: 18; height: 3; content-align: center middle; }
+
+
+/* ===== WIDGET: SampleRegion (UI/Chunking_Lab_Modules/sample_region.py) ===== */
+
+    SampleRegion { height: 1fr; min-height: 0; padding: 0 1; }
+    SampleRegion Static { height: auto; }
+    SampleRegion TextArea { height: 1fr; min-height: 4; }
 
 
 /* ===== WIDGET: ConsoleDispatchRecoveryRegion (UI/Console_Modules/dispatch_recovery.py) ===== */
@@ -762,6 +788,25 @@
     }
 
 
+/* ===== WIDGET: ChunkingLabScreen (UI/Screens/chunking_lab_screen.py) ===== */
+
+    ChunkingLabScreen #lab-title, ChunkingLabScreen #lab-status, ChunkingLabScreen #lab-message { height: auto; padding: 0 1; }
+    ChunkingLabScreen #lab-title { text-style: bold; background: $surface; }
+    ChunkingLabScreen #lab-controls, ChunkingLabScreen #lab-actions { height: 3; }
+    ChunkingLabScreen #lab-controls Button, ChunkingLabScreen #lab-actions Button { min-width: 8; width: auto; padding: 0 1; }
+    ChunkingLabScreen #lab-menu-slot { width: 1fr; min-width: 20; height: 3; }
+    ChunkingLabScreen #lab-menu { width: 100%; }
+    ChunkingLabScreen #lab-work { height: 1fr; min-height: 0; }
+    ChunkingLabScreen #lab-inputs { width: 2fr; height: 1fr; min-width: 0; }
+    ChunkingLabScreen #lab-results-scroll { width: 3fr; height: 1fr; min-width: 0; min-height: 0; }
+    ChunkingLabScreen ResultsRegion { width: 1fr; height: 1fr; min-width: 0; }
+    ChunkingLabScreen.-narrow #lab-inputs, ChunkingLabScreen.-narrow #lab-results-scroll { width: 1fr; }
+    ChunkingLabScreen.-narrow #lab-actions { height: 1; }
+    ChunkingLabScreen.-narrow ResultsRegion { height: 20; min-height: 20; }
+    ChunkingLabScreen.-narrow #result-tables { height: 7; min-height: 7; }
+    ChunkingLabScreen.-narrow #chunk-inspector { height: 5; min-height: 5; }
+
+
 /* ===== WIDGET: LabModeStrip (UI/Screens/lab_mode_strip.py) ===== */
 
     LabModeStrip {
@@ -795,6 +840,8 @@
 
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
+    LibraryScreen #library-chunking-tools { height: 1; }
+    LibraryScreen #library-chunking-tools Button { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli

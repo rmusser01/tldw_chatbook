@@ -310,14 +310,20 @@ class ResultsRegion(Widget):
         a, b = self._results.values()
 
         async def prepare() -> None:
+            if not self.is_mounted or not self.query("#comparison-status"):
+                return
             prepared = await asyncio.to_thread(_prepare, a, b)
-            if generation != self._generation:
+            if (
+                generation != self._generation
+                or not self.is_mounted
+                or not self.query("#comparison-status")
+            ):
                 return
             self._prepared = prepared
             self._refresh_results()
             self._inspect()
 
-        self.run_worker(prepare(), group="result-statistics", exclusive=True)
+        self.run_worker(prepare, group="result-statistics", exclusive=True)
 
     def _side(self) -> str:
         active = self._view["active_view"]
@@ -595,8 +601,14 @@ class ResultsRegion(Widget):
             return chunk["text"], label, None, linked
 
         async def update() -> None:
+            if not self.is_mounted or not self.query("#mapping-status"):
+                return
             document, label, highlight, linked = await asyncio.to_thread(inspect)
-            if inspection != self._inspection:
+            if (
+                inspection != self._inspection
+                or not self.is_mounted
+                or not self.query("#mapping-status")
+            ):
                 return
             self._document, self._highlight = document, highlight
             self._text_page = highlight[0] // TEXT_PAGE_SIZE if highlight else 0
@@ -605,7 +617,7 @@ class ResultsRegion(Widget):
             self._render_table(other_side)
             self._paint_text()
 
-        self.run_worker(update(), group="result-inspection", exclusive=True)
+        self.run_worker(update, group="result-inspection", exclusive=True)
 
     def _paint_text(self) -> None:
         pages = max(1, (len(self._document) + TEXT_PAGE_SIZE - 1) // TEXT_PAGE_SIZE)
