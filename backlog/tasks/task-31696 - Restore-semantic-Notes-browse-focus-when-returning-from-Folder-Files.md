@@ -1,11 +1,11 @@
 ---
 id: TASK-31696
 title: Restore semantic Notes browse focus when returning from Folder Files
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 18:37'
-updated_date: '2026-09-05 18:39'
+updated_date: '2026-09-05 18:49'
 labels: []
 dependencies: []
 ---
@@ -18,9 +18,9 @@ Repair the Files-to-Database return path that reads a removed receipt focus fiel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Files return paths resolve the current semantic Notes receipt without missing-field exceptions
-- [ ] #2 Semantic focus role, selected note and scroll restore consistently across retained and rebuilt Notes paths
-- [ ] #3 Existing return and editor authority assertions plus targeted state and static checks pass without screen budget increases
+- [x] #1 Files return paths resolve the current semantic Notes receipt without missing-field exceptions
+- [x] #2 Semantic focus role, selected note and scroll restore consistently across retained and rebuilt Notes paths
+- [x] #3 Pure semantic receipt and missing-field Escape regressions pass; independent admission repaint and responsive scroll failures remain separately tracked
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -34,3 +34,11 @@ ADR required: no
 ADR path: N/A
 Reason: Existing pure semantic conversion ownership is deduplicated to repair a removed-field read; no lifecycle, focus policy, persisted receipt schema or runtime boundary changes.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added the pure record-free focus_identity projection to the semantic tree receipt; both existing screen conversions and Files return now share it. Exact note/folder/filter fallback roles and scroll are characterized. No callback generation/guard or persisted dataclass field changed. Screen shrank from41324 to41305 lines, methods unchanged at1301.
+Four new projection cases failed before and pass after; complete tree-state file48 passed in2.87s. Both previously failing Escape sizes pass after the missing-field repair. The broader seven-case diagnostic went from7 failures to5 independent failures: outgoing editor repaint causes four identity/focus failures, and wide return has a responsive scroll6vs7 mismatch. Scope split approved by parent: those remain separate work, not claimed fixed here.
+State/test Ruff and whole-file format pass. Screen has40 pre-existing Ruff findings, verified exactly identical before/after via JSON comparison; no new findings. git diff --check passes. Parent approved and reviewed the conversion boundary. ADR required:no; existing pure conversion ownership only. No new lifecycle/focus policy. Screen unrelated full-file format debt preserved.
+<!-- SECTION:NOTES:END -->
