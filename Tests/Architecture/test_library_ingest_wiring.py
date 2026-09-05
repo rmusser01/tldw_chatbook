@@ -148,9 +148,15 @@ _INGEST_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: 1 staticmethod), 23 were kept for a genuine external caller (an
 #: excluded, still-screen-resident method calling `self.<name>()`, or a
 #: test calling/patching the screen delegator directly) and 6 had none --
-#: this 6-of-29 (~21%) prune fraction sits within the export/skills/
-#: search+RAG/collections/conversations series' own recorded range
-#: (~5%-~30%).
+#: a 6-of-56 (~11%) prune fraction, at the LOW end of the export/skills/
+#: collections/search+RAG/conversations series' own recorded range
+#: (~5%-~30%). The denominator is the TOTAL mover count, matching how
+#: every endpoint of that range is computed (export 1-of-22, skills
+#: 16-of-86, collections 14-of-64, search+RAG 12-of-42, conversations
+#: 18-of-61) -- an earlier draft of this comment quoted 6-of-29 (~21%)
+#: against the same range, comparing a census-eligible denominator with
+#: total-mover ones. Source: task-3 report §4 ("Delegator census -- 50
+#: KEEP, 6 PRUNED").
 _INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
         "_adopt_library_ingest_path",
