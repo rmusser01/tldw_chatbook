@@ -12006,3 +12006,14 @@ Inject faults after the actual boundary whose recovery semantics the test claims
 and assert that boundary's state before throwing. Crossing this checkpoint does
 not prove gateway entry: the warned-retry regression still asserts zero gateway
 calls before explicit retry and one afterward.
+
+**TASK-31754 follow-up.** The related real checkpoint-failure test exposed a
+different bug: the direct stream handler attempted a terminal assistant write
+while the checkpoint was still `accepted` and the gateway call count was zero.
+Matching the original callback exception by identity looked sufficient until
+inspection showed the production worker sanitizes it into a new
+`ChatProviderError`. Both immediate and transformed-error regressions failed on
+the premature write; a normal post-dispatch provider-error control passed. The
+repair tracks the local callback outcome across that sanitization boundary,
+resetting it on each attempt and success, while leaving normal provider failure,
+typed exceptions, cancellation, and cleanup paths intact.

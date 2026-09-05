@@ -21,6 +21,7 @@ from Tests.Chat.test_console_durable_turn_fix_round1 import (
     _install_real_effect_failure,
 )
 from Tests.Chat.test_console_first_send_atomicity import _controller
+from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
@@ -45,6 +46,102 @@ _PRE_PROVIDER_POSTCOMMIT_EFFECTS = (
     "preparation_publication",
     "checkpoint_transition",
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_phase", ("immediate_checkpoint", "deferred_checkpoint", "provider")
+)
+async def test_dispatch_callback_failure_is_not_a_provider_terminal_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, failure_phase: str
+) -> None:
+    db, store, controller, gateway = _controller(tmp_path)
+    try:
+        terminal_writes = []
+        original_mark_failed = store.mark_message_failed
+
+        def mark_failed(message_id, *args, **kwargs):
+            terminal_writes.append(message_id)
+            return original_mark_failed(message_id, *args, **kwargs)
+
+        monkeypatch.setattr(store, "mark_message_failed", mark_failed)
+        if failure_phase != "provider":
+            counts = _install_real_effect_failure(
+                controller, store, "checkpoint_transition", monkeypatch
+            )
+        if failure_phase != "immediate_checkpoint":
+            original_stream = gateway.stream_chat
+
+            async def deferred_stream(resolution, messages, **kwargs):
+                callback = kwargs.pop("before_provider_dispatch", None)
+                if callback is not None:
+                    try:
+                        await callback()
+                    except Exception:
+                        # The real worker replaces the callback exception
+                        # with a sanitized provider error on the event loop.
+                        raise ChatProviderError("sanitized callback failure") from None
+                if failure_phase == "provider":
+                    gateway.calls += 1
+                    raise ChatProviderError("ordinary provider failure")
+                async for chunk in original_stream(resolution, messages, **kwargs):
+                    yield chunk
+
+            monkeypatch.setattr(
+                gateway, "deferred_dispatch_boundary", True, raising=False
+            )
+            monkeypatch.setattr(gateway, "stream_chat", deferred_stream)
+
+        first = await controller.submit_draft("retained body", session_id="session-1")
+
+        assert first.accepted
+        if failure_phase == "provider":
+            assert first.provider_started
+            assert gateway.calls == 1
+            assert terminal_writes == [first.assistant_message_id]
+            assistant = store.get_message(first.assistant_message_id)
+            assert assistant.status == "failed"
+            assert assistant.content == ""
+            assert (
+                controller.run_state_for("session-1").status is ConsoleRunStatus.FAILED
+            )
+            assert (
+                db.get_connection()
+                .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+                .fetchone()[0]
+                == 0
+            )
+            return
+
+        assert terminal_writes == []
+        assert first.provider_started is False
+        assert gateway.calls == 0
+        assert counts == {"attempts": 1, "successes": 0}
+        checkpoint = (
+            db.get_connection()
+            .execute("SELECT state FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert checkpoint["state"] == "accepted"
+        _assert_exact_postcommit_recovery(
+            controller, assistant_message_id=first.assistant_message_id
+        )
+
+        retried = await controller.retry_dispatch_recovery("session-1")
+
+        assert retried.accepted
+        assert retried.user_message_id == first.user_message_id
+        assert retried.assistant_message_id == first.assistant_message_id
+        assert counts == {"attempts": 2, "successes": 1}
+        assert gateway.calls == 1
+        assert terminal_writes == []
+        assert store.get_message(first.assistant_message_id).status == "complete"
+        assert store.dispatch_recovery_for_session("session-1") is None
+    finally:
+        await controller.shutdown()
+        with db.quiesce_connections(timeout_seconds=2):
+            pass
+        assert db.registered_connection_count() == 0
 
 
 def _assert_exact_postcommit_recovery(

@@ -21090,18 +21090,29 @@ class ConsoleChatController:
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
             project_thinking(thinking_capture.settle(outcome))
 
+        dispatch_boundary_failed = False
+
         async def enter_provider_dispatch() -> None:
-            await self._wait_for_trace_maintenance_dispatch()
-            self._trace_last_provider_activity = time.monotonic()
-            if before_provider_dispatch is not None:
-                await before_provider_dispatch()
-                return
-            if preparation_id is not None and not self._transition_preparation(
-                preparation_id,
-                ConsoleTurnPreparationState.ACCEPTED,
-                ConsoleTurnPreparationState.DISPATCH_STARTED,
-            ):
-                raise RuntimeError("Prepared turn changed before provider dispatch.")
+            nonlocal dispatch_boundary_failed
+            dispatch_boundary_failed = False
+            try:
+                await self._wait_for_trace_maintenance_dispatch()
+                self._trace_last_provider_activity = time.monotonic()
+                if before_provider_dispatch is not None:
+                    await before_provider_dispatch()
+                elif preparation_id is not None and not self._transition_preparation(
+                    preparation_id,
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ):
+                    raise RuntimeError(
+                        "Prepared turn changed before provider dispatch."
+                    )
+            except Exception:
+                dispatch_boundary_failed = True
+                raise
+            else:
+                dispatch_boundary_failed = False
 
         try:
             if self._teardown_refuses_turn(owner_id):
@@ -21374,6 +21385,10 @@ class ConsoleChatController:
         except TraceCallPersistenceError:
             raise
         except Exception as exc:
+            # Generic gateways sanitize callback exceptions across their worker
+            # boundary. Keep that failed admission out of provider settlement.
+            if dispatch_boundary_failed:
+                raise
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
