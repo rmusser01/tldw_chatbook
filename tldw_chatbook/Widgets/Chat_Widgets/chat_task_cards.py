@@ -98,9 +98,6 @@ class ChatTaskCards(Container):
             operation_rows: Current safe status projections keyed by canonical
                 local Watchlists receipt ID.
         """
-        approval_card = self.query_one(ChatApprovalCard)
-        install_card = self.query_one(SkillInstallConfirmCard)
-        script_card = self.query_one(SkillScriptConfirmCard)
         operations_container = self.query_one("#console-watchlists-operation-cards")
         resume_panel = self.query_one(ChatResumePanel)
 
@@ -109,27 +106,11 @@ class ChatTaskCards(Container):
         # "nothing pending" (task-914: the once-legacy non-batch shape
         # produced by no live caller was removed alongside its dead
         # single-approval card body).
-        approval = task_state.pending_approval
-        approval = approval if isinstance(approval, dict) else {}
-        approval_card.set_batch(
-            approval.get("calls") or [],
-            timeout_seconds=approval.get("timeout_seconds", 0.0),
-            # Task 9 fix round 1: round-trip the round's stamped id so
-            # a decision on THIS card resolves THIS round, never
-            # "whichever session is active" -- see
-            # `ConsoleChatController.resolve_pending_approval`.
-            round_id=approval.get("round_id"),
-            phase=str(approval.get("phase") or "approval"),
-            # ADR-090 (task 5): the payload-carried advisory summary -- the
-            # slot starts None and is filled by the advisory summarizer;
-            # payload carriage means any remount re-renders it.
-            summary=approval.get("summary"),
-        )
-        install_card.set_install(task_state.pending_skill_install)
-        script_card.set_script(task_state.pending_skill_script)
-        question_card = self._question_card(create=bool(task_state.pending_question))
-        if question_card is not None:
-            question_card.set_questions(task_state.pending_question)
+        # task-31384: one routing table, kind -> (state field, card, setter).
+        # Each card keeps its own round-identity guard, so a re-sync for an
+        # unrelated field never rebuilds a card the user is mid-decision on.
+        for field, card in self._routes(task_state):
+            card(getattr(task_state, field))
         self._sync_watchlists_operations(
             operations_container,
             task_state.followed_watchlists_operations,
@@ -143,6 +124,50 @@ class ChatTaskCards(Container):
             or task_state.has_pending_question()
             or bool(task_state.followed_watchlists_operations)
             or task_state.has_resume_content()
+        )
+
+    def _routes(self, task_state):
+        """The kind -> card routing table for one sync (task-31384).
+
+        Args:
+            task_state: The ``TaskResumeState`` being synced.
+
+        Returns:
+            ``(state field, setter)`` pairs in mount order. The question
+            card's entry is present only once a question exists, because
+            that card mounts lazily on first use (ADR-097).
+        """
+        yield ("pending_approval", self._set_approval)
+        yield ("pending_skill_install", self.query_one(SkillInstallConfirmCard).set_install)
+        yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
+        # Generated lazily so the question card is created (mounted) only
+        # after the three fixed cards have synced, as before the table.
+        question_card = self._question_card(create=bool(task_state.pending_question))
+        if question_card is not None:
+            yield ("pending_question", question_card.set_questions)
+
+    def _set_approval(self, payload) -> None:
+        """Route an approval payload (a dict carrying ``calls``) to the approval card.
+
+        Args:
+            payload: ``TaskResumeState.pending_approval``; anything but a
+                dict means "nothing pending" (task-914 removed the legacy
+                non-batch shape).
+        """
+        approval = payload if isinstance(payload, dict) else {}
+        self.query_one(ChatApprovalCard).set_batch(
+            approval.get("calls") or [],
+            timeout_seconds=approval.get("timeout_seconds", 0.0),
+            # Task 9 fix round 1: round-trip the round's stamped id so
+            # a decision on THIS card resolves THIS round, never
+            # "whichever session is active" -- see
+            # `ConsoleChatController.resolve_pending_approval`.
+            round_id=approval.get("round_id"),
+            phase=str(approval.get("phase") or "approval"),
+            # ADR-090 (task 5): the payload-carried advisory summary -- the
+            # slot starts None and is filled by the advisory summarizer;
+            # payload carriage means any remount re-renders it.
+            summary=approval.get("summary"),
         )
 
     @staticmethod
