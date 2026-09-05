@@ -22,6 +22,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.consolidated_css import app_css_text
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -408,18 +409,15 @@ async def test_modal_filter_has_focus_on_open():
 
 def test_modal_css_blocks_pinned_in_source_and_bundle():
     """`ConsoleStylePickerModal`'s ids/classes must be styled in BOTH the
-    module source (`_agentic_terminal.tcss`) and the generated bundle
-    (`tldw_cli_modular.tcss`) -- proves `build_css.py` was re-run after the
-    source edit, mirroring the skill picker's own dual-file CSS-parity test."""
+    maintained source and generated app stylesheets, including the
+    Console-owned split -- proves the build still carries every selector."""
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[2]
     agentic_terminal = (
         repo_root / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
     ).read_text(encoding="utf-8")
-    bundled_stylesheet = (
-        repo_root / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
-    ).read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         for selector in (
@@ -438,6 +436,14 @@ def test_modal_css_blocks_pinned_in_source_and_bundle():
 # ---------------------------------------------------------------------------
 # Screen-level: command palette + composer insert.
 # ---------------------------------------------------------------------------
+
+
+async def _click_visible_style_row(pilot, template_id: str) -> None:
+    """Use the actual scrollable picker, then require an effective click."""
+    row = pilot.app.screen.query_one(f"#{ROW_ID_PREFIX}{template_id}", Button)
+    row.scroll_visible(animate=False)
+    await pilot.pause()
+    assert await pilot.click(row), "the style row must be reachable by the click"
 
 
 @pytest.mark.asyncio
@@ -544,7 +550,7 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.pause(0.2)
         assert len(host.screen_stack) == baseline_depth + 1
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await _click_visible_style_row(pilot, "style_anime")
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth, (
@@ -574,7 +580,7 @@ async def test_style_picker_insert_composes_valid_command_after_command_word():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await _click_visible_style_row(pilot, "style_anime")
         await pilot.pause(0.2)
 
         assert composer.draft_text() == "/generate-image @style_anime a red dragon"
@@ -599,7 +605,7 @@ async def test_style_picker_insert_replaces_existing_leading_style_token():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await _click_visible_style_row(pilot, "style_anime")
         await pilot.pause(0.2)
 
         assert (
@@ -628,7 +634,7 @@ async def test_style_picker_insert_result_parses_as_generate_image_command():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await _click_visible_style_row(pilot, "style_anime")
         await pilot.pause(0.2)
 
         draft = composer.draft_text()
