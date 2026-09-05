@@ -1,0 +1,25 @@
+{
+  "region": {
+    "x": 69,
+    "y": 25,
+    "width": 40,
+    "height": 21
+  },
+  "screen": "ChatScreen",
+  "pid": 46565,
+  "source_root": "/private/tmp/chatbook-migu-dragging-20260905",
+  "owner_current": true,
+  "events": [],
+  "changes": [
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 40,
+        "height": 21
+      },
+      "at": 1864355.078
+    }
+  ],
+  "normal_config_unchanged": true
+}

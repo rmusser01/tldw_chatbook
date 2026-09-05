@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 03:32'
-updated_date: '2026-09-05 05:24'
+updated_date: '2026-09-05 16:06'
 labels: []
 dependencies: []
 priority: high
@@ -56,4 +56,8 @@ Qodo review: restore captured undo/redo on post-acceptance refusal only for the 
 Qodo follow-up final checks: all six derived-artifact preflight gates and scoped fatal-rule Ruff checks pass. Physical dragging/OpenAI realtime AC9 remains open as explicitly documented.
 
 Latest-dev CI exposed TASK-31585 collision with PR #2403 Console closeout. Applied the TASK-19601 older-created-date rule: Buddy at 03:32 retains TASK-31585; Console closeout at 03:40 moves to TASK-31591 with provenance and both plan/spec references updated. This is metadata-only; no new ADR. Local backlog guard rerun before publication.
+
+2026-09-05 native follow-up on merged dev f8cb939e2b: foreground Terminal UAT delivered real mouse-down/move/up events. Migu moved from (41,31) to (69,25); physical lower-right resize changed rendered size from 28x15 to 40x21. Graceful exit had no app exception; fresh PID 46565 restored (69,25,40,21). All 22 PTY protocol checks passed separately, including release, viewport bounds, modal/navigation and geometry restore. Background per-PID drag delivered no app mouse events; foreground authorization resolved the native input limitation without another production fix. Evidence under /private/tmp/migu-dragging-uat-20260905 and native screenshots. AC9 remains open only for the separate application-configured OpenAI realtime check. The long-lived harness detected normal config changed since its prior-day baseline, so no normal-config-unchanged claim is made for that interval; fresh restart baseline remained unchanged. Existing ADR-074 applies; no new ADR.
+
+Publish native follow-up receipts and screenshots under qa/buddy-uat-2026-09-05/native-followup with exact tested-commit provenance. This PR adds evidence only; production fixes landed in PR2404. Native acceptance evidence is complete, but combined AC9 remains open for application-configured OpenAI realtime UAT. Existing ADR074 applies; no new ADR.
 <!-- SECTION:NOTES:END -->
