@@ -12003,6 +12003,54 @@ class TldwCli(
             owner = self._persona_buddy_overlay = PersonaBuddyOverlay(self)
         owner.request()
 
+    #: TASK-24459: feature sheets split off the boot bundle
+    #: (``build_css.SCREEN_OWNED_SPLITS``) that the APP parses on first
+    #: navigation to the owning route. Loaded here rather than via the
+    #: screens' ``CSS_PATH`` because Textual loads ``CSS_PATH`` under ANY
+    #: app -- including the UI-test harnesses that deliberately model the
+    #: unstyled tier (``Tests/UI/consolidated_css.py`` loads no app bundle);
+    #: a ``CSS_PATH`` styled harness-mounted screens with only the MOVED
+    #: half of the module and flipped three destination-shell geometry
+    #: tests (2026-09-04, paired arms). The agentic split sheets predate
+    #: this seam and keep their TASK-25812 wiring (console on the boot
+    #: path; library/settings via their screens' ``CSS_PATH``).
+    _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
+        TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
+        TAB_EVALS: ("screen_feature_evals.tcss",),
+    }
+
+    def _ensure_screen_owned_css(self, canonical_route: str) -> None:
+        """Parse the route's screen-owned feature sheets on first visit.
+
+        Mirrors Textual's ``App._load_screen_css`` (has_source guard, read,
+        reparse, app-wide update) for sheets owned by the app rather than a
+        screen. Never raises: a missing or unparsable sheet degrades to the
+        unstyled state a fresh checkout without a CSS build already has,
+        and the boot-time rebuild path owns repairing that.
+
+        Args:
+            canonical_route: The destination's canonical route id.
+        """
+        names = self._SCREEN_OWNED_ROUTE_CSS.get(canonical_route)
+        if not names:
+            return
+        try:
+            css_dir = Path(__file__).parent / "css"
+            update = False
+            for name in names:
+                path = css_dir / name
+                if path.is_file() and not self.stylesheet.has_source(str(path), ""):
+                    self.stylesheet.read(path)
+                    update = True
+            if update:
+                self.stylesheet.reparse()
+                self.stylesheet.update(self)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Screen-owned CSS load failed (route={}); continuing unstyled.",
+                canonical_route,
+            )
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -13254,6 +13302,11 @@ class TldwCli(
                 )
 
         if screen_class:
+            # TASK-24459: the destination's split-off feature CSS must be in
+            # the app stylesheet before its widgets first style themselves --
+            # ahead of BOTH construction paths below (a fresh build styles at
+            # mount; a reused instance restyles on resume).
+            self._ensure_screen_owned_css(current_tab_value)
             # TASK-24452: a reusable route's screen survives navigation as an
             # installed (suspended, never unmounted) instance; warm visits
             # skip construction, mount, and snapshot-restore entirely.
@@ -15527,6 +15580,11 @@ class TldwCli(
                 if cause is not None:
                     message += f": {type(cause).__name__}: {cause}"
                 raise RuntimeError(message) from cause
+
+
+        # TASK-24459: an initial tab of schedules/evals needs its split-off
+        # feature CSS exactly like an in-app navigation does.
+        self._ensure_screen_owned_css(resolved_tab)
 
         new_screen = screen_class(self)
 
@@ -18219,16 +18277,18 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
         css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
         css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
-        # TASK-25812 (Qodo #2281): the per-screen sheets split from the
-        # agentic module are generated outputs too -- a missing or stale one
-        # must trigger the same rebuild, or visiting that screen loads
-        # nothing (the bundle no longer carries its rules). Required only
-        # when the SOURCE module is part of this tree, mirroring
-        # `build_agentic_split`'s own skip for partial/scratch checkouts.
+        # TASK-25812 (Qodo #2281) / TASK-24459: the per-screen sheets split
+        # from the screen-owned modules are generated outputs too -- a
+        # missing or stale one must trigger the same rebuild, or visiting
+        # that screen loads nothing (the bundle no longer carries its
+        # rules). Required only when the SOURCE module is part of this
+        # tree, mirroring the builders' own skip for partial/scratch
+        # checkouts.
         *(
-            (css_dir / name for name in build_css.AGENTIC_SPLIT_SHEETS.values())
-            if (css_dir / build_css.AGENTIC_SPLIT_MODULE).is_file()
-            else ()
+            css_dir / name
+            for split in build_css.SCREEN_OWNED_SPLITS
+            if (css_dir / split.module).is_file()
+            for name in split.sheets.values()
         ),
     ]
     missing = [path.name for path in generated if not path.is_file()]
