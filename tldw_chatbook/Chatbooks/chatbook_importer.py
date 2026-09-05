@@ -1093,6 +1093,34 @@ class ChatbookImporter:
             "chatbook_importer",
             console_library_migration_seed=load_console_library_migration_seed(),
         )
+        try:
+            self._import_conversations_with_database(
+                extract_dir,
+                manifest,
+                conversation_ids,
+                conflict_resolution,
+                prefix_imported,
+                status,
+                idempotent_canvas_conversations=idempotent_canvas_conversations,
+                db=db,
+            )
+        finally:
+            db.close_connection()
+
+    def _import_conversations_with_database(
+        self,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        conversation_ids: List[str],
+        conflict_resolution: ConflictResolution,
+        prefix_imported: bool,
+        status: ImportStatus,
+        *,
+        idempotent_canvas_conversations: frozenset[str],
+        db: CharactersRAGDB,
+    ) -> None:
+        """Import conversations through one caller-owned database handle."""
+
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",

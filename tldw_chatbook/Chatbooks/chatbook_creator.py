@@ -543,6 +543,30 @@ class ChatbookCreator:
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
         )
+        try:
+            self._collect_conversations_with_database(
+                conversation_ids,
+                work_dir,
+                manifest,
+                content,
+                auto_include_dependencies,
+                db=db,
+            )
+        finally:
+            db.close_connection()
+
+    def _collect_conversations_with_database(
+        self,
+        conversation_ids: List[str],
+        work_dir: Path,
+        manifest: ChatbookManifest,
+        content: ChatbookContent,
+        auto_include_dependencies: bool,
+        *,
+        db: CharactersRAGDB,
+    ) -> None:
+        """Collect conversations through one caller-owned database handle."""
+
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
