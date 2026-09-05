@@ -5357,3 +5357,28 @@ navigation still becomes stale, while both retained authorities keep their own
 widgets. Eight identity, typing, focus and guarded-return cases pass. Responsive
 scroll receipts are independently verified; this change does not claim to fix
 their outstanding offset mismatches.
+
+## 26. Finish private ownership and keep assembly explicit (tasks 31734, 31735)
+
+The review rebase restored Library to 41,651 lines / 1,309 methods, over both
+existing ceilings. Eight Conversations methods were already pure forwards into
+their controller. Their remaining screen callers now address that owner directly;
+the sole direct UI-test invocation was retargeted with every behavioral assertion
+unchanged. The existing pruned-name guard checks all 17 removed private names are
+absent while their controller implementations remain present. No event handler,
+public action, descriptor semantics, or controller body changed.
+
+The next move puts the contiguous six-controller assembly in
+`UI/Library_Modules/wiring.py`, following DESIGN section 7's Console precedent.
+All six constructor call ASTs match the pre-move source after only normalizing
+`self` to `screen`; order, named keyword lambdas, initialization position, and
+canonical controller identities stay unchanged. Real-screen characterization
+checks replacement state and sibling lookups remain late-bound. The new helper
+is imported during construction, so relocation does not add a module to the
+guarded preimport phase; the original canonical controller imports retain their
+existing phase and compatibility names.
+
+The resulting screen is 41,303 lines / 1,301 methods; assembly is governed at
+338 lines. Statement-level diagnostic comparison is unchanged: 100 screen
+statements before/after, zero in the new assembly. Unrelated Notes/Skills/RAG
+failures found in wider verification are kept separate from the pure move.

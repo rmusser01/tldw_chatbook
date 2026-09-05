@@ -145,6 +145,8 @@ _BUDGETS: dict[str, int] = {
     # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
     # file's own `_measure` expression), no headroom.
     "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
+    # TASK-31735 (2026-09-05): unchanged ordered construction moved out of screen.
+    "tldw_chatbook/UI/Library_Modules/wiring.py": 338,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
