@@ -431,6 +431,40 @@ no runnable `.html` entry. Whole-graph import-as-new and exact-identity restore
 both completed atomically; injected validation, streaming, message, Canvas,
 and commit failures left no partial graph.
 
+### Settings and revocation implementation record
+
+Canonical F9 Privacy & Security owns `canvas.enabled` and
+`canvas.auto_open_on_create`, both true by default. Malformed execution
+preferences fail closed; quotas are read-only and configuration cannot
+override them. The Settings card describes configured served posture using
+the existing credential resolver and validated web-auth policy, while served
+startup supplies its actual effective policy. Execution-policy polling does
+not resolve credentials or read keyring.
+
+Disabling Canvas latches execution off for that process until restart. The
+application runtime owns this state, including disabled startup, deferred
+tool providers, cached catalog entries, HTML-block actions, and explicit
+opens. An accepted Settings disable latches synchronously before asynchronous
+cleanup, so a later config writer cannot cancel that process's accepted
+revocation. Native and served watchers also observe external config changes.
+Native watcher activation occurs in the actual Textual mount lifecycle,
+independently of preview creation, and disposal cannot restart it.
+
+Revocation closes browser/control capabilities and stops generated execution:
+the native shell closes its renderer channel, navigates the preview to a
+blank document, cancels bridge state, and ends polling after disconnect;
+the served host closes its broker/gateway and clears sibling browser-child
+bindings while the terminal remains available. Stored revisions, temporary
+history ownership, and archive import/export remain with their existing
+lifecycle. Re-enabling preferences requires restarting the affected process.
+
+Task 7.1 review regressions cover active-script browser shutdown, stable
+keyboard focus after disconnect, deferred provider authority, save-generation
+races, real synchronous CLI construction followed by Textual startup, and
+validated proxy/keyring posture. Independent review approved commits
+`69405e7c8d`, `e69141538f`, and `ff8a45fb65`. Quota measurements and complete
+rollout verification remain in TASK-31232's subsequent steps.
+
 ## Context
 
 Chatbook's Console already persists a branching message tree, records one

@@ -7286,6 +7286,18 @@ unresolved. Assert both authorities after each interleaving: the in-memory
 admission/next action and the durable journal/status. A state matrix is necessary,
 but it is not concurrency or restart evidence until the edges are executed.
 
+**Second incident — TASK-31232 Canvas settings, 2026-09-04.** Tests constructed
+`ConsoleRuntime` inside an already-running pytest event loop, so its constructor
+successfully started a policy watcher. The real CLI constructs `TldwCli`
+synchronously and only then calls `run()`: the same watcher helper silently
+returned because no loop existed, leaving external disables unobserved before
+the first preview. A regression that constructs the actual app before
+`asyncio.run`, enters Textual's `run_test`, changes policy without explicitly
+reading the gate, and waits for watcher retirement failed on that code. Starting
+the existing watcher from `on_mount` made it pass and retained one owner plus
+idempotent disposal. Match production construction order when claiming startup
+coverage; an async test fixture can accidentally supply the missing lifecycle.
+
 ---
 
 ## A package AST sweep can descend into an ignored nested virtualenv (TASK-19906, 2026-08-22)

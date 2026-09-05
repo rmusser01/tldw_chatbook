@@ -512,6 +512,30 @@ The implementation may place tests beside an existing narrower suite when that b
 - [ ] Add boundary tests for the final values and document what users see when each quota is exceeded.
 - [ ] Commit: `perf(canvas): freeze measured runtime quotas`
 
+### Task 7.2a: Resolve measured compiler blocking at interactive boundaries
+
+**Reason added:** Task 7.2 measured valid near-limit compilation at roughly
+208 ms for a full node plan and 371 ms for combined node/CSS/script limits on
+the qualification host. Native preview, served preview, and HTML-block import
+can execute this work on the UI/server event loop. This exceeds the repository's
+100 ms worker threshold and is a rollout blocker, not a documentation caveat.
+
+**Files:**
+
+- Modify as needed: `tldw_chatbook/Canvas/native_authority.py`, `service.py`, `gateway.py`
+- Create if needed: `tldw_chatbook/Canvas/compilation.py` (bounded pure-compilation admission only)
+- Modify as needed: `tldw_chatbook/Chat/console_canvas_controller.py`
+- Modify as needed: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify as needed: `tldw_chatbook/Web_Server/serve.py`
+- Create/modify: focused compiler-scheduling, lifecycle, and browser tests
+
+- [ ] Use the completed Task 7.2 evidence and final quotas to identify remaining interactive compilation costs; keep pure compilation off UI/server event loops and out of locks those loops must acquire.
+- [ ] Preserve captured conversation/message/branch identity across background work; revalidate lifecycle, expected-parent, and capability authority before publishing or mutating after an await. Cancellation, disable, branch switch, and disposal must not publish late results or revive authority.
+- [ ] Reuse existing worker/authority ownership where possible, bound admitted compilation work, and avoid a second mutation owner or an unbounded source cache. Any prepared result must remain bound to the exact validated source and runtime profile.
+- [ ] Add failing event-loop responsiveness and delayed-compile race tests for native/served previews and HTML-block import; also cover shared controller-lock behavior where the measured call path requires it.
+- [ ] Run focused tests plus a content-free near-limit responsiveness probe, preserving all strict-zero-egress and archive/source invariants. Document measured results and any remaining limits.
+- [ ] Commit: `fix(canvas): keep compilation off interactive event loops`
+
 ### Task 7.3: Write user, model, operations, and recovery guidance
 
 **Files:**
@@ -543,7 +567,7 @@ The implementation may place tests beside an existing narrower suite when that b
 - [ ] Archive flow: export a branching Canvas conversation, delete/purge the source as appropriate in a disposable database, import, and verify graph/source/digests/reopen behavior.
 - [ ] Security flow: rerun the adversarial real-browser suite through native and served outer routes while recording zero attempted egress at the harness boundary.
 - [ ] Run targeted Canvas, Agents, Console, database migration, Chatbooks, Web Server, packaging, and browser suites. Run formatter/linter only over changed files. Run `git diff --check`.
-- [ ] Ask the user whether they want the full repository test sweep. Do not silently substitute the targeted result for a full-suite claim.
+- [x] Ask the user whether they want the full repository test sweep. Do not silently substitute the targeted result for a full-suite claim.
 - [ ] Perform a final self-review against every design invariant and every TASK-31226 through TASK-31232 acceptance criterion.
 - [ ] Mark each task Done only after its own Definition of Done is met. TASK-31003 remains To Do as the explicit future sync-contract backlog item.
 - [ ] Commit: `test(canvas): verify native and served v1 workflows`
