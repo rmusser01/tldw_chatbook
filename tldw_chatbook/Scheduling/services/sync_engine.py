@@ -74,6 +74,31 @@ _DEFINITION_PUSH_SUCCESS_OUTCOMES = frozenset(
     {"created", "updated", "released", "transferred", "pause", "resume", "archive"}
 )
 
+#: Review round 1 finding 2: the complement of the set above, so a
+#: drift-guard test can assert every outcome `_push_definition_mutation`
+#: (+ its five `_push_definition_*` helpers, + `_replay_definition_
+#: mutations`'s own `"transfer_skipped"`) can actually return is
+#: CLASSIFIED as one or the other -- an unclassified new outcome fails
+#: that test instead of silently never moving `last_push_at`.
+#: `{action}_not_found` is `_push_definition_lifecycle`'s dynamic
+#: NotFoundError outcome (`action` is always one of the three lifecycle
+#: actions below).
+_DEFINITION_PUSH_NON_SUCCESS_OUTCOMES = frozenset(
+    {
+        "unknown",
+        "invalid",
+        "orphaned",
+        "unsynced",
+        "transfer_cas_skipped",
+        "transfer_orphaned",
+        "transfer_failed",
+        "transfer_skipped",
+        "pause_not_found",
+        "resume_not_found",
+        "archive_not_found",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SyncOutcome:

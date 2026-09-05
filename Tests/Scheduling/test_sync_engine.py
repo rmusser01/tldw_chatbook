@@ -1287,6 +1287,97 @@ async def test_sync_now_definition_noop_cycle_does_not_stamp_last_push_at(tmp_pa
     assert not state.get("last_push_at")
 
 
+def test_definition_push_success_outcomes_cover_every_return_value():
+    """Review round 1 finding 2: `_DEFINITION_PUSH_SUCCESS_OUTCOMES` is a
+    hand-maintained set with no automatic tie to the string vocabulary
+    `_push_definition_mutation` and its five helpers can actually return.
+    A new outcome added to any of those six functions (or to
+    `_replay_definition_mutations`'s own inline `"transfer_skipped"`)
+    without a matching classification here used to be silent: nothing
+    would fail, `last_push_at` would just never move for it. This walks
+    the AST of every one of those function bodies and asserts every
+    outcome string it can produce -- literal `return "..."` values, PLUS
+    `_push_definition_lifecycle`'s two dynamic shapes (`return action`
+    and `return f"{action}_not_found"`, both keyed on the three lifecycle
+    actions) -- is classified in EXACTLY ONE of `_DEFINITION_PUSH_
+    SUCCESS_OUTCOMES` / `_DEFINITION_PUSH_NON_SUCCESS_OUTCOMES`. An
+    unclassified new outcome fails this test instead of silently
+    freezing `last_push_at`.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Scheduling.services import sync_engine as sync_engine_module
+    from tldw_chatbook.Scheduling.services.sync_engine import (
+        _DEFINITION_LIFECYCLE_ACTIONS,
+        _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES,
+        _DEFINITION_PUSH_SUCCESS_OUTCOMES,
+    )
+
+    push_helper_names = {
+        "_push_definition_mutation",
+        "_push_definition_create",
+        "_push_definition_update",
+        "_push_definition_lifecycle",
+        "_push_definition_release",
+        "_push_definition_transfer",
+    }
+
+    source = inspect.getsource(sync_engine_module)
+    tree = ast.parse(source)
+
+    discovered: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.AsyncFunctionDef) and node.name in push_helper_names
+        ):
+            continue
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Return) and sub.value is not None):
+                continue
+            value = sub.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                discovered.add(value.value)
+            elif node.name == "_push_definition_lifecycle" and isinstance(
+                value, ast.Name
+            ):
+                # `return action` -- dynamic, but only ever one of the
+                # three lifecycle actions this handler dispatches on.
+                discovered.update(_DEFINITION_LIFECYCLE_ACTIONS)
+            elif node.name == "_push_definition_lifecycle" and isinstance(
+                value, ast.JoinedStr
+            ):
+                # `return f"{action}_not_found"` -- same dynamic source.
+                discovered.update(
+                    f"{action}_not_found" for action in _DEFINITION_LIFECYCLE_ACTIONS
+                )
+            # A delegating `return await self._push_definition_X(...)`
+            # (from `_push_definition_mutation`'s own dispatch) contributes
+            # nothing itself -- the callee's own literal returns, walked
+            # separately above, already cover it.
+
+    # `_replay_definition_mutations`'s own pre-dispatch short-circuit --
+    # not a `return`, a `counts["transfer_skipped"] = ...` dict write --
+    # is a seventh real outcome this vocabulary must include.
+    discovered.add("transfer_skipped")
+
+    assert discovered, "the AST walk found nothing -- the helper names above drifted"
+
+    known = _DEFINITION_PUSH_SUCCESS_OUTCOMES | _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES
+    unclassified = discovered - known
+    assert not unclassified, (
+        f"new/unclassified push outcome(s) {sorted(unclassified)} -- add each "
+        "to _DEFINITION_PUSH_SUCCESS_OUTCOMES (if it means a mutation reached "
+        "the server) or _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES (if not) in "
+        "sync_engine.py"
+    )
+    stale = _DEFINITION_PUSH_SUCCESS_OUTCOMES - discovered
+    assert not stale, (
+        f"_DEFINITION_PUSH_SUCCESS_OUTCOMES claims outcome(s) {sorted(stale)} "
+        "that no longer exist in source -- prune it"
+    )
+
+
 @pytest.mark.asyncio
 async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_both_ids(
     tmp_path,
