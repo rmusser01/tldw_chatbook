@@ -29,7 +29,6 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.events import (
-    AppFocus,
     Click,
     DescendantBlur,
     DescendantFocus,
@@ -2340,15 +2339,20 @@ class ChatScreen(BaseAppScreen):
             notify_on_failure=False,
         )
 
-    @on(AppFocus)
-    def on_console_app_focus_environment_refresh(self, _event: AppFocus) -> None:
-        """Re-read the local tier when the terminal regains focus.
+    def notify_terminal_focus_regained(self) -> None:
+        """Re-read the Environment panel's local tier on terminal focus regain.
 
         Time spent in another window is exactly when the working tree moves
         underneath the panel (a commit, a checkout, a rebase in another
-        pane). Deliberately NOT stopped: `AppFocus` is a broadcast every
-        other listener is entitled to. Free while the Inspect rail is closed
-        -- the controller's own rail-open guard refuses the dispatch.
+        pane). Free while the Inspect rail is closed -- the controller's own
+        rail-open guard refuses the dispatch.
+
+        Called by `TldwCli.on_app_focus`, NOT by a handler on this screen:
+        `AppFocus` is `bubble=False` and the driver posts it only to the App,
+        and events travel UP the DOM. A screen-level `@on(AppFocus)` handler
+        is unreachable dead code (task-13 review C1 -- one shipped as exactly
+        that, because its test called the method directly rather than posting
+        the real event through the production path).
         """
         self._console_environment.request_refresh()
 
@@ -2484,11 +2488,12 @@ class ChatScreen(BaseAppScreen):
             # would restart from the top of the shell.
             self._focus_console_workbench_target("console-native-composer")
             return
-        # task-13: the rail is now displayed (the preference write above
-        # applied visibility synchronously), so the controller's own
-        # rail-open guard passes and both tiers can dispatch. Ordering
-        # matters: called BEFORE this returns, but AFTER the rail is shown.
-        self._console_environment.notify_rail_opened()
+        # task-13: the Environment panel's both-tier refresh for this open
+        # already fired inside the `_set_console_rail_preference` call above
+        # -- `_sync_console_rail_visibility_if_changed` owns that nudge for
+        # EVERY opener (review M9), so repeating it here would only issue a
+        # duplicate dispatch.
+        #
         # The rail mounts asynchronously; focus once it is actually there.
         #
         # TASK-24703: target the pinned authority summary, NOT the pane's
@@ -6849,13 +6854,13 @@ class ChatScreen(BaseAppScreen):
         # -- unlike the left rail it came from -- defaults CLOSED, so the
         # existing `_apply_fleet_agent_section_auto_open` no longer surfaces
         # busy fleet activity to anyone. `_apply_fleet_inspector_rail_auto_
-        # open` restores that, and this flag is its sticky user-dismissal
-        # (mirroring `_agent_section_user_dismissed_while_busy`): a
-        # tick-recomputed force must never fight a manual collapse. Cleared
-        # the moment the fleet goes idle, so the NEXT busy window auto-opens
-        # again. `_console_fleet_section_auto_opened` is the one-shot for the
-        # SECTION's own collapsed default -- one force per busy window, never
-        # re-applied against a later manual collapse.
+        # open` restores that. All three flags are written in exactly one
+        # place, `_sync_console_fleet_surface_flags` (plus the user-gesture
+        # note), and all three key on THIS conversation's fleet ROWS -- the
+        # content that actually moved into this rail -- never on the
+        # other-sessions summary line, whose display target is still the left
+        # rail (review C2/I3).
+        self._console_fleet_rows_present = False
         self._console_fleet_inspector_dismissed = False
         self._console_fleet_section_auto_opened = False
         # task-13: in-memory expansion state for the Environment/Tasks
@@ -8074,19 +8079,14 @@ class ChatScreen(BaseAppScreen):
             )
             # task-13 (addition A): the section mounts COLLAPSED in the
             # Inspect rail (`open=False`, right_rail.py) -- a header with no
-            # body is not "surfacing the fleet". Open it ONCE per busy
-            # window: a one-shot, rather than a per-tick force, is what makes
-            # a later manual collapse stick even though `CollapseToggled` is
-            # delivered asynchronously and cannot set the dismissal flag
-            # before the next tick lands. Both are reset by
-            # `_apply_fleet_inspector_rail_auto_open` when the fleet quiets.
-            if (
-                fleet_section_state.rows
-                and not self._console_fleet_section_auto_opened
-                and not self._console_fleet_inspector_dismissed
-            ):
-                self._console_fleet_section_auto_opened = True
-                fleet_section.set_open(True)
+            # body is not "surfacing the fleet". This call is also the only
+            # place the three fleet auto-open flags are written outside the
+            # user-gesture note (review I4), keyed on the row presence being
+            # painted right here rather than on the other-sessions summary
+            # line (review C2/I3).
+            self._sync_console_fleet_surface_flags(
+                bool(fleet_section_state.rows), fleet_section
+            )
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
             fleet_summary.update(fleet_line)
             fleet_summary.styles.display = "block" if fleet_line else "none"
@@ -11936,7 +11936,7 @@ class ChatScreen(BaseAppScreen):
     def _apply_fleet_inspector_rail_auto_open(
         self, rail_state: ConsoleRailState
     ) -> ConsoleRailState:
-        """Reveal the Inspect rail while the agent fleet has anything to report.
+        """Reveal the Inspect rail while THIS conversation's fleet has rows.
 
         task-13 (addition A). `ConsoleAgentController._apply_fleet_agent_
         section_auto_open` has forced the Agent SECTION open on fleet
@@ -11949,15 +11949,30 @@ class ChatScreen(BaseAppScreen):
         status/steps/drilldown controls, so that force is still needed where
         it is.
 
-        Shaped exactly like `_apply_pending_launch_inspector_auto_open`
-        above -- an ephemeral override on the RENDERED state, never written
-        back to the persisted preference, and never applied over
+        **Signal choice (review C2/I3).** The trigger is
+        `_console_fleet_rows_present` -- whether the fleet SECTION has rows,
+        i.e. this conversation's own sub-agents, which is exactly the content
+        that moved into this rail. It is emphatically NOT
+        `_console_agent_fleet_summary_line()` (OTHER sessions' running/pending
+        counts): that line's display target is the pinned Static beside the
+        LEFT rail's header, so keying on it force-opened a rail whose fleet
+        section could be `display: none`, revealing nothing -- while the
+        ordinary single-session case (rows present, summary empty) read as
+        "idle" and reset the flags on every sync, re-forcing the section open
+        over the user's own collapse. **The other-sessions summary line now
+        drives nothing on the right rail at all**; it keeps its one existing
+        job, the left-rail Static and that rail's own section force.
+
+        **This method is a pure read (review I4).** Every write to the two
+        flags happens in `_sync_console_fleet_surface_flags`, on the sync
+        path, so reset ordering is deterministic and an accessor named
+        "compute the current state" cannot mutate anything.
+
+        Shaped otherwise exactly like `_apply_pending_launch_inspector_auto_
+        open` above -- an ephemeral override on the RENDERED state, never
+        written back to the persisted preference, and never applied over
         `right_forced_collapsed` (a width the rail cannot afford is not
-        negotiable). `_console_fleet_inspector_dismissed` is the TASK-915
-        sticky-dismissal discipline: this force is recomputed on every rail
-        build, so without it one manual collapse would be silently undone by
-        the next tick. The flag clears the moment the fleet goes quiet, so
-        the next busy window auto-opens again.
+        negotiable).
 
         Args:
             rail_state: Rail state before fleet visibility is applied.
@@ -11965,9 +11980,7 @@ class ChatScreen(BaseAppScreen):
         Returns:
             The original state, or a copy with the Inspect rail opened.
         """
-        if not self._agent._console_agent_fleet_summary_line():
-            self._console_fleet_inspector_dismissed = False
-            self._console_fleet_section_auto_opened = False
+        if not self._console_fleet_rows_present:
             return rail_state
         if rail_state.right_open or self._console_fleet_inspector_dismissed:
             return rail_state
@@ -11975,21 +11988,65 @@ class ChatScreen(BaseAppScreen):
             return rail_state
         return replace(rail_state, right_open=True)
 
+    def _sync_console_fleet_surface_flags(
+        self, rows_present: bool, fleet_section: ConsoleInspectorSection
+    ) -> None:
+        """Own every write to the fleet auto-open flags, on the sync path.
+
+        Called from `_sync_console_agent_section` with the freshly derived
+        row presence, so "is there fleet content" is read once, from the
+        payload that is being painted, and both the rail force and the
+        section's own one-shot key on that single signal (review C2/I3).
+
+        A busy window is "rows present". When it ends, both flags reset so
+        the NEXT window auto-opens again -- including the sticky dismissal,
+        which is scoped to one window exactly like TASK-915's
+        `_agent_section_user_dismissed_while_busy`.
+
+        The section force is a ONE-SHOT, not a per-tick recompute:
+        `CollapseToggled` is delivered asynchronously, so a per-tick force
+        would re-open the section before the user's own collapse could ever
+        arm the dismissal flag -- the same asynchronous-delivery trap the
+        Inspect-rail burn-down recorded for `DescendantFocus`.
+
+        Args:
+            rows_present: Whether the fleet section has rows to show.
+            fleet_section: The mounted fleet section, already synced.
+        """
+        if not rows_present:
+            self._console_fleet_rows_present = False
+            self._console_fleet_section_auto_opened = False
+            self._console_fleet_inspector_dismissed = False
+            return
+        self._console_fleet_rows_present = True
+        if (
+            self._console_fleet_section_auto_opened
+            or self._console_fleet_inspector_dismissed
+        ):
+            return
+        self._console_fleet_section_auto_opened = True
+        fleet_section.set_open(True)
+
     def _note_console_fleet_surface_toggle(self, open: bool) -> None:
         """Record a deliberate open/collapse of a fleet surface.
 
         One flag covers both fleet surfaces (the Inspect rail and the fleet
         section inside it): either gesture means "stop putting this in front
         of me", and a single flag cannot half-land the way two coupled ones
-        could. Never persisted -- it is scoped to the current busy window,
-        exactly like `_agent_section_user_dismissed_while_busy`.
+        could. Never persisted -- it is scoped to the current busy window and
+        cleared by `_sync_console_fleet_surface_flags` when the rows go away.
+
+        Armed on the same signal the force uses (review C2): rows present,
+        NOT the other-sessions summary line. Gating the dismissal on that
+        line meant a single-session user -- rows present, summary empty --
+        could never arm it at all, so their collapse was undone every sync.
 
         Args:
             open: The state the surface was just moved to.
         """
         if open:
             self._console_fleet_inspector_dismissed = False
-        elif self._agent._console_agent_fleet_summary_line():
+        elif self._console_fleet_rows_present:
             self._console_fleet_inspector_dismissed = True
 
     @staticmethod
@@ -12111,8 +12168,21 @@ class ChatScreen(BaseAppScreen):
         """Apply rail visibility only when the visible rail state changes."""
         if rail_state == self._last_console_rail_state:
             return
+        previous = self._last_console_rail_state
         self._sync_console_rail_visibility(rail_state)
         self._last_console_rail_state = rail_state
+        # task-13 (review M9): the ONE seam where the Inspect rail actually
+        # becomes visible, whatever opened it -- the Alt+I action, the handle
+        # button, the launch auto-open, the responsive band, or the fleet
+        # force. Refreshing here (rather than only at the explicit toggle)
+        # means an AUTO-opened rail never sits on stale data waiting for the
+        # 10s poll. Must run AFTER `_sync_console_rail_visibility` above:
+        # the controller's rail-open guard reads the DOM, which that call is
+        # what updates.
+        if rail_state.right_open and not (previous is not None and previous.right_open):
+            controller = getattr(self, "_console_environment", None)
+            if controller is not None:
+                controller.notify_rail_opened()
 
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:

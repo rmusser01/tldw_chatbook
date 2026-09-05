@@ -22,8 +22,18 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.app import App
+from textual.events import AppFocus
 
+from Tests.UI.test_console_fleet_panel import _FleetBridge
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_right_rail import make_console_pilot
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS_FIX,
@@ -42,12 +52,15 @@ from tldw_chatbook.Chat.console_environment_state import (
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
-    ConsoleInspectorSectionState,
-    InspectorSectionRow,
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 _FLEET_BUSY_LINE = "1 other agents running, 0 waiting for approval."
+
+
+def _right_rail_open(screen) -> bool:
+    rail = screen.query_one("#console-right-rail")
+    return bool(rail.display) and rail.styles.display != "none"
 
 
 @asynccontextmanager
@@ -376,18 +389,110 @@ async def test_environment_workers_cannot_panic_the_app():
 
 
 @pytest.mark.asyncio
-async def test_fleet_sync_and_app_focus_nudge_the_local_tier():
-    """Both spec'd nudges reach the controller (its own guard handles a closed rail)."""
+async def test_fleet_sync_nudges_the_local_tier():
+    """The coalesced fleet sync nudges the controller (its guard handles a closed rail)."""
     async with _console_screen() as (pilot, screen):
         calls: list[dict] = []
         screen._console_environment.request_refresh = lambda **kw: calls.append(kw)
-
         screen._run_coalesced_console_agent_fleet_sync()
         assert calls == [{}]
 
-        calls.clear()
-        screen.on_console_app_focus_environment_refresh(None)
+
+@asynccontextmanager
+async def _app_focus_screen():
+    """Host the real ChatScreen under an App carrying the PRODUCTION handler.
+
+    Every Console UI test runs under ``ConsoleHarness`` -- a plain
+    ``ConsolidatedCSSApp``, NOT ``TldwCli`` -- so the app-level handler the
+    real binary uses is unreachable from the usual harness. Binding the
+    production function object itself onto the host keeps the whole route
+    real: post to the App's queue, Textual's own name dispatch, the
+    production body, the real mounted ChatScreen, the real controller. The
+    assertion below pins the other half -- that ``TldwCli`` is where that
+    function actually lives, so this cannot pass against a handler that has
+    been renamed or deleted out of production.
+    """
+    assert "on_app_focus" in TldwCli.__dict__, (
+        "TldwCli must own the AppFocus handler: AppFocus is bubble=False and "
+        "the driver posts it only to the App, so nothing below the App can "
+        "observe a focus regain."
+    )
+
+    class _FocusHarness(ConsoleHarness):
+        on_app_focus = TldwCli.__dict__["on_app_focus"]
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _FocusHarness(app)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.2)
+        yield pilot, console
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_regain_reaches_the_controller_through_the_real_event():
+    """`AppFocus` posted for real -- never a direct handler call.
+
+    `AppFocus` is `bubble=False` and the driver posts it ONLY to the App;
+    events travel UP the DOM, never down, so a screen-level `@on(AppFocus)`
+    handler can never run. An earlier revision of this wiring shipped exactly
+    that dead handler, and its test passed because it called the method
+    directly. This one posts the production event and asserts it lands.
+    """
+    async with _app_focus_screen() as (pilot, screen):
+        calls: list[dict] = []
+        screen._console_environment.request_refresh = lambda **kw: calls.append(kw)
+
+        pilot.app.post_message(AppFocus())
+        await pilot.pause()
+        await pilot.pause()
+
         assert calls == [{}]
+
+
+@pytest.mark.asyncio
+async def test_app_focus_forwarding_tolerates_a_screen_that_does_not_want_it():
+    """The forwarding is an opt-in: a screen without the method is a no-op.
+
+    Same production function object, a plain default screen instead of the
+    Console. A focus event must never be able to raise out of the App.
+    """
+
+    class _BareApp(App):
+        on_app_focus = TldwCli.__dict__["on_app_focus"]
+
+    app = _BareApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert not hasattr(pilot.app.screen, "notify_terminal_focus_regained")
+        pilot.app.post_message(AppFocus())
+        await pilot.pause()
+        await pilot.pause()
+        assert pilot.app.is_running  # nothing raised out of the handler
+
+
+@pytest.mark.asyncio
+async def test_opening_the_inspect_rail_refreshes_both_tiers():
+    """I1: drive the real accelerator, not the controller method.
+
+    Closed -> open must fetch (an opened rail showing 10s-stale data is the
+    defect); open -> closed must dispatch nothing.
+    """
+    async with _console_screen() as (pilot, screen):
+        opens: list[int] = []
+        screen._console_environment.notify_rail_opened = lambda: opens.append(1)
+        assert not _right_rail_open(screen)
+
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
+        assert opens == [1]
+
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert not _right_rail_open(screen)
+        assert opens == [1]  # closing dispatches nothing
 
 
 # ---------------------------------------------------------------------------
@@ -395,62 +500,120 @@ async def test_fleet_sync_and_app_focus_nudge_the_local_tier():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_fleet_activity_auto_opens_the_inspector_rail():
-    async with _console_screen() as (pilot, screen):
-        assert screen._current_console_rail_state().right_open is False
-        screen._agent._console_agent_fleet_summary_line = lambda: _FLEET_BUSY_LINE
-        assert screen._current_console_rail_state().right_open is True
+def _running_handle(handle_id: str) -> FleetHandle:
+    return FleetHandle(
+        handle_id=handle_id,
+        run_id=f"run-{handle_id}",
+        agent="researcher",
+        task="find pricing",
+        status="running",
+        started_at=1000.0,
+    )
+
+
+async def _wire_fleet_bridge(pilot, screen, bridge) -> None:
+    """Attach the established fake fleet bridge (test_console_fleet_panel's)."""
+    screen._console_agent_bridge = bridge
+    screen._console_agent_drilldown_run_id = None
+    screen._character._current_console_rail_conversation_id = lambda: "conv-A"
+    screen._agent._console_agent_drilldown_conversation_id = "conv-A"
+    await pilot.pause()
+
+
+async def _real_fleet_sync(pilot, screen) -> None:
+    """Run one REAL agent-section sync (rows derived from the bridge)."""
+    screen._console_agent_section_last = None
+    screen._sync_console_agent_section()
+    await pilot.pause()
 
 
 @pytest.mark.asyncio
-async def test_manual_collapse_while_fleet_busy_sticks_until_the_fleet_goes_idle():
+async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
+    """The whole busy-window cycle, driven through the REAL derivation.
+
+    Rows come from `ConsoleAgentBridge.fleet_snapshot` via
+    `_console_agent_fleet_section_state`; nothing here monkeypatches the
+    payload (an earlier revision did, and that patch removed exactly the
+    call that was broken). Note the summary line stays EMPTY throughout --
+    this is the ordinary single-session case, which is precisely where
+    keying the force on other-sessions activity misbehaved.
+    """
+    bridge = _FleetBridge((_running_handle("h1"),))
     async with _console_screen() as (pilot, screen):
-        screen._agent._console_agent_fleet_summary_line = lambda: _FLEET_BUSY_LINE
-        assert screen._current_console_rail_state().right_open is True
-
-        screen._set_console_rail_preference(right_open=False)
-        assert screen._console_fleet_inspector_dismissed is True
-        # The tick-recomputed force must not fight the manual collapse.
-        assert screen._current_console_rail_state().right_open is False
-
-        # ...and the stickiness is scoped to THIS busy window.
-        screen._agent._console_agent_fleet_summary_line = lambda: ""
-        assert screen._current_console_rail_state().right_open is False
-        assert screen._console_fleet_inspector_dismissed is False
-        screen._agent._console_agent_fleet_summary_line = lambda: _FLEET_BUSY_LINE
-        assert screen._current_console_rail_state().right_open is True
-
-
-@pytest.mark.asyncio
-async def test_fleet_section_opens_itself_on_first_activity():
-    """The moved fleet section defaults collapsed; first activity must open it."""
-    async with _console_screen() as (pilot, screen):
+        await _wire_fleet_bridge(pilot, screen, bridge)
         fleet_section = screen.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
         assert fleet_section.open is False
+        assert screen._agent._console_agent_fleet_summary_line() == ""
 
-        payload = list(screen._agent._console_agent_section_payload())
-        payload[2] = ConsoleInspectorSectionState(
-            rows=(
-                InspectorSectionRow(
-                    row_id="fleet-1", primary_text="child agent", clickable=True
-                ),
-            ),
-            summary="1 working",
-        )
-        payload[3] = _FLEET_BUSY_LINE
-        screen._agent._console_agent_section_payload = lambda: tuple(payload)
-        screen._console_agent_section_last = None
-        screen._sync_console_agent_section()
-        await pilot.pause()
+        # Rows appear -> the section opens itself, once.
+        await _real_fleet_sync(pilot, screen)
+        assert fleet_section.rows  # real rows, from the real derivation
         assert fleet_section.open is True
 
-        # A manual collapse while still busy is not re-forced by the next tick.
+        # The user collapses it while the rows persist -> stays collapsed
+        # across subsequent REAL syncs (this is the case that regressed).
         fleet_section.set_open(False)
         await pilot.pause()
-        screen._console_agent_section_last = None
-        screen._sync_console_agent_section()
-        await pilot.pause()
+        assert screen._console_fleet_inspector_dismissed is True
+        await _real_fleet_sync(pilot, screen)
         assert fleet_section.open is False
+        await _real_fleet_sync(pilot, screen)
+        assert fleet_section.open is False
+
+        # Rows go empty -> busy window over, both flags reset.
+        bridge._handles = []
+        await _real_fleet_sync(pilot, screen)
+        assert screen._console_fleet_rows_present is False
+        assert screen._console_fleet_inspector_dismissed is False
+        assert screen._console_fleet_section_auto_opened is False
+
+        # Next busy window auto-opens again.
+        fleet_section.set_open(False)
+        await pilot.pause()
+        bridge._handles = [_running_handle("h2")]
+        await _real_fleet_sync(pilot, screen)
+        assert fleet_section.open is True
+
+
+@pytest.mark.asyncio
+async def test_fleet_rows_auto_open_the_inspect_rail_and_refresh_it():
+    """Rows appearing while the rail is closed reveal it AND refresh it."""
+    bridge = _FleetBridge((_running_handle("h1"),))
+    async with _console_screen() as (pilot, screen):
+        await _wire_fleet_bridge(pilot, screen, bridge)
+        opens: list[int] = []
+        screen._console_environment.notify_rail_opened = lambda: opens.append(1)
+        assert not _right_rail_open(screen)
+
+        await _real_fleet_sync(pilot, screen)
+        assert screen._console_fleet_rows_present is True
+        rail_state = screen._current_console_rail_state()
+        assert rail_state.right_open is True
+        screen._sync_console_rail_visibility_if_changed(rail_state)
+        await pilot.pause()
+        assert _right_rail_open(screen)
+        assert opens == [1]  # an auto-opened rail is not left on stale data
+
+        # The user closes it during the SAME busy window -> not re-forced.
+        screen._set_console_rail_preference(right_open=False)
+        await pilot.pause()
+        assert screen._console_fleet_inspector_dismissed is True
+        assert screen._current_console_rail_state().right_open is False
+        await _real_fleet_sync(pilot, screen)
+        assert screen._current_console_rail_state().right_open is False
+
+
+@pytest.mark.asyncio
+async def test_other_session_activity_alone_does_not_touch_the_inspect_rail():
+    """The other-sessions summary line drives nothing on the right rail.
+
+    Its display target is the pinned Static beside the LEFT rail's header.
+    Keying the right-rail force on it opened a rail whose fleet section was
+    `display: none` -- revealing nothing.
+    """
+    async with _console_screen() as (pilot, screen):
+        screen._agent._console_agent_fleet_summary_line = lambda: _FLEET_BUSY_LINE
+        assert screen._console_fleet_rows_present is False
+        assert screen._current_console_rail_state().right_open is False
