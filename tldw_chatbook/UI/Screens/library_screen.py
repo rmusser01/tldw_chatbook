@@ -24156,7 +24156,20 @@ class LibraryScreen(BaseAppScreen):
         # for that to be true. Live, focus sat on the Library pane grip and
         # the first Space collapsed the pane instead (critique #4, A cap
         # 31->32, B cap_69). Entry only -- exit keeps the user's focus.
-        _sync_library_canvas(self, "media", then=self._focus_library_media_items_pane)
+        #
+        # task-31631 AC#1: the ARMED list-entry seam, not the one-shot
+        # ``_focus_library_media_items_pane``. Both land on a row when the
+        # rows this sync mounts are the last word, but they are not: any of
+        # the screen's background workers ending in its own
+        # ``refresh(recompose=True)`` rebuilds the row Buttons underneath,
+        # and a one-shot focus dies with the widget it was set on
+        # (reproduced at 235x52 and 100x30 -- ``screen.focused`` is None
+        # after that recompose, which is critique #5's "F6, Down and Space
+        # all no-op with no focus painted anywhere"). ``_arm_...`` re-requests
+        # the row on every recompose while armed, and disarms itself the
+        # moment the user moves focus. It also prefers the first STILL-CHECKED
+        # row over the literal first row, which is what select mode wants.
+        _sync_library_canvas(self, "media", then=self._arm_library_list_entry_focus)
 
     def _library_media_select_enter_available(self) -> bool:
         """Whether ENTERING media Select mode is offered (task-28012).

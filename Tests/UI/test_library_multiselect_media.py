@@ -149,7 +149,10 @@ def _media_fake(
     )
     # task-31271 seam (b): entering select mode lands focus on a row, and
     # the canvas sync's whole-screen fallback schedules that follow-up.
+    # task-31631: that follow-up is now the ARMED list-entry request (it
+    # survives the background recomposes a one-shot focus does not).
     fake._focus_library_media_items_pane = lambda: None
+    fake._arm_library_list_entry_focus = lambda **_kwargs: None
     fake.call_after_refresh = lambda *_args, **_kwargs: None
     return _bind_media_mutation_seams(fake)
 
@@ -1100,6 +1103,45 @@ def test_select_toggle_on_does_not_notify():
     LibraryScreen.handle_library_media_select_toggle(fake, event)
     assert fake._library_media_select_mode is True
     assert fake._notified == []
+
+
+def test_select_toggle_on_arms_row_focus_not_the_items_pane():
+    """task-31631 AC#1: entering select mode requests the LIST-ENTRY focus.
+
+    The footer starts promising "space toggle selection" the instant select
+    mode flips, and Space's own gate needs a focused ``.library-media-row``.
+    ``_focus_library_media_items_pane`` lands on a row too, but only once --
+    it dies with the Button it focused the next time a background worker
+    recomposes the screen (critique #5: "no focus painted anywhere"). The
+    armed seam re-requests the row across those recomposes, and prefers a
+    still-checked row over the literal first one.
+    """
+    fake = _media_fake(select_mode=False)
+    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    seams = []
+    fake._focus_library_media_items_pane = lambda: seams.append("items-pane")
+    fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    assert fake._library_media_select_mode is True
+    assert seams == ["list-entry"]
+
+
+def test_select_toggle_off_keeps_the_users_focus():
+    """task-31631: the EXIT branch is unchanged -- it re-registers the footer
+    and leaves focus where the user put it (no entry-focus request)."""
+    fake = _media_fake(select_mode=True)
+    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    seams = []
+    fake._focus_library_media_items_pane = lambda: seams.append("items-pane")
+    fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    assert fake._library_media_select_mode is False
+    assert seams == []
+    assert fake._footer_registrations == 1
 
 
 def test_type_filter_change_exits_select_mode_and_notifies_discard():

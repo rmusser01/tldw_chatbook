@@ -1966,3 +1966,145 @@ async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatc
         assert generate.disabled is False
         assert str(generate.label) == "Generate"
         assert generate.tooltip is None
+
+
+# ---------------------------------------------------------------------------
+# task-31631: select mode is reachable by keyboard, and "Done" leaves the
+# "sort:" slot. Critique #5 P1: from the rail, "s" entered select mode but
+# F6, Down and Space all no-opped with no focus painted anywhere -- only a
+# mouse click on the one-cell "☐" seeded focus. Painted on purpose (the
+# task-31221 lesson): the row's focus cue is a STYLE (focus background +
+# bold underline, ``outline: none``), so a region assertion cannot tell a
+# focused row from an unfocused one.
+# ---------------------------------------------------------------------------
+
+
+def _painted_cells(host, region):
+    """Return (text, style) for every non-blank painted segment in ``region``."""
+    strips = list(host.screen._compositor.render_strips())
+    cells = []
+    for y in range(region.y, min(region.bottom, len(strips))):
+        for segment in strips[y].crop(region.x, region.right):
+            if segment.text.strip():
+                cells.append((segment.text, segment.style))
+    return cells
+
+
+def _row_is_painted_focused(host, screen) -> bool:
+    """Whether the focused media row really carries the focus cue on screen."""
+    focused = screen.focused
+    if focused is None or not focused.has_class("library-media-row"):
+        return False
+    cells = _painted_cells(host, focused.region)
+    return bool(cells) and all(style.underline for _text, style in cells)
+
+
+async def _enter_media_select_mode(screen, pilot):
+    """Stand on the rail row, press "s", and wait for select mode to settle."""
+    screen.set_focus(screen.query_one("#library-row-browse-media", Button))
+    await pilot.pause()
+    await pilot.press("s")
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_media_select_mode,
+        message="Select mode never engaged after 's'.",
+    )
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
+    """task-31631 AC#1/AC#4: "s" from the rail lands a painted focus cue on a
+    ROW -- and keeps it there when a background worker's recompose rebuilds
+    the rows -- so Down and Space work immediately, as the footer promises."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+
+        focused = screen.focused
+        assert focused is not None, "nothing is focused after entering select mode"
+        assert focused.has_class("library-media-row"), (
+            f"focus landed on {focused!r}, not a media row"
+        )
+        assert _row_is_painted_focused(host, screen), _painted(host, focused.region)
+        # The cue is the row's own, not something every row paints.
+        other = screen.query_one("#library-media-row-1", Button)
+        assert not any(
+            style.underline for _text, style in _painted_cells(host, other.region)
+        ), _painted(host, other.region)
+
+        # Any of the screen's background workers ends in its own whole-screen
+        # recompose, which rebuilds the row Buttons. A one-shot focus dies
+        # with the widget it was set on; the armed entry-focus request does
+        # not. (The Reader's general case is task-31567's.)
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        assert _row_is_painted_focused(host, screen), (
+            f"focus was {screen.focused!r} after a background recompose"
+        )
+
+        # ...and the keys the footer promises work immediately.
+        await pilot.press("down")
+        await pilot.press("space")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_row_selection.count == 1,
+            message="Down then Space did not select a row.",
+        )
+        await pilot.pause()
+        canvas = screen.query_one("#library-media-canvas")
+        assert "1 selected" in _painted(host, canvas.region)
+
+
+_BROWSE_TOOLBAR_SLOTS = (
+    "#library-media-type-filter",
+    "#library-media-sort",
+    "#library-media-export",
+    "#library-media-trash-open",
+    "#library-media-review",
+)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+@pytest.mark.asyncio
+async def test_done_does_not_take_the_sort_slot(size):
+    """task-31631 AC#3: "Done" must not land where "sort:" sat in browse mode.
+
+    The habitual click on the sort chooser otherwise silently becomes "leave
+    select mode and discard the selection" -- so the pin covers every browse
+    toolbar slot, not only sort's: trading sort's cells for Export…'s would
+    be the same bug wearing a different label.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        browse_slots = {}
+        for selector in _BROWSE_TOOLBAR_SLOTS:
+            region = screen.query_one(selector, Button).region
+            assert region.width > 0, selector
+            browse_slots[selector] = region
+
+        await _enter_media_select_mode(screen, pilot)
+        done = screen.query_one("#library-media-select-toggle", Button)
+        assert str(done.label) == "Done"
+        assert done.region.width > 0
+        for selector, region in browse_slots.items():
+            overlaps = not (
+                done.region.right <= region.x
+                or done.region.x >= region.right
+                or done.region.bottom <= region.y
+                or done.region.y >= region.bottom
+            )
+            assert not overlaps, (
+                f"Done at {done.region} overlaps the browse-mode {selector} "
+                f"slot {region}"
+            )
+        # Still a whole word, painted inside the pane.
+        canvas = screen.query_one("#library-media-canvas")
+        assert "Done" in _painted(host, canvas.region)
+        assert done.region.right <= canvas.region.right
