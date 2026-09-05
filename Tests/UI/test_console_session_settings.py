@@ -7827,8 +7827,9 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
     """The pinned preamble precedes staged and readiness content.
 
     Project status and next-send authority form the pinned preamble above the
-    Inspector rail body. The staged-context tray is the body's first child,
-    ahead of the run inspector and its source-readiness content.
+    Inspector rail body. The staged-context tray follows the task-9
+    Environment/Tasks sections as the body's third child, ahead of the run
+    inspector and its source-readiness content.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -7859,7 +7860,11 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert project_status not in tuple(rail_body.query("*"))
         assert authority not in tuple(rail_body.query("*"))
         children = list(rail_body.children)
-        assert children[0] is staged_context
+        # task-9: Environment and Tasks sections now precede the
+        # staged-context tray.
+        assert children[0].id == "console-environment-section"
+        assert children[1].id == "console-tasks-section"
+        assert children[2] is staged_context
         assert children.index(staged_context) < children.index(run_inspector)
         assert children.index(run_inspector) < children.index(live_work)
 

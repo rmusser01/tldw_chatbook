@@ -91,6 +91,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
+from textual.events import AppFocus
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -16875,6 +16876,40 @@ class TldwCli(
             await self._stts_initialization_task
             return self._stts_handler
         return await self._initialize_stts_service()
+
+    def on_app_focus(self, event: AppFocus) -> None:
+        """Forward a terminal focus regain to the active screen that wants it.
+
+        ``AppFocus`` is declared ``bubble=False`` and the driver posts it ONLY
+        to the App -- and events travel UP the DOM, never down, so a
+        screen-level ``@on(AppFocus)`` handler can never fire. (task-13 review
+        C1: one shipped as dead code precisely because its test called the
+        handler method directly instead of posting the real event.) The App is
+        therefore the only place this can be observed, and forwarding is the
+        only way a screen can react to it.
+
+        Duck-typed rather than isinstance-checked against ChatScreen: this
+        stays a one-line opt-in for any future screen, and avoids importing a
+        screen module into the app's hot import path. Never raises -- a focus
+        event must not be able to take the app down.
+
+        Args:
+            event: The focus-regained event; not consumed, so Textual's own
+                ``App._on_app_focus`` still runs (both the private framework
+                handler and this public one are dispatched, from different
+                classes in the MRO).
+        """
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            return
+        notify = getattr(screen, "notify_terminal_focus_regained", None)
+        if notify is None:
+            return
+        try:
+            notify()
+        except Exception:  # noqa: BLE001 -- a focus nudge must never crash the app
+            logger.warning("app: terminal-focus-regained forwarding failed")
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
