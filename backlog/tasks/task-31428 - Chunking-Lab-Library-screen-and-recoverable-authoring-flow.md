@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 05:54'
+updated_date: '2026-09-05 06:05'
 labels:
   - chunking
   - chunking-lab
@@ -50,7 +50,7 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-and-recovery.md. Reason: direct correction of the approved canonical-save, recovery and authoring contracts; no new storage owner/runtime or policy. Original eight-step Task8 plan completed and reviewed. Final correction wave: 1. Read final-review.md, approved constraints and corresponding existing tasks/source. 2. TDD for exact catalog-write acknowledgment and post-commit peer interleaving; validate known recovery UI shapes while preserving opaque authored data. 3. Historical output readability and explicit per-candidate Previous inspection. 4. Read-only import inspection on failed local load, validated summary and explicit replacement confirmation. 5. Preserve unfinished raw tags, lazy screen workers, builtin copy default, sample provenance and export without runnable admission. 6. Focused amended-code service/state/recovery/UI tests, no full suite or new visual polish loop. 7. Reconcile docs/ADR/plan status, append exact evidence and self-review, one scoped final re-review; no merge/push.
+ADR required: yes; existing ADR078 and ADR118 apply. Prior correction plan and evidence remain in the main Chunking Lab plan/reports. User-requested AC15 follow-up: reproduce the two runtime consumer guards; add behavior tests; place admission-time preprocessing and sanitation behind narrow template_runtime adapters without changing budgets/prescan ordering or widening guards; targeted runtime/runner checks; scoped independent review; final combined feature/compatibility gate; complete AC15 and documentation only after evidence. Follow-up plan: Docs/superpowers/plans/2026-09-04-chunking-lab-runtime-boundary-followup.md.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
