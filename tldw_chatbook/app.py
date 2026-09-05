@@ -13066,14 +13066,16 @@ class TldwCli(
                 return False
 
         # TASK-1143 (F5): give the outgoing screen one awaited chance to
-        # ASK before it (and whatever it owns) is torn down -- e.g. Console
-        # unmounting cancels every in-flight run and denies every pending/
-        # parked approval round for its ConsoleChatController (see
-        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
-        # the flush-veto seam immediately above: False keeps the outgoing
-        # screen mounted exactly like a flush veto, only here the decision
-        # comes from a user-facing confirmation dialog rather than an
-        # unresolved save conflict.
+        # ASK before navigation proceeds. Mirrors the flush-veto seam
+        # immediately above: False keeps the outgoing screen in place,
+        # only here the decision comes from a user-facing confirmation
+        # dialog rather than an unresolved save conflict. TASK-31520 note:
+        # for REUSABLE routes leaving suspends rather than tears down, so
+        # a screen whose only stake was "leaving destroys my work" should
+        # return True unconditionally once flagged reusable (Console's
+        # does -- its runs and approvals survive navigation now); the seam
+        # itself stays for non-reusable screens and for hooks that gate on
+        # something other than teardown.
         confirm_navigation = getattr(current_screen, "confirm_navigation", None)
         if callable(confirm_navigation):
             try:
@@ -15587,6 +15589,19 @@ class TldwCli(
         self._ensure_screen_owned_css(resolved_tab)
 
         new_screen = screen_class(self)
+        # TASK-31520: retain the initial screen exactly like a navigated-to
+        # one. Without this, a reusable initial tab (chat is the default!)
+        # built here was never installed, so the first navigation away
+        # unmounted it and the first RETURN paid one full re-mint -- the
+        # exact cost reuse exists to retire, on the app's most common
+        # route, for every user.
+        initial_route = resolve_screen_route(resolved_screen_name)
+        if initial_route is not None and initial_route.reusable:
+            self._retain_reusable_navigation_screen(
+                resolved_tab,
+                self._current_runtime_identity(),
+                new_screen,
+            )
 
         # A configured default tab that is itself a legacy alias route (e.g.
         # "search"/"prompts"/"skills" -> Library) carries the same nav-context
