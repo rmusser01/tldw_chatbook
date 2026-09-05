@@ -162,9 +162,7 @@ class ImageEditOperationRegistry:
                             type(exc).__name__,
                         )
 
-        task = asyncio.create_task(
-            _owned(), name=f"console-h3-image-edit-{generation}"
-        )
+        task = asyncio.create_task(_owned(), name=f"console-h3-image-edit-{generation}")
         operation = ActiveImageEditOperation(
             session_id=session_id,
             generation=generation,

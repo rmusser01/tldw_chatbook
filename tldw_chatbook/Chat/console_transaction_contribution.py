@@ -92,9 +92,7 @@ class _CursorConsoleTransactionWriter:
                 or maximum < 0
                 or maximum >= _SQLITE_MAX_INTEGER
             ):
-                raise sqlite3.DatabaseError(
-                    "Invalid trajectory sequence maximum."
-                )
+                raise sqlite3.DatabaseError("Invalid trajectory sequence maximum.")
             else:
                 self.__next_trajectory_sequence = maximum + 1
         if self.__next_trajectory_sequence > _SQLITE_MAX_INTEGER:
