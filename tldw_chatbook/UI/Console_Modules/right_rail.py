@@ -1556,6 +1556,12 @@ class ConsoleInspectorRail(Vertical):
                 collapsible=True,
                 open=self._environment_open,
                 view_all_label="Refresh",
+                # TASK-31662 AC#3: this summary IS the branch row and the
+                # Changes row's counts, so it only earns header columns
+                # while the body is hidden. The fleet section below keeps
+                # its own summary open -- "2 working, 1 done" is an
+                # aggregate no row of it restates.
+                suppress_summary_when_open=True,
                 id="console-environment-section",
             )
             environment_section.styles.display = (
@@ -1570,6 +1576,9 @@ class ConsoleInspectorRail(Vertical):
                 summary=self._tasks_section_state.summary,
                 collapsible=True,
                 open=self._tasks_open,
+                # Same reasoning as Environment above: open, the branch
+                # task's own row carries what the summary says.
+                suppress_summary_when_open=True,
                 id="console-tasks-section",
             )
             tasks_section.styles.display = (

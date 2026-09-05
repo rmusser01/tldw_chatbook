@@ -56,6 +56,56 @@ from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
+#: Content width of the Console Inspect rail's section box at the SMALLEST
+#: supported terminal. Measured, not assumed (TASK-31662, TASK-31629 #12):
+#: probing the real Console at 80x24 on 2026-09-05 reports
+#: ``#console-environment-section`` at ``Size(width=30)``, its body at 29,
+#: and each row's own content region at 27; at 200x50 the same three are
+#: 36/35/33. Budgets derived from this constant therefore fit EVERY
+#: supported width, not just the roomy ones -- the previous 34-column
+#: assumption was between the two, so an "Environment" title that fitted in
+#: its test painted as "Environm…" on a real 80x24 terminal.
+RAIL_CONTENT_WIDTH_MIN = 30
+
+#: Width of a section header's collapse chevron (``compose`` pins all three
+#: of the Button's width styles to this).
+SECTION_TOGGLE_WIDTH = 3
+
+#: Columns a row's own text gets at ``RAIL_CONTENT_WIDTH_MIN``: the section
+#: body indents by 1 (``.console-inspector-section-body`` padding) and the
+#: row spends 2 more on its own ``padding: 0 1``.
+SINGLE_LINE_ROW_BUDGET = RAIL_CONTENT_WIDTH_MIN - 1 - 2
+
+
+def row_fits_one_line(
+    primary_text: str, secondary_text: str, *, budget: int = SINGLE_LINE_ROW_BUDGET
+) -> bool:
+    """Whether a row's primary and secondary can share ONE line.
+
+    Deliberately a pure function of the TEXTS against the smallest
+    supported width, not of the widget's measured width: a row's mounted
+    shape has to be decided in ``compose`` (before layout has run) and has
+    to stay stable across a resize, so deciding it from the narrowest rail
+    the app supports is the only answer that is both available in time and
+    correct at every width. The cost is that a pair which would fit at
+    200x50 but not at 80x24 keeps the two-line form everywhere; the pair is
+    never truncated to make one fit.
+
+    Args:
+        primary_text: The row's first-line text.
+        secondary_text: The row's dimmed detail text.
+        budget: Columns available to the row's own text.
+
+    Returns:
+        ``True`` when both texts plus one separating column fit ``budget``.
+        Always ``False`` for an empty secondary -- that row has no pair to
+        put side by side; it renders as its primary line alone.
+    """
+    if not secondary_text:
+        return False
+    return len(primary_text) + 1 + len(secondary_text) <= budget
+
+
 @dataclass(frozen=True)
 class InspectorSectionRow:
     """One row rendered in an Inspector section body -- a caller-owned value
@@ -69,10 +119,13 @@ class InspectorSectionRow:
             patch in place (same ``row_id``s in the same order) or requires
             a recompose (rows added/removed/reordered).
         primary_text: First (non-dimmed) line, e.g. "glyph + name + elapsed".
-        secondary_text: Second, dimmed line, e.g. a truncated last-step
-            summary. Empty renders as a blank second line rather than a
-            missing one, so a row's mounted shape never depends on whether
-            this happens to be set.
+        secondary_text: Dimmed detail, e.g. a truncated last-step summary.
+            Where it renders depends on what it is (TASK-31662): empty
+            renders no line at all, a short one shares the primary's line
+            right-aligned, and only a pair too wide for
+            ``SINGLE_LINE_ROW_BUDGET`` takes a second line. Empty used to
+            render as a BLANK second line -- 25% of the Environment
+            section's row-lines were that blank.
         status: Status token driving the row's
             ``console-inspector-section-row-<status>`` CSS class (e.g.
             "running", "done", "error", "blocked"); ``""`` applies none.
@@ -213,6 +266,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         collapsible: bool = True,
         open: bool = True,
         view_all_label: str = "",
+        suppress_summary_when_open: bool = False,
         **kwargs: Any,
     ) -> None:
         """Create an Inspector section.
@@ -231,6 +285,16 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 when ``collapsible`` is ``False``).
             view_all_label: Label for an optional "View all" tail button;
                 ``""`` renders no tail.
+            suppress_summary_when_open: Hide the header summary while the
+                body is visible (TASK-31662, AC#3). Opt-in, and the
+                default is off, because whether a summary duplicates its
+                own rows is a property of the CALLER's data, not of this
+                grammar: the Environment section's "branch ±counts" is
+                literally its first two rows, while the fleet section's
+                "2 working, 1 done" is an aggregate no row restates. The
+                columns the summary gives up go back to the title, which
+                is what stops "Environment" painting as "Environm…" at
+                ``RAIL_CONTENT_WIDTH_MIN``.
             **kwargs: Forwarded to ``Vertical`` (e.g. ``id``, ``classes``).
         """
         super().__init__(**kwargs)
@@ -241,6 +305,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.collapsible = collapsible
         self.open = True if not collapsible else bool(open)
         self.view_all_label = view_all_label
+        self.suppress_summary_when_open = bool(suppress_summary_when_open)
         self.styles.height = "auto"
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
@@ -318,6 +383,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 summary.styles.width = "auto"
                 summary.styles.min_width = 0
                 summary.styles.height = 1
+                if self._summary_is_suppressed():
+                    summary.styles.display = "none"
                 yield summary
             if self.collapsible:
                 toggle = Button(
@@ -327,9 +394,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
-                toggle.styles.width = 3
-                toggle.styles.min_width = 3
-                toggle.styles.max_width = 3
+                toggle.styles.width = SECTION_TOGGLE_WIDTH
+                toggle.styles.min_width = SECTION_TOGGLE_WIDTH
+                toggle.styles.max_width = SECTION_TOGGLE_WIDTH
                 toggle.styles.height = 1
                 yield toggle
 
@@ -363,6 +430,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
 
     # -- Collapse ---------------------------------------------------------
 
+    def _summary_is_suppressed(self) -> bool:
+        """Whether the header summary should currently be hidden."""
+        return self.suppress_summary_when_open and self.open
+
     def _toggle_label(self) -> str:
         return resolve_glyph(GLYPH_EXPANDED if self.open else GLYPH_COLLAPSED)
 
@@ -372,10 +443,14 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
     def set_open(self, open: bool) -> None:
         """Show or hide the body without recomposing the section.
 
-        The header (and its summary/chevron) stays painted either way --
-        only the row body's ``display`` changes. Posts ``CollapseToggled``
-        so a caller can persist the preference; a no-op call (``open``
-        already matches) posts nothing.
+        The header and its chevron stay painted either way; the summary
+        follows ``suppress_summary_when_open`` -- this is the second half
+        of that pair, ``compose`` being the first, and skipping it would
+        leave the summary in whatever state the section was BUILT in for
+        the rest of its life.
+
+        Posts ``CollapseToggled`` so a caller can persist the preference;
+        a no-op call (``open`` already matches) posts nothing.
 
         Args:
             open: Whether the body should be visible.
@@ -399,6 +474,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             else:
                 toggle.label = self._toggle_label()
                 toggle.tooltip = self._toggle_tooltip()
+            if self.suppress_summary_when_open:
+                try:
+                    summary = self.query_one(f"#{self._summary_id}", Static)
+                except (NoMatches, QueryError):
+                    pass  # no summary text -> no Static to reveal
+                else:
+                    summary.styles.display = (
+                        "none" if self._summary_is_suppressed() else "block"
+                    )
         self.post_message(self.CollapseToggled(self.section_id, open))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -419,9 +503,17 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """Return a key identifying the mounted widget structure for a state.
 
         Two states with equal keys mount the same row ids, in the same
-        order, with the same summary presence (shown vs. hidden) -- they
-        differ at most in row/summary text, row status, or row
-        clickability, all of which are safe to patch in place.
+        order, each in the same LINE SHAPE, with the same summary presence
+        (shown vs. hidden) -- they differ at most in row/summary text, row
+        status, or row clickability, all of which are safe to patch in
+        place.
+
+        The line shape is part of the key (TASK-31662) because it decides
+        the row's mounted DOM: a pair that fits shares one line inside a
+        ``Horizontal``, a pair that does not is two stacked Statics.
+        Patching new text into the wrong shape would either squeeze both
+        halves into ``SINGLE_LINE_ROW_BUDGET`` columns or leave a row two
+        lines tall to say one thing -- so a shape change recomposes.
 
         ``clickable`` is deliberately EXCLUDED from this key (task-3 review
         round 2 finding, LOW): ``_apply_row_update`` already re-syncs a
@@ -441,7 +533,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             A hashable structure key.
         """
         return (
-            tuple(row.row_id for row in rows),
+            tuple(
+                (row.row_id, row_fits_one_line(row.primary_text, row.secondary_text))
+                for row in rows
+            ),
             bool(summary),
         )
 
@@ -541,9 +636,13 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 row.primary_text
             )
         if row.secondary_text != previous_row.secondary_text:
-            self.query_one(f"#{self._row_secondary_id(index)}", Static).update(
-                row.secondary_text
-            )
+            secondary = self.query_one(f"#{self._row_secondary_id(index)}", Static)
+            secondary.update(row.secondary_text)
+            # Same mounted shape (the structural key guarantees it), but an
+            # empty secondary is HIDDEN rather than blank -- so a row that
+            # gains or loses its detail text has to gain or lose the line
+            # too, or the new text renders into a `display: none` Static.
+            secondary.styles.display = "none" if not row.secondary_text else "block"
         if row.status != previous_row.status:
             if previous_row.status:
                 row_widget.remove_class(
@@ -556,12 +655,26 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
 class ConsoleInspectorSectionRow(Vertical):
     """One row inside a ``ConsoleInspectorSection`` body.
 
-    Always mounts two Statics (primary + secondary line, the latter
-    possibly blank) so a row's mounted shape never depends on whether
-    ``secondary_text`` happens to be empty at any given sync -- only row
-    identity (the structural key) governs recompose vs. in-place patching.
-    ``clickable`` can change across an in-place patch too (re-synced
-    unconditionally by ``ConsoleInspectorSection._apply_row_update``).
+    Always mounts BOTH Statics -- consumers query the secondary by id
+    whether or not the row has detail text -- but spends a second LINE on
+    the secondary only when it needs one (TASK-31662). Three cases:
+
+    * no ``secondary_text``: one line, the secondary Static hidden. This
+      row used to render a blank second line; 25% of the Environment
+      section's row-lines were exactly that.
+    * a pair that fits ``SINGLE_LINE_ROW_BUDGET``: one line, primary
+      ``1fr`` and secondary ``auto`` inside a ``Horizontal`` -- the same
+      shape the section HEADER uses for title + summary, so the secondary
+      lands flush right.
+    * a pair that does not fit: the original two-line stack, uncut. The
+      fleet section's rows ("glyph name · elapsed" over "task · N tok")
+      live here.
+
+    Which case a row is in is part of ``ConsoleInspectorSection``'s
+    structural key, so a row that changes shape recomposes rather than
+    being patched into the wrong one. ``clickable`` can still change
+    across an in-place patch (re-synced unconditionally by
+    ``ConsoleInspectorSection._apply_row_update``).
     """
 
     BINDINGS = [
@@ -590,24 +703,70 @@ class ConsoleInspectorSectionRow(Vertical):
         self._index = index
         self._primary_text = row.primary_text
         self._secondary_text = row.secondary_text
+        self._one_line = row_fits_one_line(row.primary_text, row.secondary_text)
         self.styles.height = "auto"
-        self.styles.min_height = 2
+        # Inline as well as in the CSS: a bare test harness loads neither
+        # the app bundle nor the console-owned split sheet, and geometry
+        # has to be right for any host (the same reason the header's
+        # summary sets its own width/height inline).
+        self.styles.min_height = 1
         if row.status:
             self.add_class(f"console-inspector-section-row-{row.status}")
 
-    def compose(self) -> ComposeResult:
-        yield Static(
+    @property
+    def _primary_id(self) -> str:
+        return f"console-inspector-section-{self.section_id}-row-{self._index}-primary"
+
+    @property
+    def _secondary_id(self) -> str:
+        return (
+            f"console-inspector-section-{self.section_id}-row-{self._index}-secondary"
+        )
+
+    def _make_primary(self) -> Static:
+        primary = Static(
             self._primary_text,
-            id=f"console-inspector-section-{self.section_id}-row-{self._index}-primary",
+            id=self._primary_id,
             classes="console-inspector-section-row-primary",
             markup=False,
         )
-        yield Static(
+        primary.styles.height = 1
+        return primary
+
+    def _make_secondary(self) -> Static:
+        secondary = Static(
             self._secondary_text,
-            id=f"console-inspector-section-{self.section_id}-row-{self._index}-secondary",
+            id=self._secondary_id,
             classes="console-inspector-section-row-secondary",
             markup=False,
         )
+        secondary.styles.height = 1
+        return secondary
+
+    def compose(self) -> ComposeResult:
+        if self._one_line:
+            line = Horizontal(classes="console-inspector-section-row-line")
+            line.styles.height = 1
+            line.styles.width = "100%"
+            with line:
+                primary = self._make_primary()
+                # `1fr` + `auto` is the header's own title/summary split:
+                # the primary takes everything the secondary does not, which
+                # is what puts the secondary flush against the right edge.
+                primary.styles.width = "1fr"
+                primary.styles.min_width = 0
+                yield primary
+                secondary = self._make_secondary()
+                secondary.styles.width = "auto"
+                secondary.styles.min_width = 0
+                yield secondary
+            return
+        yield self._make_primary()
+        secondary = self._make_secondary()
+        if not self._secondary_text:
+            # Mounted (consumers query it by id) but costing no line.
+            secondary.styles.display = "none"
+        yield secondary
 
     def on_mouse_down(self, _event: events.MouseDown) -> None:
         """Activate before an owning rail can reflow the row under the pointer."""

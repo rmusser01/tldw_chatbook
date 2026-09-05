@@ -210,6 +210,8 @@ def relative_age(then: datetime | None, now: datetime) -> str:
 
 
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    RAIL_CONTENT_WIDTH_MIN,
+    SECTION_TOGGLE_WIDTH,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
@@ -239,22 +241,36 @@ EXPANDABLE_ENV_ROWS = frozenset(
 
 _MAX_FILE_ROWS = 12
 
-# Column budget for the Environment section's header summary.
+# Column budgets for the two section header summaries.
 #
 # The section header is `title (1fr) + summary (auto) + toggle (3)` on ONE
 # line (`console_inspector_section.py::compose`). The summary Static is
 # `width: auto`, so an unbudgeted summary takes whatever it wants and the
-# 1fr title -- "Environment" -- is starved to nothing. Live-verified at both
-# 80x24 and 200x50: the Inspect rail's body is ~34 columns wide regardless
-# of terminal size, so any branch name over ~33 characters (routine here:
-# `feat/console-inspector-environment`) squeezed the title AND the collapse
-# chevron off the header entirely.
+# 1fr title is starved to nothing -- any branch name over ~33 characters
+# (routine here: `feat/console-inspector-environment`) squeezed the title
+# AND the collapse chevron off the header entirely.
 #
-# 18 leaves 34 - 18 - 3 = 13 columns for the title, which fits
-# "Environment" (11) with slack. Truncation lives HERE, in the pure
-# projection, not in the widget -- this arc's rule, so it is testable
-# without a running app.
-ENV_SUMMARY_BUDGET = 18
+# The budget is DERIVED from the rail's measured content width rather than
+# chosen (TASK-31662 / TASK-31629 #12). The earlier "~34 columns at every
+# terminal size" reading was wrong in the direction that matters: probing
+# the real Console on 2026-09-05 puts the section box at 30 columns at
+# 80x24 and 36 at 200x50, so 34 was a width no supported terminal
+# produces, and an 18-column summary left "Environment" painting as
+# "Environm…" at the small end. Each budget below is
+# `RAIL_CONTENT_WIDTH_MIN - len(title) - toggle - 1` (one column keeping
+# the title and summary apart), so the title always paints in full.
+#
+# Truncation lives HERE, in the pure projection, not in the widget -- this
+# arc's rule, so it is testable without a running app.
+ENV_SUMMARY_BUDGET = (
+    RAIL_CONTENT_WIDTH_MIN - len("Environment") - SECTION_TOGGLE_WIDTH - 1
+)
+#: Same derivation for the Tasks section, whose title is four columns
+#: shorter (TASK-31629 #13: "task-31450 · In Progress" is 24 columns and
+#: left three for the 5-column "Tasks" title).
+TASKS_SUMMARY_BUDGET = (
+    RAIL_CONTENT_WIDTH_MIN - len("Tasks") - SECTION_TOGGLE_WIDTH - 1
+)
 
 # TASK-31660 copy. PENDING is progress, not a claim; UNBOUND is Change
 # Review's own unbound-workspace sentence (`change_review_screen.py`'s
@@ -581,9 +597,21 @@ def project_tasks_section(
             clickable=True,
         ))
     else:
+        # TASK-31662 AC#4: this row used to read "3 in progress · 12 to do"
+        # directly under a header reading "3 doing · 12 todo" -- one fact,
+        # twice, in two vocabularies. The counts belong to the header (it
+        # is what a COLLAPSED section shows); the row is the handle onto
+        # the list, so it says what the list holds. It stays a row rather
+        # than being dropped because it is the only expand/collapse gesture
+        # for the entry list, and because a Tasks section with no rows
+        # hides itself entirely (`right_rail.py`) -- which is also what
+        # `test_poll_landing_that_hides_the_tasks_section_falls_back_to_
+        # environment_toggle` measures.
+        count = len(tasks.entries)
         rows.append(InspectorSectionRow(
             row_id=TASKS_ROW_HEAD,
-            primary_text=f"{tasks.in_progress} in progress · {tasks.todo} to do",
+            primary_text="Backlog",
+            secondary_text=f"{count} task" + ("s" if count != 1 else ""),
             clickable=True,
         ))
     if TASKS_ROW_HEAD in expanded:
@@ -611,4 +639,6 @@ def project_tasks_section(
         f"task-{tasks.branch_task.task_id} · {tasks.branch_task.status}"
         if tasks.branch_task else f"{tasks.in_progress} doing · {tasks.todo} todo"
     )
-    return ConsoleInspectorSectionState(rows=tuple(rows), summary=summary)
+    return ConsoleInspectorSectionState(
+        rows=tuple(rows), summary=_ellipsize(summary, TASKS_SUMMARY_BUDGET)
+    )

@@ -198,7 +198,7 @@ describe different trees. Rows, top to bottom:
 | **checks** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names | **Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
 
 Large counts compact rather than wrap: a seven-digit pair reads
-`+1.7M −278k` in the rail's 34-column budget, and the exact figures stay one
+`+1.7M −278k` in the rail's 30-column width, and the exact figures stay one
 Enter away in the expansion.
 
 Two honesty notes worth knowing:
@@ -214,8 +214,10 @@ Two honesty notes worth knowing:
 **Tasks** — the `backlog/` directory in the same root. When the branch name
 carries a task id (`feat/task-3401-…`, and subtask ids like `task-3401.6`
 count) the collapsed line is that task: `task-3401 · In Progress`, with
-`4/9 ACs · <title>` beside it. With no branch-linked task it reports counts
-instead — `3 in progress · 12 to do`. Enter expands the full list,
+`4/9 ACs · <title>` beside it. With no branch-linked task the section header
+carries the counts (`3 doing · 12 todo`) and the row beneath is the handle
+onto the list — **Backlog**, with how many tasks it holds. Enter expands the
+full list,
 In-Progress first, capped with a "… N more" row; **Add task to chat** pastes
 the branch task's title and file path into the composer. The list is
 read-only — the rail never edits a task file. The scan runs off the UI
@@ -973,3 +975,23 @@ previous repository's branch, counts and **Commit or push** offer within one
 **Refresh** in that state re-checks the binding rather than doing nothing.
 Code-level pass (pure projection, deferred-fake controller, and screen-wiring
 suites); not re-driven live.*
+
+*Amended — 2026-09-05 (TASK-31662, rail density): rows in these three
+sections now take ONE line unless they genuinely need two. A row with no
+detail text no longer paints a blank second line, and a row whose detail
+fits beside its label (a **Changes** row and its `+10 −2`, a file row and
+its counts) puts the detail flush right on the same line; only a pair too
+wide for the rail's 27-column row width — a fleet row's task summary, a
+long file path with its counts — still stacks. Measured on the real
+Console: the Environment section at rest went from eleven lines to seven at
+80x24. Two related changes: an OPEN Environment or Tasks section no longer
+repeats itself in its own header (the summary is what a COLLAPSED section
+shows, and standing it down is what lets "Environment" paint in full at
+80x24 instead of "Environm…"), and the Tasks row without a branch task
+stopped restating the header's counts in different words. The rail's real
+content width is 30 columns at 80x24 and 36 at 200x50; the "34 columns at
+every size" reading in the previous amendment was a width no supported
+terminal produces, and the summary budgets are now derived from the
+measured 30. Code-level pass (widget-geometry, projection, and screen-wiring
+suites, plus a live-geometry probe of the real Console at both sizes); not
+re-driven by hand in tmux.*

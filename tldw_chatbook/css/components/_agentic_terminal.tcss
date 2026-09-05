@@ -5105,10 +5105,22 @@ Button.console-inspector-action:disabled {
     padding: 0 0 0 1;
 }
 
+/* TASK-31662: one line per row unless the row's own pair needs two (see
+   `ConsoleInspectorSectionRow`'s docstring). The floor was `2`, which
+   made every row two lines tall whatever it had to say -- 25% of the
+   Environment section's row-lines were blank, and an 80x24 rail's 3-line
+   scroll body showed a single row that restated its own header. */
 .console-inspector-section-row {
     height: auto;
-    min-height: 2;
+    min-height: 1;
     padding: 0 1;
+}
+
+/* The one-line form's inner row: primary (1fr) + secondary (auto), the
+   same split the section header uses for title + summary. */
+.console-inspector-section-row-line {
+    width: 100%;
+    height: 1;
 }
 
 .console-inspector-section-row:focus {
@@ -5135,20 +5147,26 @@ Button.console-inspector-action:disabled {
    built via f-string interpolation in console_inspector_section.py, which
    is out of scope for test_css_class_coverage_contract.py by design (its
    docstring: "f-strings ... are out of scope"); these rules are shipped
-   for real styling, not to satisfy that contract. */
-.console-inspector-section-row-running > .console-inspector-section-row-primary {
+   for real styling, not to satisfy that contract.
+
+   DESCENDANT, not child (`>`), since TASK-31662: in the one-line form the
+   primary sits inside `.console-inspector-section-row-line`, so a child
+   combinator silently dropped the status colour for every row narrow
+   enough to share a line -- the fleet's running/done/error rows among
+   them. */
+.console-inspector-section-row-running .console-inspector-section-row-primary {
     color: $ds-status-running;
 }
 
-.console-inspector-section-row-done > .console-inspector-section-row-primary {
+.console-inspector-section-row-done .console-inspector-section-row-primary {
     color: $ds-status-ready;
 }
 
-.console-inspector-section-row-error > .console-inspector-section-row-primary {
+.console-inspector-section-row-error .console-inspector-section-row-primary {
     color: $ds-status-error;
 }
 
-.console-inspector-section-row-blocked > .console-inspector-section-row-primary {
+.console-inspector-section-row-blocked .console-inspector-section-row-primary {
     color: $ds-status-blocked;
 }
 

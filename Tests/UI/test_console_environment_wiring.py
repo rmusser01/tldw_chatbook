@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_CHANGES,
     ENV_ROW_CHECKS_FIX,
     ENV_ROW_COMMIT_PUSH,
+    ENV_ROW_LOCAL,
     ENV_ROW_PENDING,
     ENV_ROW_PR,
     ENV_ROW_PR_ADD,
@@ -61,6 +62,7 @@ from tldw_chatbook.Chat.console_environment_state import (
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    RAIL_CONTENT_WIDTH_MIN,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
 )
@@ -1372,3 +1374,74 @@ async def test_other_session_activity_alone_does_not_touch_the_inspect_rail():
         screen._agent._console_agent_fleet_summary_line = lambda: _FLEET_BUSY_LINE
         assert screen._console_fleet_rows_present is False
         assert screen._current_console_rail_state().right_open is False
+
+
+# ---------------------------------------------------------------------------
+# TASK-31662: density at the smallest supported terminal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_environment_rows_take_one_line_each_at_the_smallest_terminal():
+    """AC#1/#2 through the REAL rail, at the size the critique measured.
+
+    Before this task the same four rows measured two lines each (probe on
+    this branch 2026-09-05: section height 11, every row Size(height=2)),
+    which is why an 80x24 rail -- whose scrollable body is three lines
+    under an eight-line pinned stack -- showed one row that restated its
+    own header. The rail's own pinned stack is untouched here; what this
+    pins is that the section stopped spending two lines to say one thing.
+    """
+    async with _console_screen(size=(80, 24)) as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        snapshot = _snapshot(files=(ChangedFile("M", "a.py", 3, 1),))
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)
+        await pilot.pause()
+
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        # The measured content width the budgets are derived from.
+        assert section.size.width == RAIL_CONTENT_WIDTH_MIN
+        rows = list(section.query(ConsoleInspectorSectionRow))
+        assert [row.row_id for row in rows] == [
+            ENV_ROW_CHANGES, ENV_ROW_LOCAL, ENV_ROW_BRANCH, ENV_ROW_COMMIT_PUSH
+        ]
+        for row in rows:
+            assert row.size.height == 1, row.row_id
+        # header + four rows + the Refresh tail (margin + button) = 7 (was 11).
+        assert section.size.height == 7
+
+
+@pytest.mark.asyncio
+async def test_mounted_sections_suppress_their_summary_while_open():
+    """Production half of AC#3: the rail composes both sections with the
+    suppression opted in, so the header stops restating the branch row and
+    the counts while they are visible right under it."""
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        snapshot = _snapshot(
+            files=(ChangedFile("M", "a.py", 3, 1),),
+            tasks=TasksEnvState(
+                availability=EnvSourceAvailability.OK, in_progress=3, todo=12
+            ),
+        )
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)
+        await pilot.pause()
+
+        for dom_id in ("#console-environment-section", "#console-tasks-section"):
+            section = screen.query_one(dom_id, ConsoleInspectorSection)
+            assert section.suppress_summary_when_open, dom_id
+            summary = screen.query_one(
+                f"#console-inspector-section-{section.section_id}-summary"
+            )
+            section.set_open(True)
+            await pilot.pause()
+            assert not summary.display, dom_id
+            section.set_open(False)
+            await pilot.pause()
+            assert summary.display, dom_id

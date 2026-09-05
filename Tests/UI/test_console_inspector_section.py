@@ -20,15 +20,18 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.widgets import Static
 
 from Tests.UI.test_console_parallel_runs import (
     _assert_painted_at_own_region,
     _assert_widget_and_ancestors_displayed,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    RAIL_CONTENT_WIDTH_MIN,
+    SINGLE_LINE_ROW_BUDGET,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
@@ -768,6 +771,268 @@ async def test_view_all_tail_posts_view_all_requested_for_this_section():
         await pilot.click("#console-inspector-section-agents-view-all")
         await pilot.pause()
         assert app.view_all_events == ["agents"]
+
+
+# -- TASK-31662: row density ------------------------------------------------
+#
+# Measured on this branch 2026-09-05 (probe against the real Console at
+# 80x24): the section box is 30 columns, its body 29, and a row's own
+# content 27 -- so `SINGLE_LINE_ROW_BUDGET` (27) is the real thing, not a
+# guess. The harness below therefore pins the section to 30 columns AND
+# loads the app sheets, because the body indent and row padding that make
+# up the difference live in `screen_agentic_console.tcss`, which the
+# widget-defaults pair alone does not carry.
+
+
+class _RailWidthHarness(ConsolidatedCSSApp):
+    """Hosts one section at the rail's real content width, with real CSS."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+    CSS = f"#section {{ width: {RAIL_CONTENT_WIDTH_MIN}; }}"
+
+    def __init__(self, section: ConsoleInspectorSection) -> None:
+        super().__init__()
+        self._section = section
+
+    def compose(self) -> ComposeResult:
+        yield self._section
+
+
+def _one_row_section(row: InspectorSectionRow) -> ConsoleInspectorSection:
+    return ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=(row,),
+        summary="",
+        id="section",
+    )
+
+
+def _row_widget(app: App) -> ConsoleInspectorSectionRow:
+    return app.query_one(
+        "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+    )
+
+
+def _row_statics(app: App) -> tuple[Static, Static]:
+    return (
+        app.query_one("#console-inspector-section-agents-row-0-primary", Static),
+        app.query_one("#console-inspector-section-agents-row-0-secondary", Static),
+    )
+
+
+@pytest.mark.asyncio
+async def test_row_with_an_empty_secondary_renders_one_line():
+    """AC#1a: 25% of the Environment section's row-lines were blank because
+    every row mounted a second Static whether or not it had anything to
+    say. The Static stays mounted (consumers query it by id) but takes no
+    line."""
+    app = _RailWidthHarness(
+        _one_row_section(InspectorSectionRow(row_id="r0", primary_text="Local"))
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 1
+        assert primary.render_line(0).text.rstrip() == "Local"
+        assert not secondary.display
+
+
+@pytest.mark.asyncio
+async def test_row_whose_secondary_fits_renders_one_line_right_aligned():
+    """AC#1b: primary + secondary on ONE line, secondary flush right --
+    the shape the section HEADER already uses (title 1fr + summary auto)."""
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0", primary_text="Changes", secondary_text="+10 −2"
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 1
+        # Same line...
+        assert primary.region.y == secondary.region.y == row.content_region.y
+        # ...secondary flush against the row's right edge, primary at its left.
+        assert secondary.region.right == row.content_region.right
+        assert primary.region.x == row.content_region.x
+        assert primary.render_line(0).text.rstrip() == "Changes"
+        assert secondary.render_line(0).text.strip() == "+10 −2"
+
+
+@pytest.mark.asyncio
+async def test_row_whose_secondary_does_not_fit_falls_back_to_two_lines():
+    """AC#1c: the pair only shares a line when it fits at the SMALLEST
+    supported width; otherwise the old stacked shape, uncut."""
+    long_primary = "M tldw_chatbook/UI/Screens/chat_screen.py"
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0", primary_text=long_primary, secondary_text="+120 −44"
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert len(long_primary) + 1 + len("+120 −44") > SINGLE_LINE_ROW_BUDGET
+        assert row.size.height == 2
+        assert secondary.region.y == primary.region.y + 1
+        assert secondary.display
+
+
+@pytest.mark.asyncio
+async def test_fleet_shaped_rows_keep_the_two_line_form():
+    """The fleet section shares this widget: its rows carry real
+    secondaries (`Console_Modules/agent.py::_fleet_row_from_handle` --
+    "glyph name · elapsed" over "task · N tok"), which do not fit 27
+    columns and must keep both painted lines."""
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0",
+                primary_text="▶ researcher · 3s",
+                secondary_text="find pricing · 1.2k tok",
+                status="running",
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 2
+        _assert_painted_at_own_region(app, primary)
+        _assert_painted_at_own_region(app, secondary)
+        assert "researcher" in primary.render_line(0).text
+        assert "find pricing" in secondary.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_status_colour_reaches_the_primary_in_both_line_shapes():
+    """The status rules were `.row-error > .row-primary`. In the one-line
+    shape the primary is a GRANDchild (inside the line `Horizontal`), so
+    the child combinator silently dropped the colour for exactly the rows
+    that just became one line -- the second half of this change, and the
+    kind that ships looking fine because the widget is still there."""
+    one_line = InspectorSectionRow(
+        row_id="r0", primary_text="Checks", secondary_text="2 failed", status="error"
+    )
+    stacked = InspectorSectionRow(
+        row_id="r0",
+        primary_text="M tldw_chatbook/UI/Screens/chat_screen.py",
+        secondary_text="+120 −44",
+        status="error",
+    )
+    plain = InspectorSectionRow(row_id="r0", primary_text="Checks")
+    colours = {}
+    for name, row in (("one_line", one_line), ("stacked", stacked), ("plain", plain)):
+        app = _RailWidthHarness(_one_row_section(row))
+        async with app.run_test(size=(60, 12)) as pilot:
+            await pilot.pause()
+            colours[name] = _row_statics(app)[0].styles.color
+    assert colours["one_line"] == colours["stacked"] != colours["plain"]
+
+
+@pytest.mark.asyncio
+async def test_a_row_changing_line_shape_recomposes_rather_than_patching():
+    """The row's mounted SHAPE is part of the structural key now: patching
+    a one-line row's Statics with text that no longer fits would leave the
+    pair sharing 27 columns with the primary ellipsised to nothing."""
+    section = _one_row_section(
+        InspectorSectionRow(row_id="r0", primary_text="Changes", secondary_text="+1 −0")
+    )
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        assert _row_widget(app).size.height == 1
+        assert section.recompose_count == 0
+
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(
+                    InspectorSectionRow(
+                        row_id="r0",
+                        primary_text="M tldw_chatbook/UI/Screens/chat_screen.py",
+                        secondary_text="+120 −44",
+                    ),
+                ),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        assert section.recompose_count == 1
+        assert _row_widget(app).size.height == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stacked_row_gaining_a_secondary_unhides_it_in_place():
+    """The empty->long transition keeps the same mounted shape, so it is
+    still an in-place patch (no recompose) -- but the hidden Static has to
+    come back, or the new text renders nowhere."""
+    section = _one_row_section(InspectorSectionRow(row_id="r0", primary_text="Local"))
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        assert _row_widget(app).size.height == 1
+
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(
+                    InspectorSectionRow(
+                        row_id="r0",
+                        primary_text="Local",
+                        secondary_text="Remote tldw_server — not configured",
+                    ),
+                ),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        assert section.recompose_count == 0
+        _, secondary = _row_statics(app)
+        assert secondary.display
+        assert _row_widget(app).size.height == 2
+
+
+@pytest.mark.asyncio
+async def test_summary_is_suppressed_while_open_and_returns_when_collapsed():
+    """AC#3: an open section's rows already carry what its summary says, so
+    the summary is for the COLLAPSED state. Opt-in -- the fleet section's
+    "2 working, 1 done" is an aggregate no row restates, so it keeps its
+    summary open (the default, covered by the tests above)."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="agents",
+        rows=_rows(1),
+        summary="dev +10 −2",
+        collapsible=True,
+        open=True,
+        suppress_summary_when_open=True,
+        id="section",
+    )
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        summary = app.query_one("#console-inspector-section-agents-summary", Static)
+        title = app.query_one("#console-inspector-section-agents-title", Static)
+        assert not summary.display
+        # ...and the columns it would have taken go back to the title.
+        assert title.render_line(0).text.strip() == "Environment"
+
+        section.set_open(False)
+        await pilot.pause()
+        assert summary.display
+        assert summary.region.width > 0
+
+        section.set_open(True)
+        await pilot.pause()
+        assert not summary.display
 
 
 def test_inspector_section_css_is_styled_in_source_and_bundle():

@@ -1,6 +1,10 @@
 """Pure-state tests for the Console Environment panel (no I/O, no Textual app)."""
 from datetime import datetime, timedelta, timezone
 
+from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    RAIL_CONTENT_WIDTH_MIN,
+    SECTION_TOGGLE_WIDTH,
+)
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 from tldw_chatbook.Chat.console_environment_state import (
     ENV_PENDING_TEXT,
@@ -30,6 +34,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     ExecTargetState,
     EnvironmentSnapshot,
     ENV_SUMMARY_BUDGET,
+    TASKS_SUMMARY_BUDGET,
     branch_task_id,
     compact_count,
     environment_summary,
@@ -243,13 +248,30 @@ def test_missing_tool_git_tier_still_reads_as_no_git_workspace():
     assert [r.row_id for r in state.rows] == [ENV_ROW_EMPTY]
 
 
+def test_summary_budget_is_derived_from_the_measured_rail_width():
+    """AC#5: the budget is not a taste call -- it is what the rail's real
+    30-column content width leaves once the title, the chevron and one
+    separating column are paid for. Probed on this branch 2026-09-05:
+    `#console-environment-section` is 30 columns at 80x24 (36 at 200x50),
+    and the old budget of 18 left the title painting "Environm…"."""
+    assert (
+        ENV_SUMMARY_BUDGET
+        + len("Environment")
+        + SECTION_TOGGLE_WIDTH
+        + 1  # one column between title and summary
+        == RAIL_CONTENT_WIDTH_MIN
+    )
+
+
 def test_summary_fits_the_budget_and_never_truncates_the_counts():
     """A long branch ellipsizes; the ± counts stay whole (F1)."""
     long_branch = _git_state(branch="feat/console-inspector-environment-redesign")
     summary = environment_summary(long_branch)
     assert len(summary) <= ENV_SUMMARY_BUDGET
     assert summary.endswith("+1,204 −86")  # counts intact
-    assert summary.startswith("feat/c") and "…" in summary
+    # Pin narrowed with the budget (18 -> 15): 10 columns of counts leave
+    # four for the branch fragment at the rail's real width.
+    assert summary.startswith("fea") and "…" in summary
     # The projection uses the same budgeted summary, not the raw join.
     projected = project_environment_section(
         EnvironmentSnapshot(git=long_branch), frozenset(), now=_NOW)
@@ -405,10 +427,45 @@ def test_branch_task_headline_with_ac_progress():
     assert head.clickable
 
 
-def test_counts_headline_when_no_branch_task():
+def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
+    """AC#4: the head row used to read "3 in progress · 12 to do" while the
+    section header read "3 doing · 12 todo" -- the same fact twice, in two
+    vocabularies, one line apart. The counts stay in the header; the row is
+    the handle onto the list and says what the list holds."""
     snapshot = EnvironmentSnapshot(tasks=_tasks_state(branch_task=None))
-    head = project_tasks_section(snapshot, frozenset()).rows[0]
-    assert head.primary_text == "3 in progress · 12 to do"
+    state = project_tasks_section(snapshot, frozenset())
+    head = state.rows[0]
+    assert head.row_id == TASKS_ROW_HEAD  # still the expand/collapse handle
+    assert head.clickable
+    assert head.primary_text == "Backlog"
+    assert head.secondary_text == "2 tasks"
+    assert state.summary == "3 doing · 12 todo"
+    assert "in progress" not in head.primary_text
+
+
+def test_head_row_secondary_is_singular_for_one_task():
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state(
+        branch_task=None,
+        entries=(BacklogTaskEntry("1", "Only one", "To Do"),),
+    ))
+    assert project_tasks_section(snapshot, frozenset()).rows[0].secondary_text == (
+        "1 task"
+    )
+
+
+def test_tasks_summary_is_budgeted_for_the_shorter_tasks_title():
+    """AC#5 / TASK-31629 #13: "task-31450 · In Progress" is 24 columns and
+    left three for the 5-column "Tasks" title at 80x24."""
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state(
+        branch_task=BranchTaskState(task_id="31450", title="Long", status="In Progress"),
+    ))
+    summary = project_tasks_section(snapshot, frozenset()).summary
+    assert len(summary) <= TASKS_SUMMARY_BUDGET
+    assert summary.startswith("task-31450")
+    assert (
+        TASKS_SUMMARY_BUDGET + len("Tasks") + SECTION_TOGGLE_WIDTH + 1
+        == RAIL_CONTENT_WIDTH_MIN
+    )
 
 
 def test_expansion_lists_entries_in_progress_first_and_add_action():
