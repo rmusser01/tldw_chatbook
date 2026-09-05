@@ -1,18 +1,28 @@
 ---
 id: TASK-31232
 title: Complete Canvas settings rollout and cross-mode verification
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, settings, documentation, verification]
-dependencies: [TASK-31228, TASK-31229, TASK-31230, TASK-31231]
+updated_date: '2026-09-05 02:11'
+labels:
+  - canvas
+  - settings
+  - documentation
+  - verification
+dependencies:
+  - TASK-31228
+  - TASK-31229
+  - TASK-31230
+  - TASK-31231
 priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Finish the Canvas V1 product boundary with canonical settings, conservative measured quotas, user and model guidance, a kill switch, and evidence that the complete native and served workflows satisfy the approved architecture.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -27,8 +37,15 @@ Finish the Canvas V1 product boundary with canonical settings, conservative meas
 - [ ] #9 Targeted Canvas, Console, database-migration, Chatbooks, web-server, packaging, and browser suites pass; a full repository sweep is run only with explicit user approval
 <!-- AC:END -->
 
-## Related Design
+## Implementation Plan
 
-- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+ADR required: yes
+ADR path: backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: this delivery completes the long-lived Canvas product/security boundary already accepted by ADR-115: global enablement, effective ceilings, recovery/operations guidance, and cross-mode release evidence. The ADR will be amended with measured final values and verified operational behavior rather than duplicated.
+
+1. Add canonical F9 Settings controls/status for Canvas enablement and auto-open plus read-only effective quotas; implement one global kill switch across tool advertisement, message actions, native/served gateways, and control channels while preserving stored/exportable data.
+2. Build reproducible content-free compiler/runtime/browser probes, measure the current ceilings on the supported baseline, and only retain or lower limits based on responsiveness and interruption evidence.
+3. Write user, model, security, operations, and recovery documentation for the exact V1 workflow and runtime subset, explicitly deferring bundled libraries, multi-file projects, elevated capabilities, and server sync.
+4. Extend and run outermost native, served, archive, and zero-egress flows through user-visible paths, including branch/history, temporary lifecycle, confirmed actions, remote authentication, two-browser isolation, and archive restore.
+5. Run targeted Canvas/Agents/Console/database/Chatbooks/Web Server/packaging/browser checks and changed-file static analysis, then ask the user whether they want the optional full repository sweep.
+6. Request independent code/security/UX review, check every Canvas task/design invariant, update ADR-115 and this task with evidence, and mark Done only after its Definition of Done is satisfied. TASK-31003 remains To Do as the explicit sync-contract follow-up.
