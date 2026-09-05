@@ -3114,4 +3114,4 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         assert launch is not None
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
         assert chat_screen_module._source_mentions_rag(launch.source) is False
-        assert screen._console_send_blocked_reason() == ""
+        assert screen._submission._console_send_blocked_reason() == ""

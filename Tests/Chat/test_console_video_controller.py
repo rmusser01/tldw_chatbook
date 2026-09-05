@@ -110,8 +110,8 @@ async def test_registry_video_commands_delegate_to_controller() -> None:
     )
     parse = SimpleNamespace(args="prompt")
 
-    await screen._console_command_generate_video(parse)
-    await screen._console_command_stream_video(parse)
+    await screen._video._console_command_generate_video(parse)
+    await screen._video._console_command_stream_video(parse)
 
     screen._video._console_command_generate_video.assert_awaited_once_with(parse)
     screen._video._console_command_stream_video.assert_awaited_once_with(parse)

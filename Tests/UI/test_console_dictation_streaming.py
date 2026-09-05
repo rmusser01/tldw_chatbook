@@ -722,7 +722,7 @@ async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monke
 
         # The stop is requested first, but the mid-capture failure drains
         # before the worker gets its first tick.
-        console._request_console_dictation_stop()
+        console._dictation._request_console_dictation_stop()
         console._handle_console_dictation_event(
             chat_screen_module.ConsoleDictationEvent(
                 session,
@@ -763,7 +763,7 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
-        console._request_console_dictation_stop()
+        console._dictation._request_console_dictation_stop()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not service.stop_entered.is_set():
             await pilot.pause(0.01)
@@ -2197,7 +2197,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
 
             # `discard_gate` is deliberately still closed: an inline release
             # would sit here for the full 2s wait.
-            console._request_console_dictation_cancel()
+            console._dictation._request_console_dictation_cancel()
 
             assert console._console_dictation_state == "idle"
             assert console._console_dictation_session is None
@@ -3319,7 +3319,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
 
             # Something else (the wall timer, in production) stops the
             # capture before the trailing "send" is recognized.
-            console._request_console_dictation_stop()
+            console._dictation._request_console_dictation_stop()
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline and not service.stop_entered.is_set():
                 await pilot.pause(0.01)
@@ -4033,7 +4033,7 @@ async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
-        console._request_console_dictation_start()
+        console._dictation._request_console_dictation_start()
 
         # No event-loop turn has happened yet: the worker cannot have run.
         assert service.start_calls == 0
@@ -4295,7 +4295,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
             session = console._console_dictation_session
 
             service.emit_final("dictated words")
-            console._request_console_dictation_stop()
+            console._dictation._request_console_dictation_stop()
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline and not service.stop_entered.is_set():
                 await pilot.pause(0.01)

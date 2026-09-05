@@ -1043,7 +1043,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         None,
         SimpleNamespace(pending_ids=lambda _message_ids: ()),
     )
-    screen._recent_console_image_messages = lambda _messages: ()
+    screen._message._recent_console_image_messages = lambda _messages: ()
     screen._image._pending_console_generation_card_images = (
         lambda _messages, _card_specs: ()
     )

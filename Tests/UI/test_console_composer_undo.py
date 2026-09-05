@@ -1016,7 +1016,7 @@ async def test_console_prompt_append_undo_removes_separator_newline_too():
         composer.load_draft("existing draft")
         await pilot.pause()
 
-        assert console._insert_prompt_text_into_composer("resolved body", replace=False)
+        assert console._commands._insert_prompt_text_into_composer("resolved body", replace=False)
         assert composer.draft_text() == "existing draft\nresolved body"
 
         assert composer.undo() is True
@@ -1178,7 +1178,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 
         monkeypatch.setattr(controller, "submit_draft", _refused)
 
-        await console._dispatch_console_draft_send("attempted body")
+        await console._submission._dispatch_console_draft_send("attempted body")
 
         # The refusal must NOT have dropped A's banked history.
         assert session_a.id in console._console_undo_histories

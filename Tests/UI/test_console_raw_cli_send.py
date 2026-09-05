@@ -20,7 +20,6 @@ from tldw_chatbook.UI.Console_Modules.raw_cli import (
 )
 from tldw_chatbook.UI.Console_Modules.wiring import _raw_cli_persisted_leaf_anchor
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_submission_controller
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleComposerBar,
     ConsoleDraftStash,
@@ -535,13 +534,13 @@ async def test_trusted_raw_stash_is_intercepted_before_slash_attachment_and_queu
 
     screen.query_one = lambda *_args, **_kwargs: forbidden()
     screen._console_composer_or_none = forbidden
-    screen._console_pending_image_attachment = forbidden
+    screen._submission._console_pending_image_attachment = forbidden
     screen._console_command_registry.parse = lambda _text: forbidden()
-    screen._dispatch_console_draft_send = lambda *_args, **_kwargs: forbidden()
+    screen._submission._dispatch_console_draft_send = lambda *_args, **_kwargs: forbidden()
 
     build_console_submission_controller(screen)
     screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+    assert await screen._submission._send_console_message_from_visible_action() is False
     assert raw_calls == [stash]
     assert screen._submission._console_pending_send_stash is None
     assert screen._staged_attachments == [staged_attachment]
@@ -568,7 +567,7 @@ async def test_escaped_and_untrusted_bang_prefixes_follow_ordinary_chat(
 
     build_console_submission_controller(screen)
     screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    assert await screen._submission._send_console_message_from_visible_action() is True
 
     assert raw_calls == []
     assert parsed == ([expected] if expected_parse else [])
@@ -606,7 +605,7 @@ async def test_workbench_send_consumes_existing_physical_raw_provenance() -> Non
 
     build_console_submission_controller(screen)
     screen._submission._console_pending_send_stash = screen._console_pending_send_stash
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+    assert await screen._submission._send_console_message_from_visible_action() is False
     assert len(raw_calls) == 1
     assert raw_calls[0].text == "! pwd"
     assert raw_calls[0].raw_cli_prefix_typed is True

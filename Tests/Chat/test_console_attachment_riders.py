@@ -257,7 +257,7 @@ class TestSaveImageToastEscaping:
 
     def test_single_save_toast_escapes_path(self, tmp_path, monkeypatch):
         screen, message, notices = self._screen_with_message(tmp_path, monkeypatch)
-        asyncio.run(screen._save_console_message_image(message.id))
+        asyncio.run(screen._message._save_console_message_image(message.id))
         assert notices, "no toast fired"
         # Rich's escape only needs to neutralize the opening bracket.
         assert "sav\\[e]dir" in notices[-1]
@@ -267,7 +267,7 @@ class TestSaveImageToastEscaping:
         screen, message, notices = self._screen_with_message(
             tmp_path, monkeypatch, attachment_count=2
         )
-        asyncio.run(screen._save_console_message_image(message.id))
+        asyncio.run(screen._message._save_console_message_image(message.id))
         assert notices, "no toast fired"
         assert notices[-1].startswith("Saved 2 images to ")
         assert "sav\\[e]dir" in notices[-1]

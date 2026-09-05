@@ -88,13 +88,13 @@ async def test_second_identical_tick_does_not_retokenize_the_transcript(monkeypa
 
         spy = _spy_on_estimator(monkeypatch)
 
-        first = console._build_console_cost_state()
+        first = console._context_cost._build_console_cost_state()
         first_calls = spy.call_count
         assert first_calls == _TRANSCRIPT_ROWS, (
             "test setup: every seeded row must be an estimated row"
         )
 
-        second = console._build_console_cost_state()
+        second = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == first_calls, (
             "the cost chip re-tokenized an unchanged transcript on the next "
@@ -115,12 +115,12 @@ async def test_editing_one_row_retokenizes_only_that_row(monkeypatch):
         await _wait_for_selector(console, pilot, "#console-cost-chip")
         store, session_id = _seed_usageless_transcript(console)
 
-        console._build_console_cost_state()
+        console._context_cost._build_console_cost_state()
         spy = _spy_on_estimator(monkeypatch)
 
         target = store.messages_for_session(session_id)[-1]
         store.update_message_content(target.id, "a different, much shorter row")
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == 1, (
             "editing one row re-tokenized "
@@ -142,17 +142,17 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch):
         await _wait_for_selector(console, pilot, "#console-cost-chip")
         store, session_id = _seed_usageless_transcript(console)
 
-        before = console._build_console_cost_state()
+        before = console._context_cost._build_console_cost_state()
         target = store.messages_for_session(session_id)[-1]
         original_content = target.content
         store.update_message_content(target.id, "tiny")
-        after = console._build_console_cost_state()
+        after = console._context_cost._build_console_cost_state()
 
         assert before is not None and after is not None
         assert after.tooltip != before.tooltip
         # And restoring the original text restores the original reading.
         store.update_message_content(target.id, original_content)
-        restored = console._build_console_cost_state()
+        restored = console._context_cost._build_console_cost_state()
         assert restored is not None
         assert restored.tooltip == before.tooltip
 
@@ -172,7 +172,7 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("price this request")
         console._sync_console_settings_summary()
-        before = console._build_console_cost_state()
+        before = console._context_cost._build_console_cost_state()
         assert before is not None
         assert "Current $0.00" in before.label
 
@@ -205,13 +205,13 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
         )
         await pilot.pause()
 
-        first = console._build_console_cost_state()
+        first = console._context_cost._build_console_cost_state()
         settled_calls = spy.call_count
         assert settled_calls == 0, "unsent evidence must not tokenize as current spend"
         assert first is not None and "Current $0.00" in first.label
         assert _next_send_dollars(first) > _next_send_dollars(before)
 
-        second = console._build_console_cost_state()
+        second = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == settled_calls, (
             "unsent evidence was tokenized as current spend on the next tick"
@@ -246,11 +246,11 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick():
         original = chat_screen_module._estimate_tokens_locally
         chat_screen_module._estimate_tokens_locally = spy
         try:
-            alert_state = console._build_console_cost_state()
+            alert_state = console._context_cost._build_console_cost_state()
             assert alert_state is not None and alert_state.alert is True
             assert spy.call_count == 1, "test setup: the projection must run once"
 
-            repeat_state = console._build_console_cost_state()
+            repeat_state = console._context_cost._build_console_cost_state()
 
             assert spy.call_count == 1, (
                 "the projected cache-break delta re-tokenized the whole "

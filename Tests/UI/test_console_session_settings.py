@@ -30,7 +30,10 @@ from textual.widgets import (
     TextArea,
 )
 
-from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
+from tldw_chatbook.UI.Console_Modules.wiring import (
+    build_console_settings_controllers,
+    build_console_provider_selection_controller,
+)
 import tldw_chatbook.UI.Console_Modules.settings_navigation as settings_navigation_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Console_Modules.provider_selection as provider_selection_module
@@ -233,6 +236,8 @@ def _bare_console_state_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build the minimal real Console serializer fixture used by privacy tests."""
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     screen._console_runtime_ref = SimpleNamespace(
         chat_store=store,
         set_chat_store=lambda value: setattr(
@@ -976,6 +981,8 @@ def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     handoffs = PendingHandoffStore()
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._ensure_console_chat_store = lambda: store
@@ -1015,6 +1022,8 @@ def test_credential_route_navigation_rejection_clears_exact_staged_return_slot()
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     handoffs = PendingHandoffStore()
     messages: list[object] = []
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
@@ -1048,6 +1057,8 @@ def test_credential_route_rejected_delivery_repairs_the_exact_slot() -> None:
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     handoffs = PendingHandoffStore()
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._ensure_console_chat_store = lambda: store
@@ -1081,6 +1092,8 @@ def test_credential_route_stale_identical_snapshot_cannot_reopen_newer_request(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     handoffs = PendingHandoffStore()
     messages: list[object] = []
     scheduled: list[object] = []
@@ -1127,6 +1140,8 @@ async def test_failed_source_reopen_retains_suspended_snapshot_and_token(
     )
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     fake_app = SimpleNamespace(screen_stack=(screen,))
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
     store = ConsoleChatStore()
@@ -1167,6 +1182,8 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
     )
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     fake_app = SimpleNamespace(screen_stack=(screen,))
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
     store = ConsoleChatStore()
@@ -1207,10 +1224,10 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda draft, **_kwargs: draft,
     )
-    screen._console_settings_context_estimate_for_session = (
+    screen._context_cost._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._console_context_control_state_for_session = (
+    screen._context_cost._console_context_control_state_for_session = (
         lambda *_args, **_kwargs: None
     )
     if not hasattr(screen, "app_instance"):
@@ -1237,6 +1254,8 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     stack: list[object] = [screen]
     pushed: list[ConsoleSettingsModal] = []
     newer_overlay = object()
@@ -1277,18 +1296,18 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda *args, **kwargs: args[0],
     )
-    screen._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
+    screen._context_cost._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._console_context_control_state_for_session = lambda *args, **kwargs: None
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._context_cost._console_context_control_state_for_session = lambda *args, **kwargs: None
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
     screen._suspended_conversation_settings = snapshot
     screen._suspended_conversation_settings_token = 13
     assert store.active_session_id == session.id
@@ -1336,6 +1355,8 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
     session = store.create_session(settings=snapshot.settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     stack: list[object] = [screen]
     pushed: list[object] = []
     fake_app = SimpleNamespace(
@@ -1353,12 +1374,12 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     resolution_started = asyncio.Event()
     release_resolution = asyncio.Event()
@@ -1368,7 +1389,7 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
         await release_resolution.wait()
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = delayed_provider_models
+    screen._provider_selection._providers_models_for_console_settings = delayed_provider_models
 
     reopen_task = asyncio.create_task(
         screen._settings_navigation._reopen_suspended_console_settings(
@@ -1393,6 +1414,8 @@ def test_resident_console_screen_is_not_active_stack_owner(monkeypatch) -> None:
     """A hidden resident source must not reopen over the actual top screen."""
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     top_screen = object()
     fake_app = SimpleNamespace(screen_stack=(screen, top_screen))
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
@@ -1421,6 +1444,8 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     staged_modal: list[object] = []
     posted: list[object] = []
     mount_awaited = False
@@ -1453,19 +1478,19 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
     screen.post_message = posted.append
 
     assert await screen._settings_navigation._open_console_settings() is True
@@ -1487,6 +1512,8 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
 
     class FailedMount:
         def __await__(self):
@@ -1508,19 +1535,19 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
 
     assert await screen._settings_navigation._open_console_settings() is False
 
@@ -1535,6 +1562,8 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     stack: list[object] = [screen]
     popped: list[object] = []
     callbacks: list[object] = []
@@ -1579,19 +1608,19 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
 
     assert await screen._settings_navigation._open_console_settings() is False
     assert len(popped) == 1
@@ -1608,6 +1637,8 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
 
     class CancelledMount:
         def __await__(self):
@@ -1629,19 +1660,19 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
 
     with pytest.raises(asyncio.CancelledError):
         await screen._settings_navigation._open_console_settings()
@@ -1674,6 +1705,8 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
     build_console_settings_controllers(screen)
+    screen._context_cost = SimpleNamespace()
+    build_console_provider_selection_controller(screen)
     staged_modal: list[ConsoleSettingsModal] = []
     discovery_inputs: list[tuple[str, str | None]] = []
 
@@ -1701,12 +1734,12 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._context_cost._active_console_settings_context_estimate = lambda: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
-    screen._provider_readiness_app_config = lambda: {
+    screen._provider_selection._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}, "vllm": {}}
     }
     screen._global_chat_display_name = lambda: "Ada"
@@ -1716,7 +1749,7 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
         discovery_inputs.append((provider, current_model))
         return {"vllm": ["draft-model"]}
 
-    screen._providers_models_for_console_settings = provider_models
+    screen._provider_selection._providers_models_for_console_settings = provider_models
 
     assert (
         await screen._settings_navigation._open_console_settings(
@@ -5207,7 +5240,7 @@ async def test_console_model_resolution_failure_logs_provider_context(
 
     monkeypatch.setattr(provider_selection_module.logger, "exception", fake_exception)
 
-    models = await console._providers_models_for_console_settings(
+    models = await console._provider_selection._providers_models_for_console_settings(
         "OpenAI",
         current_model="gpt-5",
     )
@@ -5242,7 +5275,7 @@ async def test_console_settings_model_resolution_preserves_configured_alternativ
     )
     console = ChatScreen(app)
 
-    models = await console._providers_models_for_console_settings(
+    models = await console._provider_selection._providers_models_for_console_settings(
         "local_llamacpp",
         current_model="uat-local-model",
     )
@@ -5259,7 +5292,7 @@ async def test_console_settings_model_resolution_keeps_empty_cloud_snapshot_auth
     app.llm_provider_catalog_scope_service = EmptyConsoleModelSnapshotScope()
     console = ChatScreen(app)
 
-    models = await console._providers_models_for_console_settings(
+    models = await console._provider_selection._providers_models_for_console_settings(
         "anthropic",
         current_model=None,
     )
@@ -8392,7 +8425,7 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
                 f"Console summary did not show discovered-model provenance: {summary_text}"
             )
 
-        _settings, readiness = console._active_console_settings_readiness()
+        _settings, readiness = console._provider_selection._active_console_settings_readiness()
         assert readiness.native_send_supported is True
 
 
@@ -10030,7 +10063,7 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     ]
     assert provider_system.startswith("Protect Captain Rowan.")
     assert provider_system.endswith("Hello Captain Rowan.")
-    estimate_result = console._active_console_settings_context_estimate()
+    estimate_result = console._context_cost._active_console_settings_context_estimate()
     assert estimate_result.used_tokens == 17
     # The spend projection folds the seeded greeting into the same system
     # message as the provider; it is not counted again as transcript history.
@@ -10090,7 +10123,7 @@ async def test_system_prompt_editor_clears_character_template_source() -> None:
         )
 
         console.run_worker(
-            console._open_console_system_prompt_editor(), exclusive=False
+            console._prompts._open_console_system_prompt_editor(), exclusive=False
         )
         await pilot.pause(0.2)
         modal = host.screen_stack[-1]
@@ -10176,10 +10209,10 @@ async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) ->
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        assert console._build_console_provider_selection().provider == "llama_cpp"
+        assert console._provider_selection._build_console_provider_selection().provider == "llama_cpp"
         await _click_console_session_tab(console, store, pilot, second_id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
-        assert console._build_console_provider_selection().provider == "openai"
+        assert console._provider_selection._build_console_provider_selection().provider == "openai"
 
 
 @pytest.mark.asyncio
@@ -10285,7 +10318,7 @@ async def test_console_provider_selection_includes_generation_controls() -> None
         )
         await console._sync_native_console_chat_ui()
 
-        selection = console._build_console_provider_selection()
+        selection = console._provider_selection._build_console_provider_selection()
 
     assert selection.seed == 17
     assert selection.presence_penalty == 0.4
@@ -10433,7 +10466,7 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        assert console._build_console_provider_selection().provider == "custom"
+        assert console._provider_selection._build_console_provider_selection().provider == "custom"
         assert controller.run_state.status is ConsoleRunStatus.IDLE
         assert stale_copy not in str(
             console.query_one("#console-mode-bar", Static).renderable
@@ -10470,10 +10503,10 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
                 break
             await pilot.pause(0.05)
 
-        assert console._console_send_blocked_reason() == (
+        assert console._submission._console_send_blocked_reason() == (
             "Console send blocked: Finish provider setup before sending."
         )
-        assert "wip_provider" not in console._console_send_blocked_reason()
+        assert "wip_provider" not in console._submission._console_send_blocked_reason()
 
 
 @pytest.mark.asyncio
@@ -10526,7 +10559,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         text = _screen_visible_text(console)
         assert "Model: model-a" in _summary_text(console)
         assert "Setup required: choose a model in Console Settings." not in text
-        assert console._console_send_blocked_reason() == ""
+        assert console._submission._console_send_blocked_reason() == ""
 
 
 @pytest.mark.asyncio
@@ -10612,7 +10645,7 @@ def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_de
     }
     screen = ChatScreen(app)
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = screen._context_cost._build_console_settings_summary_state()
 
     assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
 
@@ -10691,7 +10724,7 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
         session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1")
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = screen._context_cost._build_console_settings_summary_state()
     inspector_state = screen._build_console_inspector_state(None)
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
     blocker_copy = screen._console_provider_blocker_copy()
@@ -10700,7 +10733,7 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
     assert blocker_copy == ""
-    assert screen._console_send_blocked_reason() == ""
+    assert screen._submission._console_send_blocked_reason() == ""
 
 
 def test_console_missing_key_recovery_action_is_provider_specific() -> None:
@@ -10789,7 +10822,7 @@ def test_console_no_provider_recovery_action_and_card_step_are_provider_actions(
 
     label, target, tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
-    _settings, readiness = screen._active_console_settings_readiness()
+    _settings, readiness = screen._provider_selection._active_console_settings_readiness()
 
     assert (
         screen._console_provider_blocker_copy()
@@ -10824,7 +10857,7 @@ def test_console_missing_key_no_model_recovery_action_is_provider_action() -> No
 
     label, target, _tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
-    _settings, readiness = screen._active_console_settings_readiness()
+    _settings, readiness = screen._provider_selection._active_console_settings_readiness()
 
     assert readiness.label == "Missing key"
     assert readiness.native_send_supported is False
@@ -10859,7 +10892,7 @@ def test_console_provider_ready_missing_model_keeps_choose_model_action() -> Non
 
     label, target, _tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
-    _settings, readiness = screen._active_console_settings_readiness()
+    _settings, readiness = screen._provider_selection._active_console_settings_readiness()
 
     assert readiness.label == "Missing model"
     assert readiness.native_send_supported is False
@@ -10871,7 +10904,7 @@ def test_console_provider_ready_missing_model_keeps_choose_model_action() -> Non
     assert target == "console"
     assert screen._console_provider_recovery_field() == ""
     assert (
-        screen._console_send_blocked_reason()
+        screen._submission._console_send_blocked_reason()
         == "Console send blocked: Select a model before sending."
     )
     step_one, step_two, _step_three = card_state.steps
@@ -10940,7 +10973,7 @@ def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint
 
     label, target, tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
-    _settings, readiness = screen._active_console_settings_readiness()
+    _settings, readiness = screen._provider_selection._active_console_settings_readiness()
 
     assert readiness.label == "Invalid URL"
     assert "invalid base URL" in screen._console_provider_blocker_copy()
@@ -10971,13 +11004,13 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
         session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = screen._context_cost._build_console_settings_summary_state()
 
     assert summary_state.readiness_label == ""
     assert summary_state.provider_row == "Provider: llama.cpp"
     assert summary_state.model_row == "Model: Missing"
     assert (
-        screen._console_send_blocked_reason()
+        screen._submission._console_send_blocked_reason()
         == "Console send blocked: Select a model before sending."
     )
 
@@ -11002,7 +11035,7 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
         session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
     )
 
-    summary_state = screen._build_console_settings_summary_state()
+    summary_state = screen._context_cost._build_console_settings_summary_state()
 
     assert summary_state.readiness_label == ""
     assert "Select a model before sending" not in summary_state.model_row
@@ -11181,7 +11214,7 @@ def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -
     fresh = _disk_loaded_snapshot(api_settings={"openai": {"api_key": "sk-fresh"}})
     monkeypatch.setattr(provider_selection_module, "load_settings", lambda: fresh)
 
-    assert console._provider_readiness_app_config() is fresh
+    assert console._provider_selection._provider_readiness_app_config() is fresh
 
 
 def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) -> None:
@@ -11197,7 +11230,7 @@ def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) ->
 
     monkeypatch.setattr(provider_selection_module, "load_settings", _fail_load_settings)
 
-    assert console._provider_readiness_app_config() is app.app_config
+    assert console._provider_selection._provider_readiness_app_config() is app.app_config
 
 
 def test_provider_readiness_config_falls_back_when_load_settings_fails(
@@ -11212,7 +11245,7 @@ def test_provider_readiness_config_falls_back_when_load_settings_fails(
 
     monkeypatch.setattr(provider_selection_module, "load_settings", _boom)
 
-    assert console._provider_readiness_app_config() is app.app_config
+    assert console._provider_selection._provider_readiness_app_config() is app.app_config
 
 
 def test_console_readiness_unblocks_after_provider_save_without_restart(
@@ -11243,7 +11276,7 @@ def test_console_readiness_unblocks_after_provider_save_without_restart(
 
         readiness_before = build_console_settings_readiness(
             settings,
-            app_config=console._provider_readiness_app_config(),
+            app_config=console._provider_selection._provider_readiness_app_config(),
             environ={},
         )
         assert readiness_before.native_send_supported is False
@@ -11255,7 +11288,7 @@ def test_console_readiness_unblocks_after_provider_save_without_restart(
 
         readiness_after = build_console_settings_readiness(
             settings,
-            app_config=console._provider_readiness_app_config(),
+            app_config=console._provider_selection._provider_readiness_app_config(),
             environ={},
         )
         assert readiness_after.native_send_supported is True
@@ -12098,7 +12131,7 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
             "Setup card still blocking after a provider save; "
             f"steps={[(step.state, step.label) for step in card_state.steps]}"
         )
-        settings, readiness = console._active_console_settings_readiness()
+        settings, readiness = console._provider_selection._active_console_settings_readiness()
         assert settings.provider == "llama_cpp"
         assert readiness.native_send_supported is True
 
