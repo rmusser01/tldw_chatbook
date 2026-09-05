@@ -10705,6 +10705,44 @@ async def _open_media_find(screen, pilot):
     return await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
 
+# ---------------------------------------------------------------------------
+# Shared painted-screen helpers (task-31631/31634/31567 fix round, review M-2):
+# both test_library_media_render_fixes.py and test_library_media_reader_flow.py
+# need these, but render_fixes.py already imports from reader_flow.py, so a
+# reader_flow-side import of render_fixes would be circular. Both files already
+# import media helpers from here, so this module is the shared home.
+# ---------------------------------------------------------------------------
+
+
+def _top_border_row(host, box) -> str:
+    """Painted top-border row of one widget, glyphs included (task-31634 cue)."""
+    region = box.region
+    strips = list(host.screen._compositor.render_strips())
+    return strips[region.y].crop(region.x, region.right).text
+
+
+def _painted_cells(host, region):
+    """(text, style) for every non-blank painted segment inside ``region``."""
+    strips = list(host.screen._compositor.render_strips())
+    cells = []
+    for y in range(region.y, min(region.bottom, len(strips))):
+        for segment in strips[y].crop(region.x, region.right):
+            if segment.text.strip():
+                cells.append((segment.text, segment.style))
+    return cells
+
+
+def _row_is_painted_focused(host, row) -> bool:
+    """Whether ``row`` really carries the media row focus cue on screen.
+
+    ``.library-media-row:focus`` sets ``outline: none`` and paints its cue as
+    a STYLE (focus background + bold underline), so a region assertion cannot
+    tell a focused row from an unfocused one (the task-31221 lesson).
+    """
+    cells = _painted_cells(host, row.region)
+    return bool(cells) and all(style.underline for _text, style in cells)
+
+
 @pytest.mark.asyncio
 async def test_library_media_sort_chooser_applies_the_selected_order():
     """task-28013: the media sort chooser re-fetches page one under the new order."""
