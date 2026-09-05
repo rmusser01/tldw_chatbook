@@ -372,7 +372,11 @@ async def test_refresh_requests_a_new_first_page_and_preserves_reader():
         assert screen._items_page_index == 0
         assert screen._selected_content_item is open_item
         assert content.item is open_item
-        assert [row["item_id"] for row in screen._loaded_items] == [9]
+        assert [row["item_id"] for row in screen._loaded_items] == [
+            9,
+            open_item["item_id"],
+        ]
+        assert screen._items_snapshot_count == 1
 
 
 @pytest.mark.asyncio
@@ -881,7 +885,7 @@ async def test_same_query_pane_rebuild_uses_cache_and_preserves_selected_article
 
 
 @pytest.mark.asyncio
-async def test_explicit_refresh_removes_an_out_of_predicate_pinned_row():
+async def test_explicit_refresh_retains_the_open_out_of_predicate_pinned_row():
     controller = AsyncMock()
     controller.list_reader_items_page.side_effect = [
         _page([4], high_water=4, snapshot_count=1),
@@ -898,7 +902,8 @@ async def test_explicit_refresh_removes_an_out_of_predicate_pinned_row():
         assert [row["item_id"] for row in screen._loaded_items] == [4, 3]
 
         assert await screen._replace_items_snapshot(reason="refresh") is True
-        assert [row["item_id"] for row in screen._loaded_items] == [3]
+        assert [row["item_id"] for row in screen._loaded_items] == [4, 3]
+        assert screen._items_snapshot_count == 1
         assert screen._selected_content_item is pinned
 
 
