@@ -1,5 +1,5 @@
 ---
-id: task-22300
+id: TASK-22300
 title: Rewind summarize guard test is order-dependent under xdist
 status: To Do
 labels:
