@@ -8338,10 +8338,11 @@ class ChatScreen(BaseAppScreen):
         present. I1: some reachable projections (UNBOUND/ERROR/PENDING/the
         "No git workspace" empty state -- task-31660) render a row saying
         so but never a *clickable* one, so no row anywhere in the section
-        may qualify; the section's own collapse chevron is a real,
-        focusable control and is the last resort, rather than leaving focus
-        wherever Textual's unmount reset already put it (the defect widget
-        itself).
+        may qualify; a VISIBLE collapse chevron
+        (`_focus_console_environment_visible_toggle` -- round-2: not
+        necessarily this section's own, if this section itself is now
+        hidden) is the last resort, rather than leaving focus wherever
+        Textual's unmount reset already put it (the defect widget itself).
 
         Args:
             section: The section whose body held the focused row.
@@ -8363,7 +8364,7 @@ class ChatScreen(BaseAppScreen):
             section, nearest_row_id
         ):
             return
-        self._focus_console_environment_section_toggle(section)  # I1
+        self._focus_console_environment_visible_toggle(section)  # I1 (round-2: visible chain)
 
     def _console_environment_focus_left_the_rail(self) -> bool:
         """Whether focus is currently OUTSIDE the Inspect rail's row body.
@@ -8384,15 +8385,25 @@ class ChatScreen(BaseAppScreen):
         composer landing in that window got silently overridden back onto
         the rail row.
 
+        ``focused is None`` is handled as "still inside" (round-2 review
+        I1, Tasks-section case, also probe-reproduced): when a whole
+        section goes ``display: none`` because its row projection emptied
+        out (Tasks leaving ``EnvSourceAvailability.OK``), a row it held
+        focus on is unmounted with NO visible sibling anywhere for
+        Textual's `_reset_focus` to fall back to, so it sets
+        ``screen.focused = None`` -- never something a human click does.
+        Treating that as "a human moved it" made the restore bail
+        entirely, leaving NOTHING focused: worse than the original defect.
+
         Returns:
             ``True`` when focus has left the rail body (a human's move
             should win, so the restore must not run); ``False`` when it is
-            still inside (including still on a row, or nowhere yet reset
-            at all) and the restore should proceed.
+            still inside (including still on a row, reset to ``None``, or
+            nowhere yet reset at all) and the restore should proceed.
         """
         focused = self.focused
         if focused is None:
-            return True
+            return False
         try:
             rail_body = self.query_one("#console-inspector-rail-body")
         except (NoMatches, QueryError):
@@ -8441,32 +8452,103 @@ class ChatScreen(BaseAppScreen):
                         return candidate_id
         return None
 
-    @staticmethod
-    def _focus_console_environment_section_toggle(
-        section: ConsoleInspectorSection,
+    def _focus_console_environment_visible_toggle(
+        self, origin_section: ConsoleInspectorSection
     ) -> None:
-        """Focus ``section``'s own collapse chevron -- the I1 last resort.
+        """Focus a VISIBLE collapse chevron -- the I1 last resort.
 
-        Used only when no row in the section is focusable at all: the
-        UNBOUND/ERROR/PENDING/"No git workspace" Environment projections
-        (task-31660) each render exactly one explanatory row, and none of
-        them are ever ``clickable``. The chevron is a real, focusable
-        ``Button`` (every section here is built ``collapsible=True``), so
-        landing on it still satisfies AC #2 ("focus never lands on a
-        widget with no visible indication") even in states that have no
-        row to land on.
+        Used only when no row in ``origin_section`` is focusable at all:
+        the UNBOUND/ERROR/PENDING/"No git workspace" Environment
+        projections (task-31660) each render exactly one explanatory row,
+        and none of them are ever ``clickable``.
+
+        Round-2 review: round-1 focused ``origin_section``'s own toggle
+        unconditionally, which is unsafe when the ORIGIN SECTION ITSELF
+        has gone ``display: none``. `_land_console_environment` hides the
+        WHOLE section -- header, toggle, everything -- whenever its
+        projection has no rows at all (e.g. Tasks leaving
+        ``EnvSourceAvailability.OK``), so focusing that section's own
+        (now invisible) toggle would violate AC #2 exactly as badly as
+        the original defect -- probe-reproduced by parking focus on
+        ``task-head`` and landing a Tasks-emptying snapshot.
+
+        Chain, in order:
+
+        1. ``origin_section``'s own toggle, if ``origin_section`` is
+           displayed.
+        2. Otherwise the first DISPLAYED ``ConsoleInspectorSection`` among
+           [environment, tasks]'s own toggle. Environment renders at
+           least one row in EVERY ``EnvSourceAvailability`` state
+           reachable on this branch (PENDING/UNBOUND/ERROR/NOT_APPLICABLE/
+           OK all produce >=1 row -- see `project_environment_section`),
+           so it is never hidden and is the reliable anchor whenever
+           Tasks is the one that disappeared.
+        3. Last resort: the rail's own outer body
+           (`#console-inspector-rail-body`, `can_focus=True` by
+           construction -- `_InspectorOuterBody` in `right_rail.py` --
+           already used as a navigational fallback there for sections
+           with no focusable control at all).
+
+        Every candidate's own ``Button`` (or, for the rail body, its own
+        ``can_focus``) is still checked before focusing, rather than
+        assumed from displayedness alone.
 
         Args:
-            section: The section whose header chevron should be focused.
+            origin_section: The section whose header chevron was the
+                first candidate (the one whose focused row just vanished).
         """
+        for section_id in self._console_environment_visible_toggle_section_ids(
+            origin_section.section_id
+        ):
+            try:
+                toggle = self.query_one(
+                    f"#console-inspector-section-{section_id}-toggle", Button
+                )
+            except (NoMatches, QueryError):
+                continue
+            if toggle.can_focus:
+                toggle.focus()
+                return
         try:
-            toggle = section.query_one(
-                f"#console-inspector-section-{section.section_id}-toggle", Button
-            )
+            rail_body = self.query_one("#console-inspector-rail-body")
         except (NoMatches, QueryError):
             return
-        if toggle.can_focus:
-            toggle.focus()
+        if rail_body.can_focus:
+            rail_body.focus()
+
+    def _console_environment_visible_toggle_section_ids(
+        self, origin_section_id: str
+    ) -> tuple[str, ...]:
+        """``section_id``s (``"environment"``/``"tasks"``) to try, in order.
+
+        Args:
+            origin_section_id: The section whose own toggle is tried
+                first, PROVIDED that section is currently displayed. Its
+                DOM container id (looked up via
+                ``CONSOLE_ENVIRONMENT_SECTION_DOM_IDS``) is what is
+                actually checked for visibility -- distinct from the
+                toggle's own id, which the caller derives separately.
+
+        Returns:
+            Just ``(origin_section_id,)`` when that section is displayed;
+            otherwise every DISPLAYED section id among
+            ``(ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID)``, in that fixed
+            order (so Environment -- never hidden, see the caller's
+            docstring -- is always reached first when Origin itself is
+            hidden).
+        """
+        origin_dom_id = CONSOLE_ENVIRONMENT_SECTION_DOM_IDS.get(origin_section_id)
+        if origin_dom_id is not None and self._is_console_widget_displayed(
+            origin_dom_id
+        ):
+            return (origin_section_id,)
+        return tuple(
+            section_id
+            for section_id in (ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID)
+            if (dom_id := CONSOLE_ENVIRONMENT_SECTION_DOM_IDS.get(section_id))
+            is not None
+            and self._is_console_widget_displayed(dom_id)
+        )
 
     def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
         """Run one Environment/Tasks row's action.

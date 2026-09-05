@@ -4,7 +4,7 @@ title: Environment 10s poll silently resets rail focus when the file set changes
 status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
-updated_date: '2026-09-05 19:17'
+updated_date: '2026-09-05 19:49'
 labels:
   - console
   - inspector
@@ -193,4 +193,58 @@ Tests/UI/test_console_environment_section.py,
 Tests/Chat/test_console_environment_state.py,
 Tests/UI/test_console_right_rail.py, Tests/UI/test_console_inspector_
 section.py -- all green together; ./scripts/preflight.sh clean.
+
+--- Round-2 review fix (2026-09-05) ---
+
+Re-review confirmed I2/#3/M4/M5/M7/bookkeeping addressed; one finding
+remained: I1's round-1 fix only exercised the Environment section
+(UNBOUND/ERROR keep the section visible, just rowless-clickable). The
+Tasks section has a mode round-1 never triggered: `project_tasks_section`
+returns `rows=()` outright when availability leaves OK, and
+`_land_console_environment` hides the WHOLE section (header+toggle) in
+response. If `task-head` held focus, Textual's `_reset_focus` finds no
+visible sibling anywhere and sets `screen.focused = None`. Two
+compounding bugs: (a) `_console_environment_focus_left_the_rail`'s
+`focused is None` branch returned `True` ("human moved it") and bailed
+the entire restore -- end state NOTHING focused, worse than the original
+defect; (b) even past that, the toggle fallback always targeted the
+ORIGIN section's own toggle, which is itself now invisible.
+
+Fixed both: (a) `focused is None` now returns `False` (a human move
+never lands on None -- only Textual's reset does); (b) replaced the
+single-target toggle fallback with
+`_focus_console_environment_visible_toggle`, a chain: origin section's
+toggle if displayed -> else the first displayed section among
+[environment, tasks] (Environment always renders >=1 row in every
+availability state, so it's the reliable anchor) -> last resort the rail
+body (`_InspectorOuterBody`, already `can_focus=True` and used
+identically elsewhere in `right_rail.py`). Visibility checked via the
+existing `_is_console_widget_displayed` (full ancestor chain), not a
+bare `styles.display` read.
+
+One bug caught mid-implementation before running anything: a first draft
+derived the toggle id by string-suffixing the section's DOM container id
+(`f"#{dom_id}-toggle"`) -- wrong, the toggle id follows an unrelated
+pattern (`console-inspector-section-{section_id}-toggle`). Fixed by
+threading `section_id` (not the container dom id) through both the
+visibility check and the toggle-id construction.
+
+Test: `test_poll_landing_that_hides_the_tasks_section_falls_back_to_
+environment_toggle` -- focuses `task-head`, lands a Tasks-availability
+snapshot leaving OK, asserts focus is NOT None and IS the Environment
+toggle. Verified RED against BOTH halves independently (reverting each
+one at a time): (a) reverted alone -> `assert None is not None`, the
+exact defect; (b) reverted alone (with (a) fixed) -> landed on the
+invisible `console-inspector-section-tasks-toggle` instead of the
+Environment one. Also re-ran the two round-1 I2 race tests 3x each after
+the `None` semantic change -- fully deterministic, unaffected (a same-tick
+composer click never leaves focus as None).
+
+Full suite: Tests/UI/test_console_environment_wiring.py (36 passed),
+combined with controller/section/state/right_rail/inspector_section --
+163 passed, 0 failures. preflight.sh clean.
+
+Files: tldw_chatbook/UI/Screens/chat_screen.py,
+Tests/UI/test_console_environment_wiring.py. Full report appended to
+.superpowers/sdd/2026-09-05-inspect-rail-critique-burndown/task-31661-report.md
 <!-- SECTION:NOTES:END -->

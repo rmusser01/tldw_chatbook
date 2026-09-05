@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     PrCheck,
     PrEnvState,
     TASKS_ROW_ADD,
+    TASKS_ROW_HEAD,
     TasksEnvState,
     BranchTaskState,
     unbound_snapshot,
@@ -615,6 +616,70 @@ async def test_poll_landing_error_state_also_falls_back_to_the_section_toggle():
 
         assert not any(row.clickable for row in section.rows)
         focused = screen.focused
+        assert isinstance(focused, Button)
+        assert focused.id == "console-inspector-section-environment-toggle"
+
+
+@pytest.mark.asyncio
+async def test_poll_landing_that_hides_the_tasks_section_falls_back_to_environment_toggle():
+    """TASK-31661 (round-2 review I1, Tasks-section case, probe-reproduced).
+
+    Focus is parked on ``task-head`` (``TASKS_ROW_HEAD``, clickable) in
+    the Tasks section. A poll then lands a snapshot where Tasks
+    availability leaves OK (back to PENDING) -- `project_tasks_section`
+    returns ``rows=()``, so `_land_console_environment` sets the WHOLE
+    Tasks section `display: none` (header + toggle included, not just
+    the row). Textual's own `_reset_focus` then finds no visible sibling
+    anywhere and sets ``screen.focused = None``.
+
+    Two things had to be fixed for this to land correctly (round-2):
+    round-1's `_console_environment_focus_left_the_rail` read
+    ``focused is None`` as "a human moved it" and bailed the WHOLE
+    restore -- ending with NOTHING focused, worse than the original
+    defect -- and even past that bail, round-1's fallback would have
+    targeted the Tasks section's OWN (now-hidden) toggle, an invisible
+    target. The restore must land on the Environment section's toggle
+    instead: Environment always renders at least one row in every
+    `EnvSourceAvailability` state, so it is never hidden.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        with_tasks = _snapshot(
+            tasks=TasksEnvState(availability=EnvSourceAvailability.OK)
+        )
+        screen._console_environment.snapshot = with_tasks
+        screen._land_console_environment(with_tasks)
+        await pilot.pause()
+
+        tasks_section = screen.query_one(
+            "#console-tasks-section", ConsoleInspectorSection
+        )
+        assert TASKS_ROW_HEAD in _row_ids(tasks_section)
+
+        def _task_head_row():
+            return next(
+                widget
+                for widget in tasks_section.query(ConsoleInspectorSectionRow)
+                if widget.row_id == TASKS_ROW_HEAD
+            )
+
+        _task_head_row().focus()
+        await pilot.pause()
+        assert screen.focused is _task_head_row()
+
+        pending_tasks = _snapshot(
+            tasks=TasksEnvState(availability=EnvSourceAvailability.PENDING)
+        )
+        screen._console_environment.snapshot = pending_tasks
+        screen._land_console_environment(pending_tasks)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert tasks_section.styles.display == "none"
+        focused = screen.focused
+        assert focused is not None  # NOT the round-2 defect
         assert isinstance(focused, Button)
         assert focused.id == "console-inspector-section-environment-toggle"
 
