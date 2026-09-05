@@ -3096,20 +3096,23 @@ class ConsoleSettingsModal(
         self._reveal_focused_control(focused, self._focus_reveal_generation)
 
     def _sync_action_copy(self, compact: bool) -> None:
-        """Use concise footer copy when the terminal cannot fit full labels."""
+        """Synchronize footer copy and widths for the responsive layout."""
 
         make_default = self.query_one("#console-settings-make-default", Button)
         apply_button = self.query_one("#console-settings-save", Button)
         make_default.label = (
             "Default for new chats" if compact else "Make default for new chats"
         )
-        apply_button.label = (
-            "Use in this conversation" if compact else "Use for this conversation"
-        )
-        for button in (make_default, apply_button):
-            width = len(str(button.label)) + 2
-            button.styles.width = width
-            button.styles.min_width = width
+        apply_button.label = "Use for this conversation"
+        actions = self.query_one("#console-settings-actions", Vertical)
+        for button in actions.query(Button):
+            if compact:
+                button.styles.width = "100%"
+                button.styles.min_width = 0
+            else:
+                width = max(12, len(str(button.label)) + 2)
+                button.styles.width = width
+                button.styles.min_width = width
 
     def _sync_action_layout(self, viewport_width: int) -> None:
         """Keep every footer action reachable at supported terminal widths."""
@@ -3142,13 +3145,13 @@ class ConsoleSettingsModal(
             button.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
-        action_height = 1 if recovery_active or not compact else 2
-        actions.styles.height = action_height
-        actions.styles.min_height = action_height
+        actions.styles.height = "auto" if compact else 1
+        actions.styles.min_height = 1
         action_groups = list(actions.query(".console-settings-action-group"))
         for group in action_groups:
+            group.styles.layout = "vertical" if compact else "horizontal"
             group.styles.width = "100%" if compact else "auto"
-            group.styles.height = 1
+            group.styles.height = "auto" if compact else 1
             group.styles.min_height = 1
             group.styles.align_horizontal = "right"
         if len(action_groups) > 1:

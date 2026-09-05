@@ -634,6 +634,22 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "`request_skill_script_confirm` (`allow=False, remember=False`).",
     ),
     ConsoleViewHookSlot(
+        "set_task_panel",
+        "controller",
+        why="Every read site is an `is not None` guard: the pinned task "
+        "panel is a mirror of the session's todo store, and with no view "
+        "there is nothing to mirror into. The store itself keeps the tasks, "
+        "so the next attach re-derives the panel from it.",
+    ),
+    ConsoleViewHookSlot(
+        "set_pending_question",
+        "controller",
+        why="`request_user_questions` returns `{answered: False, reason: "
+        "'cancelled'}` when it is None, and `_ask_user_wiring` registers no "
+        "tool at all without it -- a viewless run cannot be asked, which is "
+        "PRD A10's headless posture.",
+    ),
+    ConsoleViewHookSlot(
         "wake_user_priority_probe",
         "controller",
         viewless_user_priority_probe,
@@ -894,9 +910,7 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
-            legacy_normalization_enabled = callable(
-                getattr(db, "transaction", None)
-            )
+            legacy_normalization_enabled = callable(getattr(db, "transaction", None))
             legacy_normalizer: Any | None = None
             native_reader: Any | None = None
 
@@ -943,9 +957,7 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        read_normalized_calls
-                        if legacy_normalization_enabled
-                        else None
+                        read_normalized_calls if legacy_normalization_enabled else None
                     ),
                     normalized_reads_enabled=lambda: (
                         runtime_capture_policy().normalized_reads_enabled
@@ -1027,9 +1039,7 @@ class ConsoleRuntime:
                         "legacy trace maintenance paused after {}",
                         type(exc).__name__,
                     )
-                    await asyncio.sleep(
-                        LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS
-                    )
+                    await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS)
                     continue
                 if result.logical_complete:
                     now = time.monotonic()
@@ -1550,6 +1560,21 @@ class ConsoleRuntime:
         self._rearm_delivery_ui_hook()
         if claimed:
             self.remount_pending_approval()
+            self._remount_task_panel()
+
+    def _remount_task_panel(self) -> None:
+        """Push the active session's tasks into a newly claimed view's panel.
+
+        PRD Feature B: the runtime and its todo stores outlive the screen,
+        but the panel widget is screen-owned and mounts empty. Without this
+        a return visit to Console shows no tasks until the next ``todo_*``
+        change or session switch.
+        """
+        controller = self._chat_controller
+        store = self._chat_store
+        remount = getattr(controller, "_remount_task_panel", None)
+        if store is not None and callable(remount):
+            remount(store.active_session_id)
 
     def detach_view(self, view: Any | None = None) -> bool:
         """Clear every screen-owned slot; the runtime itself survives.

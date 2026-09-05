@@ -224,7 +224,9 @@ class RefuseSecondGateway(SequencedGateway):
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
         if self.resolve_calls == 2:
-            return provider_resolution(ready=False, visible_copy="Provider blocked: unavailable")
+            return provider_resolution(
+                ready=False, visible_copy="Provider blocked: unavailable"
+            )
         return await super().resolve_for_send(selection)
 
 

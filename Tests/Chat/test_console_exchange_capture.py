@@ -283,11 +283,7 @@ def test_short_known_credential_is_replaced_in_nested_tool_mapping_keys():
     response = build_response_capture(
         content="ordinary response",
         tool_calls=[
-            {
-                "function": {
-                    "arguments": {f"prefix{credential}suffix": "ordinary"}
-                }
-            }
+            {"function": {"arguments": {f"prefix{credential}suffix": "ordinary"}}}
         ],
         known_credentials=(credential,),
     )

@@ -37,7 +37,9 @@ Narrow
 Media has three stable roles:
 
 - **Library** — the normal Library navigation rail.
-- **Items** — a local-only list with **Filter media**, type selection,
+- **Items** — a local-only list with a filter over title, content and
+  keyword (its box is narrow, so it reads "Title/keyword…" and its tooltip
+  spells out "Filter by title, content or keyword"), type selection,
   paging, bulk actions, and balanced two-line rows.
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
@@ -127,15 +129,25 @@ a status line says "showing X of N" honestly. Entering Trash clears any
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-There is no permanent-delete or empty-trash action here yet — restoring is
-the only operation, and nothing is ever removed from the Trash except by
-restoring it.
+A selected row offers two actions and no others: **"Restore"**, and
+**"Delete permanently"**, which arms an inline "Cancel | Delete
+permanently" confirmation and, once confirmed, removes that one item for
+good — there is no undo and no receipt afterwards. There is no
+empty-trash or bulk permanent delete; each item is deleted on its own.
+Whichever Trash action you take, "‹ Media" returns you to a
+current list: the app refreshes the page it fenced for its own write, so it
+never asks you to press "Retry" for a change you just made here.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
+and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
+235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
+2" range, no stale banner and no "Retry").*
 
 ### Media list
 
 | Control | What it does |
 |---|---|
-| "Filter media" / "Clear filter" | Searches the complete local Media source before paging; it is separate from Find in item. Clearing restores the unfiltered selection when it is still available. |
+| "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
@@ -146,8 +158,14 @@ restoring it.
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
 
 Empty states: with nothing imported, "No media in your Library yet. Import
-something to see it here."; with a filter that matches nothing, "No media
-of type 'pdf'."
+something to see it here."; with a type that matches nothing, "No media
+of type 'pdf'."; with a filter query that matches nothing, "No media matched
+“day2” in titles, content or keywords." beside a live "Clear filter".
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
+articles tagged `day2` — a keyword in no title and no body — filtered live in
+tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
+\"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."
@@ -161,9 +179,18 @@ Reader stays mounted beside Items and keeps one mode visible at a time:
 while you move through items. Missing analysis or highlights produces an
 item-specific empty state; it does not silently switch modes.
 
+Its header is deliberately short: **‹ Back**, the title, the action row, and
+the mode row — five rows above the reading surface, border included. A byline
+row appears only when the item actually has an author or a URL, and an
+identity line ("Server item · not in local Media list") only for a server
+item a local Media list cannot show. The mode row is the only label for the
+open mode; no section header repeats it. Body text wraps at a reading measure
+of about 90 columns however wide the terminal is, while the box around it
+still spans the pane.
+
 - **Read** — the complete stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item whose content has a
-  real heading, table, or fenced code block), a "Rendered (selected) |
+  markdown-flavored media (a `.md`/Obsidian-style item, or a video/audio
+  transcript, whose content has a real heading, table, or fenced code block), a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -175,14 +202,13 @@ item-specific empty state; it does not silently switch modes.
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
   and wraps at either end — in both views. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
-  no on-screen mark. While a search is active, the search box, match
-  count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
-  they stay visible while you step through matches — even in a small
-  terminal, and no matter how far you scroll. Clearing the query
-  (submit an empty box) unpins them back into the Read section. Eligible local
-  PNG, JPEG, and WebP files can also show an inline image above the complete
-  text. **Hide preview** / **Show preview** affects only that item for this
-  session. An unavailable or failed preview reports the problem and leaves
+  no on-screen mark. The search bar stays exactly where Find opened it,
+  directly under the Read/Analysis/Highlights/Info row: submitting a query
+  only reveals the match count and "◀ Prev" / "Next ▶" beneath the box, and
+  clearing the query (submit an empty box) hides them again. Nothing above
+  the bar moves. Eligible local PNG, JPEG, and WebP files can also show an
+  inline image above the complete text. **Hide preview** / **Show preview**
+  affects only that item for this session. An unavailable or failed preview reports the problem and leaves
   every character of stored text readable; GIF, PDF, audio, video, remote URL,
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
@@ -204,7 +230,7 @@ item-specific empty state; it does not silently switch modes.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the in-item search bar (collapsed until then) focused and ready to type; this never filters Items. Escape closes the bar again. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
@@ -224,14 +250,17 @@ them one by one, with your place and progress saved between visits.
   Sets.") — creating never silently strands a walk.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
-  and the open document always agree (Escape shows the list until the next
-  entry).
+  and the open document always agree (in narrower layouts Escape shows the
+  list again until the next entry; the three-pane layout keeps showing it in
+  the Items pane throughout).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
-  a final `]` on the last item marks it done in place. **Escape** leaves the
-  Reader but keeps the set active — re-entering resumes at your cursor.
+  a final `]` on the last item marks it done in place. **Escape** steps out
+  of the Reader — to the loaded Items row, and to the list itself in
+  narrower layouts — and keeps the set active; re-entering resumes at your
+  cursor.
   **R** (Exit review) deactivates the set without deleting it.
 - **Resume / switch / dismiss** — **Sets** on the media list title row opens
   the saved-set picker: each row shows the set's name, live progress, and
@@ -247,8 +276,18 @@ them one by one, with your place and progress saved between visits.
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
-*Verified against fix/media-review-continuity — 2026-09-04 (task-31233/34/36/38:
-live create-from-selection → every-entry resume → dismiss-undo pass in tmux).*
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31276: Find opened, "item"
+submitted, "Next ▶" stepped and Escape closed, live in tmux 235x52 and 100x30 — the bar
+holds its row under the mode toolbar through every step and the pane join stays clean.)*
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31277: a local audio item with
+no author or URL and a `## `-sectioned video transcript, both opened live in tmux 235x52
+— chrome above the first content line went from 9 rows to 5, prose wraps at ~88 cells
+instead of ~136, and the transcript renders its headings instead of literal `##`.)*
+
+*Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
+three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier
+task-31233/34/36/38 create-from-selection → every-entry resume → dismiss-undo pass still holds).*
 
 ### Conversations
 
@@ -301,12 +340,11 @@ setting**; it supplies one bundle of **staged context** for the next send.
 ### Open a media item and search inside it
 1. Click a row; it loads into Reader without replacing Items.
 2. Press **Find**, type into "Search content…", and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and
-   the whole search bar pins to the top of the viewer for as long as the
-   search is active.
-3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized
-   and the pinned bar keeps the count and both controls in view while you
-   navigate.
+   "Match 1 of N matches", the matches are highlighted in the content, and the
+   count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
+   itself does not move, and neither does the header above it.
+3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
+   the bar keeps the count and both controls in view while you navigate.
 
 ### Highlight a passage
 1. In Reader, choose **Highlights** and expand "Add highlight".
@@ -345,15 +383,46 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 **Escape** cancels without applying a choice and returns focus to its opener.
-The Media grips accept **Enter** and **Space**. Arrow-key traversal moves the
-Items selection with a short settle delay; **Enter** loads immediately.
-**Escape** closes transient Reader state before moving outward through Items
-and Library. While a review set is active, the Reader adds **]** (next in
+The Media grips accept **Enter**; in Select mode **Space** is reserved for
+toggling the focused row, so the grips take Enter only there. Arrow-key
+traversal moves the Items selection with a short settle delay; **Enter**
+loads immediately.
+**Escape** closes transient Reader state first — the Find bar, the More
+menu, an open type/sort strip, or an armed delete or edit — and then steps
+outward: from the Reader to the loaded **Items row**, from Items to the
+**Media row in the rail**. Neither of those steps lands in a text box.
+In the three-pane layout (verified at 235x52) Escape never leaves the
+Reader at all: the Items pane is already showing the list, so the document
+stays open and `]`/`[` keep working from the row. The rail row is the last
+stop, and the footer drops its `esc` chip there rather than advertise a key
+that does nothing.
+Where the Library pane is collapsed but the Items pane still shows the list
+(verified at 100x30) the "‹ Back" control returns you to the list, and so
+does Escape from the Items row. Below about 92 columns both panes are
+collapsed: the control and the key still register the exit, but nothing on
+screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
+stop working until you re-enter Media from the rail. A follow-up will open
+the Items pane on that exit.
+**F6** cycles Library → Items → the Reader's content box, which tints its
+own border in the accent colour while it holds focus (no overlay, so the
+text stays readable).
+From a focused Items row beside the Reader, the Reader's own keys stay
+live and are advertised with it: **]** / **[** walk items, **l** toggles
+read-later, **c** sends the item to Console, **t** arms Move to trash, and
+**s** enters Select mode (where Space toggles a row and **s** again is
+Done). On the last item of an active review set **]** reads "finish
+review" and marks it done in place.
+While a review set is active, the Reader adds **]** (next in
 set, marking the item you leave), **[** (previous, never marks), **m**
 (toggle reviewed), and **R** (exit review, keeping the set resumable); the
 footer shows these alongside your "X of M · N reviewed" progress. **Enter** submits the "Filter conversations… (Enter)", **Filter
 media**, and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
+
+*Verified against fix/media-wave4-b — 2026-09-04 (task-31272: the Escape
+ladder to the rail row, More closed by Escape from a focused rail input,
+and the F6 content-stop border tint all live in tmux 235x52; "‹ Back" and
+Escape's return to the list live at 100x30).*
 
 ## Related settings & docs
 

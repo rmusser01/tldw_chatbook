@@ -57,6 +57,11 @@ def _walker_fake(
         ),
         _sync_library_media_viewer_or_recompose=lambda: syncs.append(True),
     )
+    # The screen formats the progress line from the measured seam, so the
+    # fake carries both (task-31271 seam (c)).
+    fake._active_review_progress = MethodType(
+        LibraryScreen._active_review_progress, fake
+    )
     fake._select_calls = calls
     fake._notices = notices
     fake._syncs = syncs
@@ -292,22 +297,6 @@ def test_walk_returns_false_when_no_set_is_active(tmp_path):
 def test_walk_returns_false_when_service_is_absent():
     fake = SimpleNamespace(_review_set_service=lambda: None, _select_calls=[])
     assert LibraryScreen._walk_active_review_set(fake, 1) is False
-
-
-def test_active_review_set_progress_formats_the_line(tmp_path):
-    service = _service(tmp_path)
-    set_id = service.create_review_set(
-        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
-    )
-    service.mark_item_done(set_id, backing_media_id=10, done=True)
-    fake = _walker_fake(service)
-
-    assert LibraryScreen._active_review_set_progress(fake) == "1 of 3 · 1 reviewed"
-
-
-def test_active_review_set_progress_is_none_without_an_active_set(tmp_path):
-    fake = _walker_fake(_service(tmp_path))
-    assert LibraryScreen._active_review_set_progress(fake) is None
 
 
 def test_exit_review_deactivates_but_keeps_the_set(tmp_path):
@@ -1274,3 +1263,108 @@ def test_review_set_active_reflects_the_service(tmp_path):
     assert LibraryScreen._review_set_active(fake) is False
     service.create_review_set("X", origin="browse", items=[(1, "a")])
     assert LibraryScreen._review_set_active(fake) is True
+
+
+def test_cancel_pending_resume_targets_the_resume_worker_group():
+    """task-31273: explicit opens cancel an in-flight auto-resume so the
+    landing worker cannot yank the Reader away from what the user chose."""
+    calls = []
+    fake = SimpleNamespace(
+        workers=SimpleNamespace(cancel_group=lambda owner, group: calls.append(group))
+    )
+    LibraryScreen._cancel_pending_review_set_resume(fake)
+    assert calls == ["library_review_set_resume"]
+
+
+def test_row_press_and_open_by_id_cancel_a_pending_resume():
+    """The two explicit-open seams both route through the cancel helper --
+    pinned at the source level because the handlers need a live screen."""
+    import inspect
+
+    row_src = inspect.getsource(LibraryScreen.handle_library_media_row)
+    open_src = inspect.getsource(LibraryScreen._open_library_item_by_id)
+    assert "_cancel_pending_review_set_resume()" in row_src
+    assert "_cancel_pending_review_set_resume()" in open_src
+
+
+def test_review_footer_names_the_completion_gesture_on_the_last_item():
+    """task-31271 seam (c): on the last item ] FINISHES the set (B cap_50).
+
+    The final forward press marks the item done in place rather than
+    walking anywhere (``plan_walk``'s completion gesture), so
+    "] next in set" promised a next item that does not exist.
+    """
+    at_last = LibraryScreen._review_footer_entries(
+        "6 of 6 · 5 reviewed", at_last=True
+    )
+    assert at_last[0] == ("]", "finish review")
+    assert ("[", "prev in set") in at_last
+    assert ("", "6 of 6 · 5 reviewed") in at_last
+
+    mid_set = LibraryScreen._review_footer_entries("2 of 6 · 1 reviewed")
+    assert mid_set[0] == ("]", "next in set")
+
+    # A complete set keeps task-31225's shape (no ]/[ at all).
+    complete = LibraryScreen._review_footer_entries("All 6 reviewed", at_last=True)
+    assert [key for key, _label in complete] == ["m", "R", ""]
+
+
+def test_review_footer_at_last_follows_the_loaded_item_not_the_cursor(tmp_path):
+    """Qodo on #2386: ] only RESUMES the set while an off-set item is loaded.
+
+    The cursor sitting on the last item is necessary but not sufficient --
+    the walk measures from the DISPLAYED item (Qodo #2333), so the chip
+    that names it has to as well.
+    """
+    import inspect
+
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
+    )
+    service.set_cursor(set_id, 2)  # cursor ON the last item
+
+    off_set = _walker_fake(service, loaded=99)
+    assert LibraryScreen._active_review_loaded_at_last(off_set) is False
+    assert LibraryScreen._review_footer_entries("3 of 3 · 0 reviewed")[0] == (
+        "]",
+        "next in set",
+    )
+
+    mid_set = _walker_fake(service, loaded=11)
+    assert LibraryScreen._active_review_loaded_at_last(mid_set) is False
+
+    on_last = _walker_fake(service, loaded=12)
+    assert LibraryScreen._active_review_loaded_at_last(on_last) is True
+    assert LibraryScreen._review_footer_entries(
+        "3 of 3 · 0 reviewed", at_last=True
+    )[0] == ("]", "finish review")
+
+    # A tombstoned tail moves "last" back to the newest LIVE item.
+    live_only = _walker_fake(service, live_ids={10, 11}, loaded=11)
+    assert LibraryScreen._active_review_loaded_at_last(live_only) is True
+
+    # ...and the footer genuinely composes the two (source-level pin, the
+    # idiom this file already uses for screen-only seams).
+    footer_src = inspect.getsource(
+        LibraryScreen._library_route_shortcuts_for_current_state
+    )
+    assert "_active_review_loaded_at_last()" in footer_src
+
+
+def test_active_review_progress_exposes_the_live_index_and_total(tmp_path):
+    """The footer's ``at_last`` comes from live index/total, not the string."""
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
+    )
+    service.set_cursor(set_id, 2)  # third (0-based) item = the last one
+    fake = _walker_fake(service)
+
+    progress = LibraryScreen._active_review_progress(fake)
+
+    assert (progress.index, progress.total) == (3, 3)
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir()
+    empty = _walker_fake(_service(empty_root))
+    assert LibraryScreen._active_review_progress(empty) is None

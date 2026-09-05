@@ -28,6 +28,10 @@ ALLOWED_SERVER_CREATE_SOURCE_TYPES = (
     "git_repository",
 )
 
+#: Fields the Library Media browse filter searches (TASK-31274). The empty
+#: state and the input placeholder name exactly these, so keep them in step.
+LIBRARY_BROWSE_SEARCH_FIELDS = ("title", "content", "keywords")
+
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
         "operation_id": "media.web_content_ingest.local",
@@ -753,6 +757,13 @@ class MediaReadingScopeService:
         if library_summary:
             filters = dict(filters)
             filters["library_summary"] = True
+            if query and "fields" not in filters:
+                # TASK-31274: the Library Media filter searches keywords too --
+                # set here rather than at either call site so the list and
+                # "Review these" (which pages the same scope) can never search
+                # different fields. Only with a query, so the unfiltered browse
+                # keeps its exact legacy SQL.
+                filters["fields"] = list(LIBRARY_BROWSE_SEARCH_FIELDS)
         payload = await self._call_local_leaf(
             normalized_mode,
             service,

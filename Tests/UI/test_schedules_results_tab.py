@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, DataTable, TabbedContent
+from textual.widgets import Button, DataTable
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import rendered_row_cells
@@ -30,11 +30,13 @@ from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
 from tldw_chatbook.UI.Screens.scheduling.results_tab import (
     RESULTS_HEADING,
+    ResultsHostScreen,
     ResultsTab,
     _format_result_created,
     _result_kind_cell,
     _result_owner_suffix,
     _review_state_cell,
+    index_definitions_by_id,
     solved_eligibility,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -441,27 +443,44 @@ def _seed_result(
     return result_id
 
 
-def _rendered_tab_title(workbench, pane_id: str) -> str:
-    """The text the tab bar actually shows for one pane.
+def _rendered_badge_label(workbench, button_id: str) -> str:
+    """The text a status/rail badge Button actually shows.
 
-    Goes through `TabbedContent.get_tab()` -> the `Tab` widget's own
-    rendered visual, so it can only pass if the label really reached the
-    widget that paints the tab bar.
+    redesign PR-4 task 5 replaces `_rendered_tab_title`, which read the
+    same counts off the retired `TabbedContent`'s own `Tab` widgets. The
+    reason that helper went through the rendered widget rather than an
+    attribute survives verbatim and is why this one does too: the
+    previous assertion read back `TabPane.label`, an attribute Textual
+    8.x's `TabPane` does not have, so the badge was invisible on screen
+    while the test confirmed itself (live verification task 6, D2). A
+    `Button`'s `label` IS its rendered content, so reading it is reading
+    the paint.
     """
-    tab = workbench.query_one("#scheduling-tabs", TabbedContent).get_tab(pane_id)
-    return str(tab.render())
+    return str(workbench.query_one(button_id, Button).label)
 
 
-async def _open_results_tab(pilot, *, row: int = 0):
+async def _open_results_overlay(pilot, *, row: int = 0):
+    """Open the results view the way a user does -- the rail's
+    `Results (N)` button -- and select `row`.
+
+    redesign PR-4 task 5 replaces `_open_results_tab`, which flipped
+    `TabbedContent.active` to the retired Results tab. Every scenario
+    that used it is re-pointed here rather than deleted: the listing, the
+    detail rendering and the read/dismiss/mark-solved verbs all still
+    exist, on the pushed surface (task 2) instead of the tab. Returns
+    `(workbench, screen)` because several of those scenarios assert on
+    BOTH -- the pushed view's effect, and the rail badge behind it.
+    """
     workbench = pilot.app.screen
-    tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-    tabs.active = "scheduling-results-tab"
+    workbench.query_one("#scheduling-results-badge", Button).press()
     await pilot.pause()
-    table = workbench.query_one("#scheduling-results-table", DataTable)
+    screen = pilot.app.screen
+    assert isinstance(screen, ResultsHostScreen), screen
+    table = screen.query_one("#scheduling-results-table", DataTable)
     if table.row_count:
         table.cursor_coordinate = (row, 0)
         await pilot.pause()
-    return workbench
+    return workbench, screen
 
 
 @pytest.mark.asyncio
@@ -493,25 +512,31 @@ async def test_badge_and_table_span_every_owner(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        # Assert the RENDERED tab title through the real widget tree, not
-        # an attribute the code just set. The previous assertion read back
-        # `TabPane.label` -- an attribute Textual 8.x's TabPane does not
-        # have (it stores `_title`), so the assignment created an inert
-        # Python attribute, this test confirmed itself, and the badge was
-        # invisible on screen (live verification task 6, D2).
-        assert _rendered_tab_title(pilot.app.screen, "scheduling-results-tab") == (
-            "Results (2)"
-        )
+        # redesign PR-4 task 5: the unread count is read off the rail's
+        # `Results (N)` button, the badge that survived the retirement --
+        # `_refresh_results_badge` mirrors the same single
+        # `count_unread_results` the tab label used to.
+        assert _rendered_badge_label(
+            pilot.app.screen, "#scheduling-results-badge"
+        ) == "Results (2)"
 
-        table = pilot.app.screen.query_one("#scheduling-results-table", DataTable)
+        # ...and the all-owners listing is the pushed view's, opened from
+        # that same button.
+        _workbench, screen = await _open_results_overlay(pilot)
+        table = screen.query_one("#scheduling-results-table", DataTable)
         assert table.row_count == 3
 
 
 @pytest.mark.asyncio
 async def test_conflicts_badge_renders_too(results_db):
     """The Conflicts badge is the one PR-6's Results badge was copied from
-    and was equally inert (live verification task 6, D2). Both go through
-    the same `_set_tab_label` seam now, so both are pinned on the render.
+    and was equally inert (live verification task 6, D2), so both are
+    pinned on the render.
+
+    redesign PR-4 task 5: both counts used to be mirrored onto a tab
+    label AND a badge Button; `_set_tab_label` is deleted with the
+    `TabbedContent` and the Buttons are the only home left. Same two
+    counts, same two `service.db` reads.
     """
     db = results_db
     db.record_conflict(
@@ -527,21 +552,29 @@ async def test_conflicts_badge_renders_too(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        assert _rendered_tab_title(
-            pilot.app.screen, "scheduling-conflicts-tab"
+        assert _rendered_badge_label(
+            pilot.app.screen, "#scheduling-conflicts-badge"
         ) == "Conflicts (1)"
         # No results seeded -> the Results badge stays a bare label.
-        assert _rendered_tab_title(
-            pilot.app.screen, "scheduling-results-tab"
+        assert _rendered_badge_label(
+            pilot.app.screen, "#scheduling-results-badge"
         ) == "Results"
 
 
 @pytest.mark.asyncio
 async def test_mark_solved_resolves_a_server_keyed_result(results_db):
     """Live verification task 6, D3: a synced result's `definition_id` is
-    the SERVER's id, but the tab indexed definitions by their LOCAL id and
-    `resolve_definition` takes a LOCAL id -- so `o` refused ("definition
-    could not be found") on exactly the rows the feature exists for.
+    the SERVER's id, but the view indexed definitions by their LOCAL id
+    and `resolve_definition` takes a LOCAL id -- so `o` refused
+    ("definition could not be found") on exactly the rows the feature
+    exists for.
+
+    redesign PR-4 task 5: driven through the pushed view's own `o`
+    (`ResultsHostScreen.action_mark_solved`) now that the tab and its
+    tab-gated `action_mark_result_solved` are retired. Both always shared
+    the same `solved_eligibility` gate and `mark_selected_result_solved`
+    orchestration (task 2 factored them out for exactly this), so the D3
+    regression this pins is unmoved -- only its caller is.
     """
     db = results_db
     local_definition_id = _seed_definition(
@@ -559,10 +592,10 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
         # The eligibility gate resolves through the server id space...
-        results_tab = workbench.query_one("#scheduling-results", ResultsTab)
+        results_tab = screen.query_one(ResultsTab)
         detail_text = str(
             results_tab.query_one("#scheduling-results-detail").render()
         )
@@ -570,7 +603,7 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
 
         # ...and so does the action, which must hand `resolve_definition`
         # the LOCAL id it contracts for.
-        workbench.action_mark_result_solved()
+        screen.action_mark_solved()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -581,6 +614,13 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
 
 @pytest.mark.asyncio
 async def test_read_action_marks_local_result_read(results_db):
+    """redesign PR-4 task 5: `r` used to be `action_run_task_now` routed
+    by active tab; the routing and the tab are retired, so this drives
+    the pushed view's own `r` (`ResultsHostScreen.action_review_read`),
+    which has always called the same `review_selected_result`. The badge
+    half of the claim -- the count clears once nothing is unread -- is
+    re-asserted on the rail button, and now also proves the pop-time
+    `dismissed` refresh actually runs."""
     db = results_db
     definition_id = _seed_definition(db)
     result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
@@ -589,23 +629,38 @@ async def test_read_action_marks_local_result_read(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        workbench, screen = await _open_results_overlay(pilot)
+        assert _rendered_badge_label(
+            workbench, "#scheduling-results-badge"
+        ) == "Results (1)"
 
-        # r reuses action_run_task_now, routed to "read" on this tab.
-        workbench.action_run_task_now()
+        screen.action_review_read()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         row = db.get_automation_result(result_id)
         assert row["review_state"] == "read"
-        # Badge clears once nothing is unread -- asserted on the render,
-        # same reason as the badge test above (task 6, D2).
-        assert _rendered_tab_title(workbench, "scheduling-results-tab") == "Results"
+
+        # Closing the view runs its `dismissed` hook, which re-counts the
+        # rail badge: it clears once nothing is unread.
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert pilot.app.screen is workbench
+        assert _rendered_badge_label(
+            workbench, "#scheduling-results-badge"
+        ) == "Results"
 
 
 @pytest.mark.asyncio
 async def test_dismiss_action_queues_server_pushback_mutation(results_db):
+    """redesign PR-4 task 5: `d` used to be `action_delete` routed by
+    active tab; driven through the pushed view's own `d` now (same
+    `review_selected_result` orchestration). The claim -- a server-owned
+    result's dismissal queues its pushback mutation with the SERVER's
+    result id -- is untouched and has no other home."""
     db = results_db
     definition_id = _seed_definition(
         db, owner_id="server:1", server_id="srv-def-1"
@@ -622,10 +677,9 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        # d reuses action_delete, routed to "dismissed" on this tab.
-        workbench.action_delete()
+        screen.action_review_dismiss()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -643,6 +697,11 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
 
 @pytest.mark.asyncio
 async def test_mark_all_read_fans_out_per_row(results_db):
+    """redesign PR-4 task 5: no tab to activate first --
+    `action_mark_all_results_read` is ungated now (it was Results-tab-only,
+    with a byte-identical ungated twin behind the rail button; the two
+    collapsed into one when the gate went). The fan-out claim is
+    unchanged."""
     db = results_db
     definition_id = _seed_definition(db)
     r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
@@ -655,7 +714,7 @@ async def test_mark_all_read_fans_out_per_row(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        workbench = pilot.app.screen
 
         workbench.action_mark_all_results_read()
         await pilot.pause()
@@ -673,7 +732,7 @@ async def test_mark_all_read_fans_out_per_row(results_db):
 async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
     results_db,
 ):
-    """HIGH (Qodo): `_unread_result_ids` used to read the Results tab's
+    """HIGH (Qodo): `_unread_result_ids` used to read the results view's
     own CAPPED listing (`RESULTS_INBOX_LIMIT`, 200 newest rows) instead
     of querying the DB directly, so an older unread result outside that
     window survived a mark-all-read -- while the rail button's
@@ -706,13 +765,17 @@ async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        workbench, screen = await _open_results_overlay(pilot)
 
         # Sanity: the loaded table window is capped, so the old result is
         # not among the currently-rendered rows -- this is the exact
-        # shape that used to leave it unreached.
-        table = workbench.query_one("#scheduling-results-table", DataTable)
+        # shape that used to leave it unreached. (redesign PR-4 task 5:
+        # that capped listing is the PUSHED view's now; the fan-out under
+        # test still reads the DB, which is the whole point.)
+        table = screen.query_one("#scheduling-results-table", DataTable)
         assert table.row_count == RESULTS_INBOX_LIMIT
+        await pilot.press("escape")
+        await pilot.pause()
 
         workbench.action_mark_all_results_read()
         await pilot.pause()
@@ -737,13 +800,16 @@ async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
 
 
 @pytest.mark.asyncio
-async def test_rail_mark_all_read_button_fans_out_without_switching_tabs(results_db):
-    """redesign PR-2, Task 3: unlike the `a` keybinding (Results-tab-only,
-    see `test_results_actions_refuse_off_the_results_tab`), the rail's
-    `Mark all read` button on the Queue tab reuses the SAME per-row
-    fan-out (`_dispatch_mark_all_results_read`) without a tab switch
-    first, then refreshes the Queue's own unread dots so the button hides
-    itself again once nothing is unread."""
+async def test_rail_mark_all_read_button_fans_out_and_hides_itself(results_db):
+    """redesign PR-2, Task 3: the rail's `Mark all read` button reuses the
+    per-row fan-out (`_dispatch_mark_all_results_read`), then refreshes
+    the Queue's own unread dots so the button hides itself again once
+    nothing is unread.
+
+    redesign PR-4 task 5 (renamed): "without switching tabs" was the
+    point of the button when `a` was Results-tab-only -- there are no
+    tabs and no gate now, so the button and `a` are one path and the
+    name says what is still true."""
     db = results_db
     definition_id = _seed_definition(db)
     r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
@@ -756,10 +822,6 @@ async def test_rail_mark_all_read_button_fans_out_without_switching_tabs(results
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         workbench = pilot.app.screen
-
-        # Still on the Queue tab -- the `a` keybinding would refuse here.
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        assert tabs.active == "scheduling-queue-tab"
 
         button = workbench.query_one("#scheduling-mark-all-read", Button)
         assert button.display is True
@@ -779,6 +841,10 @@ async def test_rail_mark_all_read_button_fans_out_without_switching_tabs(results
 
 @pytest.mark.asyncio
 async def test_mark_solved_local_round_trip(results_db):
+    """redesign PR-4 task 5: driven through the pushed view's `o`
+    (`ResultsHostScreen.action_mark_solved`) -- same
+    `mark_selected_result_solved` orchestration the retired tab-gated
+    `action_mark_result_solved` called."""
     db = results_db
     definition_id = _seed_definition(db)
     result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
@@ -787,9 +853,9 @@ async def test_mark_solved_local_round_trip(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        workbench.action_mark_result_solved()
+        screen.action_mark_solved()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -804,6 +870,11 @@ async def test_mark_solved_local_round_trip(results_db):
 async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
     results_db,
 ):
+    """redesign PR-4 task 5: the SYNCHRONOUS eligibility refusal (no
+    worker round-trip) that `solved_eligibility` owns, re-pinned on the
+    pushed view's `o` -- `ResultsHostScreen.action_mark_solved` keeps the
+    same caller-side gate the retired tab action had (results_tab.py's
+    own docstring: the gates stay in each CALLER)."""
     db = results_db
     definition_id = _seed_definition(db)
     _seed_result(
@@ -814,9 +885,9 @@ async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        workbench.action_mark_result_solved()
+        screen.action_mark_solved()
         await pilot.pause()
 
         definition = db.get_automation_definition(definition_id)
@@ -830,6 +901,8 @@ async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
 
 @pytest.mark.asyncio
 async def test_mark_solved_server_round_trip(results_db):
+    """redesign PR-4 task 5: driven through the pushed view's `o`; the
+    local->server id translation under test is unchanged."""
     db = results_db
     definition_id = _seed_definition(
         db, owner_id="server:1", server_id="srv-def-1"
@@ -853,9 +926,9 @@ async def test_mark_solved_server_round_trip(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        workbench.action_mark_result_solved()
+        screen.action_mark_solved()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -870,6 +943,8 @@ async def test_mark_solved_server_round_trip(results_db):
 
 @pytest.mark.asyncio
 async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
+    """redesign PR-4 task 5: driven through the pushed view's `o`; the
+    real `ServerUnavailableError` refusal under test is unchanged."""
     db = results_db
     definition_id = _seed_definition(
         db, owner_id="server:1", server_id="srv-def-1"
@@ -889,9 +964,9 @@ async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        workbench.action_mark_result_solved()
+        screen.action_mark_solved()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -904,39 +979,36 @@ async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
         )
 
 
-@pytest.mark.asyncio
-async def test_results_actions_refuse_off_the_results_tab(results_db):
-    db = results_db
-    definition_id = _seed_definition(db)
-    _seed_result(db, definition_id=definition_id, dedupe_key="d1")
-
-    app = ResultsWorkbenchTestApp(db)
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen  # Queue tab is active by default
-
-        workbench.action_mark_result_solved()
-        workbench.action_mark_all_results_read()
-        await pilot.pause()
-
-        definition = db.get_automation_definition(definition_id)
-        assert definition["resolution_state"] == "open"
-        notifications = list(pilot.app._notifications)
-        assert len(notifications) == 2
-        assert all("Results tab" in n.message for n in notifications)
+# redesign PR-4 task 5: `test_results_actions_refuse_off_the_results_tab`
+# is DELETED, not relocated. It pinned `_is_results_tab_active`'s two
+# refusals ("Switch to the Results tab to ...") -- the behaviour of a
+# gate whose only purpose was to stop tab-scoped keys acting on a tab the
+# user was not looking at. With one surface there is no tab to be off of:
+# `o` lives only on the pushed view (a screen underneath never receives
+# the key at all -- structural, not gated), and `a` is deliberately
+# ungated because its target, the rail's `Mark all read` button, is
+# always on screen. There is no behaviour left to assert; keeping the
+# test would mean re-introducing the gate to satisfy it. The half that
+# survives -- `a` doing the right thing from the rail -- is
+# `test_rail_mark_all_read_button_fans_out_and_hides_itself` above.
 
 
 @pytest.mark.asyncio
 async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
     """HIGH (Qodo): the refresh took the DB's default `limit=50` while the
-    badge counted EVERY unread result, so the tab could read "Results
+    badge counted EVERY unread result, so the badge could read "Results
     (201)" over 50 rows with nothing saying the rest existed.
 
-    The listing is now the sync-mirrored window -- `RESULTS_INBOX_LIMIT`,
+    The listing is the sync-mirrored window -- `RESULTS_INBOX_LIMIT`,
     i.e. exactly the newest-pages walk `SyncEngine._pull_results` does --
     and once it bites, the heading says so. Deliberately no pagination:
     saying what is hidden is the fix.
+
+    redesign PR-4 task 5: the listing and its cap line moved to the
+    pushed view with the retirement (`_push_results_overlay` runs the
+    same `RESULTS_INBOX_LIMIT` query the tab refresh used to). Both
+    halves of the honesty claim are still asserted together, which is the
+    point of the test: the capped listing AND the uncapped badge count.
     """
     db = results_db
     definition_id = _seed_definition(db)
@@ -948,27 +1020,28 @@ async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        workbench, screen = await _open_results_overlay(pilot)
 
-        table = workbench.query_one("#scheduling-results-table", DataTable)
+        table = screen.query_one("#scheduling-results-table", DataTable)
         assert table.row_count == RESULTS_INBOX_LIMIT
 
-        heading = workbench.query_one("#scheduling-results-heading")
+        heading = screen.query_one("#scheduling-results-heading")
         assert (
             f"showing newest {RESULTS_INBOX_LIMIT} of {total}"
             in str(heading.render())
         )
         # The badge still counts every unread result -- that honesty is
         # the whole reason the truncation has to be stated.
-        assert f"Results ({total})" in _rendered_tab_title(
-            workbench, "scheduling-results-tab"
+        assert f"Results ({total})" in _rendered_badge_label(
+            workbench, "#scheduling-results-badge"
         )
 
 
 @pytest.mark.asyncio
 async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
     """The count line is truncation-only -- an inbox that fits must not
-    grow a permanent "showing newest 2 of 2" tail."""
+    grow a permanent "showing newest 2 of 2" tail. (redesign PR-4 task 5:
+    read off the pushed view, which owns the listing now.)"""
     db = results_db
     definition_id = _seed_definition(db)
     for index in range(2):
@@ -978,7 +1051,252 @@ async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
-        workbench = await _open_results_tab(pilot)
+        _workbench, screen = await _open_results_overlay(pilot)
 
-        heading = workbench.query_one("#scheduling-results-heading")
+        heading = screen.query_one("#scheduling-results-heading")
         assert str(heading.render()).strip() == RESULTS_HEADING
+
+
+# ---------------------------------------------------------------------------
+# redesign PR-4, task 2: Results relocation onto the pushed surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_initial_results_self_populate_with_custom_heading():
+    """`ConflictsTab.initial_conflicts`'s own self-populate-on-mount idiom
+    (task 1), plus the optional `heading` override a definition-filtered
+    pushed view uses -- the SAME "showing newest N of TOTAL" cap-line math
+    renders under whatever heading text it is given."""
+
+    class _App(ConsolidatedCSSApp):
+        def compose(self):
+            yield ResultsTab(
+                id="scheduling-results-overlay",
+                initial_results=[_base_result()],
+                initial_total=5,
+                heading="Automation results — Weekly digest",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-results-table", DataTable)
+        assert table.row_count == 1
+        heading = str(tab.query_one("#scheduling-results-heading").render()).strip()
+        assert heading == "Automation results — Weekly digest — showing newest 1 of 5"
+
+
+def _push_results_host_closures(service, *, definition_id: str | None = None):
+    """`(query, unread_ids)` closures matching `SchedulesWorkbench._push_
+    results_overlay`'s own shape, scoped to a single `definition_id`
+    string when given. These tests never mix local/server id spaces for
+    one definition -- that merge is `_definition_results_query`'s own
+    concern, exercised directly below."""
+
+    def query():
+        results = service.db.list_automation_results(
+            owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
+        )
+        total = service.db.count_automation_results(
+            owner_id=None, definition_id=definition_id
+        )
+        definitions_by_id = index_definitions_by_id(
+            service.db.list_automation_definitions(owner_id=None)
+        )
+        return results, definitions_by_id, total
+
+    def unread_ids():
+        total_unread = service.db.count_unread_results(
+            owner_id=None, definition_id=definition_id
+        )
+        if not total_unread:
+            return []
+        rows = service.db.list_automation_results(
+            owner_id=None,
+            definition_id=definition_id,
+            review_state="unread",
+            limit=total_unread,
+        )
+        return [row["id"] for row in rows]
+
+    return query, unread_ids
+
+
+async def _push_results_host_screen(pilot, service, *, definition_id: str | None = None):
+    """Push a `ResultsHostScreen` directly (no `SchedulesWorkbench`
+    involved) -- exercises the pushed view's own r/d/o/a binding surface
+    and the shared service orchestration in isolation."""
+    query, unread_ids = _push_results_host_closures(service, definition_id=definition_id)
+    results, definitions_by_id, total = query()
+
+    def _factory() -> ResultsTab:
+        return ResultsTab(
+            id="scheduling-results-overlay",
+            initial_results=results,
+            initial_definitions_by_id=definitions_by_id,
+            initial_total=total,
+        )
+
+    await pilot.app.push_screen(
+        ResultsHostScreen(
+            _factory, title="Results", service=service, query=query, unread_ids=unread_ids
+        )
+    )
+    await pilot.pause()
+    return pilot.app.screen
+
+
+@pytest.mark.asyncio
+async def test_hosted_read_action_updates_the_selected_result(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(result_id)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_hosted_dismiss_action_updates_the_selected_result(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(result_id)["review_state"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_hosted_mark_solved_action_resolves_the_definition(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        definition = db.get_automation_definition(definition_id)
+        assert definition["resolution_state"] == "solved"
+        assert definition["resolved_result_id"] == result_id
+
+
+@pytest.mark.asyncio
+async def test_hosted_mark_all_read_action_fans_out(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+    r2 = _seed_result(db, definition_id=definition_id, dedupe_key="d2")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        await _push_results_host_screen(pilot, service)
+
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(r1)["review_state"] == "read"
+        assert db.get_automation_result(r2)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_definition_results_query_merges_local_and_server_id_spaces(results_db):
+    """redesign PR-4 task 2: a definition mirrored from the server can
+    carry results in BOTH id spaces -- a locally-created one
+    (`definition_id` = the local row id) and a server-mirrored one
+    (`definition_id` = the server's id, `index_definitions_by_id`'s own
+    documented split). `_definition_results_query` must see both, and
+    count both toward its cap-line total -- neither single-id-space DB
+    query alone sees more than half. A result belonging to a different
+    definition must not leak in."""
+    db = results_db
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
+    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    server_result_id = _seed_result(
+        db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
+    )
+    other_definition_id = _seed_definition(db, name="Other")
+    _seed_result(db, definition_id=other_definition_id, dedupe_key="other-1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        service = pilot.app.scheduling_service
+
+        definition = db.get_automation_definition(definition_id)
+        results, total = workbench._definition_results_query(service, definition)
+
+        assert total == 2
+        assert {row["id"] for row in results} == {local_result_id, server_result_id}
+
+
+@pytest.mark.asyncio
+async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
+    """`_definition_unread_result_ids` counterpart of the query merge test
+    above -- the `a` action inside a definition-filtered pushed view must
+    reach unread results in BOTH id spaces, and none belonging to another
+    definition."""
+    db = results_db
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
+    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    server_result_id = _seed_result(
+        db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
+    )
+    other_definition_id = _seed_definition(db, name="Other")
+    other_result_id = _seed_result(
+        db, definition_id=other_definition_id, dedupe_key="other-1"
+    )
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        service = pilot.app.scheduling_service
+
+        definition = db.get_automation_definition(definition_id)
+        ids = workbench._definition_unread_result_ids(service, definition)
+
+        assert set(ids) == {local_result_id, server_result_id}
+        assert other_result_id not in ids

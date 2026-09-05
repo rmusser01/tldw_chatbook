@@ -110,6 +110,85 @@ contains private text; its expanded notice is
 `Proprietary thinking obfuscated - not available`. This distinction describes
 observable provider events and does not promise hidden chain-of-thought.
 
+### Task panel — the agent's task list stays in view
+
+When the agent keeps a task list (the `todo_create` / `todo_update` tools),
+a **Tasks** panel sits pinned above the transcript for as long as the list
+has entries:
+
+```
+▾ Tasks · 3 of 7 done · Writing the migration
+[x] Read the schema
+[x] Draft the migration plan
+[x] Add the version bump
+[~] Writing the migration
+[ ] Run the DB tests
+[ ] Update the docs
+[ ] Open the PR
+```
+
+- The header always shows how many tasks are done and what the agent is
+  working on right now. `[~]` marks the in-progress task, `[x]` a finished
+  one, `[ ]` one still waiting.
+- The panel updates the instant the agent changes the list. The transcript
+  still gets its `☰ Tasks` marker on every change, so the history stays
+  intact; the panel is the copy that does not scroll away.
+- Click the header to collapse the panel to its one-line summary, and click
+  again to expand it. Each tab remembers its own collapsed state.
+- Long lists scroll inside the panel rather than pushing the transcript
+  down.
+- The list belongs to the tab: switching tabs switches the panel, and a tab
+  with no tasks shows no panel at all. Like the rest of a run, the list
+  lives only while Console stays open.
+
+The panel is read-only — it shows the agent's plan; it is not a place to
+edit it.
+
+### Questions from the agent
+
+An agent can stop and ask you up to four multiple-choice questions. The
+questions appear on a card above the transcript, in the same slot as
+approvals, and the run waits until you answer:
+
+```
+The agent has 2 questions for you:
+Database   Which database should the migration target?
+  ( ) Postgres — managed, relational
+  (•) SQLite — embedded
+  Other…
+Region     Which regions? (pick any)
+  [x] eu
+  [ ] us
+  Other…
+                                                    [ Submit ]
+```
+
+- Pick an option per question, or type your own answer in **Other…** — it
+  is always there, whatever the agent offered. `1`–`4` pick an option in the
+  question you are on, `Tab` moves between questions, `Enter` submits.
+- You can submit with questions left blank; the agent sees them as
+  unanswered and decides what to do.
+- You can also just type your answer and send it. While a question card is
+  up, a plain message answers the questions you have not picked an option
+  for (it becomes their **Other…** text) and is not sent to the agent as a
+  new message. Two exceptions: a `/` command runs as usual, and a message
+  with a staged attachment or staged Library evidence is sent as a normal
+  turn, leaving the question up for you to answer on the card.
+- The card never grabs focus from something you are typing. If you need to
+  reach it from the keyboard, the inspector's **Review approval** action
+  focuses the question card when no approval is pending.
+- By default the question waits as long as it takes. To make an unanswered
+  question expire instead, set `ask_user_timeout_seconds` under `[console]`
+  in your config; the card then shows *Auto-continues in m:ss* and the run
+  carries on without an answer when it reaches zero.
+- A question for a tab you are not looking at lights that tab's badge and
+  shows a toast; visit the tab to answer it. Stopping the run clears the card.
+- Every answered round leaves one line per question in the transcript, so
+  the exchange stays in the record.
+
+The tool is on by default. To remove it from every agent, set
+`ask_user_enabled = false` under `[tools]`.
+
 ### Approvals — tools ask before they run
 
 Nothing is ever auto-approved, and built-in tools always ask first. When the

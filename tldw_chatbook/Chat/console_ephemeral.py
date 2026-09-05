@@ -88,20 +88,16 @@ TEMPORARY_TOOLTIP = (
 #: shared choke point ``ToolCatalogRegistry.invoke_by_name``.
 EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
     "generate-image": (
-        "Generating an image writes a file to disk — not available in a "
-        "temporary chat."
+        "Generating an image writes a file to disk — not available in a temporary chat."
     ),
     "generate-video": (
-        "Generating a video writes a file to disk — not available in a "
-        "temporary chat."
+        "Generating a video writes a file to disk — not available in a temporary chat."
     ),
     "save-chatbook": (
-        "Saving a Chatbook exports a file to disk — not available in a "
-        "temporary chat."
+        "Saving a Chatbook exports a file to disk — not available in a temporary chat."
     ),
     "save-image": (
-        "Saving the image writes a file to disk — not available in a "
-        "temporary chat."
+        "Saving the image writes a file to disk — not available in a temporary chat."
     ),
     "save-as-note": (
         "Saving as a Note writes it to the local Notes database — not "
@@ -132,8 +128,7 @@ EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
         "available in a temporary chat."
     ),
     "write_file": (
-        "The write_file tool writes a file to disk — not available in a "
-        "temporary chat."
+        "The write_file tool writes a file to disk — not available in a temporary chat."
     ),
 }
 

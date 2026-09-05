@@ -7338,6 +7338,11 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
         workspace.query_one("#file-notes-manage", Button).press()
         await pilot.pause()
 
+        # task-31264: $ds-focus-bg is the polarity-aware generated focus tint
+        # (block-cursor-blurred-background), no longer the #51677e literal.
+        focus_bg = Color.parse(
+            pilot.app.theme_variables["block-cursor-blurred-background"]
+        )
         buttons = (
             workspace.query_one("#file-notes-root-details", Button),
             workspace.query_one("#file-notes-choose-root", Button),
@@ -7356,7 +7361,7 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
             assert button.has_focus
             assert button.render_line(0).text.strip() == str(button.label)
             assert not button.styles.outline
-            assert button.styles.background == Color.parse("#51677e")
+            assert button.styles.background == focus_bg
             assert button.styles.text_style.bold
             assert button.styles.text_style.underline
 
@@ -7368,7 +7373,7 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
             assert tree.has_focus
             assert not tree.styles.outline
             cursor = tree.get_component_styles("tree--cursor")
-            assert cursor.background == Color.parse("#51677e")
+            assert cursor.background == focus_bg
             assert cursor.text_style.bold
             assert cursor.text_style.underline
 

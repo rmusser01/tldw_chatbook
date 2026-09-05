@@ -1,4 +1,12 @@
-"""Conflicts tab for the Schedules workbench."""
+"""Sync-conflicts view for the Schedules workbench.
+
+The module keeps its `conflicts_tab` name (redesign PR-4 task 5's own
+judgment: renaming the file buys nothing but churn), but the TAB it was
+built for is retired. `ConflictsTab` is now mounted only as a fresh
+instance inside a pushed `WorkbenchHostScreen`, opened from the status
+strip's Conflicts badge (task 1) -- so it self-populates from
+`initial_conflicts` rather than being driven by an owner screen.
+"""
 
 from __future__ import annotations
 
@@ -61,16 +69,30 @@ class ConflictsTab(Vertical):
     }
     """
 
-    def __init__(self, sync_engine: _SyncEngineProtocol | None, **kwargs) -> None:
+    def __init__(
+        self,
+        sync_engine: _SyncEngineProtocol | None,
+        *,
+        initial_conflicts: list[dict[str, Any]] | None = None,
+        **kwargs: object,
+    ) -> None:
         """Initialize the conflicts tab.
 
         Args:
             sync_engine: Engine providing ``resolve_conflict(conflict_id, resolution)``.
+            initial_conflicts: When given, ``populate()``s the table with
+                these on mount. A pushed instance (redesign PR-4, Task
+                1's conflicts-badge overlay, via ``WorkbenchHostScreen``)
+                has no external ``.populate()`` driver the way the
+                retired mounted tab instance did, so it self-populates
+                instead. Still optional: ``populate()`` remains callable
+                from outside.
             **kwargs: Passed to the parent widget.
         """
         super().__init__(**kwargs)
         self.sync_engine = sync_engine
         self._conflicts_by_id: dict[str, dict[str, Any]] = {}
+        self._initial_conflicts = initial_conflicts
 
     def compose(self) -> ComposeResult:
         """Build the tab layout."""
@@ -154,10 +176,13 @@ class ConflictsTab(Vertical):
             )
 
     def on_mount(self) -> None:
-        """Configure the table cursor."""
+        """Configure the table cursor, and self-populate if constructed with data."""
         table = self.query_one("#scheduling-conflicts-table", DataTable)
         table.cursor_type = "row"
-        self._set_actions_enabled(False)
+        if self._initial_conflicts is not None:
+            self.populate(self._initial_conflicts)
+        else:
+            self._set_actions_enabled(False)
 
     @on(DataTable.RowHighlighted, "#scheduling-conflicts-table")
     def _on_conflict_highlighted(self, event: DataTable.RowHighlighted) -> None:

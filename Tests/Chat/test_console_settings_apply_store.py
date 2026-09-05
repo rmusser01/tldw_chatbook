@@ -42,7 +42,9 @@ from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferenc
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
-def _settings(model: str, *, system_prompt: str | None = None) -> ConsoleSessionSettings:
+def _settings(
+    model: str, *, system_prompt: str | None = None
+) -> ConsoleSessionSettings:
     return ConsoleSessionSettings(
         provider="openai",
         model=model,
@@ -123,7 +125,9 @@ class _SettingsPersistence:
         self.context_revision = (
             None
             if self.context_policy.is_empty
-            else 1 if self.context_revision is None else self.context_revision + 1
+            else 1
+            if self.context_revision is None
+            else self.context_revision + 1
         )
         return ContextPolicyWriteResult(
             ContextPolicyWriteStatus.WRITTEN,
@@ -231,7 +235,9 @@ def test_missing_or_rebound_origin_is_rejected_without_mutation() -> None:
     assert rebound.context_policy_revision == 0
 
 
-def test_first_persist_binding_preserves_revision_but_explicit_rebind_advances() -> None:
+def test_first_persist_binding_preserves_revision_but_explicit_rebind_advances() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session(settings=_settings("old"))
     origin = store.capture_console_settings_origin(session.id)
@@ -250,7 +256,10 @@ def test_first_persist_binding_preserves_revision_but_explicit_rebind_advances()
     )
     store.commit_console_settings_live(accepted)
     store.rebind_persisted_conversation(session.id, "conversation-b")
-    assert session.conversation_binding_revision == origin.conversation_binding_revision + 1
+    assert (
+        session.conversation_binding_revision
+        == origin.conversation_binding_revision + 1
+    )
 
 
 @pytest.mark.asyncio
@@ -480,7 +489,9 @@ async def test_queued_applies_before_first_yield_drain_only_latest_values() -> N
 
 
 @pytest.mark.asyncio
-async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits() -> None:
+async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits() -> (
+    None
+):
     persistence = _SettingsPersistence()
     first_started = threading.Event()
     release_first = threading.Event()
@@ -555,7 +566,9 @@ async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits(
 
 
 @pytest.mark.asyncio
-async def test_outside_policy_write_during_generation_avoids_duplicate_failure() -> None:
+async def test_outside_policy_write_during_generation_avoids_duplicate_failure() -> (
+    None
+):
     persistence = _SettingsPersistence()
     generation_started = threading.Event()
     release_generation = threading.Event()
@@ -579,7 +592,9 @@ async def test_outside_policy_write_during_generation_avoids_duplicate_failure()
             compaction=ContextCompactionMode.OFF,
         )
     )
-    drain = asyncio.create_task(store.persist_console_settings_commit_serialized(commit))
+    drain = asyncio.create_task(
+        store.persist_console_settings_commit_serialized(commit)
+    )
 
     outside_policy = ConsoleContextPolicyOverrides(
         compaction_mode=ContextCompactionMode.AUTOMATIC
@@ -595,9 +610,7 @@ async def test_outside_policy_write_during_generation_avoids_duplicate_failure()
         release_generation.set()
     outcome = await drain
 
-    assert [call["overrides"] for call in persistence.context_calls] == [
-        outside_policy
-    ]
+    assert [call["overrides"] for call in persistence.context_calls] == [outside_policy]
     assert persistence.context_policy == outside_policy
     assert session.context_policy_overrides == outside_policy
     assert session.context_policy_durable_revision == persistence.context_revision
@@ -754,9 +767,7 @@ async def test_replacement_apply_serializes_after_old_inflight_owned_write() -> 
     assert replacement.generation_durable_snapshot.model == "model-b"
     assert replacement.settings_persistence_failures == {}
     assert old_outcome.stale_components == frozenset(ConsoleSettingsComponent)
-    assert replacement_outcome.written_components == frozenset(
-        ConsoleSettingsComponent
-    )
+    assert replacement_outcome.written_components == frozenset(ConsoleSettingsComponent)
 
 
 def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> None:
@@ -804,10 +815,7 @@ def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> No
 
     first_restore_revision = replacement.conversation_binding_revision
     store.restore_state(sessions=[restored], active_session_id=session.id)
-    assert (
-        store.sessions()[0].conversation_binding_revision
-        > first_restore_revision
-    )
+    assert store.sessions()[0].conversation_binding_revision > first_restore_revision
 
 
 def test_preclose_origin_is_rejected_after_same_id_conversation_restore() -> None:
@@ -902,9 +910,10 @@ async def test_external_generation_change_is_refused_not_overwritten(tmp_path) -
 
         await store.persist_console_settings_commit_serialized(commit)
 
-        assert service.get_conversation_generation_settings(
-            conversation_id
-        ).snapshot.model == "external"
+        assert (
+            service.get_conversation_generation_settings(conversation_id).snapshot.model
+            == "external"
+        )
         assert ConsoleSettingsComponent.GENERATION_SETTINGS in (
             session.settings_persistence_failures
         )
@@ -942,7 +951,9 @@ async def test_generation_failure_captures_only_exact_safe_snapshot() -> None:
     failure = session.settings_persistence_failures[
         ConsoleSettingsComponent.GENERATION_SETTINGS
     ]
-    assert failure.generation_snapshot == snapshot_from_session_settings(commit.settings)
+    assert failure.generation_snapshot == snapshot_from_session_settings(
+        commit.settings
+    )
     assert not hasattr(failure.generation_snapshot, "base_url")
     assert secret_endpoint not in repr(failure)
 
@@ -1119,7 +1130,9 @@ def test_temporary_newer_full_policy_supersedes_quick_failure_label() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resumed_absent_policy_apply_empty_publishes_none_without_failure() -> None:
+async def test_resumed_absent_policy_apply_empty_publishes_none_without_failure() -> (
+    None
+):
     persistence = _SettingsPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.restore_persisted_session(
@@ -1188,6 +1201,8 @@ def test_session_failure_state_does_not_capture_endpoint_or_secrets() -> None:
 
     assert session.settings_persistence_failures == {}
     assert session.applied_settings_submission_ids.maxlen == 32
-    assert session.generation_metadata_status is ConsoleGenerationSettingsReadStatus.ABSENT
+    assert (
+        session.generation_metadata_status is ConsoleGenerationSettingsReadStatus.ABSENT
+    )
     assert session.generation_metadata_warning_shown is False
     assert session.new_chat_default_generation == 0

@@ -71,11 +71,15 @@ class FakeGateway:
     def call_count(self) -> int:
         return len(self.selections)
 
-    async def resolve_for_send(self, selection: ConsoleProviderSelection) -> FakeResolution:
+    async def resolve_for_send(
+        self, selection: ConsoleProviderSelection
+    ) -> FakeResolution:
         self.selections.append(selection)
         return self.resolution
 
-    async def stream_chat(self, resolution: FakeResolution, messages: list[dict[str, str]]):
+    async def stream_chat(
+        self, resolution: FakeResolution, messages: list[dict[str, str]]
+    ):
         self.stream_calls += 1
         self.messages.append(messages)
         if self.error is not None and not self.error_after_chunks:
@@ -114,7 +118,10 @@ def default_run_kwargs(**overrides: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_stream_yields_deltas_then_complete_outcome_with_identity() -> None:
-    gateway = FakeGateway(chunks=["Hel", "lo ", "world"], resolution=FakeResolution(provider="zai", model="glm-test"))
+    gateway = FakeGateway(
+        chunks=["Hel", "lo ", "world"],
+        resolution=FakeResolution(provider="zai", model="glm-test"),
+    )
     service = ConsoleSideChatService(gateway)
 
     items = await collect(service, **default_run_kwargs())
@@ -144,7 +151,9 @@ async def test_messages_shape_system_then_user_with_selection() -> None:
     gateway = FakeGateway()
     service = ConsoleSideChatService(gateway)
 
-    await collect(service, **default_run_kwargs(prompt="Summarize", selection_quote="QUOTE"))
+    await collect(
+        service, **default_run_kwargs(prompt="Summarize", selection_quote="QUOTE")
+    )
 
     assert gateway.messages == [
         [
@@ -201,7 +210,12 @@ async def test_provider_error_mid_stream_preserves_partial_text() -> None:
 @pytest.mark.asyncio
 async def test_blocked_resolution_yields_provider_error_without_stream_chat() -> None:
     gateway = FakeGateway(
-        resolution=FakeResolution(provider="openai", model="", ready=False, visible_copy="API key missing for openai")
+        resolution=FakeResolution(
+            provider="openai",
+            model="",
+            ready=False,
+            visible_copy="API key missing for openai",
+        )
     )
     service = ConsoleSideChatService(gateway)
 
@@ -225,7 +239,11 @@ async def test_blocked_resolution_yields_provider_error_without_stream_chat() ->
 async def test_ready_resolution_with_blank_model_yields_provider_error_with_fallback_copy(
     model: str | None,
 ) -> None:
-    gateway = FakeGateway(resolution=FakeResolution(provider="mistral", model=model, ready=True, visible_copy=""))
+    gateway = FakeGateway(
+        resolution=FakeResolution(
+            provider="mistral", model=model, ready=True, visible_copy=""
+        )
+    )
     service = ConsoleSideChatService(gateway)
 
     items = await collect(service, **default_run_kwargs())
@@ -280,13 +298,17 @@ async def test_cancellation_yields_cancelled_outcome_then_reraises() -> None:
 
 @pytest.mark.asyncio
 async def test_qualified_model_overrides_provider_and_model() -> None:
-    gateway = FakeGateway(resolution=FakeResolution(provider="mistral", model="mistral-large"))
+    gateway = FakeGateway(
+        resolution=FakeResolution(provider="mistral", model="mistral-large")
+    )
     service = ConsoleSideChatService(gateway)
 
     await collect(
         service,
         **default_run_kwargs(
-            provider_selection=ConsoleProviderSelection(provider="openai", base_url="https://session"),
+            provider_selection=ConsoleProviderSelection(
+                provider="openai", base_url="https://session"
+            ),
             sidechat_model="mistral/mistral-large-latest",
         ),
     )
@@ -303,7 +325,10 @@ async def test_qualified_model_works_without_session_selection() -> None:
     gateway = FakeGateway()
     service = ConsoleSideChatService(gateway)
 
-    items = await collect(service, **default_run_kwargs(provider_selection=None, sidechat_model="openai/gpt-5"))
+    items = await collect(
+        service,
+        **default_run_kwargs(provider_selection=None, sidechat_model="openai/gpt-5"),
+    )
 
     assert gateway.call_count == 1
     recorded = gateway.selections[0]
@@ -364,7 +389,10 @@ async def test_missing_session_selection_without_qualified_model_errors_before_g
     gateway = FakeGateway()
     service = ConsoleSideChatService(gateway)
 
-    items = await collect(service, **default_run_kwargs(provider_selection=None, sidechat_model=sidechat_model))
+    items = await collect(
+        service,
+        **default_run_kwargs(provider_selection=None, sidechat_model=sidechat_model),
+    )
 
     assert gateway.call_count == 0
     assert items == [
@@ -388,11 +416,15 @@ def test_render_prompt_substitutes_selection() -> None:
 
 
 def test_render_prompt_leaves_other_braces_literal() -> None:
-    assert render_prompt("Use {foo} and {selection} here", "x") == "Use {foo} and x here"
+    assert (
+        render_prompt("Use {foo} and {selection} here", "x") == "Use {foo} and x here"
+    )
 
 
 def test_render_prompt_blank_template_falls_back_to_default() -> None:
-    assert render_prompt("   ", "sel") == CONFIG_DEFAULT_TEMPLATE.format(selection="sel")
+    assert render_prompt("   ", "sel") == CONFIG_DEFAULT_TEMPLATE.format(
+        selection="sel"
+    )
 
 
 def test_render_prompt_missing_placeholder_appends_selection_on_new_line() -> None:

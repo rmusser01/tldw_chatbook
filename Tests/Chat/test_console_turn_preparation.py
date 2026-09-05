@@ -203,7 +203,9 @@ def test_queued_temporary_capture_on_is_not_an_interactive_pause() -> None:
         pause_temporary_capture_on(preparation)
 
 
-def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on() -> None:
+def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on() -> (
+    None
+):
     values = _preparation_values(ConsoleTurnPreparationState.READY)
     values.update(
         ephemeral=True,
@@ -224,7 +226,9 @@ def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on(
     )
 
     assert capture_off.state is ConsoleTurnPreparationState.READY
-    assert capture_off.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_OFF
+    assert (
+        capture_off.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_OFF
+    )
     assert capture_off.one_shot_capture_off is True
     assert capture_off.ephemeral is True
     assert promoted.state is ConsoleTurnPreparationState.READY
@@ -232,10 +236,7 @@ def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on(
     assert promoted.one_shot_capture_off is False
     assert promoted.ephemeral is False
     assert promoted.attempt_id == "attempt-promoted"
-    assert (
-        promoted.execution_context.library_authority.attempt_id
-        == "attempt-promoted"
-    )
+    assert promoted.execution_context.library_authority.attempt_id == "attempt-promoted"
 
 
 def test_temporary_capture_promotion_rejects_changed_frozen_send_context() -> None:

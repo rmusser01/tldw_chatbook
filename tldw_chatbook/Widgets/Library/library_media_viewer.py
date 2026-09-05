@@ -12,7 +12,9 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
@@ -82,6 +84,7 @@ class LibraryMediaViewer(Vertical):
         content_match_index: int = 0,
         content_mode: str = "raw",
         find_open: bool = False,
+        find_focus_pending: bool = False,
         loading: bool = False,
         loading_message: str = "Loading media…",
         error_message: str = "",
@@ -95,12 +98,16 @@ class LibraryMediaViewer(Vertical):
         image_preview_available: bool = False,
         image_preview_source: Any = None,
         review_banner: str = "",
+        back_visible: bool = True,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
 
         Args:
             viewer: Pure display state for the loaded item.
+            find_focus_pending: One-shot token from the Find gesture; the
+                bar it mounts takes focus, then the token is spent here so
+                later syncs never re-take focus (task-31269).
             find_open: Whether the content Find bar renders (task-31237:
                 collapsed until the Find action opens it -- a permanently
                 open input duplicated Find and spent 3 rows per item).
@@ -108,6 +115,11 @@ class LibraryMediaViewer(Vertical):
                 <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
                 set is active (task-30045). Rendered as literal text (set
                 names derive from user input).
+            back_visible: Whether the "‹ Back" control renders. False in the
+                three-pane shell, where the Items pane already shows the
+                list so Back changed no pixels while revoking every Reader
+                binding gated on the view flag (task-31272); the screen
+                decides from the shell's effective layout.
         """
         super().__init__(**kwargs)
         self.viewer = viewer
@@ -120,6 +132,7 @@ class LibraryMediaViewer(Vertical):
         self.content_match_index = content_match_index
         self.content_mode = content_mode
         self.find_open = find_open
+        self.find_focus_pending = find_focus_pending
         self.loading = loading
         self.loading_message = loading_message
         self.error_message = error_message
@@ -133,6 +146,7 @@ class LibraryMediaViewer(Vertical):
         self.image_preview_available = image_preview_available
         self.image_preview_source = image_preview_source
         self.review_banner = review_banner
+        self.back_visible = back_visible
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -195,13 +209,16 @@ class LibraryMediaViewer(Vertical):
         )
         banner.display = self.loading
         yield banner
-        yield Static(
-            "Server item · not in local Media list"
-            if self.external_detail
-            else "Local Media item",
-            id="library-media-reader-identity",
-            markup=False,
-        )
+        if self.external_detail:
+            # task-31277 (critique #4 P2): only a SERVER item needs an
+            # identity line. "Local Media item" restated what the Media
+            # list beside it already said, at the cost of the top row of
+            # the reading surface on every local open.
+            yield Static(
+                "Server item · not in local Media list",
+                id="library-media-reader-identity",
+                markup=False,
+            )
         if self.review_banner:
             # task-30045 (critique P2): the active review set is a workflow
             # object -- its name, live progress, and the loaded item's own
@@ -212,27 +229,31 @@ class LibraryMediaViewer(Vertical):
                 id="library-media-review-banner",
                 markup=False,
             )
-        yield Button("‹ Back", id="library-media-back", compact=True)
+        if self.back_visible:
+            yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
             markup=False,
         )
         if not self.editing:
-            yield Static(
-                next(
-                    (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
-                     if line.startswith("Author: ")),
-                    "",
-                )
-                or next(
-                    (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
-                     if line.startswith("URL: ")),
-                    "",
-                ),
-                id="library-media-reader-byline",
-                markup=False,
+            byline = next(
+                (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
+                 if line.startswith("Author: ")),
+                "",
+            ) or next(
+                (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
+                 if line.startswith("URL: ")),
+                "",
             )
+            # task-31277: an item with neither an author nor a URL spent a
+            # row of the Reader header painting nothing at all.
+            if byline:
+                yield Static(
+                    byline,
+                    id="library-media-reader-byline",
+                    markup=False,
+                )
         yield from self._compose_primary_toolbar()
         yield from self._compose_mode_toolbar()
 
@@ -264,7 +285,23 @@ class LibraryMediaViewer(Vertical):
     def _compose_primary_toolbar(self) -> ComposeResult:
         """Render the always-reachable Reader actions."""
         with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
-            yield Button("Find", id="library-media-reader-find", compact=True)
+            # Qodo on #2378: an Analysis tab with nothing to search has no
+            # bar to mount -- say why Find is off instead of toggling silently.
+            find_reason = analysis_find_unavailable_reason(
+                mode=self.reader_mode,
+                analysis=self.viewer.analysis,
+                generating=self.generating_analysis,
+                editing=self.editing_analysis,
+            )
+            find = Button(
+                library_disabled_action_label("Find", bool(find_reason)),
+                id="library-media-reader-find",
+                compact=True,
+            )
+            if find_reason:
+                find.disabled = True
+                find.tooltip = find_reason
+            yield find
             if not self.external_detail:
                 yield Button(
                     "Remove later" if self.viewer.read_later else "Read later",
@@ -305,8 +342,11 @@ class LibraryMediaViewer(Vertical):
     def _compose_active_body(self) -> ComposeResult:
         """Compose exactly the selected Reader body; never mount hidden modes."""
         if self.external_detail or self.reader_mode == "read":
+            # task-31277 (critique #4 P2, AC#3): no section header here --
+            # the mode row directly above already reads "Read (selected)",
+            # so the header spent a row of the reading surface saying that
+            # word twice. Analysis and Highlights lost theirs the same way.
             with Vertical(id="library-media-reader-mode-read"):
-                yield Static("Read", classes="destination-section")
                 if self.image_preview is not None and not self.image_preview_hidden:
                     with Vertical(id="library-media-image-preview"):
                         yield self.image_preview
@@ -330,9 +370,9 @@ class LibraryMediaViewer(Vertical):
                     )
                 yield from self._compose_content_mode_toggle()
             # Keep the search controls and content body as direct children of
-            # the scrolling Reader. Textual docks relative to the immediate
-            # container, so nesting these under the mode marker pins an active
-            # Find bar below the Reader header instead of at the viewport top.
+            # the Reader, siblings of the mode marker -- the mode row is the
+            # Find bar's anchor (task-31276 retired the dock that moved an
+            # active bar to the viewport top).
             # task-31237: the Find bar is collapsed until the Find action
             # opens it (or a query is applied); a permanently open
             # "Search content…" input duplicated Find and spent 3 rows on
@@ -346,8 +386,11 @@ class LibraryMediaViewer(Vertical):
                     query=self.content_query,
                     matches=matches,
                     match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
                     id="library-media-content-search-controls",
                 )
+                # task-31269: the gesture token is spent on this mount.
+                self.find_focus_pending = False
             yield LibraryMediaContentBody(
                 content=self.viewer.content,
                 is_markdown=self.viewer.is_markdown,
@@ -366,7 +409,6 @@ class LibraryMediaViewer(Vertical):
                 yield from self._compose_highlights()
             return
         with Vertical(id="library-media-reader-mode-info"):
-            yield Static("Info", classes="destination-section")
             if self.editing:
                 yield from self._compose_edit_form()
             else:
@@ -596,11 +638,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the Analysis section.
         """
-        yield Static(
-            "Analysis",
-            id="library-media-viewer-analysis-title",
-            classes="destination-section",
-        )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
             return
@@ -625,13 +662,19 @@ class LibraryMediaViewer(Vertical):
             # match count, Prev/Next, and Enter-advance all follow the
             # active tab. Analysis is plain text -> raw mode, not Markdown.
             matches = find_content_matches(self.viewer.analysis, self.content_query)
-            yield LibraryMediaContentSearchControls(
-                is_markdown=False,
-                query=self.content_query,
-                matches=matches,
-                match_index=self.content_match_index,
-                id="library-media-content-search-controls",
-            )
+            # task-31269: like Read, the bar is collapsed until Find opens
+            # it -- an always-mounted bar stole focus on every item load and
+            # swallowed the walk keys (critique #4 P0).
+            if self.find_open or self.content_query:
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=False,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
+                    id="library-media-content-search-controls",
+                )
+                self.find_focus_pending = False
             yield LibraryMediaContentBody(
                 content=self.viewer.analysis,
                 is_markdown=False,
@@ -791,11 +834,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the highlights section.
         """
-        yield Static(
-            "Highlights",
-            id="library-media-viewer-highlights-title",
-            classes="destination-section",
-        )
         if not self.highlights:
             yield Static(
                 "No highlights yet.",

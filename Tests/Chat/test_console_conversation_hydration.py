@@ -344,11 +344,14 @@ def _message_shape(store, session_id):
 @pytest.mark.asyncio
 async def test_production_hydration_restores_before_first_cursor(tmp_path) -> None:
     app = _fixture_app(tmp_path)
-    assert app.chachanotes_db.set_conversation_active_cursor(
-        CONVERSATION_ID,
-        active_leaf_message_id=None,
-        before_message_id="m1",
-    ) is True
+    assert (
+        app.chachanotes_db.set_conversation_active_cursor(
+            CONVERSATION_ID,
+            active_leaf_message_id=None,
+            before_message_id="m1",
+        )
+        is True
+    )
     store = app.console_runtime.ensure_chat_store()
 
     session = await hydrate_console_session(

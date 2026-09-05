@@ -32,6 +32,7 @@ from textual.widgets import (
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -4603,7 +4604,7 @@ async def test_summary_builder_mounted_rail_uses_typed_copy_and_provider_name() 
         )
 
         assert "Provider: OpenAI" in painted
-        assert "Not ready — OpenAI missing API key" in painted
+        assert "Not ready — API key missing for OpenAI" in painted
         assert "READY legacy poison" not in painted
         assert "Provider: openai" not in painted
 
@@ -9843,7 +9844,7 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
 
     assert (
         screen._console_provider_blocker_copy()
-        == "Provider setup needed: OpenAI missing API key"
+        == "Provider setup needed: API key missing for OpenAI"
     )
     assert label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
     assert target == "settings"
@@ -9954,7 +9955,7 @@ def test_console_missing_key_no_model_recovery_action_is_provider_action() -> No
     assert readiness.native_send_supported is False
     assert (
         screen._console_provider_blocker_copy()
-        == "Provider setup needed: OpenAI missing API key"
+        == "Provider setup needed: API key missing for OpenAI"
     )
     assert label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
     assert target == "settings"
@@ -11710,7 +11711,11 @@ async def test_console_connection_tester_uses_chat_catalog_and_returns_typed_res
             model_ids=("served-model",),
         )
 
-    monkeypatch.setattr(chat_screen_module, "probe_settings_endpoint", probe, raising=False)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        probe,
+    )
     identity = ProviderDraftIdentity(
         provider_key="llama_cpp",
         connection_identity=("llama_cpp", "http://127.0.0.1:9099"),
@@ -13738,12 +13743,7 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert actions.region.right <= frame.content_region.right
         assert str(cancel.label) == "Cancel"
         assert str(defaults.label) == "Save as provider defaults"
-        expected_use_label = (
-            "Use in this conversation"
-            if modal.has_class("-conversation-settings-compact")
-            else "Use for this conversation"
-        )
-        assert str(use.label) == expected_use_label
+        assert str(use.label) == "Use for this conversation"
         assert defaults.region.width >= len(str(defaults.label))
         assert use.region.width >= len(str(use.label))
 

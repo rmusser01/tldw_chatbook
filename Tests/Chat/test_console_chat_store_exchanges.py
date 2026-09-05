@@ -17,6 +17,7 @@ variant restore, ephemeral, fake persistence):
   * extending ``RecordingPersistence`` with a recording subclass:
     ``_UsageUpdatePersistence`` / ``UsagePersistence``
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -40,10 +41,18 @@ from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeC
 
 def _cap(run_tag="r1", seq=0, status="complete"):
     return ExchangeCapture(
-        run_tag=run_tag, seq=seq, created_at="t", provider="p", model="m",
-        endpoint=None, request={"messages_payload": []},
-        response={"content": "x"}, status=status, usage_json=None,
-        omitted_keys=())
+        run_tag=run_tag,
+        seq=seq,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={"messages_payload": []},
+        response={"content": "x"},
+        status=status,
+        usage_json=None,
+        omitted_keys=(),
+    )
 
 
 def test_capture_policy_state_uses_exact_revisions():
@@ -60,9 +69,12 @@ def test_capture_policy_state_uses_exact_revisions():
     assert value is CaptureDetail.FULL
     assert slot_revision == 1
     assert policy_revision == 1
-    assert store.consume_session_next_capture_detail(
-        session.id, expected_next_revision=slot_revision
-    ) is True
+    assert (
+        store.consume_session_next_capture_detail(
+            session.id, expected_next_revision=slot_revision
+        )
+        is True
+    )
     assert store.capture_policy_state(session.id).next_detail is None
 
 
@@ -96,9 +108,12 @@ def test_exact_revision_consumption_preserves_concurrently_rearmed_slot():
         expected_policy_revision=policy_revision,
     )
 
-    assert store.consume_session_next_capture_detail(
-        session.id, expected_next_revision=admitted_revision
-    ) is False
+    assert (
+        store.consume_session_next_capture_detail(
+            session.id, expected_next_revision=admitted_revision
+        )
+        is False
+    )
     assert store.capture_policy_state(session.id).next_detail is CaptureDetail.SAFE
 
 
@@ -123,7 +138,9 @@ def test_capture_policy_hydrates_from_the_existing_repository():
 
     store.hydrate_session_capture_policy(session.id)
 
-    assert store.capture_policy_state(session.id).conversation_detail is CaptureDetail.FULL
+    assert (
+        store.capture_policy_state(session.id).conversation_detail is CaptureDetail.FULL
+    )
 
 
 def test_unavailable_capture_policy_hydration_publishes_explicit_safe_pending() -> None:
@@ -144,7 +161,10 @@ def test_unavailable_capture_policy_hydration_publishes_explicit_safe_pending() 
     outcome = store.hydrate_session_capture_policy(session.id)
 
     state = store.capture_policy_state(session.id)
-    assert outcome.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    assert (
+        outcome.status
+        is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    )
     assert state.conversation_detail is CaptureDetail.SAFE
     assert state.save_pending is True
 
@@ -303,7 +323,8 @@ def test_attach_dedups_by_run_tag_and_seq(store_with_streaming_assistant):
 
 
 def test_attach_replaces_a_stopped_snapshot_with_the_terminal_capture(
-        store_with_streaming_assistant):
+    store_with_streaming_assistant,
+):
     """Carried-context refinement: a stop-time snapshot for (run_tag, seq)
     is superseded by a later, non-'stopped' capture for the same key -- the
     closed capture arriving after the stop-time snapshot was attached."""
@@ -315,7 +336,8 @@ def test_attach_replaces_a_stopped_snapshot_with_the_terminal_capture(
 
 
 def test_attach_keeps_the_first_capture_when_neither_side_is_stopped(
-        store_with_streaming_assistant):
+    store_with_streaming_assistant,
+):
     """The refinement is scoped to a 'stopped' existing capture -- a repeat
     key otherwise still keeps the FIRST-attached capture."""
     store, mid = store_with_streaming_assistant
@@ -333,7 +355,9 @@ def test_terminal_mark_flushes_exchanges(store_with_fake_persistence):
     assert persistence.appended_exchange_rows  # fake recorded the flush
 
 
-def test_flush_derives_capture_detail_from_the_immutable_capture(store_with_fake_persistence):
+def test_flush_derives_capture_detail_from_the_immutable_capture(
+    store_with_fake_persistence,
+):
     store, mid, persistence = store_with_fake_persistence
     capture = _cap()
     object.__setattr__(capture, "capture_detail", CaptureDetail.FULL)
@@ -352,7 +376,8 @@ def test_attach_after_terminal_flushes_immediately(store_with_fake_persistence):
 
 
 def test_variant_restored_message_keeps_captures_marked_abandoned(
-        store_after_variant_restore):
+    store_after_variant_restore,
+):
     """CONTRAST with usage (which drops): spec owner decision 6."""
     store, mid = store_after_variant_restore  # mid in _variant_restored_message_ids
     store.attach_message_exchanges(mid, [_cap(run_tag="r2")])
@@ -366,7 +391,8 @@ def test_variant_restored_message_keeps_captures_marked_abandoned(
 
 
 def test_abandoned_exchange_run_tags_reads_the_native_bookkeeping(
-        store_after_variant_restore):
+    store_after_variant_restore,
+):
     """task-9: the public accessor the Conversation Inspector's Exchange
     tab uses to resolve a NATIVE (not-yet-persisted) capture's ``abandoned``
     flag -- must reflect the same run_tags ``attach_message_exchanges``
@@ -409,7 +435,8 @@ def test_ephemeral_session_keeps_exchanges_in_memory(ephemeral_store):
 
 
 def test_deferred_terminal_persistence_flushes_exchanges(
-        store_with_deferred_terminal_persistence):
+    store_with_deferred_terminal_persistence,
+):
     """FINDING 1: the citation-deferred terminal branch creates the durable
     row via ``_persist_new_message(..., terminal_persistence=True)``
     directly, never routing through ``_persist_existing_message`` -- so
@@ -423,7 +450,8 @@ def test_deferred_terminal_persistence_flushes_exchanges(
 
 
 def test_persist_exchanges_only_survives_a_serialization_failure(
-        store_with_fake_persistence, monkeypatch):
+    store_with_fake_persistence, monkeypatch
+):
     """FINDING 2: row-building (``capture_to_blob``'s JSON serialization)
     must run INSIDE ``_persist_exchanges_only``'s try, not before it -- a
     malformed capture (a circular reference in ``request``) degrades to the
@@ -434,9 +462,18 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
     store, mid, persistence = store_with_fake_persistence
     canary = "CANARY_FULL_CAPTURE_MUST_NOT_REACH_LOGS"
     bad_capture = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request={}, response={"content": "x"},
-        status="complete", usage_json=None, omitted_keys=())
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={},
+        response={"content": "x"},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
+    )
     store.attach_message_exchanges(mid, [bad_capture])
     monkeypatch.setattr(
         store_module,
@@ -481,10 +518,16 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
             raise failure
 
     service = ChatPersistenceService(_RaisingDb())
-    rows = [{
-        "run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-        "capture_blob": b"SECRET-CAPTURE-BYTES", "created_at": "t",
-    }]
+    rows = [
+        {
+            "run_tag": "r1",
+            "seq": 0,
+            "status": "complete",
+            "abandoned": False,
+            "capture_blob": b"SECRET-CAPTURE-BYTES",
+            "created_at": "t",
+        }
+    ]
 
     events: list[dict] = []
     sink_id = loguru_logger.add(
@@ -511,7 +554,8 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
 
 
 def test_persist_exchanges_only_compresses_each_capture_once_across_flushes(
-        monkeypatch, store_with_fake_persistence):
+    monkeypatch, store_with_fake_persistence
+):
     """``_persist_exchanges_only`` runs on EVERY flush of a message with
     exchanges -- e.g. once per tool call in a long agent turn -- and used
     to call ``capture_to_blob`` for every capture on every one of those
@@ -549,7 +593,8 @@ def test_persist_exchanges_only_compresses_each_capture_once_across_flushes(
 
 
 def test_persist_exchanges_only_recompresses_a_superseded_stopped_capture(
-        store_with_fake_persistence):
+    store_with_fake_persistence,
+):
     """The one legitimate content change for an existing (run_tag, seq) key
     -- a 'stopped' snapshot superseded by a later non-'stopped' capture for
     the same key (``attach_message_exchanges``'s documented merge rule) --
@@ -586,7 +631,8 @@ def test_persist_exchanges_only_recompresses_a_superseded_stopped_capture(
 
 
 def test_exchange_blob_cache_does_not_leak_between_messages(
-        store_with_fake_persistence):
+    store_with_fake_persistence,
+):
     """Two different messages that each happen to carry a capture with the
     same (run_tag, seq, status) key must not share a cache entry -- the
     cache is keyed by message id first, so one message's blob can never be
@@ -609,7 +655,8 @@ def test_exchange_blob_cache_does_not_leak_between_messages(
 
 
 def test_restore_state_clears_exchange_blob_cache_and_abandoned_run_tags(
-        store_with_fake_persistence):
+    store_with_fake_persistence,
+):
     """M2: ``restore_state`` used to clear 25 sibling in-memory maps but
     leave ``_exchange_blob_cache``/``_abandoned_exchange_run_tags``
     untouched -- unlike ``delete_message`` and session-close (the two sites

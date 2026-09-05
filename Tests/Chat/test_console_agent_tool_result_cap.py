@@ -95,9 +95,11 @@ def test_config_toml_value_is_honoured_when_no_env_var(monkeypatch):
     monkeypatch.delenv("TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS", raising=False)
     monkeypatch.setattr(
         "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default: 500
-        if (section, key) == ("console", "tool_result_display_chars")
-        else default,
+        lambda section, key, default: (
+            500
+            if (section, key) == ("console", "tool_result_display_chars")
+            else default
+        ),
     )
     assert _console_tool_result_display_cap() == 500
 
@@ -347,12 +349,15 @@ def test_console_bridge_run_log_read_fails_closed_after_chat_revocation(tmp_path
         ),
     )
     writer.bind("run-a")
-    assert writer.append(
-        run_id="run-a",
-        kind="primary",
-        type="model",
-        content="private",
-    ) == 1
+    assert (
+        writer.append(
+            run_id="run-a",
+            kind="primary",
+            type="model",
+            content="private",
+        )
+        == 1
+    )
     assert console_bridge.run_log_available("run-a") is True
 
     with manager.lease(snapshot):
@@ -410,7 +415,9 @@ def test_run_log_available_is_true_for_a_drilled_in_subagent_run(bridge, log_roo
     )
     writer = RunLogWriter()
     writer.bind(primary_id)  # only the PRIMARY id binds a writer/directory
-    writer.append(run_id=primary_id, kind="primary", type="model", content="primary turn")
+    writer.append(
+        run_id=primary_id, kind="primary", type="model", content="primary turn"
+    )
     writer.append(
         run_id=subagent_id,
         kind="subagent",
@@ -437,7 +444,9 @@ def test_run_log_available_is_false_for_a_subagent_that_never_logged_a_record(
     )
     writer = RunLogWriter()
     writer.bind(primary_id)
-    writer.append(run_id=primary_id, kind="primary", type="model", content="primary only")
+    writer.append(
+        run_id=primary_id, kind="primary", type="model", content="primary only"
+    )
 
     assert console_bridge.run_log_available(subagent_id) is False
 
@@ -499,9 +508,15 @@ def test_load_run_log_text_for_a_primary_run_is_unaffected_by_subagents(
     )
     writer = RunLogWriter()
     writer.bind(primary_id)
-    writer.append(run_id=primary_id, kind="primary", type="model", content="primary turn")
     writer.append(
-        run_id=subagent_id, kind="subagent", type="tool_result", tool="fetch", content="sub"
+        run_id=primary_id, kind="primary", type="model", content="primary turn"
+    )
+    writer.append(
+        run_id=subagent_id,
+        kind="subagent",
+        type="tool_result",
+        tool="fetch",
+        content="sub",
     )
 
     text = console_bridge.load_run_log_text(primary_id)
@@ -525,13 +540,17 @@ def test_load_run_log_text_window_grows_with_a_raised_max_record_bytes_config(
 
     monkeypatch.setattr(
         "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default: 3_000_000
-        if (section, key) == ("agents", "run_log_max_record_bytes")
-        else default,
+        lambda section, key, default: (
+            3_000_000
+            if (section, key) == ("agents", "run_log_max_record_bytes")
+            else default
+        ),
     )
     writer = RunLogWriter()
     writer.bind(run_id)
-    writer.append(run_id=run_id, kind="primary", type="tool_result", tool="t", content=big_content)
+    writer.append(
+        run_id=run_id, kind="primary", type="tool_result", tool="t", content=big_content
+    )
 
     text = console_bridge.load_run_log_text(run_id)
 

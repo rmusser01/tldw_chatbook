@@ -1,26 +1,59 @@
-"""Results tab for the Schedules workbench (schedules-handoff PR-6 Task 3).
+"""Automation-results view for the Schedules workbench (schedules-handoff
+PR-6 Task 3).
+
+The module keeps its `results_tab` name (redesign PR-4 task 5's own
+judgment: renaming the file buys nothing but churn), but the TAB it was
+built for is retired -- `ResultsTab` is mounted only inside a pushed
+`ResultsHostScreen` now (task 2), reached from the rail's `Results (N)`
+button or a definition pane's unread row.
+
 
 Minimal-honest inbox (plan ruling 1): a `DataTable` of `automation_results`
 rows spanning every owner (Task 1's `list_automation_results(owner_id=None)`)
 plus a read-only detail pane. Row mutations (read/dismiss/mark-solved/mark
-all read) are keybindings owned by `SchedulesWorkbench` -- this widget is a
-pure renderer, the same split the Automations tab uses for its `m`/`M`/`y`/
-`k` actions (no per-row detail widget there either). Unlike `ConflictsTab`
+all read) are keybindings owned by the SCREEN, not by this widget -- this
+widget is a pure renderer. They began as `SchedulesWorkbench` bindings; task
+2 factored the orchestration into the module-level helpers below and task 5
+retired the workbench's copies, leaving `ResultsHostScreen` (bottom of this
+module) as their owner. Unlike `ConflictsTab`
 (whose "Use server"/"Use local" buttons resolve locally, synchronously),
 the actions here (`SchedulingService.review_automation_result`/
-`resolve_definition`) are async server-aware calls, so they live on the
-screen that already owns `run_worker` plumbing for exactly that shape
-(`_begin_automation_transfer`).
+`resolve_definition`) are async server-aware calls, so they live on a screen
+with `run_worker` plumbing rather than in the renderer.
+
+redesign PR-4, task 2 (Results relocation) adds two things on top of the
+above, unchanged: (1) `ResultsTab` gains the same `initial_*`-self-paints-
+on-mount seam `ConflictsTab.initial_conflicts` established in task 1, plus
+an optional `heading` override -- a caller (`SchedulesWorkbench._push_
+results_overlay`) can hand a pushed instance an already-scoped (optionally
+definition-filtered) results/total pair, and the SAME "showing newest N of
+TOTAL" cap-line math renders under whatever heading text it is given,
+already-escaped by the caller (this widget never markup-escapes the
+heading itself -- it is rendered through the same `Static.update(str)` ->
+`Content.from_markup` parser `escape_markup`'s own docstring warns about).
+(2) `review_selected_result`/`mark_selected_result_solved`/`mark_results_
+read` are the read/dismiss/mark-solved/mark-all-read orchestration,
+factored out of `SchedulesWorkbench`'s own tab-routed actions so the tab
+and the pushed view could not drift apart. Task 5 then retired the tab
+and its copies of those actions, leaving `ResultsHostScreen` (a pushed
+`Screen` never receives a screen-underneath's `BINDINGS`, so it must own
+them) as the only caller of the first two. The
+synchronous "nothing selected"/eligibility gates stay in each CALLER,
+not in these helpers (`SchedulesWorkbench.action_mark_result_solved`'s
+existing tests pin those refusals firing WITHOUT a worker round-trip);
+these helpers only need to be async because the mutation itself is.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
@@ -33,6 +66,7 @@ from .unified_rows import (
     definition_for_result,
     index_definitions_by_id,  # noqa: F401  (re-export: schedules_workbench.py imports this from here)
 )
+from .workbench_host_screen import WorkbenchHostScreen
 
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
@@ -94,6 +128,50 @@ def _result_owner_suffix(result: dict[str, Any]) -> str:
     return f" (server: {label})"
 
 
+def _parse_created_at(created_at: str | None) -> datetime | None:
+    """Parse a result's `created_at` into an aware UTC `datetime`, or
+    `None` when missing/unparseable.
+
+    `datetime.fromisoformat` (3.11+) accepts both a `Z` suffix (server-
+    mirrored rows) and a `+00:00` offset (locally-written rows) -- the
+    real comparison this repo's DB layer takes pains to get right via
+    `strftime` ordering (`ScheduledTasksDB.list_automation_results`'s own
+    docstring: raw text comparison mis-orders those two forms). Naive
+    timestamps are treated as UTC, matching `_format_relative`'s
+    convention.
+    """
+    if not created_at:
+        return None
+    try:
+        created = datetime.fromisoformat(str(created_at))
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return created
+
+
+def _result_sort_key(result: dict[str, Any]) -> datetime:
+    """Newest-first sort key for MERGING two already-DB-sorted result
+    lists (redesign PR-4 task 2's definition-filtered query, which reads
+    the local- and server-id spaces as two separate queries -- see
+    `SchedulesWorkbench._definition_results_query`). An unparseable/
+    missing timestamp sorts last (oldest), never raises.
+
+    ``ponytail:`` this compares REAL instants (via `_parse_created_at`),
+    correctly ordering the `Z`-vs-`+00:00` mix the DB's own docstring
+    warns a raw string sort gets wrong -- but does not replicate that
+    same docstring's millisecond-then-raw-text-then-id tie-break for two
+    results stamped in the same microsecond. Only used to merge a single
+    definition's (at most two id-spaces') results, a low-volume case
+    where an exact tie is unlikely; upgrade to a real SQL merge if a
+    definition-scoped tie ever turns out to matter.
+    """
+    return _parse_created_at(result.get("created_at")) or datetime.min.replace(
+        tzinfo=UTC
+    )
+
+
 def _format_result_created(
     created_at: str | None, *, now: datetime | None = None
 ) -> str:
@@ -101,18 +179,12 @@ def _format_result_created(
 
     Same distance-math shape as `task_detail._format_relative`, but a
     result is a past event, not a future run -- "overdue" would be a
-    category error, so this uses "X ago" instead. Naive timestamps are
-    treated as UTC, matching `_format_relative`'s own convention.
+    category error, so this uses "X ago" instead.
     """
-    if not created_at:
-        return "-"
-    try:
-        created = datetime.fromisoformat(str(created_at))
-    except ValueError:
-        return str(created_at)
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    reference = now if now is not None else datetime.now(timezone.utc)
+    created = _parse_created_at(created_at)
+    if created is None:
+        return "-" if not created_at else str(created_at)
+    reference = now if now is not None else datetime.now(UTC)
     seconds = (reference - created).total_seconds()
     future = seconds < 0
     seconds = abs(seconds)
@@ -204,20 +276,54 @@ class ResultsTab(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        initial_results: list[dict[str, Any]] | None = None,
+        initial_definitions_by_id: dict[str, dict[str, Any]] | None = None,
+        initial_total: int | None = None,
+        heading: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the results tab.
 
         Args:
+            initial_results: When given, `populate()`s the table with
+                these on mount -- `ConflictsTab.initial_conflicts`'s own
+                idiom (task 1). A pushed instance (redesign PR-4, task
+                2's rail/definition-pane overlays, via `ResultsHostScreen`)
+                has no external `.populate()` driver the way the retired
+                mounted tab instance did, so it self-populates. Still
+                optional: `populate()` remains callable from outside, and
+                `ResultsHostScreen` re-calls it after every mutation.
+            initial_definitions_by_id: Paired with `initial_results` --
+                the mark-solved eligibility index (`solved_eligibility`).
+            initial_total: Paired with `initial_results` -- the honest
+                "of TOTAL" denominator for the cap line.
+            heading: Overrides `RESULTS_HEADING` (default `None` keeps
+                it). MUST already be markup-safe (`escape_markup`): this
+                is rendered through the same `Static.update(str)` ->
+                `Content.from_markup` parser the detail pane's own
+                escaping discipline guards against, and, unlike the
+                heading's own hardcoded text, a caller-built heading may
+                now carry a user-authored definition name. Lets a
+                definition-filtered pushed view say what it's scoped to
+                while reusing the SAME "showing newest N of TOTAL" cap
+                math unchanged.
             **kwargs: Forwarded verbatim to `Vertical` (id, classes, ...).
         """
         super().__init__(**kwargs)
         self._results_by_id: dict[str, dict[str, Any]] = {}
         self._definitions_by_id: dict[str, dict[str, Any]] = {}
         self._selected_result_id: str | None = None
+        self._heading = heading or RESULTS_HEADING
+        self._initial_results = initial_results
+        self._initial_definitions_by_id = initial_definitions_by_id
+        self._initial_total = initial_total
 
     def compose(self) -> ComposeResult:
         """Build the tab layout."""
-        yield Static(RESULTS_HEADING, id="scheduling-results-heading")
+        yield Static(self._heading, id="scheduling-results-heading")
         table = DataTable(id="scheduling-results-table")
         table.add_columns("Kind", "Result", "Created", "State")
         yield table
@@ -229,9 +335,16 @@ class ResultsTab(Vertical):
         yield Static("No results yet.", id="scheduling-results-empty")
 
     def on_mount(self) -> None:
-        """Configure the table cursor."""
+        """Configure the table cursor, and self-populate if constructed
+        with data (see `initial_results`)."""
         table = self.query_one("#scheduling-results-table", DataTable)
         table.cursor_type = "row"
+        if self._initial_results is not None:
+            self.populate(
+                self._initial_results,
+                self._initial_definitions_by_id,
+                total=self._initial_total,
+            )
 
     @property
     def definitions_by_id(self) -> dict[str, dict[str, Any]]:
@@ -270,9 +383,9 @@ class ResultsTab(Vertical):
         previous_selection = self._selected_result_id
         self._results_by_id = {result["id"]: result for result in results}
         self.query_one("#scheduling-results-heading", Static).update(
-            f"{RESULTS_HEADING} — showing newest {len(results)} of {total}"
+            f"{self._heading} — showing newest {len(results)} of {total}"
             if total is not None and total > len(results)
-            else RESULTS_HEADING
+            else self._heading
         )
 
         table = self.query_one("#scheduling-results-table", DataTable)
@@ -315,8 +428,8 @@ class ResultsTab(Vertical):
         row_keys = [result["id"] for result in results]
         if previous_selection in row_keys:
             # Restoring the cursor fires RowHighlighted, which re-records
-            # the same id -- belt and braces, set both explicitly (matches
-            # the Automations tab's load_automations reconciliation).
+            # the same id -- belt and braces, set both explicitly (the
+            # same by-id reconciliation every table rebuild here uses).
             table.cursor_coordinate = (row_keys.index(previous_selection), 0)
             self._selected_result_id = previous_selection
             self._show_detail(self._results_by_id[previous_selection])
@@ -414,3 +527,241 @@ class ResultsTab(Vertical):
             )
 
         self.query_one("#scheduling-results-detail", Static).update("\n".join(lines))
+
+
+# -- Shared read/dismiss/mark-solved/mark-all-read orchestration -----------
+#
+# redesign PR-4, task 2: factored out of `SchedulesWorkbench` so the
+# Results tab and `ResultsHostScreen` below could not drift apart; task 5
+# retired the tab, so the host screen is now the only caller of the first
+# two (the workbench still calls `mark_results_read` for its rail-level
+# `Mark all read`). `notify` is `Callable[[message, severity], None]` --
+# the caller's own notification sink (`app_instance.notify`/`app.notify`,
+# same call shape, different attribute name depending on whether the
+# caller is a `BaseAppScreen` subclass or a plain `Screen`).
+
+
+async def review_selected_result(
+    service: Any,
+    results_tab: ResultsTab,
+    review_state: str,
+    notify: Callable[[str, str], None],
+) -> None:
+    """Read/dismiss the result under `results_tab`'s cursor.
+
+    `SchedulingService.review_automation_result` writes the local row
+    and, for a server mirror, queues the sync pushback mutation in the
+    same DB transaction -- nothing extra to do here for that half.
+
+    Args:
+        service: The `SchedulingService` whose `review_automation_result`
+            performs the write.
+        results_tab: The `ResultsTab` instance whose cursor selects the
+            result to review.
+        review_state: `"read"` or `"dismissed"` (the two states the `r`/
+            `d` actions drive).
+        notify: The caller's notification sink, `(message, severity)`.
+    """
+    result = results_tab.selected_result()
+    if result is None:
+        notify("Select a result first.", "warning")
+        return
+    updated = await service.review_automation_result(result["id"], review_state)
+    if not updated:
+        notify("Could not update this result — see the log.", "error")
+
+
+async def mark_selected_result_solved(
+    service: Any,
+    result: dict[str, Any],
+    definitions_by_id: dict[str, dict[str, Any]],
+    notify: Callable[[str, str], None],
+) -> None:
+    """Mark `result`'s definition solved -- the async half of the `o`
+    action. Eligibility (`solved_eligibility`) is checked by the CALLER,
+    synchronously, before spawning the worker this runs in (existing
+    tests pin that refusal firing without a worker round-trip).
+
+    Args:
+        service: The `SchedulingService` whose `resolve_definition`
+            performs the write.
+        result: The `automation_results` row under the cursor.
+        definitions_by_id: The index built by `index_definitions_by_id`,
+            used to resolve `result`'s owning definition.
+        notify: The caller's notification sink, `(message, severity)`.
+    """
+    definition = definition_for_result(result, definitions_by_id)
+    local_definition_id = str((definition or {}).get("id") or "")
+    outcome = await service.resolve_definition(
+        local_definition_id, solved=True, result_id=result["id"]
+    )
+    if outcome.status == "saved":
+        notify("Marked solved.", "information")
+    else:
+        notify(outcome.reason or "Could not mark this result solved.", "warning")
+
+
+async def mark_results_read(
+    service: Any,
+    result_ids: list[str],
+    notify: Callable[[str, str], None],
+) -> None:
+    """Per-row `review_automation_result` fan-out for a batch of result
+    ids -- there is no bulk DB primitive for this (documented fan-out,
+    mirroring `SchedulesWorkbench._on_bulk_delete_confirmed`'s loop-and-
+    count shape).
+
+    Args:
+        service: The `SchedulingService` whose `review_automation_result`
+            performs each write.
+        result_ids: Every result id to mark `"read"` (the `a` action's
+            scope -- global or one definition's, per the caller).
+        notify: The caller's notification sink, `(message, severity)`;
+            called once at the end with the read/failed count.
+    """
+    errors = 0
+    for result_id in result_ids:
+        if not await service.review_automation_result(result_id, "read"):
+            errors += 1
+    count = len(result_ids) - errors
+    notify(
+        f"Marked {count} result{'s' if count != 1 else ''} read"
+        + (f" ({errors} failed)" if errors else "")
+        + ".",
+        "information" if not errors else "warning",
+    )
+
+
+class ResultsHostScreen(WorkbenchHostScreen):
+    """`WorkbenchHostScreen` + the Results-specific r/d/o/a bindings
+    (redesign PR-4, task 2).
+
+    `SchedulesWorkbench` has no r/d/o/a bindings at all any more (task 5
+    retired its tab-gated copies along with the Results tab), and it could
+    not receive those keys here regardless -- Textual routes a key through
+    the CURRENTLY ACTIVE screen's own binding chain only, and a screen
+    underneath is not part of that chain. This pushed view therefore owns
+    the four actions outright, over the module-level service orchestration
+    above (`review_selected_result`/`mark_selected_result_solved`/`mark_
+    results_read`), which is where the tab-era logic was factored to
+    before the tab went away.
+
+    `query`/`unread_ids` are closures the constructing `SchedulesWorkbench`
+    supplies, scoped to whatever this push is (the global inbox, or one
+    definition's results across both its id spaces) -- this class has no
+    opinion on that scope, it only re-runs whichever closure it was given
+    after each mutation to repaint ITS OWN `ResultsTab` instance in place.
+    The rail/Queue-tab/badge refresh on the workbench BEHIND this screen
+    happens once, on pop, via the base class's `dismissed` hook -- not on
+    every keystroke here (brief: "refresh the rail + unified rows on
+    dismissed").
+    """
+
+    BINDINGS: ClassVar = [
+        *WorkbenchHostScreen.BINDINGS,
+        Binding("r", "review_read", "Read"),
+        Binding("d", "review_dismiss", "Dismiss"),
+        Binding("o", "mark_solved", "Mark solved"),
+        Binding("a", "mark_all_read", "Mark all read"),
+    ]
+
+    def __init__(
+        self,
+        widget_factory: Callable[[], ResultsTab],
+        *,
+        title: str,
+        service: Any,
+        query: Callable[[], tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]],
+        unread_ids: Callable[[], list[str]],
+        dismissed: Callable[[], None] | None = None,
+    ) -> None:
+        """Initialize the host.
+
+        Args:
+            widget_factory: Builds the fresh `ResultsTab` instance (see
+                `WorkbenchHostScreen`).
+            title: Shown in the `Header`.
+            service: The `SchedulingService` the r/d/o/a actions call.
+            query: Re-runs the scope's own results/definitions/total read
+                (global or definition-filtered) -- called once after
+                every mutation to repaint this screen's `ResultsTab`.
+            unread_ids: Every unread result id in THIS scope, uncapped by
+                `RESULTS_INBOX_LIMIT` (the `a` action's own Qodo-HIGH
+                fix: `SchedulesWorkbench._unread_result_ids`'s docstring).
+            dismissed: Runs once on pop (`Esc`), same as the base class.
+        """
+        super().__init__(widget_factory, title=title, dismissed=dismissed)
+        self._service = service
+        self._query = query
+        self._unread_ids = unread_ids
+
+    def _results_tab(self) -> ResultsTab:
+        return self.query_one(ResultsTab)
+
+    def _notify(self, message: str, severity: str) -> None:
+        self.app.notify(message, severity=severity)
+
+    def _repaint(self) -> None:
+        results, definitions_by_id, total = self._query()
+        self._results_tab().populate(results, definitions_by_id, total=total)
+
+    def action_review_read(self) -> None:
+        """`r`: mark the result under the cursor read."""
+        self._run_review("read")
+
+    def action_review_dismiss(self) -> None:
+        """`d`: dismiss the result under the cursor."""
+        self._run_review("dismissed")
+
+    def _run_review(self, review_state: str) -> None:
+        results_tab = self._results_tab()
+
+        async def _do() -> None:
+            await review_selected_result(
+                self._service, results_tab, review_state, self._notify
+            )
+            self._repaint()
+
+        self.run_worker(_do, exclusive=True, group="schedules-results-host")
+
+    def action_mark_solved(self) -> None:
+        """`o`: mark the result under the cursor's definition solved.
+
+        The synchronous eligibility gate (`solved_eligibility`) runs here,
+        before the worker -- a refusal notifies without a worker round-
+        trip.
+        """
+        results_tab = self._results_tab()
+        result = results_tab.selected_result()
+        if result is None:
+            self._notify("Select a result first.", "warning")
+            return
+        eligible, reason = solved_eligibility(result, results_tab.definitions_by_id)
+        if not eligible:
+            self._notify(reason or "This result cannot be marked solved.", "warning")
+            return
+
+        async def _do() -> None:
+            await mark_selected_result_solved(
+                self._service, result, results_tab.definitions_by_id, self._notify
+            )
+            self._repaint()
+
+        self.run_worker(_do, exclusive=True, group="schedules-results-host")
+
+    def action_mark_all_read(self) -> None:
+        """`a`: mark every unread result in this screen's scope read.
+
+        Scope is whatever `unread_ids` (constructor arg) was built to
+        return -- the global inbox, or one definition's results.
+        """
+        unread_ids = self._unread_ids()
+        if not unread_ids:
+            self._notify("Nothing unread.", "information")
+            return
+
+        async def _do() -> None:
+            await mark_results_read(self._service, unread_ids, self._notify)
+            self._repaint()
+
+        self.run_worker(_do, exclusive=True, group="schedules-results-host")

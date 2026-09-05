@@ -8775,7 +8775,9 @@ def test_auxiliary_adapter_kwargs_forward_bounded_transport_policy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generation_probe_anthropic_budget_cannot_expand_one_token_bound() -> None:
+async def test_generation_probe_anthropic_budget_cannot_expand_one_token_bound() -> (
+    None
+):
     calls = []
     resolution = _auxiliary_resolution(
         provider="anthropic",
@@ -8954,7 +8956,9 @@ async def test_auxiliary_completion_cancellation_starts_no_second_call_and_reset
 
 
 @pytest.mark.asyncio
-async def test_auxiliary_outer_timeout_does_not_claim_blocking_adapter_work_stopped() -> None:
+async def test_auxiliary_outer_timeout_does_not_claim_blocking_adapter_work_stopped() -> (
+    None
+):
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
@@ -9046,9 +9050,7 @@ async def test_auxiliary_direct_llama_uses_one_request_and_15_second_timeout() -
                 dict(request.extensions.get("timeout", {})),
             )
         )
-        return httpx.Response(
-            200, json={"choices": [{"message": {"content": "ok"}}]}
-        )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     gateway = ConsoleProviderGateway(http_client=client)

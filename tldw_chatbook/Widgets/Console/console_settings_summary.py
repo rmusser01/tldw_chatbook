@@ -154,7 +154,9 @@ def build_console_readiness_presentation(
         action = ("Configure", "hidden", "Configure Console settings")
     else:
         blocker_copy = _BLOCKER_COPY.get(readiness.blocker, "review provider settings")
-        if readiness.blocker in {"credential_missing", "credential_rejected"}:
+        if readiness.blocker == "credential_missing":
+            blocker_copy = f"API key missing for {provider}"
+        elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
         primary = f"Not ready — {blocker_copy}"
         detail = f"Provider setup needed: {blocker_copy}"

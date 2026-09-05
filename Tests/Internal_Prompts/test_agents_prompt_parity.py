@@ -26,7 +26,7 @@ def test_console_agent_operating_matches_source_constant():
 def test_tool_protocol_template_renders_original_scaffold():
     # Pre-migration expected output, built exactly as agent_runtime.py:183-193
     # does today (copy the f-string expression verbatim with sample values).
-    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN, _FENCE_CLOSE
+    from tldw_chatbook.Agents.agent_runtime import _FENCE_CLOSE, FENCE_OPEN
 
     tool_list = '{\n  "name": "demo",\n  "description": "d",\n  "parameters": {}\n}'
     expected = (
@@ -46,3 +46,11 @@ def test_tool_protocol_template_renders_original_scaffold():
         fence_open=FENCE_OPEN,
         fence_close=_FENCE_CLOSE,
     ) == expected
+
+
+def test_ask_user_tool_description_matches_source_constant():
+    from tldw_chatbook.Agents.ask_user_questions import ASK_USER_DESCRIPTION
+
+    spec = CATALOG["agents.ask_user_tool_description"]
+    assert spec.default == ASK_USER_DESCRIPTION
+    assert spec.required_placeholders == () and spec.optional_placeholders == ()

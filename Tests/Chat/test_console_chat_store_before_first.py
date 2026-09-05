@@ -30,9 +30,7 @@ class _CursorDB:
         active_leaf_message_id: str | None,
         before_message_id: str | None,
     ) -> bool:
-        self.calls.append(
-            (conversation_id, active_leaf_message_id, before_message_id)
-        )
+        self.calls.append((conversation_id, active_leaf_message_id, before_message_id))
         return self.result
 
     def set_conversation_active_leaf(
@@ -58,9 +56,7 @@ class _RaisingCursorDB(_CursorDB):
         active_leaf_message_id: str | None,
         before_message_id: str | None,
     ) -> bool:
-        self.calls.append(
-            (conversation_id, active_leaf_message_id, before_message_id)
-        )
+        self.calls.append((conversation_id, active_leaf_message_id, before_message_id))
         raise RuntimeError("cursor write failed")
 
 
@@ -271,9 +267,7 @@ def test_invalid_marker_only_falls_back_and_repairs_cursor(
     fallback = nodes[-1]
     assert store.active_leaf(session.id) == fallback.id
     assert store.session_draft(session.id) == ""
-    assert db.calls == [
-        ("conversation", fallback.persisted_message_id, None)
-    ]
+    assert db.calls == [("conversation", fallback.persisted_message_id, None)]
 
 
 @pytest.mark.parametrize(
@@ -613,9 +607,7 @@ def test_temporary_descendant_uses_native_parent_and_raises_without_mutation() -
     session = store.create_session(title="Temporary")
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="U1")
     store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="A1")
-    u2 = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="U2"
-    )
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="U2")
     assert u2.parent_message_id is None
     state_before = _state(store, session.id)
 
@@ -631,12 +623,8 @@ def test_live_persisted_descendant_uses_native_parent_without_mutation() -> None
     db = _CursorDB()
     store = ConsoleChatStore(persistence=SimpleNamespace(db=db))
     session, _root = _restore_root(store)
-    store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="A1"
-    )
-    u2 = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="U2"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="A1")
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="U2")
     # Acceptance hydration assigns the live owner its durable identity without
     # rewriting this persisted-parent field; native ancestry remains authoritative.
     live_u2 = store._nodes_by_session[session.id][u2.id]

@@ -85,10 +85,17 @@ async def capture() -> None:
             assert library_rows == [expected_upper, last_row - expected_upper]
             assert items_rows in ([last_row // 2], [(last_row + 1) // 2])
             assert _background_cells(host, library_grip) == rest_backgrounds
-            assert library_grip.styles.outline_top[0] == "solid"
-            assert library_grip.styles.outline_bottom[0] == "solid"
-            assert library_grip.styles.outline_left[0] in {"", "none"}
-            assert library_grip.styles.outline_right[0] in {"", "none"}
+            # task-31276 retired the accent end-caps: the grip is as tall as
+            # the shell, so outline-top painted a five-cell rule across the
+            # Reader's own first row at the pane join. Focus is the arrow's
+            # colour and weight now, and no edge carries an outline.
+            focused_endcaps = [
+                edge
+                for edge in ("top", "bottom", "left", "right")
+                if getattr(library_grip.styles, f"outline_{edge}")[0]
+                not in {"", "none"}
+            ]
+            assert focused_endcaps == [], focused_endcaps
             assert not library_grip.get_visual_style().reverse
             assert shell.content_region.contains_region(shell.reader.region)
             assert all(
@@ -125,7 +132,7 @@ async def capture() -> None:
                     "library_arrow_rows": library_rows,
                     "items_arrow_rows": items_rows,
                     "focused_background_unchanged": True,
-                    "focused_endcaps": ["top", "bottom"],
+                    "focused_endcaps": focused_endcaps,
                     "visible_children_inside_shell": True,
                     "reader_inside_shell": True,
                 }

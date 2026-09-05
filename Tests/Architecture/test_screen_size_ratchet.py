@@ -380,7 +380,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # skill-trust modal classes from `.skills_screen` -- all three left for
     # this cleanup PR, per the export/collections series' own Task 3/Task 4
     # split). 41247/1311 -> 41155/1295.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41155, 1295),
+    #
+    # 2026-09-04, wave-4 final review: `origin/dev` merge (106 commits since
+    # this branch's merge-base). Fresh `_measure()` on the merged tree:
+    # 41155/1295 -> 41574/1302 (+419 lines, +7 methods) -- ordinary
+    # dev-side feature drift landing in `LibraryScreen` while this wave's
+    # own series was in flight (unrelated to the skills move; the one
+    # merge conflict this dev-merge produced was in the diagnostic
+    # inventory pin, not in this file). Re-pinned to the merged tree's own
+    # measured value, not carried forward from either side.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41574, 1302),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

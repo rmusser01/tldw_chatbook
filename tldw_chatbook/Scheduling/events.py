@@ -67,40 +67,15 @@ class RunReminderNowRequested(Message):
         self.task = task
 
 
-class TransferToServerRequested(Message):
-    """Posted when the user asks to move a local reminder to the server
-    (schedules-handoff spec §6.1, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class TransferToLocalRequested(Message):
-    """Posted when the user asks to move a server-owned reminder mirror to
-    this device (schedules-handoff spec §6.2, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class CancelTransferRequested(Message):
-    """Posted when the user cancels a reminder's in-progress transfer
-    (schedules-handoff spec §6.3, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class RetryTransferRequested(Message):
-    """Posted when the user retries a definitively-failed local -> server
-    transfer (schedules-handoff spec §6.1.5, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
+# redesign PR-4, task 4 (ruling 2): `TransferToServerRequested`/
+# `TransferToLocalRequested`/`CancelTransferRequested`/
+# `RetryTransferRequested` (schedules-handoff spec §6, PR-5 task 7) were
+# posted only by `TaskDetail`'s now-retired legacy Move/Retry/Cancel
+# buttons and consumed only by `SchedulesWorkbench`'s now-retired
+# `_begin_transfer`/`_cancel_transfer` -- deleted with both ends (`git
+# grep` verified zero remaining producers/consumers before removal). The
+# Runs-on row's dropdown + mini-bar uses `ReminderOwnerActionRequested`
+# below instead.
 
 
 class ReminderFieldEditRequested(Message):
@@ -188,11 +163,13 @@ class ReminderOwnerActionRequested(Message):
     idiom `DetailValueRow.Activated`/`ReminderFieldEditRequested` already
     use) so the workbench can call `row.show_error(...)` directly on a
     refusal -- this row's transfer refusals render inline (health-quoting
-    preserved), NOT through the legacy toast the existing Move/Cancel/
-    Retry buttons still use (`SchedulesWorkbench._begin_transfer`'s own
-    ``notify(reason, ...)``) -- the two surfaces are deliberately
-    independent (coexistence, task-5 brief). `TaskDetail` has already
-    called `row.end_edit()` (a dropdown commit) before posting this.
+    preserved) rather than as a toast. That inline rendering was
+    originally the coexisting alternative to the legacy Move/Cancel/Retry
+    buttons' `SchedulesWorkbench._begin_transfer` toast (PR-3 task 5
+    brief); redesign PR-4 task 4 deleted those buttons and that method, so
+    this row's dropdown is now the ONE transfer surface (ruling 2).
+    `TaskDetail` has already called `row.end_edit()` (a dropdown commit)
+    before posting this.
     """
 
     def __init__(self, task: ReminderTask, action: str, row: DetailValueRow) -> None:
@@ -216,6 +193,68 @@ class DefinitionOwnerActionRequested(Message):
         self.definition = definition
         self.action = action
         self.row = row
+
+
+class ViewDefinitionResultsRequested(Message):
+    """Posted when a definition pane's 'Unread results' row is activated
+    (redesign PR-4, task 2 -- the retired "See Results tab" pointer's
+    live replacement). ``definition`` is the raw dict `DefinitionDetail.
+    set_definition` was last painted with; the workbench resolves both
+    its local/server id spaces (`index_definitions_by_id`'s own caveat)
+    and pushes a `ResultsTab` scoped to this one definition.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
+        super().__init__()
+        self.definition = definition
+
+
+class DefinitionRunNowRequested(Message):
+    """Posted when a definition pane's header 'Run now' button is pressed
+    (redesign PR-4, task 3 -- the retired Automations-tab `r` key's live
+    replacement, ruling 2). ``definition`` is the raw dict
+    `DefinitionDetail.set_definition` was last painted with; the workbench
+    routes it to the existing owner-routed dispatch
+    (`SchedulesWorkbench._run_automation_now`) unchanged.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
+        super().__init__()
+        self.definition = definition
+
+
+class ViewDefinitionAuditRequested(Message):
+    """Posted when a definition pane's 'Last run' row is activated
+    (redesign PR-4, task 3 -- the retired Automations-tab's third
+    (run-history/audit) pane's live replacement; the row's own "...see
+    Run history" copy for a server-owned definition is the pointer this
+    activation makes live). ``definition`` is the raw dict
+    `DefinitionDetail.set_definition` was last painted with; the
+    workbench pushes a `definition_audit_view.DefinitionAuditView` scoped
+    to this one definition.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
+        super().__init__()
+        self.definition = definition
 
 
 class SyncCompleted(Message):

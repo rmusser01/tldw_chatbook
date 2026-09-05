@@ -127,8 +127,10 @@ class ConversationMenuTarget:
     def normalized_state(self) -> str:
         """The row's state, falling back to the default when unrecognised."""
         candidate = (self.state or "").strip().lower()
-        return candidate if candidate in CONVERSATION_STATES else (
-            DEFAULT_CONVERSATION_STATE
+        return (
+            candidate
+            if candidate in CONVERSATION_STATES
+            else (DEFAULT_CONVERSATION_STATE)
         )
 
     @property
@@ -238,7 +240,9 @@ def _status_page(
     target: ConversationMenuTarget,
 ) -> tuple[ConversationMenuItem, ...]:
     current = target.normalized_state
-    items = [ConversationMenuItem(action_id=ACTION_BACK, label="‹ Back", opens_page="root")]
+    items = [
+        ConversationMenuItem(action_id=ACTION_BACK, label="‹ Back", opens_page="root")
+    ]
     for state in CONVERSATION_STATES:
         items.append(
             ConversationMenuItem(

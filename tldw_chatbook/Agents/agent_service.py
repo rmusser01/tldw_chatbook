@@ -131,7 +131,12 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
+from .run_context import (
+    CurrentRunActor,
+    clean_subagent_label,
+    use_run_actor,
+    use_tool_call_id,
+)
 from .run_log import _setting
 from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
 from .run_log_eviction import (
@@ -1034,6 +1039,28 @@ _FILE_CONTENT_TOOL_NAMES = frozenset(
         "run_skill_script",
     }
 )
+
+
+def subagent_display_label(agent_name: str | None, task: str | None) -> str | None:
+    """Return the display label for a sub-agent run (task-31382).
+
+    The named agent's name wins when the spawn named one; otherwise the
+    first line of the child's task. Either goes through
+    ``clean_subagent_label`` so the label is one bounded, control-free line.
+
+    Args:
+        agent_name: The resolved named-agent name, or None.
+        task: The child's task text, or None.
+
+    Returns:
+        A one-line label, or None when neither source has text.
+    """
+    name = clean_subagent_label(agent_name)
+    if name:
+        return name
+    stripped = (task or "").strip()
+    first_line = stripped.splitlines()[0] if stripped else ""
+    return clean_subagent_label(first_line) or None
 
 
 def _is_file_content_tool(tool_name: str) -> bool:
@@ -6126,6 +6153,11 @@ class AgentService:
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary",
             run_id,
             parent_run_id,
+            label=(
+                subagent_display_label(agent_definition, task)
+                if agent_kind == AGENT_KIND_SUBAGENT
+                else None
+            ),
         )
         builtin_invoke_tool = self._make_invoke_tool(
             config,

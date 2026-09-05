@@ -48,6 +48,17 @@ Top to bottom:
   the rail; while collapsed, the **Context->** handle on the far left
   brings it back. With focus anywhere in the rail, **Ctrl+Shift+←**
   collapses every section and **Ctrl+Shift+→** expands them all.
+  Colour in the rail follows your theme and carries four meanings: the
+  theme's **primary** hue marks what you are *in* (the active workspace
+  name, the active-chat line, and the selected conversation row); the
+  **accent** hue marks a *value* beside its grey label (Temperature,
+  Max tokens, Storage, …); **status** colours mark *state* (the Agent line
+  while a run is running, done, stuck, or failed, and conversation rows
+  whose fleet marker shows a run is running, needs approval, or finished);
+  plain grey is labels and help copy. Keyboard focus keeps its own
+  separate tint, so "which chat am I in" and "where is focus" never look
+  the same. Every built-in theme and any theme saved from
+  **Settings ▸ Theme** recolours the rail automatically.
 - **Conversation pane** — titled "Conversation", extended to
   "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
@@ -565,7 +576,14 @@ operation immediately, no restart needed.
   "Console: Change model…".
 
 —
-*Verified against working tree — 2026-08-30 (TASK-23193/23195/23196/23197/
+*Verified against working tree — 2026-09-04 (TASK-31429, Context-rail colour
+grammar: live tmux captures of the real app on textual-dark, textual-light,
+and the Orb apricot theme, colour-decoded from `capture-pane -e`, show the
+active-chat line and selected row in each theme's text-primary, label/value
+pairs as muted label + text-accent value, and the Agent line in the theme
+primary while a real llama-server run was in progress; a mounted rule-match
+probe pins the same three resolutions in `test_console_rail_color_grammar.py`).
+Verified against working tree — 2026-08-30 (TASK-23193/23195/23196/23197/
 23198/23199/23200, Context rail UX pass: the rail's default open set is now
 Sessions + Conversations and the whole rail fits at 160x48 with all seven
 headers reachable; the header reads **Context ◂**; the outer hint names the

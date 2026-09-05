@@ -1,12 +1,14 @@
-"""Automations tab per-definition detail pane (schedules-redesign PR-1, Task 4).
+"""Per-definition detail pane (schedules-redesign PR-1, Task 4).
 
-The Automations tab's FIRST per-row detail widget -- until now the tab
-had no field-level rendering of a selected `automation_definition` at all
-(only the definitions `DataTable`'s five columns and the audit-trail
+Introduced as the Automations tab's FIRST per-row detail widget -- that
+tab had no field-level rendering of a selected `automation_definition` at
+all (only the definitions `DataTable`'s five columns and the audit-trail
 history pane; see `redesign-pr1-survey.md` section 1's "no per-row detail
-widget" finding). `DefinitionDetail` fills that gap using the same
-`DetailValueRow`/`DetailGroup` row grammar Task 3 used to regrammar the
-Queue tab's `TaskDetail` -- Details/Frequency/History groups. PR-1 shipped
+widget" finding). redesign PR-4 task 5 retired that tab; this pane lives
+on as the queue's definition-row detail, the sibling of `TaskDetail` in
+the same detail pane. It uses the same `DetailValueRow`/`DetailGroup` row
+grammar Task 3 used to regrammar `TaskDetail` -- Details/Frequency/
+History groups. PR-1 shipped
 every row read-only (`affordance` at its `False` default); schedules-
 redesign PR-3, task 4 wires in-pane editing onto the Details/Frequency
 rows (Model/Generation/Finding policy/Sources/Notifications editable,
@@ -73,6 +75,9 @@ from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
     DefinitionOwnerActionRequested,
+    DefinitionRunNowRequested,
+    ViewDefinitionAuditRequested,
+    ViewDefinitionResultsRequested,
 )
 # PR-3 task 5: same lock/failed-state gating `task_detail.py`'s own
 # Runs-on row uses (survey §3) -- see that module's import comment for
@@ -510,7 +515,7 @@ def _definition_last_run_label(last_run: dict[str, Any] | None) -> str:
 
 
 class DefinitionDetail(Vertical):
-    """Automations tab (and Queue tab sibling) per-definition detail pane.
+    """Per-definition detail pane (the queue's definition-row detail).
 
     schedules-redesign PR-3, task 4 wires in-pane editing onto the
     Details/Frequency rows PR-1 left read-only, plus the header Pause/
@@ -524,9 +529,18 @@ class DefinitionDetail(Vertical):
     the workbench handles, mirroring `TaskDetail`'s own Task 3 Frequency
     rows exactly -- this widget still performs no I/O of its own.
 
-    `Runs on`/`Last run`/`Run count`/`Unread results`/`Results` stay
-    permanently read-only (out of this task's row list; owner transfer is
-    a separate, not-yet-built feature per survey §7).
+    `Run count` stays permanently read-only. `Runs on` gets its own
+    owner-transfer affordance (survey §7, PR-3 task 5). `Unread results`
+    is activatable (redesign PR-4, task 2): it is the live replacement
+    for the old "See Results tab" pointer, pushing a `ResultsTab` scoped
+    to this definition. `Last run` is activatable too (redesign PR-4,
+    task 3): it is the live replacement for the retired Automations-tab
+    third pane, pushing a `definition_audit_view.DefinitionAuditView`
+    scoped to this definition -- see `ViewDefinitionResultsRequested`/
+    `ViewDefinitionAuditRequested` and `on_detail_value_row_activated`
+    below. A header `Run now` button sits beside Pause/Resume (redesign
+    PR-4, task 3, ruling 2): the retired Automations-tab `r` key's live
+    replacement, posting `DefinitionRunNowRequested`.
     """
 
     def __init__(self, *args, **kwargs: object) -> None:
@@ -547,6 +561,9 @@ class DefinitionDetail(Vertical):
         # PR-3 task 4:
         self._definition: dict[str, Any] | None = None
         self._pause_resume_button: Button | None = None
+        #: redesign PR-4, task 3: the retired Automations-tab `r` key's
+        #: live replacement (ruling 2 -- a button, not a new global key).
+        self._run_now_button: Button | None = None
         self._why_static: Static | None = None
         #: Cached from `set_lifecycle_lock` (never re-derived here) --
         #: same one-source-of-truth rule survey §8 documents for
@@ -609,6 +626,19 @@ class DefinitionDetail(Vertical):
                     classes="detail-lifecycle-button",
                 )
                 yield self._pause_resume_button
+                # redesign PR-4, task 3: the retired Automations-tab `r`
+                # key's live replacement (ruling 2 -- a button here, no
+                # new global keybinding). Unconditionally enabled/never
+                # family-gated -- `_run_automation_now` itself is
+                # family-agnostic (it only routes by owner), the same as
+                # the tab's own `r` key was.
+                self._run_now_button = Button(
+                    "Run now",
+                    id="scheduling-automation-run-now",
+                    variant="primary",
+                    classes="detail-lifecycle-button",
+                )
+                yield self._run_now_button
             # Visible when the lifecycle button (or an editable row) is
             # locked by an in-flight transfer: keyboard users can't see
             # hover tooltips, so the reason must live in text too
@@ -721,27 +751,48 @@ class DefinitionDetail(Vertical):
                 id="scheduling-automation-detail-group-frequency",
             )
 
+            # redesign PR-4, task 3: the retired Automations-tab third
+            # (run-history/audit) pane's live replacement -- this row's
+            # own copy already says "...see Run history" for a
+            # server-owned definition (`_SERVER_LAST_RUN`); activating it
+            # pushes a `DefinitionAuditView` scoped to this definition.
+            # Unconditionally clickable/focusable, same "viewing history
+            # is not an edit" rule task 2 established for `_unread_row`
+            # below -- a local definition's activation still pushes the
+            # view, which renders its OWN honest "not available yet"
+            # copy rather than the row being gated/disabled here.
             self._last_run_row = DetailValueRow(
-                "Last run", "-", value_id="scheduling-automation-detail-last-run"
+                "Last run",
+                "-",
+                value_id="scheduling-automation-detail-last-run",
+                affordance=True,
+                can_focus=True,
+                row_key="view_runs",
             )
             self._run_count_row = DetailValueRow(
                 "Run count", "-", value_id="scheduling-automation-detail-run-count"
             )
+            # redesign PR-4, task 2: the retired "See Results tab" pointer
+            # (a dangling string once the tab bar goes away, survey
+            # :734-736) becomes THIS row's live activation instead of a
+            # separate row -- the count and the destination are the same
+            # fact, so a second row saying "Results -- See Results tab"
+            # next to it was redundant, not a second affordance.
+            # Unconditionally clickable/focusable (never family-gated
+            # like the editable rows above): viewing history is sensible
+            # for any definition, including one with zero unread results.
             self._unread_row = DetailValueRow(
                 "Unread results",
                 "-",
                 value_id="scheduling-automation-detail-unread-results",
-            )
-            view_results_row = DetailValueRow(
-                "Results",
-                "See Results tab",
-                value_id="scheduling-automation-detail-view-results",
+                affordance=True,
+                can_focus=True,
+                row_key="view_results",
             )
             yield DetailGroup(
                 self._last_run_row,
                 self._run_count_row,
                 self._unread_row,
-                view_results_row,
                 title="History",
                 collapsed=True,
                 id="scheduling-automation-detail-group-history",
@@ -995,6 +1046,16 @@ class DefinitionDetail(Vertical):
             row.clear_error()
 
     @property
+    def runs_on_row(self) -> DetailValueRow | None:
+        """The Runs-on row, for the workbench's `m` keybinding (redesign
+        PR-4 task 4) to activate programmatically -- posting `DetailValueRow.
+        Activated(row)` on it drives the exact same `on_detail_value_row_
+        activated` path (honest lock/family-note refusal, then the
+        dropdown) a real Enter/click already does, so `m` needs no new
+        activation logic, only this reference."""
+        return self._runs_on_row
+
+    @property
     def shown_definition_id(self) -> str:
         """The id of the definition this pane is painting, `""` for none.
 
@@ -1030,8 +1091,28 @@ class DefinitionDetail(Vertical):
 
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated row's editor, or -- locked -- show why
-        editing is refused instead of doing nothing (ruling 2)."""
+        editing is refused instead of doing nothing (ruling 2).
+
+        The `Unread results` row is not an editable row at all (it never
+        opens an in-place editor) -- activating it instead posts
+        `ViewDefinitionResultsRequested` upward for the workbench to push
+        the definition-filtered Results view. `Last run` is the same
+        shape (redesign PR-4, task 3): activating it posts `ViewDefinition
+        AuditRequested` to push this definition's audit-trail view.
+        Neither is gated on the lifecycle lock or the family note: viewing
+        history is not an edit, so a locked/unsupported-family row can
+        still be browsed.
+        """
         row = event.row
+        if row is self._unread_row or row is self._last_run_row:
+            event.stop()
+            if self._definition is None:
+                return
+            if row is self._unread_row:
+                self.post_message(ViewDefinitionResultsRequested(self._definition))
+            else:
+                self.post_message(ViewDefinitionAuditRequested(self._definition))
+            return
         if row not in self._editable_rows():
             return
         event.stop()
@@ -1288,6 +1369,9 @@ class DefinitionDetail(Vertical):
         elif button_id == "scheduling-automation-pause-resume":
             event.stop()
             self._toggle_lifecycle()
+        elif button_id == "scheduling-automation-run-now":
+            event.stop()
+            self._request_run_now()
         elif button_id == _RUNS_ON_CANCEL_ID:
             event.stop()
             self._request_runs_on_cancel()
@@ -1541,10 +1625,11 @@ class DefinitionDetail(Vertical):
 
     def _request_runs_on_cancel(self) -> None:
         """Post a cancel request from the Runs-on row's own mini-bar
-        (PR-3 task 5) -- a SEPARATE surface from the Automations tab's
-        `k`-key `_cancel_automation_transfer` (coexistence, task-5
-        brief): this one renders a refusal via `row.show_error`, not the
-        tab's shared inline-notice Static."""
+        (PR-3 task 5). It began as a SEPARATE surface coexisting with the
+        Automations tab's `k`-key `_cancel_automation_transfer` (task-5
+        brief); redesign PR-4 task 5 retired that tab and its key, so this
+        mini-bar is now the only cancel affordance -- and it still renders
+        a refusal via `row.show_error`, never a shared notice Static."""
         definition = self._definition
         row = self._runs_on_row
         if definition is not None and row is not None:
@@ -1589,12 +1674,28 @@ class DefinitionDetail(Vertical):
         action = "resume" if lifecycle != "configured" else "pause"
         self.post_message(DefinitionLifecycleToggleRequested(definition, action))
 
+    def _request_run_now(self) -> None:
+        """`Run now` button pressed (redesign PR-4, task 3).
+
+        Never gated on `_lifecycle_lock_reason`/`_family_note`: the
+        Automations tab's own `r` key never gated run-now on either
+        (`_run_automation_now` refuses on its own terms -- pending sync,
+        paused/archived lifecycle, unready health -- and reports why via
+        a notification, the same honest-refusal shape this button keeps).
+        """
+        definition = self._definition
+        if definition is None:
+            return
+        self.post_message(DefinitionRunNowRequested(definition))
+
     def apply_lifecycle(self, definition_id: str, lifecycle: str) -> None:
         """Patch + repaint the lifecycle in place after a successful
         toggle (the task-4 brief's "optimistic repaint") -- called by the
         workbench on EVERY mounted `DefinitionDetail` instance right
         after `set_definition_lifecycle` succeeds, ahead of the slower
-        background refresh (`_request_automations_refresh`), so this pane
+        background refresh (`_request_tasks_refresh` -- redesign PR-4 task
+        5 retired the Automations tab's `_request_automations_refresh`
+        this used to name), so this pane
         never shows a stale Pause/Resume label while that worker is still
         running. Task 2's own DB-level pull-guard is what then keeps a
         RACING sync pull from reverting the value that background refresh

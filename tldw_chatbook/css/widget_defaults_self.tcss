@@ -1530,6 +1530,14 @@
 
 
 
+/* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
+
+    DefinitionAuditView {
+        height: 1fr;
+    }
+
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
     ResultsTab {
@@ -1706,6 +1714,54 @@
         dock: right;
         padding: 0 1;
         margin-left: 2;
+    }
+
+
+/* ===== WIDGET: ChatQuestionCard (Widgets/Chat_Widgets/chat_question_card.py) ===== */
+
+    ChatQuestionCard {
+        height: auto;
+        max-height: 24;
+        border: round $accent;
+        padding: 0 1;
+    }
+    ChatQuestionCard > #question-title {
+        height: 1;
+        text-style: bold;
+    }
+    ChatQuestionCard > #question-deadline {
+        height: auto;
+        color: $text-muted;
+    }
+    ChatQuestionCard > #question-sections {
+        height: auto;
+        max-height: 15;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    ChatQuestionCard .question-section {
+        height: auto;
+        margin-bottom: 1;
+    }
+    ChatQuestionCard .question-header {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+    }
+    ChatQuestionCard .question-text {
+        height: auto;
+    }
+    ChatQuestionCard .question-options {
+        height: auto;
+        border: none;
+        padding: 0;
+    }
+    ChatQuestionCard .question-other {
+        height: 3;
+    }
+    ChatQuestionCard > #question-actions {
+        height: 3;
+        align-horizontal: right;
     }
 
 
@@ -2208,6 +2264,35 @@
 
 
 
+/* ===== WIDGET: ConsoleTaskPanel (Widgets/Console/console_task_panel.py) ===== */
+
+    ConsoleTaskPanel {
+        height: auto;
+        max-height: 12;
+        width: 1fr;
+        border-top: solid $secondary;
+        border-bottom: solid $secondary;
+        padding: 0 1;
+    }
+    ConsoleTaskPanel > #console-task-panel-header {
+        height: 1;
+        text-style: bold;
+    }
+    ConsoleTaskPanel > #console-task-panel-header:hover {
+        background: $boost;
+    }
+    ConsoleTaskPanel > #console-task-panel-body {
+        height: auto;
+        max-height: 10;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    ConsoleTaskPanel #console-task-panel-rows {
+        height: auto;
+        width: 1fr;
+    }
+
+
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
 
     ConsoleMessageHeader {
@@ -2344,6 +2429,11 @@
      * rendered at any width). Share the row instead. */
 
 
+    /* task-31270: receipts are two rows, full width; the copy wraps and the
+     * action row keeps content-width buttons so Undo/Dismiss always paint. */
+
+
+
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
@@ -2409,7 +2499,7 @@
     }
 
     LibraryNoteImportCanvas .note-import-error {
-        color: #ff8fa3;
+        color: $text-error;
         text-style: bold;
     }
 

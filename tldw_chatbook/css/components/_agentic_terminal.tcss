@@ -1270,14 +1270,23 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
+/* task-31276: no focus outline here. The grip is 5 columns wide and as
+   TALL AS THE SHELL, so an outline can only ever paint its top and bottom
+   rows -- and the top row sits on the Reader's identity line, where a
+   five-cell rule reads as a rendering artifact at the pane join, not as
+   focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
+   because focus lands here after ANY Reader recompose: Escape out of the
+   Find bar, a mode-tab click, More). Fourth widget bitten by an outline
+   painting over content rather than around it, after TASK-1160
+   (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
+   chooser). Focus stays visible the sanctioned way: the arrow glyph
+   recolours to the accent and goes bold. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
     color: $ds-action-focus;
     text-style: bold;
     tint: transparent;
     outline: none;
-    outline-top: solid $ds-action-focus;
-    outline-bottom: solid $ds-action-focus;
 }
 
 #library-collections-reader-shell #library-canvas {
@@ -3333,6 +3342,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: 100%;
 }
 
+/* task-31270 (critique #4 P1): the delete / dismiss receipts are two rows
+   (copy, then Undo · Dismiss) at full width. A single content-width
+   Horizontal clipped Undo to "Und" at the Items pane's real width (live
+   2026-09-04) -- the one recovery control was unreadable exactly where it
+   renders. Same multi-row grammar as the toolbars (task-30043). */
+#library-media-canvas .library-media-receipt {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-actions {
+    width: 100%;
+    height: auto;
+}
+
 /* task-30043 (critique 2026-09-03 P1) supersedes task-28025's 1fr squeeze:
    sharing the row width chopped every label to fragments (``t so E Tr R
    Se``) and collapsed disabled bulk actions to bare "○" markers at the
@@ -3445,26 +3472,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
     text-style: bold;
     color: $ds-text-primary;
-    margin: 0 0 1 0;
+    /* task-31277 (critique #4 P2): no bottom margin. It bought separation
+       from a byline row that is now composed only when the item HAS an
+       author or URL, so on every other item it paid one blank row of the
+       reading surface for nothing -- and a byline reads better hugging
+       the title it belongs to anyway. */
+    margin: 0;
 }
 
 #library-media-viewer-meta {
     width: 100%;
     color: $ds-text-muted;
     margin: 0 0 1 0;
-}
-
-/* Section headers: bold + a thin top rule so Content / Analysis / Highlights
-   read as real section boundaries the eye can find without reading. */
-#library-media-viewer-content-title,
-#library-media-viewer-analysis-title,
-#library-media-viewer-highlights-title {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
 }
 
 #library-media-content-search {
@@ -3494,25 +3513,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
-/* task-15774: while a search is ACTIVE, the whole search-controls block
-   (box + match count + Prev/Next) docks to the top of the scrolling viewer
-   -- the find-bar convention, and the same pinned-edge chrome idiom as
-   #library-ingest-commit-bar's dock: bottom. In flow, the stack above the
-   controls (Back, title, metadata, section header) exceeds an 80x24
-   viewport, so the match count and Prev/Next sat below the fold exactly
-   while the user was operating them. Dock-on-active keeps them painted at
-   every size and scroll position; an inactive search keeps the in-flow
-   layout, so no space is stolen when nobody is searching. The raised
-   background + bottom rule stop scrolled content bleeding through the
-   pinned bar; the collapsed child margins keep the bar to 6 rows of a
-   24-row terminal instead of 8. */
-#library-media-content-search-controls.-library-media-search-active {
-    dock: top;
-    width: 100%;
-    background: $ds-surface-raised;
-    border-bottom: solid $ds-grid-line;
-}
-
+/* task-31276 (critique #4 P2) retires task-15774's dock-on-active. That
+   rule moved the whole controls block to the top of the viewer the moment
+   a query was submitted, so Enter teleported the bar out from under the
+   mode row and shoved the Reader header (identity line, Back, title) down
+   six rows -- the bar the user was typing into jumped away from the caret.
+   Its premise is gone too: task-31237 made the viewer itself stop
+   scrolling (the content box owns the overflow), so the chrome above the
+   bar no longer scrolls out from under it and nothing bleeds through.
+   The class stays: it still collapses the active bar's child margins,
+   keeping it to 6 rows of a 24-row terminal instead of 8. */
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search,
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search-status {
     margin: 0;
@@ -3596,6 +3606,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
 }
 
+/* task-31276: a bare Horizontal defaults to height:1fr, so this one-row
+   Rendered|Raw toggle claimed the reader's whole remaining height (12 rows
+   at 80x24, 18 once the Find bar mounted) and pushed the reading surface --
+   and, once task-15774's dock was retired, the Find bar's match count and
+   Prev/Next -- below the fold. The same unstyled-1fr-wrapper trap task-31222
+   fixed one level up on #library-media-reader-mode-read. */
+#library-media-content-mode-strip {
+    height: auto;
+}
+
 #library-media-viewer-content {
     /* task-31237 (evolves task-31222's 75vh cap into a true fill): the
        content box takes exactly the pane's remaining height -- 75vh could
@@ -3614,11 +3634,41 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1;
 }
 
+/* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
+   the whole pane, so prose ran ~150 cells at 235 columns against DESIGN.md's
+   65-75. The cap is on the TEXT bodies only -- #library-media-viewer-content
+   keeps its full width so its border still spans the pane. */
+#library-media-viewer-content-text,
+#library-media-viewer-content-markdown {
+    max-width: 92;
+}
+
+/* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
+   (``_MEDIA_WORKBENCH_FOCUS_TARGETS``), but nothing on screen said so --
+   a keyboard user could not tell the scroll keys had somewhere to land.
+   The cue tints the border the box ALREADY draws: an outline would paint
+   over the first and last TEXT rows of the document (the task-31221
+   lesson, third widget bitten by ``*:focus { outline: solid }``), and a
+   border on the inner ScrollView would cost two rows of reading surface.
+   ``:focus-within`` covers both modes: Raw focuses the inner ScrollView,
+   Rendered focuses this container itself (Textual's ``has_focus_within``
+   is true for the node itself as well as its descendants). */
+#library-media-viewer-content:focus-within {
+    border: solid $accent;
+}
+
+#library-media-viewer-content:focus,
+#library-media-viewer-content-text:focus {
+    outline: none;
+}
+
 #library-media-viewer-content-text {
     /* task-22500: the widget sets its own height from the wrap index,
        bounded by the room its parent actually has (the parent's max-height
        is an OUTER bound, so its border rows are not available to us);
-       width must fill so the index is built at the real render width. */
+       width must fill so the index is built at the real render width
+       (task-31277 caps that width; the index is rebuilt from the widget's
+       own scrollable content region, so the cap is what it indexes at). */
     width: 100%;
     /* The reader wraps, so horizontal scrolling has nothing to reach. A
        horizontal scrollbar here would also shrink the render width below
@@ -4106,6 +4156,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
 }
 
+/* TASK-31429 (rail colour grammar): the line that NAMES the active chat
+   takes the active hue; the same Static's "No active …" placeholder keeps
+   the muted id rule above. id+class so it outranks that id rule. */
+#console-workspace-selected-conversation.console-workspace-selected-conversation-active {
+    color: $ds-active-fg;
+}
+
 /* The row is 3 rows tall so the bordered Input inside it can show its value:
    a `tall` border spends one row above and one below the text, so a 1-row
    input paints its top edge and nothing else. */
@@ -4158,10 +4215,37 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+/* TASK-31429 (rail colour grammar): a row's fleet run-marker state colours
+   its text with the same status tokens the Inspector rows use. Ordered
+   BEFORE `-selected` (equal specificity, last wins) so the selected row
+   keeps the active hue whatever its marker. */
+.console-workspace-conversation-row-running {
+    color: $ds-status-running;
+}
+
+.console-workspace-conversation-row-needs-approval {
+    color: $ds-status-approval-required;
+}
+
+.console-workspace-conversation-row-finished-ok {
+    color: $ds-status-ready;
+}
+
+.console-workspace-conversation-row-finished-failed {
+    color: $ds-status-error-readable;
+}
+
+.console-workspace-conversation-row-subagent-unseen {
+    color: $ds-status-info;
+}
+
+/* TASK-31429: selection is a foreground hue (primary = what you are in),
+   no longer the focus tint -- so "which chat am I in" and "where is
+   keyboard focus" read as two different signals. Focus rules below still
+   paint the focus tint on top when the selected row is focused. */
 .console-workspace-conversation-row-selected {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+    color: $ds-active-fg;
+    text-style: bold;
 }
 
 .console-conversation-browser-section-header {
@@ -4557,7 +4641,12 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: bold underline;
 }
 
-.console-workspace-conversation-row Button:focus {
+/* TASK-31429 (Qodo review on PR #2393): the conversation row IS the Button
+   (`_conversation_button`), so the former descendant form
+   `.console-workspace-conversation-row Button:focus` matched nothing. Target
+   the row itself; class+pseudo specificity outranks the `-selected` and
+   run-marker hue rules, so focus stays its own visible signal on top. */
+.console-workspace-conversation-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -4803,7 +4892,7 @@ ConsoleBoundedSection {
 .console-model-section-value {
     width: 1fr;
     min-width: 10;
-    color: $ds-text-primary;
+    color: $ds-value-fg;
 }
 
 #console-model-section-provider .console-model-section-value,
@@ -4819,12 +4908,34 @@ ConsoleBoundedSection {
 }
 
 #console-model-section-recovery {
-    color: $ds-status-blocked;
+    /* TASK-31429: this line is READ, not glanced -- readable error variant
+       (design-language rule: readable beats decorative). */
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-line {
     height: 1;
     color: $ds-text-primary;
+}
+
+/* TASK-31429 (rail colour grammar): the Agent status line's run status
+   (`apply_console_agent_status_state`) maps to the same status tokens the
+   Inspector's fleet rows already use; idle/unavailable carry no class. */
+.console-agent-section-status-running {
+    color: $ds-status-running;
+}
+
+.console-agent-section-status-done {
+    color: $ds-status-ready;
+}
+
+.console-agent-section-status-stuck {
+    color: $ds-status-warning;
+}
+
+.console-agent-section-status-error,
+.console-agent-section-status-cancelled {
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-steps {
@@ -6585,13 +6696,19 @@ ConsoleCitationSourcesModal {
     margin: 0;
 }
 
+/* TASK-31429 (rail colour grammar): quiet key, coloured value -- the label
+   drops its bold so it no longer competes with the value it introduces. */
 .console-workspace-status-label {
     color: $ds-text-muted;
-    text-style: bold;
 }
 
 .console-workspace-status-value {
-    color: $ds-text-primary;
+    color: $ds-value-fg;
+}
+
+/* The workspace you are IN is identity, not a setting: active hue. */
+#console-active-workspace-value {
+    color: $ds-active-fg;
 }
 
 .console-workspace-empty-copy {

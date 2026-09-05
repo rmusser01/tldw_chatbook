@@ -323,17 +323,28 @@ Library readers after a successful save.
 
 ### Interface — Theme
 
-A full editor with its own save model: **Theme Library** (a **Name** box, live
-only after **New** or **Clone**; a **Dark theme** switch; a browsable **Themes**
-tree), **Color Palette** (ten hex boxes, Primary through Error), **Color
-Presets** (click a swatch row to fill the last box you touched), and a
-decorative **Live Preview**. **New** and **Clone** start a theme and unlock the
-name box; **Generate from Primary** derives the palette from the primary color;
-**Apply** applies it **for this session only** and writes nothing; **Save**
-stores it as a theme you can pick later (built-ins can't be overwritten);
-**Reset** reloads it as last saved; **Delete** and **Export** remove it or write
-it to your Downloads folder. **This editor never sets the launch default** —
-press **Save** here, then pick the theme in **Appearance** → **Theme**.
+A full editor with its own save model. **Theme Library**: a **Name** box (live
+for anything but the two Textual built-ins), a **Dark theme** On/Off toggle,
+the **New / Clone / Delete / Export** row, and a **Themes** tree that lists
+**Your themes** first and open, then **Built-in**, then the **Shipped themes**
+catalog collapsed. Selecting a theme in the tree only loads it for editing; it
+never changes the running app. **Actions** come next: **Apply** applies the
+palette **for this session only** and writes nothing; **Save** stores it as a
+TOML file in your profile's `themes/` folder and registers it at once, so it
+appears in **Appearance** → **Theme** and in the palette's "Theme: Switch
+to…" list without a restart (built-ins can't be overwritten, and saving over
+another saved theme asks first); **Reset** reloads it as last saved; **Generate
+from Primary** derives a palette from the primary colour; **Set as launch
+default** writes the saved theme's name to `general.default_theme` so it
+loads at startup. **Color Palette** is ten hex boxes, Primary through Error,
+each with a swatch showing the colour and its hex; an invalid value marks the
+box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
+the **Presets fill** box (Primary by default), by click or by focusing a swatch
+and pressing Enter or Space. The **Live Preview** is a Console-shaped stub that
+repaints as you type. **New** starts a theme from the palette currently loaded;
+**Clone** does the same and appends `_copy` to the name. **Delete** removes a
+saved theme after confirmation; **Export** writes it to your Downloads folder
+and asks before replacing an earlier export.
 
 ### Interface — Splash Screen
 
@@ -618,9 +629,9 @@ a note on what would have to exist before Settings could own a default.
 3. **Change the theme and make it stick.** Open **Appearance**, choose a
    **Theme**, press **Preview** for a look (this session only), then **s** to
    save the draft — the theme is applied at the next launch. If you built the
-   theme yourself in the **Theme** editor, press **Save** there first, then come
-   back to **Appearance** and select it; the editor never sets the launch
-   default.
+   theme yourself in the **Theme** editor, press **Save** there and then **Set
+   as launch default**; saved themes also appear in **Appearance** → **Theme**
+   as "<Name> (saved)".
 4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
@@ -720,9 +731,9 @@ not open an editor.
   applied once, at launch; **Preview** shows it this session. Two other routes
   do apply a theme immediately: the Theme editor's **Apply** (this session
   only), and the command palette's "Theme: Switch to \<name\>", which applies
-  it *and* rewrites the launch default. A theme you
-  **Save** in the Theme editor is only stored — set it as the launch default in
-  **Appearance**.
+  it *and* rewrites the launch default. A theme you **Save** in the Theme
+  editor is stored and registered but not applied — press **Set as launch
+  default** there, or pick it in **Appearance**.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
@@ -763,6 +774,12 @@ created, selected, edited, and disabled a real definition in a scratch
 profile, fixing a rendering defect on the Name/Description/Model
 override/Tools fields found along the way; the rest of this page's content
 unchanged from the prior stamp).*
+*Interface — Theme rewritten against fix/theme-editor-ux @ 9997d086b4 —
+2026-09-04 (tasks 31250-31259, 31279 and 31280: driven live in a scratch profile — a theme
+saved in the editor now registers at once, appears in Appearance → Theme and
+the palette, and loads at the next launch via **Set as launch default**;
+swatches, the Dark toggle and the preset target are painted; Actions sit above
+the palette; the rest of this page's content unchanged from the prior stamp).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
 menu now leaves the strip scrolled so "F9 Settings" is visible and

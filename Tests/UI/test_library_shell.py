@@ -521,9 +521,16 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         rows = list(self.media_items)
         query = str(kwargs.get("query") or "").casefold()
         if query:
-            rows = [
-                row for row in rows if query in str(row.get("title") or "").casefold()
-            ]
+            # Mirrors LIBRARY_BROWSE_SEARCH_FIELDS in
+            # tldw_chatbook/Media/media_reading_scope_service.py (task-31274):
+            # the real browse filter matches title, content AND keywords, so a
+            # title-only fake would hide a keyword miss instead of catching it.
+            def _matches(row):
+                haystacks = [str(row.get("title") or ""), str(row.get("content") or "")]
+                haystacks.extend(str(word) for word in row.get("keywords") or ())
+                return any(query in text.casefold() for text in haystacks)
+
+            rows = [row for row in rows if _matches(row)]
         media_types = kwargs.get("media_types")
         if isinstance(media_types, list):
             rows = [row for row in rows if row.get("type") in media_types]
@@ -9332,9 +9339,13 @@ async def test_library_shell_media_back_returns_to_list():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-back")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only -- in this three-pane layout
+        # the Items pane already shows the list, so the control changed no
+        # pixels while revoking every Reader binding gated on the view flag.
+        assert not screen.query("#library-media-back")
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -9673,7 +9684,9 @@ async def test_library_shell_media_edit_save_refreshes_authoritative_page():
 
         service = screen.app_instance.media_reading_scope_service
         assert service.search_calls[-1]["offset"] == 0
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; this drives the exit seam
+        # it shares with Escape's compact branch.
+        screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: "Renamed In List" in _visible_text(screen),
@@ -9808,7 +9821,9 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_browse_controller.applied_result is None
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; this drives the seam it
+        # shares with Escape's compact exit.
+        screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -10647,6 +10662,18 @@ async def _open_media_viewer(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
 
+async def _open_media_find(screen, pilot):
+    """Press Find and return the mounted content search Input.
+
+    task-31237 collapsed the bar until the Find action opens it; task-31269
+    made Find open the bar for whichever tab is being read, so this works
+    on Read and on Analysis alike. A no-op when the bar is already open.
+    """
+    if not screen.query("#library-media-content-search"):
+        screen.query_one("#library-media-reader-find", Button).press()
+    return await _wait_for_selector(screen, pilot, "#library-media-content-search")
+
+
 @pytest.mark.asyncio
 async def test_library_media_sort_chooser_applies_the_selected_order():
     """task-28013: the media sort chooser re-fetches page one under the new order."""
@@ -11049,7 +11076,7 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
-        search_input = screen.query_one("#library-media-content-search", Input)
+        search_input = await _open_media_find(screen, pilot)
 
         search_input.value = "setup"
         await pilot.pause()
@@ -11073,7 +11100,8 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
-        search_input = screen.query_one("#library-media-content-search", Input)
+        # task-31237 collapsed the Find bar until the Find action opens it.
+        search_input = await _open_media_find(screen, pilot)
         controls = viewer.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -11169,6 +11197,11 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+        # task-31237 collapsed the Find bar until the Find action opens it,
+        # and that mount recomposes the viewer -- open it before the
+        # baseline identities are taken, so the measured submit/Next/Prev
+        # are what they claim to be.
+        await _open_media_find(screen, pilot)
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
@@ -11567,14 +11600,17 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
-    """Catch the active-search dock stealing layout with no search active.
+async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_active():
+    """The search chrome appears on submit without relocating the bar.
 
-    task-15774's docked find bar must be scoped to an ACTIVE search: with no
-    query submitted, the search box stays in its normal flow position inside
-    the Content section (below the Back control), no status/Prev/Next chrome
-    exists, and clearing an active query returns to exactly that state.
-    Spot-checked at 120x40 per the task's larger-size non-regression note.
+    task-15774 docked an ACTIVE search to the top of the viewer; task-31276
+    (critique #4 P2) retired that dock, because Enter then teleported the
+    bar the user was typing into out from under the mode row and pushed the
+    Reader header down six rows. The contract this now pins: submitting a
+    query only reveals the status/Prev/Next chrome -- the bar's own ``y``
+    is unchanged, it stays below the Back control, and clearing the query
+    hides the chrome again without moving anything. Spot-checked at 120x40
+    per task-15774's larger-size non-regression note.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
@@ -11584,6 +11620,7 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+        await _open_media_find(screen, pilot)
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -11597,19 +11634,22 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         assert "◀ Prev" not in painted_inactive
         assert "Next ▶" not in painted_inactive
 
-        # Active: the controls dock above the scrolled stack; exactly one
-        # search box is painted (docking must not duplicate chrome).
+        # Active: the chrome appears in place -- the bar keeps the exact ``y``
+        # it had when Find opened it and stays below Back; exactly one search
+        # box is painted (task-31276).
+        inactive_y = controls.region.y
         await _submit_content_search_query(screen, pilot, "budget")
         await pilot.pause()
         controls_active = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        assert controls_active.region.y <= back_button.region.y
+        assert controls_active.region.y == inactive_y
+        assert back_button.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
         assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
 
-        # Cleared: the dock releases and the flow order returns.
+        # Cleared: the chrome hides again and nothing has moved.
         search_input = screen.query_one("#library-media-content-search", Input)
         search_input.value = ""
         search_input.focus()
@@ -11621,13 +11661,12 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         painted_cleared = "\n".join(_painted_rows(screen))
         assert "◀ Prev" not in painted_cleared
         assert "Next ▶" not in painted_cleared
-        assert (
-            back_button.region.y
-            < screen.query_one(
-                "#library-media-content-search-controls",
-                LibraryMediaContentSearchControls,
-            ).region.y
+        cleared = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
         )
+        assert back_button.region.y < cleared.region.y
+        assert cleared.region.y == inactive_y
 
 
 @pytest.mark.asyncio
@@ -11705,8 +11744,8 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert heading_row >= body.region.y
         assert body.styles.min_height is not None
         assert body.styles.min_height.value == 3
-        assert body.styles.max_height is not None
-        assert body.styles.max_height.value == 18
+        # task-31237: the 18-row cap is gone -- the box fills the pane (1fr).
+        assert body.styles.max_height is None
 
         parse_count_before_navigation = len(markdown_updates)
         next_button.focus()
@@ -11744,7 +11783,8 @@ async def test_library_shell_media_content_search_resets_on_back():
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
         assert screen._library_media_content_query == "budget"
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; the exit seam is shared.
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -12068,7 +12108,8 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         await _open_media_viewer(screen, pilot)
         assert screen._library_media_content_mode == "rendered"
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; the exit seam is shared.
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
         assert screen._library_media_content_mode == "raw"
@@ -12077,7 +12118,8 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         # older-timestamp row under the default newest-first sort); row 0
         # is the OTHER (unmodified, non-markdown "video") item.
         screen.query_one("#library-media-row-0").press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        await _open_media_find(screen, pilot)
         assert screen._library_media_content_mode == "raw"
         assert not screen.query("#library-media-content-mode-strip")
 
@@ -27066,11 +27108,14 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
 
 @pytest.mark.asyncio
 async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail():
-    """Escape unwinds the adaptive Reader before returning to list and rail.
+    """Escape unwinds the adaptive Reader without ever landing in an Input.
 
-    Items yields to Library first when both panes are open. Leaving the
-    Reader then re-focuses the first list row; one more Escape from that list
-    moves focus to the same rail search target used by `/` and F6.
+    task-31272 (critique #4, A cap 20): the old ladder handed the Reader's
+    Escape to the rail's "Search Library…" box, so the NEXT Escape (and
+    every letter after it) was typed text and leaving took three presses.
+    The ladder is now Reader -> the loaded Items ROW -> the ACTIVE RAIL
+    ROW, and the Reader stays live the whole way (the three-pane shell has
+    no list mode of its own, so ] / [ keep working from the row).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -27084,24 +27129,33 @@ async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
         await pilot.pause()
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-back")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_view == "viewer"
+        assert not screen.query("#library-media-back")
 
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_media_view == "viewer"
-        assert screen.query_one("#library-search-input", Input).has_focus
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert screen._library_media_view == "list"
-        await _wait_for_selector(screen, pilot, "#library-media-row-0")
-        await pilot.pause()
         assert screen.query_one("#library-media-row-0", Button).has_focus
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen.query_one("#library-search-input", Input).has_focus
+        assert screen._library_media_view == "viewer"
+        assert not isinstance(screen.focused, Input), screen.focused
+        assert (
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
+        )
+
+        # The rail row is the terminus: a further Escape is inert, so it
+        # cannot strand the view flag out from under the visible Reader.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_media_view == "viewer"
+        assert (
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
+        )
 
 
 @pytest.mark.asyncio
@@ -33806,7 +33860,9 @@ async def test_library_media_analysis_tab_is_searchable():
         # Wait for the analysis tab to settle (its Edit action is the stable
         # signal the existing analysis tests use) before searching.
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
-        search = screen.query_one("#library-media-content-search", Input)
+        # task-31269: the Analysis bar is collapsed until Find opens it, in place.
+        search = await _open_media_find(screen, pilot)
+        assert screen._library_media_reader_session.mode == "analysis"
 
         search.value = "budget"
         search.focus()
@@ -33846,9 +33902,8 @@ async def test_library_media_switching_tabs_clears_the_search():
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
         # Read tab: search the transcript.
-        search = await _wait_for_selector(
-            screen, pilot, "#library-media-content-search"
-        )
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        search = await _open_media_find(screen, pilot)
         search.value = "roadmap"
         search.focus()
         await pilot.pause()

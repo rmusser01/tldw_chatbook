@@ -20,7 +20,14 @@ _TYPE_KEYS = ("type", "media_type")
 # "obsidian_note" -- neither type alone proves the content is markdown, so
 # LIB-13's "Rendered by default" decision also requires a content sniff
 # (``looks_like_markdown_content``) before defaulting to the rendered view.
-_MARKDOWN_MEDIA_TYPES = frozenset({"plaintext", "markdown", "obsidian_note"})
+# task-31277 (critique #4 P2, AC#5): video/audio transcripts join the list.
+# Ingestion writes sectioned transcripts with real `## ...` headings, and
+# gating the sniff on the type alone painted those hashes literally in the
+# Reader. The content sniff stays the second gate, so an ordinary transcript
+# still defaults to Raw.
+_MARKDOWN_MEDIA_TYPES = frozenset(
+    {"plaintext", "markdown", "obsidian_note", "video", "audio"}
+)
 _ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 _TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
 
@@ -450,3 +457,39 @@ def build_library_media_highlight_rows(
             )
         )
     return tuple(rows)
+
+
+def detail_analysis_text(detail: Mapping[str, Any]) -> str:
+    """Public read of the newest version's analysis text (see the private helper)."""
+    return _latest_version_analysis_text(detail)
+
+
+def analysis_find_unavailable_reason(
+    *, mode: str, analysis: str, generating: bool, editing: bool
+) -> str:
+    """Why Find cannot open on the Analysis tab right now, or "" when it can.
+
+    Qodo on #2378: Find opens the bar for the tab being read, and the
+    Analysis tab composes its bar only around analysis text. With no text
+    (or while generating / editing) there is nothing to mount, so the
+    gesture must be disabled with a reason instead of silently arming
+    ``find_open``. The Read tab always has a body to search.
+
+    Args:
+        mode: The Reader mode (``"read"``, ``"analysis"``, ...).
+        analysis: The current analysis text, or "".
+        generating: Whether an analysis is being generated.
+        editing: Whether the analysis edit form is open.
+
+    Returns:
+        The user-facing reason, or "" when Find is available.
+    """
+    if mode != "analysis":
+        return ""
+    if generating:
+        return "Analysis is still generating."
+    if editing:
+        return "Finish editing the analysis first."
+    if not analysis.strip():
+        return "No analysis to search yet."
+    return ""

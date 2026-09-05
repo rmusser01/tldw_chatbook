@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import threading
-
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -19,10 +18,10 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.MCP.permission_store import (
+    _DEFAULT_PROFILE_ID,
     BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     GatedToolRef,
-    _DEFAULT_PROFILE_ID,
     _as_mapping,
     resolve_builtin_state,
 )
@@ -617,6 +616,15 @@ _WEB_DEEP_SEARCH_DESCRIPTION = (
     "Requires an app restart to take effect."
 )
 
+#: PRD Feature A (A12): hand-written like web_deep_search's -- ask_user is a
+#: LocalToolSpec, not a Tool ABC subclass. Default ON (see ASK_USER_GATE_KEY).
+_ASK_USER_DESCRIPTION = (
+    "Lets an agent ask you up to four multiple-choice questions on a card "
+    "above the Console transcript. On by default: it touches only your "
+    "attention, never your data. Turn it off to remove the tool from every "
+    "agent."
+)
+
 
 def all_tool_gates() -> list[ToolGate]:
     """Every ``[tools]``/``[console]`` registration gate, on or off.
@@ -643,7 +651,11 @@ def all_tool_gates() -> list[ToolGate]:
         rows, then the local group's two).
     """
     from ..config import coerce_bool_setting, get_cli_setting
-    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .local_tool_provider import (
+        ASK_USER_DEFAULT_ENABLED,
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
     from .tool_catalog import _GATEABLE_BUILTINS, build_gateable_tool
 
     gates: list[ToolGate] = []
@@ -695,6 +707,19 @@ def all_tool_gates() -> list[ToolGate]:
             group="local",
         )
     )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=ASK_USER_GATE_KEY,
+            tool_name="ask_user",
+            description=_ASK_USER_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
+                ASK_USER_DEFAULT_ENABLED,
+            ),
+            group="local",
+        )
+    )
     return gates
 
 
@@ -702,7 +727,10 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     """Every gate's (section, key), in enumeration order, WITHOUT
     constructing any Tool — the cheap skeleton `all_tool_gates()` and the
     count path share so the key set can never drift between them."""
-    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .local_tool_provider import (
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
     from .tool_catalog import _GATEABLE_BUILTINS
 
     pairs: list[tuple[str, str]] = [
@@ -710,6 +738,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     ]
     pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
+    pairs.append(("tools", ASK_USER_GATE_KEY))
     return pairs
 
 
@@ -721,15 +750,18 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         gate is disabled.
     """
     from ..config import coerce_bool_setting, get_cli_setting
+    from .local_tool_provider import ASK_USER_DEFAULT_ENABLED, ASK_USER_GATE_KEY
 
     off = 0
     local_master_off = False
     for section, key in _gate_key_pairs():
-        default = (
-            LOCAL_TOOLS_DEFAULT_ENABLED
-            if section == "console" and key == LOCAL_TOOLS_MASTER_KEY
-            else False
-        )
+        if section == "console" and key == LOCAL_TOOLS_MASTER_KEY:
+            default = LOCAL_TOOLS_DEFAULT_ENABLED
+        elif section == "tools" and key == ASK_USER_GATE_KEY:
+            # PRD A12: the one [tools] gate that defaults ON.
+            default = ASK_USER_DEFAULT_ENABLED
+        else:
+            default = False
         enabled = coerce_bool_setting(get_cli_setting(section, key, default), default)
         if enabled:
             continue

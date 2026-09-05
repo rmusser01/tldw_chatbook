@@ -1329,7 +1329,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         return_copy = str(
             modal.query_one("#console-settings-return-status", Static).renderable
         )
-        assert "OpenAI missing API key" in readiness_copy
+        assert "API key missing for OpenAI" in readiness_copy
         assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
 
 
@@ -1824,13 +1824,19 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
         console.apply_navigation_context(first_target.to_context())
-        for _ in range(80):
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
             if (
                 reopened_tokens
                 and not console._conversation_settings_return_restore_in_progress
             ):
                 break
             await pilot.pause(0.05)
+        else:
+            raise AssertionError(
+                "Timed out waiting for the first Conversation settings return "
+                "to finish restoring."
+            )
 
         assert reopened_tokens == [161]
         assert replacement_target is not None
@@ -1845,13 +1851,19 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
         console._consume_pending_conversation_settings_return()
-        for _ in range(80):
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
             if (
                 reopened_tokens == [161, 162]
                 and not console._conversation_settings_return_restore_in_progress
             ):
                 break
             await pilot.pause(0.05)
+        else:
+            raise AssertionError(
+                "Timed out waiting for the replacement Conversation settings "
+                "return to finish restoring."
+            )
 
         assert reopened_tokens == [161, 162]
         assert console._pending_conversation_settings_return_target is None
@@ -9246,7 +9258,7 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_console_failed_stream_renders_inline_retry_and_recovers():
+async def test_console_failed_stream_renders_retry_without_continue_and_recovers():
     gateway = FailThenRecoverGateway()
     app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -9284,8 +9296,9 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         )
         assert str(retry_button.label) == "Retry"
         assert retry_button.tooltip == "Retry the failed response."
+        assert not console.query(f"#console-message-action-continue-{failed.id}")
 
-        await pilot.click(f"#console-message-action-retry-{failed.id}")
+        retry_button.press()
         await _wait_for_text(console, pilot, "recovered")
 
     assert store.get_message(failed.id).status == "complete"
@@ -13058,7 +13071,7 @@ def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     )
 
     assert screen._console_provider_blocker_copy() == (
-        "Provider setup needed: OpenAI missing API key"
+        "Provider setup needed: API key missing for OpenAI"
     )
     assert screen._console_provider_recovery_action() == (
         CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,

@@ -102,6 +102,18 @@ LOCAL_SERVER_LABEL = "Local workspace, web, and Watchlists"
 #: name, so they cannot silently drift apart.
 WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
 
+#: PRD Feature A (A12): `[tools] ask_user_enabled`, default ON -- a deliberate
+#: exception to the off-by-default gates. Every other gate is off because the
+#: tool touches data, disk, or network; this one touches only the user's
+#: attention, and a tool whose purpose is to initiate contact cannot be
+#: discovered while invisible. Hand-listed in `all_tool_gates()` like
+#: `web_deep_search`.
+ASK_USER_GATE_KEY = "ask_user_enabled"
+ASK_USER_DEFAULT_ENABLED = True
+
+#: The controller's blocking ask: cleaned questions in, PRD A6 result dict out.
+AskUserCallback = Callable[[list[dict[str, Any]]], dict[str, Any]]
+
 # Pinned refusal strings (spec §3.3) — tests assert on these verbatim.
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
@@ -320,9 +332,18 @@ class LocalToolSpec:
     execution_policy: ToolExecutionPolicy = ToolExecutionPolicy.BOUNDED_ABANDONABLE
     tags: tuple[str, ...] = ()
     approval_arguments: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None
+    #: PRD Feature A (A12): the spec is exempt from the Allow/Ask/Off
+    #: permission layer -- it never raises an approval card and never
+    #: appears in batch review. Reserved for tools that touch only the
+    #: user's ATTENTION (``ask_user``): asking whether the agent may ask a
+    #: question is two interruptions for one. Anything that touches data,
+    #: disk, or network must leave this False.
+    gate_exempt: bool = False
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
+        if not isinstance(self.gate_exempt, bool):
+            raise ValueError("LocalToolSpec gate_exempt must be a bool")
         if not isinstance(self.exposure, LocalToolExposure):
             raise ValueError("LocalToolSpec exposure must be a LocalToolExposure")
         if not isinstance(self.approval_effects, tuple) or not all(
@@ -557,6 +578,7 @@ class LocalToolProvider:
         record_decision: Callable[[HubTool, str], None] | None = None,
         todo_store: SessionTodoStore | None = None,
         on_todo_change: TodoChangeCallback | None = None,
+        ask_user: AskUserCallback | None = None,
         watchlists_service: WatchlistsToolService | None = None,
         watchlists_command_service: WatchlistsCommandService | None = None,
         no_callback_refusal: str | None = None,
@@ -605,6 +627,7 @@ class LocalToolProvider:
                 workspace_executor=selected_executor,
                 todo_store=todo_store,
                 on_todo_change=on_todo_change,
+                ask_user=ask_user,
                 watchlists_service=watchlists_service,
                 watchlists_command_service=watchlists_command_service,
             )
@@ -616,6 +639,7 @@ class LocalToolProvider:
                     workspace_executor=selected_executor,
                     todo_store=todo_store,
                     on_todo_change=on_todo_change,
+                    ask_user=ask_user,
                     watchlists_service=watchlists_service,
                     watchlists_command_service=watchlists_command_service,
                 )
@@ -634,6 +658,7 @@ class LocalToolProvider:
                         workspace_executor=executor,
                         todo_store=todo_store,
                         on_todo_change=on_todo_change,
+                        ask_user=ask_user,
                         watchlists_service=watchlists_service,
                         watchlists_command_service=watchlists_command_service,
                     )
@@ -657,6 +682,7 @@ class LocalToolProvider:
                         workspace_executor=selected_executor,
                         todo_store=todo_store,
                         on_todo_change=on_todo_change,
+                        ask_user=ask_user,
                         watchlists_service=watchlists_service,
                         watchlists_command_service=watchlists_command_service,
                     )
@@ -1463,6 +1489,9 @@ class LocalToolProvider:
             ``None`` came from ``resolve_state`` raising, never for a
             legitimate state flip or a session approval.
         """
+        exempt_spec = self._specs.get(name)
+        if exempt_spec is not None and exempt_spec.gate_exempt:
+            return None, False
         try:
             state = self._resolve_state(hub)
         except Exception:  # noqa: BLE001 — fail closed to "let invoke handle it"
@@ -2301,6 +2330,9 @@ class LocalToolProvider:
             run_id: The dispatching run -- the only run whose per-turn
                 stamp may resolve this call (PR2a Task 5).
         """
+        spec = self._specs.get(name)
+        if spec is not None and spec.gate_exempt:
+            return _LocalGateDecision(verdict="allow", approval_consumed=False)
         hub = self.hub_tool_for(name)
         try:
             state = self._resolve_state(hub)
@@ -2780,12 +2812,37 @@ def _make_todo_list_handler(store: SessionTodoStore) -> Callable[[dict], str]:
     return _handler
 
 
+def _make_ask_user_handler(ask_user: AskUserCallback) -> Callable[[dict], str]:
+    """Build ``ask_user`` for one Console session's ask callback.
+
+    Validation (PRD A1/A2) runs BEFORE the callback so a rejected call never
+    mounts anything; the callback's own ``AskUserBusyRefusal`` (A9)
+    propagates as a tool error through the provider's handler boundary.
+
+    Args:
+        ask_user: The controller's ``request_user_questions`` bound to the
+            run's session.
+
+    Returns:
+        The spec handler: ``args`` dict in, compact JSON text out.
+    """
+    from .ask_user_questions import validate_questions
+
+    def _handler(args: dict) -> str:
+        values = _exact_task_args(args, allowed={"questions"}, required={"questions"})
+        questions = validate_questions(values["questions"])
+        return _todo_json(ask_user(questions))
+
+    return _handler
+
+
 def _default_specs(
     workspace_root: Path,
     *,
     workspace_executor: WorkspaceToolExecutor,
     todo_store: SessionTodoStore | None = None,
     on_todo_change: TodoChangeCallback | None = None,
+    ask_user: AskUserCallback | None = None,
     watchlists_service: WatchlistsToolService | None = None,
     watchlists_command_service: WatchlistsCommandService | None = None,
 ) -> list[LocalToolSpec]:
@@ -4120,6 +4177,49 @@ def _default_specs(
                 # tags -- the [tools] gate above is the extra guard this one
                 # gets beyond that shared default.
                 tags=(),
+            )
+        )
+    if ask_user is not None and coerce_bool_setting(
+        get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
+        ASK_USER_DEFAULT_ENABLED,
+    ):
+        # PRD Feature A: registered only when the Console supplies an ask
+        # callback (the todo_* pattern -- absent in headless runs, A10),
+        # exempt from the permission layer (A12), imported lazily so the
+        # module stays off the boot path (ADR-097).
+        import os
+
+        from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
+        from .ask_user_questions import (
+            ASK_USER_DESCRIPTION,
+            ASK_USER_DESCRIPTION_ENV_VAR,
+            ASK_USER_PARAMETERS,
+            resolve_tool_description,
+        )
+
+        # task-31420: the description is a registry prompt (its catalog
+        # default is byte-identical to ASK_USER_DESCRIPTION) so a user can
+        # inspect and override the restraint text like any other prompt the
+        # app puts in front of a model. Precedence is env -> config/registry
+        # -> shipped constant, and every candidate is validated through the
+        # Pydantic `ToolDescriptionText` model before it can reach the spec;
+        # a blank, over-long, or non-text override is skipped, never shipped.
+        description = resolve_tool_description(
+            os.environ.get(ASK_USER_DESCRIPTION_ENV_VAR),
+            get_internal_prompt("agents.ask_user_tool_description"),
+            ASK_USER_DESCRIPTION,
+        )
+        specs.append(
+            LocalToolSpec(
+                name="ask_user",
+                description=description,
+                parameters=ASK_USER_PARAMETERS,
+                handler=_make_ask_user_handler(ask_user),
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
+                tags=(),
+                gate_exempt=True,
             )
         )
     return specs

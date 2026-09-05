@@ -31,9 +31,14 @@ $ds-focus-fg: $ds-text-primary;
    surfaces — it previously aliased $ds-surface-raised (= $surface), which
    nullified the non-obscuring focus contract's own mechanism (~1.1:1 focus
    shifts measured live; an invisible-focus Tab+Enter activated 'Save as…').
-   A raised steel-blue, ~3:1 against the dark control/panel surfaces, still
-   muted enough to keep the contract's no-accent character. */
-$ds-focus-bg: #51677e;
+   task-31264: the steel-blue literal (#51677e) that replaced the alias was
+   tuned for dark canvases only, and a `$name: value` here shadows every
+   theme's variables dict for this source (per-source variable scope) — so
+   light themes painted a frozen slate focus. Textual's generated
+   block-cursor-blurred-background ($primary at 30%) gives a polarity-aware
+   tint on every theme; the Button:focus rule's bold-underline cues carry
+   the handful of themes whose primary sits close to their surface. */
+$ds-focus-bg: $block-cursor-blurred-background;
 $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 /* task-1586: this token still aliased $ds-surface-raised (= $surface),
@@ -58,26 +63,35 @@ $ds-status-error: $error;
 /* task-2230 (a11y): $error measures 3.06:1 on the app's dark canvases --
    an AA fail, and LESS readable than ordinary help text (7.21:1), which
    inverts the importance hierarchy. This token is the readable error
-   foreground (7.71:1) for text and marks that must be READ, while
-   $ds-status-error stays the decorative status hue. */
-$ds-status-error-readable: #ff8fa3;
+   foreground for text and marks that must be READ, while $ds-status-error
+   stays the decorative status hue. task-31264: the original literal
+   (#ff8fa3) was dark-canvas-only and, being a per-source definition, could
+   not be overridden by any theme — light themes rendered error text at
+   1.4–2.0:1. Textual's generated $text-error is the same idea computed per
+   theme polarity (agentic_terminal resolves to #FF929C, within a hair of
+   the old hand-tuned value). */
+$ds-status-error-readable: $text-error;
 /* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
    measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
    -- below AA for normal text, and a 0.03 delta means a placeholder is
-   also useless as a disabled-state cue. This grey clears AA against BOTH
-   the resting field surface (rgb 30) and the darkened disabled surface
-   (rgb 13) -- measured 4.94:1 / 5.63:1 -- while staying obviously dimmer
-   than a real value ($text, rgb 224), so a placeholder still reads as an
-   absent value rather than as content. */
-$ds-text-placeholder: #8a8a8a;
+   also useless as a disabled-state cue. The token must clear AA against
+   the field surfaces while staying obviously dimmer than a real value, so
+   a placeholder still reads as an absent value rather than as content.
+   task-31264: the grey literal (#8a8a8a) that implemented this was
+   measured on dark surfaces only and shadowed every theme (per-source
+   variable scope; 2.2–3.2:1 on the light themes). $text-muted is the same
+   dimmer-but-readable role generated per theme polarity. */
+$ds-text-placeholder: $text-muted;
 /* TASK-25822 (a11y): `Button:disabled` stacked `opacity: 50%` ON TOP of an
    already-dim $text-disabled, compositing to a measured 1.34:1 -- a disabled
    primary read as ABSENT, not unavailable, while the dismissive action beside
-   it stayed near 14:1 and inverted the dialog's hierarchy. This grey clears
-   AA-large against the darkened disabled button surface (measured 5.09:1 on
-   rgb 25) while staying far dimmer than live label text ($text, rgb 224), so
-   "disabled" still reads as a state rather than as content. */
-$ds-text-disabled-readable: #8a8a8a;
+   it stayed near 14:1 and inverted the dialog's hierarchy. The token must
+   clear AA-large on the disabled surface while staying far dimmer than live
+   label text, so "disabled" still reads as a state rather than as content.
+   task-31264: same polarity story as $ds-text-placeholder above -- the grey
+   literal was dark-tuned and theme-frozen; $text-muted is the generated
+   polarity-aware equivalent. */
+$ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
@@ -89,6 +103,14 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+/* TASK-31429: Console context-rail colour grammar. Primary hue = what you
+   are in (active workspace, active/selected conversation); accent hue = a
+   value beside a muted label. Both are references to Textual's generated
+   per-theme text tints, so every theme -- built-in, Orb, or user-saved --
+   recolors the rail; themes.py pins the two generated names to AA-readable
+   values where Textual's 66% tint falls short (see ensure_readable_text_hues). */
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
 
 /* Console transcript speaker accents. Textual exposes whether the active
    theme is dark or light as an App class; the two assistant tones keep the
@@ -2973,25 +2995,16 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
     display: none;
 }
 
-/* task-15774: while a search is ACTIVE, the whole search-controls block
-   (box + match count + Prev/Next) docks to the top of the scrolling viewer
-   -- the find-bar convention, and the same pinned-edge chrome idiom as
-   #library-ingest-commit-bar's dock: bottom. In flow, the stack above the
-   controls (Back, title, metadata, section header) exceeds an 80x24
-   viewport, so the match count and Prev/Next sat below the fold exactly
-   while the user was operating them. Dock-on-active keeps them painted at
-   every size and scroll position; an inactive search keeps the in-flow
-   layout, so no space is stolen when nobody is searching. The raised
-   background + bottom rule stop scrolled content bleeding through the
-   pinned bar; the collapsed child margins keep the bar to 6 rows of a
-   24-row terminal instead of 8. */
-#library-media-content-search-controls.-library-media-search-active {
-    dock: top;
-    width: 100%;
-    background: $ds-surface-raised;
-    border-bottom: solid $ds-grid-line;
-}
-
+/* task-31276 (critique #4 P2) retires task-15774's dock-on-active. That
+   rule moved the whole controls block to the top of the viewer the moment
+   a query was submitted, so Enter teleported the bar out from under the
+   mode row and shoved the Reader header (identity line, Back, title) down
+   six rows -- the bar the user was typing into jumped away from the caret.
+   Its premise is gone too: task-31237 made the viewer itself stop
+   scrolling (the content box owns the overflow), so the chrome above the
+   bar no longer scrolls out from under it and nothing bleeds through.
+   The class stays: it still collapses the active bar's child margins,
+   keeping it to 6 rows of a 24-row terminal instead of 8. */
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search,
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search-status {
     margin: 0;
@@ -6088,61 +6101,81 @@ StatCard:hover {
     margin: 1 0 0 0;
 }
 
-.settings-preview-grid {
+/* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
+   the palette being edited (see SettingsThemeEditor._refresh_preview), so it
+   follows every keystroke instead of the applied app theme. */
+.settings-theme-preview {
     width: 100%;
     height: auto;
-    min-height: 8;
     margin: 1 0;
+    border: solid $ds-grid-line;
 }
 
-.preview-column {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
-}
-
-.color-swatch {
-    width: 7;
-    min-width: 7;
+.settings-theme-preview-row {
+    width: 100%;
     height: 1;
     min-height: 1;
-    border: solid $ds-grid-line;
+}
+
+/* TASK-31254: a 1-row Static with `border: solid` paints only its top border
+   glyphs -- the hex text (and the "invalid" label) never had a content row.
+   No border; the colour IS the swatch and the text sits on it. */
+.color-swatch {
+    width: 9;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    border: none;
     content-align: center middle;
     text-style: bold;
 }
 
 .color-preset-swatch {
-    width: 2;
-    min-width: 2;
+    width: 3;
+    min-width: 3;
     height: 1;
     min-height: 1;
     margin: 0 1 0 0;
-    border: solid $ds-grid-line;
+    border: none;
 }
 
 /* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
-   Space), so they need a visible focus indicator. */
+   Space), so they need a visible focus indicator. An outline paints over the
+   swatch's own cells without needing a border row, so the colour stays
+   visible (TASK-31254). */
 .color-preset-swatch:focus {
-    border: solid $ds-focus-accent;
+    outline: solid $ds-focus-accent;
     text-style: bold;
 }
 
-.preview-button {
-    width: 100%;
+/* TASK-31254: escape the app-wide `Checkbox { height: 2 }` + tall border that
+   leaves zero content rows (the TASK-18960 family; same idiom as
+   `.settings-imagegen-backend-row Checkbox`). One row: glyph + On/Off label. */
+#settings-theme-dark-mode {
+    width: auto;
     height: 1;
     min-height: 1;
-    margin: 0 0 1 0;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+#settings-theme-dark-mode > .toggle--button {
+    color: $ds-surface-panel;
+}
+#settings-theme-dark-mode.-on > .toggle--button {
+    color: $success;
 }
 
-.preview-surface-demo,
-.preview-panel-demo,
-.preview-boost-demo {
+
+/* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
+   detail pane is ~45 cells; four 16-cell-minimum buttons cannot share a row,
+   so the library and action rows stack and each button takes the width. */
+#settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-card .theme-editor-action {
     width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 1 0;
-    border: solid $ds-grid-line;
-    content-align: center middle;
 }
 
 /* ===== Settings splash screen viewer ===== */
@@ -13632,22 +13665,20 @@ Button.error:hover {
  * ======================================== */
 
 /* The liveness Static + bottom status strip are auto-height siblings of
- * the TabbedContent; without an explicit 1fr the auto-height TabbedContent
- * measures its fr children against the whole content area and overflows
- * past the footer. */
+ * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
+ * this rationale used to name); without an explicit 1fr the auto-height
+ * workbench row measures its fr children against the whole content area
+ * and overflows past the footer. */
 #schedules-shell {
     height: 1fr;
     min-height: 0;
 }
 
-#scheduling-tabs {
-    height: 1fr;
-}
-
-/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
- * across every tab (not Queue-specific), hosting the existing
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
+ * below the whole workbench, not inside the list pane, hosting the existing
  * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
- * that switches to the Conflicts tab. SyncStatusWidget takes the
+ * that PUSHES the conflicts view over the list (redesign PR-4 task 5: the
+ * Conflicts tab it used to switch to is retired). SyncStatusWidget takes the
  * remaining width so the badge sits flush right; `align` centers the
  * badge (height:1, from .scheduling-queue-chip) against the taller
  * padded SyncStatusWidget row. */
@@ -13659,13 +13690,6 @@ Button.error:hover {
 
 #scheduling-status-strip > SyncStatusWidget {
     width: 1fr;
-}
-
-SchedulesWorkbench TabbedContent,
-SchedulesWorkbench TabbedContent ContentSwitcher,
-SchedulesWorkbench TabbedContent TabPane {
-    height: 1fr;
-    min-height: 0;
 }
 
 #scheduling-workbench {
@@ -13692,55 +13716,11 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
-/* Automations tab (ADR-077): definitions list on the left, the selected
- * definition's durable run history on the right -- the same list|detail
- * idiom as the Queue tab's three panes. */
-#scheduling-automations-split {
-    layout: horizontal;
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-automations-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-#scheduling-automation-history-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
- * the definitions detail widget (DefinitionDetail), the same list|detail|
- * inspector idiom as the Queue tab's three panes above.
- *
- * min-width 22, not 30 (final review F5): the three panes' min-widths must
- * SUM to no more than the narrowest width at which all three are still
- * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
- * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
- * Textual's fr layout then gave EVERY pane the full container width,
- * laying the detail and history panes out entirely off-screen; the split
- * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
- * 82 fits 84 with slack. This floor only ever binds inside that band -- at
- * any wider width the 1fr share is larger anyway. */
-#scheduling-automations-detail-pane {
-    width: 1fr;
-    min-width: 22;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
+/* redesign PR-4, task 5: the Automations tab's own three-pane split
+ * (#scheduling-automations-split / -pane / -detail-pane / -history-pane)
+ * is retired with the tab. The ids below that still start with
+ * `#scheduling-automation-detail-` are DefinitionDetail's own CHILD ids,
+ * not that pane's -- they follow the widget wherever it is mounted. */
 #scheduling-automation-detail-empty-state {
     color: $text-muted;
     text-align: center;
@@ -13757,19 +13737,6 @@ SchedulesWorkbench TabbedContent TabPane {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $text;
-}
-
-#scheduling-automations-table {
-    height: 1fr;
-}
-
-#scheduling-automation-history-table {
-    height: 1fr;
-}
-
-#scheduling-automations-notice,
-#scheduling-automation-history-notice {
-    color: $text-muted;
 }
 
 #scheduling-queue-filter {
@@ -13796,26 +13763,69 @@ SchedulesWorkbench TabbedContent TabPane {
     background: $surface-darken-1;
 }
 
+/* redesign PR-4, task 6 (spec §11): the collapsed-chip control -- one
+ * button standing in for the four named chips below 84 columns. Same
+ * flat single-row look as the chips it replaces (it deliberately does
+ * NOT carry `.scheduling-queue-chip`: that class is what the compact
+ * rule below hides). `display: none` by default, so it only ever appears
+ * at the widths where the four chips are gone. */
+#scheduling-chip-cycle {
+    display: none;
+    height: 1;
+    border: none;
+    width: auto;
+    min-width: 8;
+    background: $surface-darken-1;
+}
+
 /* Compact mode: the filter's margin row goes to the table (80x24 has
- * exactly one spare row; without this the queue shows only the filter).
- * The chip row is hidden outright at this width rather than squeezed
- * further -- it is a filter convenience, not a required affordance, and
- * the narrow-width floor already prioritizes the table + detail pane. */
+ * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
 }
 
+/* The four chips collapse into the cycling control rather than the whole
+ * row disappearing (ruling 6) -- one row either way, and a mouse user
+ * keeps a filter affordance at the floor. The row's own bottom margin
+ * goes to the table for the same reason the filter's does. */
 #scheduling-workbench.compact #scheduling-queue-chips {
+    margin: 0;
+}
+
+#scheduling-workbench.compact #scheduling-queue-chips .scheduling-queue-chip {
     display: none;
+}
+
+#scheduling-workbench.compact #scheduling-chip-cycle {
+    display: block;
+}
+
+/* With both side panes hidden the rail is the only thing on screen, so it
+ * takes the whole width -- it used to keep the 24-column width the
+ * three-pane compact split gives it, wrapping the queue into a gutter
+ * while 54 columns sat empty -- and drops its own frame: the workbench's
+ * border is already the visible edge, and 4 rows of pane chrome is a
+ * sixth of an 80x24 terminal. */
+#scheduling-workbench.compact #scheduling-list-pane {
+    width: 1fr;
+    min-width: 0;
+    border: none;
+    padding: 0 1;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
     padding: 0;
 }
 
+/* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
+ * left ~20 usable ones -- narrow enough that the header's three Buttons
+ * wrapped their labels, and an auto-height row of wrapped Buttons grew to
+ * SIXTEEN rows, leaving the queue table a single line at 110x40. Sharing
+ * the width with the detail pane (which keeps its own min-width) fits the
+ * header on one row again and gives the table back its space. */
 SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 24;
-    min-width: 20;
+    width: 1fr;
+    min-width: 28;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
@@ -13862,19 +13872,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin-left: 1;
 }
 
-/* Automations tab header (task-5): same title+button row shape as the
- * Queue pane's #scheduling-list-header above. */
-#scheduling-automations-header {
-    height: auto;
-}
-
-#scheduling-automations-header #scheduling-automations-title {
-    width: 1fr;
-}
-
-#scheduling-new-automation {
+/* redesign PR-4, task 2: the rail's Results relocation affordance,
+ * beside Mark-all-read -- same auto-width row shape, always visible
+ * (never hidden, unlike Mark-all-read). */
+#scheduling-results-badge {
     width: auto;
     min-width: 9;
+    margin-left: 1;
 }
 
 /* Empty state */
@@ -13895,15 +13899,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-/* Transfer action row (schedules-handoff spec §6, PR-5 task 7) */
-#scheduling-task-detail-transfer {
-    height: auto;
-    padding: 0 0 1 0;
-}
-
-#scheduling-task-detail-transfer Button {
-    margin: 0 1 0 0;
-}
+/* redesign PR-4, task 4: the legacy transfer action row (schedules-
+   handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
+   Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
@@ -13912,7 +13910,12 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     text-style: bold;
 }
 
-#scheduling-task-detail .follow-why {
+/* Both live instances of the pane: the docked one and, at narrow widths,
+ * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
+ * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which
+ * would be an ancestor-scoped bare-type rule (PR-3's fastpath ratchet). */
+#scheduling-task-detail .follow-why,
+#scheduling-task-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
@@ -13932,8 +13935,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-#scheduling-automation-detail .follow-why,
-#scheduling-queue-definition-detail .follow-why {
+/* Same pair as the reminder pane's rule above: docked + pushed instance. */
+#scheduling-queue-definition-detail .follow-why,
+#scheduling-definition-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
@@ -14028,13 +14032,25 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0;
 }
 
-/* Compact mode (see SchedulesWorkbench.on_resize): the Queue tab label
- * already names the pane; the in-pane title/New-button row goes to the
- * table (80x24 has exactly one spare row -- the New button stays reachable
- * via the `c` key, which the footer advertises). Hiding the header hides
- * the title Static nested inside it too. */
-#scheduling-workbench.compact #scheduling-list-header {
+/* Compact mode (see SchedulesWorkbench.on_resize): the screen header
+ * already names the pane, so the in-pane TITLE yields its row -- but the
+ * header's buttons do not. redesign PR-4, task 6 (ruling 6: "the rail
+ * degrades readably at 80"): `Create ▾`, `Mark all read` and `Results`
+ * are the only routes to those operations that need no selected row, and
+ * what made the row unaffordable at the floor was the 3-row bordered
+ * Button box, not the buttons. They flatten to one row instead
+ * (height:1/border:none -- the same idiom the chip row and the Runs-on
+ * mini-bar already use), and the header goes from 3 rows to 1. */
+#scheduling-workbench.compact #scheduling-list-title {
     display: none;
+}
+
+#scheduling-workbench.compact #scheduling-new-task,
+#scheduling-workbench.compact #scheduling-mark-all-read,
+#scheduling-workbench.compact #scheduling-results-badge {
+    height: 1;
+    border: none;
+    background: $surface-darken-1;
 }
 
 /* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
@@ -14135,6 +14151,20 @@ DetailValueRow .detail-value-row-error {
 DetailGroup {
     background: $ds-surface-panel;
     border-top: hkey $ds-grid-line;
+}
+
+/* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
+ * push pattern, spec §11) hands the factory-built widget this class so it
+ * fills the space between the screen's `Header`/`Footer` regardless of
+ * whether the hosted widget sizes itself (`ConflictsTab` already does,
+ * via its own `BUNDLED_CSS` -- this covers the panes that don't, e.g.
+ * `TaskDetail`/`DefinitionDetail`, once later tasks push those). Bare
+ * class selector, carried only by whatever `WorkbenchHostScreen.compose`
+ * tags with it -- not ancestor-scoped, so it never counts against the
+ * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
+ * rule_count_is_a_ratchet`). */
+.workbench-host-body {
+    height: 1fr;
 }
 
 /* ===== MODULE: features/_code_repo.tcss ===== */

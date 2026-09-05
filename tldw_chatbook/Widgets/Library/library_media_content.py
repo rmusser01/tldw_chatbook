@@ -317,13 +317,12 @@ class LibraryMediaContentBody(ScrollableContainer):
 class LibraryMediaContentSearchControls(Vertical):
     """Maintain search controls while preserving active widget identity."""
 
-    #: Set while a query is active. The app CSS (task-15774) docks the
-    #: active controls to the top of the scrolling viewer so the match
-    #: count and Prev/Next stay painted at every terminal size -- at 80x24
-    #: the in-flow stack above them (Back, title, metadata, section
-    #: header) pushed them below the fold exactly while they were in use.
-    #: An inactive search stays in flow, so no space is reserved when
-    #: nobody is searching.
+    #: Set while a query is active. task-31276 retired task-15774's
+    #: dock-on-active (submitting relocated the whole bar to the top of the
+    #: viewer, above the Reader header, while the user was typing into it);
+    #: the class now only collapses the active bar's child margins, so it
+    #: costs 6 rows instead of 8. The bar's anchor is the mode row, in flow,
+    #: at every stage of the gesture.
     ACTIVE_SEARCH_CLASS = "-library-media-search-active"
 
     DEFAULT_CSS = """
@@ -339,26 +338,45 @@ class LibraryMediaContentSearchControls(Vertical):
         query: str,
         matches: tuple[int, ...],
         match_index: int,
+        focus_on_mount: bool = False,
         **kwargs: Any,
     ) -> None:
+        """Build the in-item search bar.
+
+        Args:
+            is_markdown: Whether the searched body renders as Markdown (the
+                placeholder says search matches raw text).
+            query: The active query, or "" when the bar is empty.
+            matches: Line indexes that match ``query``.
+            match_index: Index into ``matches`` of the current match.
+            focus_on_mount: One-shot Find-gesture token (task-31269): take
+                focus into the Input after this mount; never set for an
+                item change, mode flip, or match navigation remount.
+            **kwargs: Passed to ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.is_markdown = is_markdown
         self.query = query
         self.matches = matches
         self.match_index = match_index
+        self.focus_on_mount = focus_on_mount
         self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
 
     def on_mount(self) -> None:
-        """Take focus into the input on the Find-gesture mount (task-31237).
+        """Take focus into the input only on the Find-gesture mount.
 
-        The bar now mounts only when the Find action opens it (or a query
-        is already applied). On the gesture mount -- empty query -- the
-        input takes focus from THIS widget's own post-refresh hook (its
-        children exist by then), because no screen-level defer can order
-        itself after a nested recompose-mount; an active-query remount
-        (match navigation, mode flips) never steals focus.
+        task-31269 (critique #4 P0): inferring the gesture from an empty
+        query made EVERY mount with no query steal focus -- each ]/[ item
+        load in Analysis mode, and any walk with the bar still empty,
+        parked the caret in this Input and the next key was typed. The
+        gesture is now an explicit token the screen sets in the Find
+        handler and the viewer spends on the one compose that follows;
+        every other mount (item change, mode flip, match navigation)
+        leaves focus alone. The focus still runs from THIS widget's
+        post-refresh hook because no screen-level defer can order itself
+        after a nested recompose-mount (task-31237).
         """
-        if not self.query:
+        if self.focus_on_mount:
             self.call_after_refresh(self._focus_search_input)
 
     def _focus_search_input(self) -> None:
@@ -438,8 +456,7 @@ class LibraryMediaContentSearchControls(Vertical):
         self.matches = matches
         self.match_index = match_index
         is_active = bool(query)
-        # Dock-on-active (task-15774): the class stays on the persistent
-        # container itself.
+        # The active-state class stays on the persistent container itself.
         self.set_class(is_active, self.ACTIVE_SEARCH_CLASS)
 
         search_input = self.query_one("#library-media-content-search", Input)

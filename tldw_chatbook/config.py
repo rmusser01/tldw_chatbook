@@ -119,6 +119,12 @@ def get_cli_config_path() -> Path:
     return _get_effective_config_path()
 
 
+def get_user_themes_dir() -> Path:
+    """Directory holding the user's saved theme TOML files (active profile)."""
+
+    return get_cli_config_path().parent / "themes"
+
+
 def _optional_package_available(module_name: str) -> bool:
     """Return whether an optional top-level module is installed without importing it."""
 
@@ -3235,6 +3241,7 @@ rail_layout_scope = "global"  # Share Console rail disclosure across workspaces;
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+# ask_user_timeout_seconds = 0  # ask_user question card auto-continue: 0 (default) waits for an answer indefinitely; e.g. 120 continues the run without an answer after 120s. Environment override: TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS
 raw_cli_permitted = false       # Persisted unlock only; every app launch still starts unarmed
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
 project_instructions_startup_max_bytes = 32768

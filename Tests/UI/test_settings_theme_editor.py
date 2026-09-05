@@ -222,7 +222,7 @@ async def test_settings_theme_editor_delete_blocks_builtin_themes(tmp_path):
 @pytest.mark.asyncio
 async def test_settings_theme_editor_delete_blocks_shipped_themes(tmp_path):
     """Shipped catalog themes are not deletable and say "shipped", matching
-    the tree's own grouping (Built-in / Custom catalog / User Themes)."""
+    the tree's own grouping (Your themes / Built-in / Shipped themes)."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
@@ -253,7 +253,7 @@ def _write_user_theme(themes_dir, theme_name: str):
 def _user_theme_labels(editor: SettingsThemeEditor) -> set[str]:
     tree = editor.query_one("#settings-theme-tree", Tree)
     for node in tree.root.children:
-        if str(node.label) == "User Themes":
+        if str(node.label) == "Your themes":
             return {str(child.label) for child in node.children}
     return set()
 
@@ -271,7 +271,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
 
         # The tree picked the file up on mount, so the delete also exercises
         # the tree-removal branch.
-        assert "user:my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in _user_theme_labels(editor)
 
         editor.current_theme_name = "my_custom_theme"
         editor.on_delete_theme()
@@ -287,7 +287,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert theme_file.exists()
-        assert "user:my_custom_theme" in _user_theme_labels(editor)
+        assert "my_custom_theme" in _user_theme_labels(editor)
 
         # Re-invoke and confirm: only now is the file unlinked.
         editor.on_delete_theme()
@@ -297,7 +297,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert "user:my_custom_theme" not in _user_theme_labels(editor)
+        assert "my_custom_theme" not in _user_theme_labels(editor)
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == "Deleted theme 'my_custom_theme'"
@@ -316,7 +316,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        assert f"user:{shipped_name}" in _user_theme_labels(editor)
+        assert shipped_name in _user_theme_labels(editor)
 
         editor.current_theme_name = shipped_name
         editor.on_delete_theme()
@@ -330,7 +330,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
         await pilot.pause()
 
         assert not theme_file.exists()
-        assert f"user:{shipped_name}" not in _user_theme_labels(editor)
+        assert shipped_name not in _user_theme_labels(editor)
         assert editor.current_theme_name == "textual-dark"
         message = app.notify.call_args.args[0]
         assert message == f"Deleted theme '{shipped_name}'"
@@ -423,7 +423,7 @@ async def test_settings_theme_editor_reset_without_edits_skips_confirmation(tmp_
 
         assert not isinstance(app.screen, ConfirmationDialog)
         message = app.notify.call_args.args[0]
-        assert message == "Theme reset to original values"
+        assert message == "No changes to reset"
 
 
 @pytest.mark.asyncio
@@ -509,3 +509,495 @@ async def test_settings_theme_editor_new_confirms_before_discarding_edits(tmp_pa
         assert editor.current_theme_name == "new_theme"
         message = app.notify.call_args.args[0]
         assert message == "Creating new theme"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(tmp_path):
+    """TASK-31251: New -> rename -> Apply/Save/Reset/Delete all use the typed name."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        name_input = editor.query_one("#settings-theme-name", Input)
+        name_input.value = "ocean"
+        await pilot.pause()
+        assert editor.current_theme_name == "ocean"
+
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.notify.call_args.args[0] == "Theme 'ocean' applied"
+
+        editor.on_save_theme()
+        await pilot.pause()
+        assert (tmp_path / "ocean.toml").exists()
+        assert editor.current_theme_name == "ocean"
+
+        editor.on_reset_theme()
+        await pilot.pause()
+        assert name_input.value == "ocean"
+
+        editor.on_delete_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert "ocean" in app.screen.message
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_selecting_builtin_leaf_does_not_retheme_app(tmp_path):
+    """TASK-31255: browsing the tree is read-only for the running app, and the
+    palette comes from the real registered Theme, not a hardcoded table."""
+    from textual.color import Color
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.theme = "textual-light"
+        await pilot.pause()
+        editor.load_theme("textual-dark")
+        await pilot.pause()
+        assert app.theme == "textual-light"
+        resolved = app.available_themes["textual-dark"].to_color_system().generate()
+        for key in ("background", "secondary", "panel"):
+            assert editor.color_inputs[key].value.upper() == Color.parse(
+                resolved[key]
+            ).hex.upper(), key
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_delete_keeps_app_theme(tmp_path):
+    """TASK-31255: deleting a saved theme resets the editor, not the app theme."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "my_custom_theme")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.theme = "textual-light"
+        editor.load_user_theme("my_custom_theme")
+        await pilot.pause()
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert app.theme == "textual-light"
+        assert editor.current_theme_name == "textual-dark"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_save_registers_theme_with_app(tmp_path):
+    """TASK-31250: Save registers the theme so Appearance/palette can offer it."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert "ocean" in app.available_themes
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
+    tmp_path, monkeypatch
+):
+    """TASK-31250: unsaved -> warning; saved -> general.default_theme written."""
+    import tldw_chatbook.config as config_module
+
+    written: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        config_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: written.append((section, key, value)) or True,
+    )
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_set_launch_default()
+        await pilot.pause()
+        assert "Save the theme first" in app.notify.call_args.args[0]
+        assert written == []
+
+        editor.on_save_theme()
+        await pilot.pause()
+        editor.on_set_launch_default()
+        await pilot.pause()
+        assert written == [("general", "default_theme", "ocean")]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_remount_after_apply_restores_palette(tmp_path):
+    """TASK-31252: app.theme == 'custom_<name>' must load, not blank the editor."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "custom_new_theme"
+
+        editor._initialize_editor()  # what a remount does
+        await pilot.pause()
+        assert editor.current_theme_name == "new_theme"
+        assert editor.query_one("#settings-theme-name", Input).value == "new_theme"
+        assert editor.color_inputs["primary"].value.upper() == "#123456"
+        assert editor.color_inputs["background"].value != ""
+
+
+def _hue_deg(hex_value: str) -> float:
+    from textual.color import Color
+
+    return Color.parse(hex_value).hsl.h * 360
+
+
+def _hue_distance(a: float, b: float) -> float:
+    delta = abs(a - b) % 360
+    return min(delta, 360 - delta)
+
+
+@pytest.mark.parametrize("primary", ["#9966FF", "#00CC66", "#FF9900"])
+def test_generate_from_primary_keeps_the_primary_hue(primary):
+    """TASK-31253: Color.hsl hue is 0-1; the generator treated it as degrees,
+    so every primary produced a red secondary and a cyan accent."""
+    from textual.color import Color
+
+    editor = SettingsThemeEditor()  # is_dark_theme defaults to True
+    palette = editor._generate_theme_from_primary(Color.parse(primary))
+
+    base = _hue_deg(primary)
+    for key in ("secondary", "background", "surface", "panel"):
+        assert _hue_distance(_hue_deg(palette[key]), base) <= 30, (key, palette[key])
+    assert 150 <= _hue_distance(_hue_deg(palette["accent"]), base) <= 180
+    assert all(value == value.upper() for value in palette.values()), palette
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_actions_precede_presets_in_focus_order(tmp_path):
+    """TASK-31256: Apply/Save/Reset must not sit behind 40 preset swatches."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ids = [w.id for w in editor.query("*") if getattr(w, "can_focus", False) and w.id]
+        assert ids.index("settings-theme-apply") < ids.index("settings-theme-preset-Blues-0")
+        assert ids.index("settings-theme-apply") < ids.index("settings-theme-color-primary")
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_tabbing_does_not_move_preset_target(tmp_path):
+    """TASK-31256: focusing colour inputs on the way to a swatch must not change
+    which colour the swatch fills (it used to land on Error)."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["error"].focus()
+        await pilot.pause()
+        before_error = editor.color_inputs["error"].value
+        editor.query_one("#settings-theme-preset-Blues-0").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert editor.current_theme_data["primary"] == editor.COLOR_PRESETS["Blues"][0]
+        assert editor.color_inputs["error"].value == before_error
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(tmp_path):
+    """TASK-31256: own themes first and open; the 58 shipped themes collapsed."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor._populate_theme_tree()
+        tree = editor.query_one("#settings-theme-tree", Tree)
+        labels = [str(node.label) for node in tree.root.children]
+        assert labels == ["Your themes", "Built-in", "Shipped themes"]
+        assert tree.root.is_expanded
+        assert tree.root.children[0].is_expanded
+        assert not tree.root.children[2].is_expanded
+        assert [str(c.label) for c in tree.root.children[0].children] == ["ocean"]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_new_copies_current_palette(tmp_path):
+    """TASK-31257: the hint promises 'from the current palette'; New used to load
+    a hardcoded blue set and force dark=True."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_theme("textual-light")
+        await pilot.pause()
+        before = dict(editor.current_theme_data)
+        assert before, "textual-light must resolve to a palette"
+        editor.on_new_theme()
+        await pilot.pause()
+        assert editor.current_theme_name == "new_theme"
+        assert editor.current_theme_data == before
+        assert editor.is_dark_theme is False
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_save_confirms_before_overwriting_another_theme(tmp_path):
+    """TASK-31258: saving under a name that already exists on disk (and is not
+    the theme currently loaded from that file) asks first; cancel keeps the file."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert 'primary = "#0099FF"' in (tmp_path / "ocean.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(tmp_path):
+    """TASK-31258: re-saving the theme you loaded from disk is an update, not an overwrite."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "#123456" in (tmp_path / "ocean.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_export_confirms_before_overwriting(tmp_path, monkeypatch):
+    """TASK-31258: Export onto an existing file asks first."""
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    existing = downloads / "textual-dark_theme.toml"
+    existing.write_text("old", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_export_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert existing.read_text(encoding="utf-8") == "old"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(tmp_path):
+    """TASK-31259: the preview must follow the palette being edited, not the
+    app theme (which only changes on Apply)."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        editor.color_inputs["error"].value = "#654321"
+        await pilot.pause()
+        user_row = editor.query_one("#settings-theme-preview-user")
+        assert user_row.styles.background.hex.upper() == "#123456"
+        error_row = editor.query_one("#settings-theme-preview-error")
+        assert error_row.styles.color.hex.upper() == "#654321"
+        # Nothing was applied to the running app.
+        assert not str(app.theme).startswith("custom_")
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_one_primary_button_per_action_row(tmp_path):
+    """TASK-31280: Apply is the one primary action; New and Generate were also
+    variant=primary, so three buttons competed for the eye."""
+    from textual.widgets import Button
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        primaries = [b.id for b in editor.query(Button) if b.variant == "primary"]
+        assert primaries == ["settings-theme-apply"]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(tmp_path):
+    """Live at 2026-09-04: a saved accent '#FFD700' displayed as '#FED700' because
+    the editor read every colour back through the resolved colour system, which
+    round-trips set colours through float maths. Colours a Theme sets explicitly
+    must come back byte-exact; only unset ones are resolved."""
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.register_theme(
+            create_theme_from_dict(
+                "exact_check",
+                {"primary": "#9966FF", "accent": "#FFD700", "warning": "#FFD700", "dark": True},
+            )
+        )
+        editor.load_theme("exact_check")
+        await pilot.pause()
+        assert editor.color_inputs["accent"].value == "#FFD700"
+        assert editor.color_inputs["warning"].value == "#FFD700"
+        assert editor.color_inputs["primary"].value == "#9966FF"
+        # Unset colours are still resolved, not left blank.
+        assert editor.color_inputs["background"].value.startswith("#")
+
+
+# ---------------------------------------------------------------------------
+# PR #2375 review follow-ups (Qodo).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_using_stale_name(tmp_path):
+    """Qodo #6: an emptied Name box must not let Apply/Export/Delete/Set default
+    act on the previously loaded name."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "   "
+        await pilot.pause()
+        assert editor.current_theme_name == ""
+
+        for handler in (
+            editor.on_apply_theme,
+            editor.on_export_theme,
+            editor.on_delete_theme,
+            editor.on_set_launch_default,
+        ):
+            app.notify.reset_mock()
+            handler()
+            await pilot.pause()
+            assert app.notify.call_args.args[0] == "Please enter a theme name", handler.__name__
+            assert not isinstance(app.screen, ConfirmationDialog), handler.__name__
+        assert (tmp_path / "ocean.toml").exists()
+        assert "custom_" not in " ".join(app.available_themes)
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_set_launch_default_validates_name_and_reports_write_failure(
+    tmp_path, monkeypatch
+):
+    """Qodo #2 + #7: a traversal-shaped name is rejected before any path check, and
+    a failed config write is reported as an error, not success."""
+    import tldw_chatbook.config as config_module
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+
+        editor.current_theme_name = "../evil"
+        editor.on_set_launch_default()
+        await pilot.pause()
+        assert "Invalid theme name" in app.notify.call_args.args[0]
+
+        editor.current_theme_name = "ocean"
+        monkeypatch.setattr(config_module, "save_setting_to_cli_config", lambda *a, **k: False)
+        editor.on_set_launch_default()
+        await pilot.pause()
+        message, kwargs = app.notify.call_args.args[0], app.notify.call_args.kwargs
+        assert "Could not save" in message
+        assert kwargs.get("severity") == "error"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_shipped_theme(
+    tmp_path, monkeypatch
+):
+    """Qodo #9: deleting a saved theme drops its runtime registration (so Appearance
+    and the palette stop offering it), restores a shadowed shipped theme, and clears
+    it as the launch default."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES, create_theme_from_dict
+
+    shipped = next(t for t in ALL_THEMES if hasattr(t, "name"))
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    _write_user_theme(tmp_path, shipped.name)
+    written: list[tuple] = []
+    monkeypatch.setattr(config_module, "get_cli_setting", lambda section, key, default=None: "ocean")
+    monkeypatch.setattr(
+        config_module, "save_setting_to_cli_config", lambda *a: written.append(a) or True
+    )
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # Registered as the app would at startup / after Save.
+        app.register_theme(create_theme_from_dict("ocean", {"primary": "#9966FF"}))
+        app.register_theme(create_theme_from_dict(shipped.name, {"primary": "#123456"}))
+
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert "ocean" not in app.available_themes
+        assert ("general", "default_theme", "textual-dark") in written
+
+        editor.load_user_theme(shipped.name)
+        await pilot.pause()
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        restored = app.available_themes[shipped.name]
+        assert str(getattr(restored, "primary", "")).upper() != "#123456"

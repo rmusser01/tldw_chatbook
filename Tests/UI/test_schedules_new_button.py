@@ -127,12 +127,20 @@ async def test_new_button_chooser_recurring_choice_opens_automation_form():
 
 
 @pytest.mark.asyncio
-async def test_new_button_row_hidden_in_compact_mode():
-    """Compact mode (see on_resize) reclaims the header's row for the table.
+async def test_new_button_row_flattens_to_one_line_in_compact_mode():
+    """Compact mode (see on_resize) reclaims the header's ROWS, not its
+    buttons.
 
-    Hiding the whole header -- not just the title -- keeps the pre-change
-    row budget: the New button stays reachable via the `c` key, which the
-    footer advertises, instead of eating the one spare row at 80x24.
+    Redesign PR-4, task 6 (ruling 6: "the rail degrades readably at 80")
+    DELIBERATELY replaces this test's previous claim -- that the whole
+    header hid below 84 columns. It hid `Create ▾`, `Mark all read` and
+    `Results` with it, which are the only routes to those operations that
+    need no selected row, and the row it bought back came from the
+    3-row bordered Button box rather than from the buttons themselves.
+    The header now flattens to a single row: the title yields (the screen
+    header already names the pane) and the buttons lose their border.
+    The narrow-width floor's own reachability claims are pinned in
+    `test_schedules_responsive_floor.py`.
     """
     app = LocalOnlyBundledCSSTestApp()
     async with app.run_test() as pilot:
@@ -146,4 +154,10 @@ async def test_new_button_row_hidden_in_compact_mode():
         await pilot.pause()
 
         header = workbench.query_one("#scheduling-list-header")
-        assert header.display is False
+        assert header.display is True
+        assert header.region.height == 1
+        assert workbench.query_one("#scheduling-list-title").display is False
+        for button_id in ("#scheduling-new-task", "#scheduling-results-badge"):
+            button = workbench.query_one(button_id, Button)
+            assert button.display is True
+            assert button.region.height == 1

@@ -424,7 +424,8 @@ class ConsoleComposerBar(Horizontal):
             composer: The composer whose draft changed.
             is_insertion: True when the edit ADDED text (a printable
                 character, or Shift+Enter/Ctrl+J's newline), False when it
-                removed text (Backspace/Ctrl+H, Delete, Ctrl+W, Ctrl+U).
+                removed text (Backspace/Ctrl+H, Delete, Ctrl+W, Ctrl+U,
+                focused Ctrl+C).
                 The screen dismisses first-run guidance on insertions only
                 -- "the user has started composing" is not something a
                 Backspace says -- which is exactly the baseline split, and
@@ -3821,10 +3822,9 @@ class ConsoleComposerBar(Horizontal):
                 undoable (TASK-1281). Defaults to False -- most callers use
                 this to swap draft scope programmatically (session switches,
                 the post-send clear, restore-then-replace flows), and none
-                of those should be revertable with Ctrl+Z. The one caller
-                that must pass ``True`` is the Ctrl+U "clear draft" key
-                handler in `ChatScreen.on_key` -- an accidental full clear is
-                exactly what undo exists for.
+                of those should be revertable with Ctrl+Z. The Ctrl+U and
+                focused, unselected Ctrl+C key handlers pass ``True`` because
+                an accidental full clear is exactly what undo exists for.
         """
         if record_history and self._has_any_draft_content():
             self._record_undo_snapshot(coalesce=False)
@@ -4142,7 +4142,7 @@ class ConsoleComposerBar(Horizontal):
         reaches past the composer -- the clipboard, undo/redo's store
         persistence, send, transcript paging.
 
-        TASK-3749 added the six draft-EDITING keys (Backspace/Ctrl+H,
+        TASK-3749 added the draft-EDITING keys (Backspace/Ctrl+H,
         Delete, Ctrl+W, Shift+Enter/Ctrl+J, Ctrl+U and the printable
         fallthrough). Wave 5 had to leave those on the screen because each
         one called a screen method AFTER the edit; they now post
@@ -4232,9 +4232,10 @@ class ConsoleComposerBar(Horizontal):
         # edit with `DraftChanged` and the screen does the Workbench resync
         # (and, for insertions, the guidance dismissal) in its subscriber.
         # Ordering note: as a group these ran LATER in `on_key` than they do
-        # here -- but every key they match is disjoint from the branches that
-        # used to precede them (Ctrl+C's copy, Enter's send, PageUp/PageDown's
-        # paging, the undo/redo chords), so precedence is unchanged. The
+        # here. Focused, unselected Ctrl+C is intentionally handled before the
+        # screen's selected-draft copy branch; every other edit key remains
+        # disjoint from Enter's send, PageUp/PageDown's paging, and the
+        # undo/redo chords, so their precedence is unchanged. The
         # printable fallthrough in particular can never shadow those: their
         # characters are C0 control bytes or CR, none of which are
         # `is_printable`, and all of them are modifier chords besides.
@@ -4266,8 +4267,18 @@ class ConsoleComposerBar(Horizontal):
             event.prevent_default()
             return True
         if event.key == "ctrl+u":
-            # TASK-1281: this is the one call site that opts into undo --
+            # TASK-1281: user-requested full clears opt into undo --
             # an accidental full clear is exactly what undo exists for.
+            self.clear_draft(record_history=True)
+            self._post_draft_changed(is_insertion=False)
+            event.stop()
+            event.prevent_default()
+            return True
+        if (
+            event.key == "ctrl+c"
+            and self.has_focus
+            and not self.has_full_draft_selection()
+        ):
             self.clear_draft(record_history=True)
             self._post_draft_changed(is_insertion=False)
             event.stop()

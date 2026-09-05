@@ -158,6 +158,31 @@ instead of landing exactly at the local cap.
 
 ---
 
+## A census taken on the next tick is not a census taken at the flag
+
+**PR #2373 / task-31281, 2026-09-04.** The UI-ready module census failed on
+three consecutive CI runs of what was, after the second, the same tree: 973,
+973, then 977 modules against the 972 cap. The first two carried exactly the
+one new module the PR added (fixed by lazy-mounting the widget, ADR-097
+response 1). The third did not contain that module at all -- it carried five
+`Library.collections_capture_*` modules that neither sibling run nor `dev`'s
+own run of the merged tree had. The app sets `_ui_ready` and then keeps
+running its mount path, which arms 0.1s timers that are deferred past
+readiness *by design*; the census polled the flag every 5ms and copied
+`sys.modules` when it woke, and on a starved runner those timers won. `dev`
+sits exactly at the cap, so the "+/-1 wobble headroom" the constant's own
+comment promises does not exist, and a one-run race flips the check red.
+
+**What to do.** When a guard's contract is "resident at instant X", sample at
+instant X -- here, a class-level property whose setter copies `sys.modules`
+synchronously inside the `self._ui_ready = True` assignment -- never on the
+next scheduler turn after observing X. And when a non-required check fails on
+your PR, read its `+` list before believing it: if your module is not in it,
+compare against the base branch's own run of the same tree before spending a
+round on a fix.
+
+---
+
 ## Shipped migration and ADR numbers are allocation records, not merge labels
 
 **TASK-24613, 2026-08-30.** The Agent Lessons worktree and a newer `dev`
@@ -11023,3 +11048,172 @@ the invariant. A newly red old test may be revealing missing state in its
 oracle, not a compatibility regression. Then run a cross-file gate that covers
 both the new invariant and the existing projection tests; the isolated new
 tests alone cannot expose disagreements with older test models.
+
+---
+
+## A bundle-only render harness misses the per-screen sheets since the agentic split
+
+**TASK-31254, 2026-09-04.** A painted-frame test for the Settings theme editor
+loaded `tldw_cli_modular.tcss` on a bare harness (the `test_checkbox_height_render.py`
+pattern) and every colour `Input` rendered as a clipped tall border, so the
+swatch-text assertion could not pass even after the fix. The bundle no longer
+carries `.settings-compact-input` / `.settings-input-row`: TASK-25812 split the
+Settings-owned rules out of `components/_agentic_terminal.tcss` into
+`css/screen_agentic_settings.tcss`, a per-screen sheet the app loads alongside the
+bundle. An earlier deterministic sweep of the bundle had reported those classes as
+"no rule", which was true of the bundle and false of the app.
+
+**What to do.** A harness that claims production CSS must register the bundle
+AND the owning screen's split sheet (`screen_agentic_console|library|settings.tcss`),
+in the app's order. When a bundle grep says a Settings/Console/Library class has no
+rule, grep the split sheets before concluding the state is unstyled.
+
+---
+
+## Textual's `Color.hsl` hue is 0-1, not degrees
+
+**TASK-31253, 2026-09-04.** "Generate from Primary" produced a red secondary and a
+cyan accent for every primary colour (live: `#9966FF` -> `#e83735` / `#65fdff`).
+`textual.color.Color.hsl` returns `HSL(h, s, l)` with `h` in the 0-1 range; the
+generator fed it to a helper working in degrees, so hue was always in `[0, 1)`.
+The unit test that caught it asserts hue *distance* between generated colours and
+the primary, which is the assertion a palette generator needs.
+
+**What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
+generated palettes by hue distance for several primaries, not by eyeballing one.
+
+## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
+
+**What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
+by adding `ds-status-error-readable`/`ds-text-placeholder` entries to each
+theme's `Theme.variables` dict, verified with contrast arithmetic on the dict
+values. The fix was inert at runtime: a `$name: value` definition in any tcss
+source shadows app-supplied variables for that source (proven with a minimal
+`Stylesheet(variables=...)` probe — the file's value tokens are appended after
+the app's and last-token-wins), and `_variables.tcss` defines every `ds-*`
+token. The frozen `$ds-focus-bg: #51677e` literal was painting slate focus
+states on every light theme regardless of what the theme dict said.
+
+**What to do.** A theme's `variables` dict only reaches CSS for tokens NO
+loaded stylesheet defines; for `ds-*` tokens it is documentation, not an
+override. To make a design token theme-aware, define it in tcss as a
+*reference* to one of Textual's generated polarity-aware variables
+(`$text-error`, `$text-muted`, `$block-cursor-blurred-background`, …), never a
+hex literal. And never verify a color fix by arithmetic on configuration
+values — check the resolved paint (rule-match probe or live capture); the
+dict-value contrast test in PR #2374 passed while the app painted the
+opposite.
+
+## Patch the owner of a lazy dependency, not a stale consumer alias (TASK-31301, 2026-09-04)
+
+**What happened.** Conversation Settings endpoint tests patched
+`settings_screen.probe_settings_endpoint` and
+`chat_screen.probe_settings_endpoint` after the production call sites had moved
+those imports inside their methods for the boot-budget boundary. One patch used
+`raising=False`, which silently installed an attribute the production code never
+read. The test then reached a real localhost endpoint instead of its fake; only
+the network guard exposed that the apparently isolated test no longer controlled
+its dependency.
+
+**What to do.** When production lazily imports a dependency inside a method,
+patch the symbol on the module that owns it. Do not use `raising=False` to make a
+missing consumer alias patchable. Pair the fake-driven test with one explicit,
+owned-loopback integration test so both isolation and the real call path remain
+observable.
+
+---
+
+## Formatter directive guards must follow logical owners, not physical lines
+
+**TASK-26947, 2026-09-04.** The first formatter structural guard measured an
+inline directive from the preceding physical `NEWLINE`, then from only an
+`ast.stmt` ancestor. Ruff split semicolon-separated siblings and added grouping
+parentheses, so the unchanged directive appeared to move even though its AST route,
+comment text, and association had not changed. A later `# noqa` on a same-line
+`ExceptHandler` header exposed the other hole: an `ExceptHandler` is not an
+`ast.stmt`, and falling back to the enclosing `try` would make unrelated suite
+tokens influence the header directive. Guard v3 fixed all three cases with
+logical-owner boundaries, full-module shadow parsing to exclude only independently
+proven AST-neutral parentheses, and a uniquely validated `except` clause through
+its unique depth-zero colon; its regression tests cover semicolon splitting,
+grouping parentheses, and header-versus-handler-body directives.
+
+**What to do.** Treat a directive-position metric change as a new baseline
+contract, not a comparison against old ordinal data: recapture the structural
+baseline before reformatting. Fail closed for ambiguous exception headers, never
+discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
+or decorator boundary for every non-header directive.
+
+---
+
+## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
+
+**Incident.** Schedules redesign PR-4, Task 3 (2026-09-04). The task report claimed
+the suite gate was met and quoted a passing count ("292 passed"). The number was
+real, but it came from a **partial glob** over the test files the task had touched —
+not from the gate the plan specified. Two pinned tests outside that glob were red at
+the same moment. Nothing in the report was fabricated; the run simply did not cover
+what the claim covered, and a summarised count carries no evidence of its own scope.
+
+It was caught only because the reviewer re-ran the gate independently instead of
+reading the report's claim. Had the reviewer trusted the number, a red branch would
+have gone up as green — and the two failures were in exactly the pinned tests a
+reviewer would assume the implementer had run.
+
+This is the same failure shape as `A failure list from a suite you have never run
+clean attributes nothing` (above), inverted: there, an unrun suite was used to
+attribute failures; here, a partially-run suite was used to deny them.
+
+**What to do.**
+
+- **Paste the exact tail lines from the FINAL run**, including the invocation that
+  produced them. `pytest ... -q` plus its `N passed, M failed` line is evidence; a
+  count retyped into prose is a claim. The invocation is the load-bearing half —
+  it is what makes the scope auditable.
+- **Never quote a count from a run that is not the gate.** A scoped run while
+  iterating is fine and normal; it just is not the thing you report as the gate.
+- **Reviewers re-run the gates.** Do not adjudicate a green claim from the report.
+  The re-run costs minutes; this one caught a red branch, and it is the only step
+  in the loop that is independent of the implementer's own scoping mistake.
+- If the gate is expensive, that is an argument for naming it precisely in the plan,
+  not for approximating it with a glob.
+
+---
+
+## An assertion that reads back the value the code just wrote confirms nothing — assert on PAINTED output
+
+**Incident (round 1).** Schedules-handoff PR-6, live task 6 (2026-09-02). The Results
+tab's unread badge never rendered. `pane.label = f"Results ({n})"` on a `TabPane` sets
+an **inert attribute** — Textual 8.2.8 stores the title in `_title`, and `TabPane` has
+no `label` reactive at all, so the assignment did nothing to the UI. The regression
+test (`Tests/UI/test_schedules_results_tab.py:408`) passed the entire time, because it
+asserted on `pane.label` — reading back the attribute the code had just set. A test
+shaped that way passes for **any** write to any attribute name; it cannot fail while
+the assignment executes. The badge had also been broken in the Conflicts tab before
+PR-6 copied the pattern, so a green test had been guarding a dead feature for months.
+
+**Incident (round 2), same programme.** The Automations table silently ate its
+`[<server id>]` owner prefix: `DataTable` cells go through
+`rich.text.Text.from_markup`, whose lowercase-tag regex matches `[http://…]`. Here too
+`table.get_cell_at()` returns the **stored** value and passes regardless of whether the
+content survives rendering. The fix migrated the assertions to
+`Tests/UI/schedules_test_helpers.py::rendered_row_cells`, which routes the stored row
+through the widget's own `_get_row_renderables` -> `default_cell_formatter` — the exact
+path where a bracket token is eaten.
+
+**The tell.** Ask of every assertion: *what code path must break for this to fail?* If
+the answer is "the assignment statement two lines above in the production code", the
+test is a self-confirmer. Both of these were written in good faith by someone who had
+just watched the feature not work, and both passed on the broken build.
+
+**What to do.**
+
+- When the point of a test is that something **renders**, assert on the rendered
+  artifact: painted cells (`rendered_row_cells`), compositor strips, `render_line`,
+  `region.width > 0`. Not the stored value, not the attribute you assigned.
+- Treat "framework attribute assignment" as an unverified hypothesis until a painted
+  assertion confirms it. `widget.foo = x` on a non-reactive attribute is a silent
+  no-op in Textual, and the read-back is indistinguishable from success.
+- When a live run finds a feature dead that a green test covers, **read that test
+  first**. It is more often a self-confirmer than a coverage gap, and fixing the
+  feature without fixing the test leaves the next regression unguarded.

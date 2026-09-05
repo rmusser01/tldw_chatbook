@@ -124,7 +124,10 @@ def render_conversation_markdown(
     for message in clean_messages:
         if message.role == "tool":
             lines.extend(
-                _details(f"Tool: {_safe_label(message.tool_label) or 'tool'}", message.content)
+                _details(
+                    f"Tool: {_safe_label(message.tool_label) or 'tool'}",
+                    message.content,
+                )
             )
             continue
         if message.role == "system":
@@ -266,9 +269,7 @@ def markdown_messages_from_db_rows(rows: list[dict]) -> list[MarkdownMessage]:
                     for block in blocks
                     if isinstance(block, dict)
                 ).strip()
-        image_label = (
-            "image" if str(row.get("image_mime_type", "") or "") else ""
-        )
+        image_label = "image" if str(row.get("image_mime_type", "") or "") else ""
         normalized.append(
             MarkdownMessage(
                 role=_role_value(row.get("sender", "") or "assistant"),

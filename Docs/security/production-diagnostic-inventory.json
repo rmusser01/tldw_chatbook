@@ -2904,6 +2904,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "7c97480f99ca94c6e4d4",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Screens/scheduling/definition_audit_view.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "6abd5e2a330f548a189a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/scheduling/definition_detail.py",
@@ -2917,8 +2924,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 34,
-      "diagnostic_digest": "b7e7388dbb41c5b41a6f",
+      "call_count": 27,
+      "diagnostic_digest": "c85dd7c9863c11936c42",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3848,8 +3855,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "e5f5b8a3dad70ab963ad",
+      "call_count": 9,
+      "diagnostic_digest": "91aad24a548a543c6c38",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/settings_theme_editor.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3978,6 +3985,13 @@
       "diagnostic_digest": "a4d5338ae2a43a1841f4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "32586a8d28e9fa3e33cb",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/css/Themes/themes.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -11041,6 +11055,20 @@
     {
       "candidates": [
         {
+          "call_digest": "f358d891f8a057a8",
+          "method": "warning",
+          "path_expressions": [
+            "path.name"
+          ],
+          "scope": "load_user_themes",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/css/Themes/themes.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "cc9b60087aa3e3bc",
           "method": "warning",
           "path_expressions": [
@@ -11328,10 +11356,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 572,
-    "path_privacy_candidate_calls": 714,
+    "owner_files": 574,
+    "path_privacy_candidate_calls": 715,
     "persistent_sink_files": 10,
     "task_492_calls": 1337,
-    "task_494_calls": 7596
+    "task_494_calls": 7593
   }
 }
