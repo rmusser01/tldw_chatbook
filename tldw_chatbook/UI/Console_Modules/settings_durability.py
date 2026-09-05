@@ -54,14 +54,14 @@ _CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
 class ConsoleSettingsDurabilityController:
     """Own console settings submission durability and app-lifetime default recovery.
 
-    App identity is stable for this controller lifetime. All other dependencies
-    are explicit callables resolved by wiring at use time. No DOM is owned here.
+    Dependencies, including the app owner, resolve through named callables
+    at use time. The controller owns no DOM or screen handle.
     """
 
     def __init__(
         self,
         *,
-        app_instance: Any,
+        app_instance_accessor: Callable[[], Any],
         _ensure_console_chat_controller: Callable[..., Any],
         _ensure_console_chat_store: Callable[..., Any],
         _global_chat_display_name: Callable[..., Any],
@@ -71,7 +71,7 @@ class ConsoleSettingsDurabilityController:
         _sync_native_console_chat_ui: Callable[..., Any],
         run_worker: Callable[..., Any],
     ) -> None:
-        self.app_instance = app_instance
+        self._app_instance_accessor = app_instance_accessor
         self._ensure_console_chat_controller = _ensure_console_chat_controller
         self._ensure_console_chat_store = _ensure_console_chat_store
         self._global_chat_display_name = _global_chat_display_name
@@ -83,6 +83,10 @@ class ConsoleSettingsDurabilityController:
         self._sync_native_console_chat_ui = _sync_native_console_chat_ui
         self.run_worker = run_worker
         self._console_settings_coordinated_submission_ids = deque(maxlen=64)
+
+    @property
+    def app_instance(self) -> Any:
+        return self._app_instance_accessor()
 
     def _console_default_durability_state(self) -> ConsoleDefaultDurabilityState:
         """Return the single app-lifetime default recovery holder."""
