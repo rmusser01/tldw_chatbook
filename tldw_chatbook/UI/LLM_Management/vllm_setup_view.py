@@ -155,7 +155,7 @@ class VllmSetupView(VerticalScroll):
         VllmReadinessState.NEEDS_ATTENTION: "vllm-recovery-primary",
     }
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     VllmSetupView > #vllm-local-setup,
     VllmSetupView > #vllm-existing-setup,
     VllmSetupView > #vllm-current-server,

@@ -16,7 +16,7 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
 
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     SAFE_MODAL_CONTENT = "#skill-import-choice"
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SkillImportChoiceModal {
         align: center middle;
         background: $background 75%;
