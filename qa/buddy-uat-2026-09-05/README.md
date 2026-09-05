@@ -1,6 +1,7 @@
 # Migu Buddy UAT fixes on current dev
 
-PR base: `68f9d865fad623db6ec02e19632090c1140b3c89`.
+Rebased before follow-up repairs onto `dev` at `b52080fee0`.
+Original PR verification base: `68f9d865fad623db6ec02e19632090c1140b3c89`.
 Work branch: `codex/migu-buddy-uat-fixes`. Task: TASK-31585.
 
 ## Scope
@@ -16,7 +17,9 @@ boundaries, durable turn admission and diagnostic inventory format.
   Pin directory device/inode while retaining file metadata, digest, descriptor,
   containment and symlink checks. Publication may change ancestor metadata.
 - Route readback through trusted Manual Speak snapshots and playback ownership,
-  so terminal playback clears the speaking presentation.
+  so terminal playback clears the speaking presentation. Actual playback also
+  owns an exact Buddy voice lease; stale terminal callbacks release only their
+  own lease and preserve concurrent voice owners.
 - Terminalize cancelled/unavailable project-instruction recovery. Refused
   transient echoes are excluded from provider history; already durably accepted
   turns retain recovery ownership under current dev's existing contract.
@@ -32,51 +35,65 @@ ADR required: no new ADR. Existing ADR-074 (Persona Visual/Buddy), ADR-037
 (trusted speech), ADR-069 (project instructions), and ADR-029 (private diagnostic
 boundary) govern these repairs. No new schema, dependency or provider transport.
 
+- Preserve the stable Send width while bounding the busy transcription chip,
+  keeping the cancel-capable microphone reachable at 80 columns. Narrow copy
+  reads “Local transcription busy — queued.” or “Queued”; the full explanation
+  stays in its tooltip. Ordinary listening layout is unchanged.
+
 ## Verification
 
 Tests import the actual PR tree using `PYTHONPATH` and `python -m pytest`.
 The existing development Python environment supplies dependencies only.
 No full repository suite was run.
 
-- Native Buddy widget + publication + importer: **171 passed**.
-- Independent review: **15 focused regressions passed**, covering readback,
-  setup recovery, draft ownership and nested environments.
-- Final focused setup, readback, draft, voice-guard and diagnostic regressions:
-  **23 passed**; the final diagnostic registry assertion also passed separately.
-- Broader Console/speech selection: **140 passed, 6 failed**. All six failures
-  reproduce on the pristine base with the same environment.
-- Broader diagnostic selection: **66 passed, 2 failed, 1 skipped**. Both failures
-  reproduce on the pristine base; the skip needs unavailable pinned Git objects.
-- Diagnostic inventory: 573 owners, 1,338 TASK-492 calls, 7,599 TASK-494
-  calls, 10 sink files. Statement-level review confirms exactly two changed
-  constant-message signatures; no call counts changed. Final rebuild reports
-  no drift.
-- New files pass Ruff; changed ranges were checked for formatting. Fatal-rule
-  checks retain a pre-existing `F821` (`Iterable`) in `library_screen.py:36855`,
-  reproduced on the pristine base. Existing broad lint debt is not represented
-  as clean.
+- Initial rebased targeted run: **414 passed, 3 failed**. All three remaining
+  voice failures were investigated and repaired; see the follow-up below.
+- Rebased diagnostic suite: **69 passed, 1 skipped**. The skip requires unavailable
+  historical Git objects; current-source and metadata assertions remain enabled.
+- Speech ownership, autoplay and Buddy adapter gate: **102 passed**.
+- Final complete voice-chip and mounted dictation selection: **103 passed**.
+- Focused narrow-chip/mounted-microphone regression selection: **13 passed**.
+- Independent final chip review: **15 passed**; no actionable review findings.
+- Diagnostic inventory rebuilt without drift: 574 owners, 1,334 TASK-492 calls,
+  7,599 TASK-494 calls and 10 sink files. The changed counts come from rebased dev.
+- All six derived-artifact preflight checks passed: CSS, path inventory,
+  diagnostic inventory, task IDs, schema allowlist and index pins.
+- Changed Python files pass fatal-rule checks; the missing Library `Iterable`
+  annotation import is repaired. New readback tests pass Ruff, changed ranges
+  were formatted, and `git diff --check` passes. No full repository sweep.
 
-Born-red tests demonstrated final release position loss, profile-owned
-publication rejection, stale readback ownership, recovery stuck in validating,
-consumed draft loss, cross-session draft restoration, dependency inventory
-contamination and exception capture before their respective fixes.
-Independent review found and corrected decorator placement and visible-composer
-ownership during the port.
+### Verification repairs
 
-### Base failures retained for follow-up
+The original eight failures reproduced after the rebase. Four composer fixtures
+needed the supported capture-off setting because their in-memory harness has no
+durable trace repository. The token-omission fixture now permits the base request
+to fit while the optional instruction row exceeds its budget. Setup retry covers
+both transient refusal and durable acceptance: a durable pending response blocks
+new sends until explicit discard, after which a fresh send succeeds.
 
-- `test_console_enter_snapshots_draft_before_late_keystrokes`
-- `test_console_double_enter_sends_once_and_loses_nothing`
-- `test_console_fresh_profile_first_send_resolves_real_session_not_sentinel`
-- `test_console_enter_no_op_press_restores_draft_and_unblocks_next_send`
-- `test_token_omission_notice_keeps_content_free_source_metadata`
-- `test_project_instruction_disable_terminalizes_and_allows_retry`
-- `test_reviewed_diagnostic_changes_are_metadata_only`
-- `test_task_15743_exception_types_survive_loguru_forwarding`
+The metadata registry now follows two extracted Library diagnostics and removes
+one retired by `5dd1077df6`. The exception-type forwarding guard admits only the
+existing safe conditional type-name/literal fallback. No privacy check was disabled.
 
-The last two concern stale moved diagnostic labels and an existing activity
-receipt metadata assertion. The draft PR does not waive these checks or claim
-complete repository governance sign-off.
+The broader voice gate exposed a real 80-column clipping regression after Send
+width stabilization, plus stale fixed-width/reason-visibility expectations. Bare
+composer harnesses also omitted the split Console stylesheet, causing false
+visual failures. They now load the production Console sheet; production CSS did
+not need changing.
+
+### Rebased live evidence
+
+`rebased-live-evidence.json` records actual runs from this PR worktree:
+
+- **Kokoro:** 128,000 PCM bytes drained; Migu idle → speaking → idle; speech
+  presentation cleared, no app exception, normal configuration unchanged.
+- **DeepSeek:** expected synthetic reply received; run completed; Migu
+  idle → thinking → speaking → idle; normal configuration unchanged.
+- The first rebased Kokoro replay exposed the missing Buddy playback lease;
+  regression tests failed before the repair and the real replay passed afterward.
+- Physical macOS dragging is still awaiting a foreground Terminal window. The
+  background gesture did not change geometry, so this replay is not a pass.
+- OpenAI realtime is blocked because no credential is configured.
 
 ## Earlier live evidence and limits
 
@@ -91,7 +108,7 @@ Normal configuration remained unchanged. Microphone content was neither saved
 nor sent to a provider. Temporary speech dependencies/model were not added to
 the project or enabled in the user's normal profile.
 
-Before final sign-off: resolve or classify the base failures and CI, then run
-live OpenAI realtime UAT with a credential configured in the application's
-settings. That provider was not configured during this UAT. Local speech success
+Before final sign-off: finish physical dragging on the final branch, review
+updated CI, then run live OpenAI realtime UAT with a credential configured in
+the application's settings. That provider was not configured during this UAT. Local speech success
 does not validate the OpenAI realtime transport.

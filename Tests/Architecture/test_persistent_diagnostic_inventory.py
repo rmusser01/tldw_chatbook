@@ -176,7 +176,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
         "Pending Library lifecycle write failed during unmount.": (),
-        "canvas sync failed": ("kind",),
         "Library entry canvas repair attempt failed": (),
         "Strict Library entry shell synchronization failed": (),
         "Strict Library entry canvas removal failed": (),
@@ -189,7 +188,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "operation",
             "type(exc).__name__",
         ),
-        "Failed to load Library conversations page.": (),
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
@@ -197,7 +195,13 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to persist the Library ingest backend": (),
         "Failed to persist Library ingest options": (),
         "Failed to restore a Library note": (),
-        "Failed to restore a Library Collection": (),
+        # Removed by 5dd1077df6 when generic Collection restore was retired.
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+        "canvas sync failed": ("kind",),
+    },
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": (),
     },
     "tldw_chatbook/UI/Console_Modules/image.py": {
         "Console image edit cleanup failed": (
@@ -994,7 +998,15 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             if "exception_type={}" not in message:
                 failures.append(f"{relative}: {label!r} does not render exception_type")
             positional = [ast.unparse(argument) for argument in call.args[1:]]
-            if "type(exc).__name__" not in positional:
+            # Receipt degradation also supports a missing exception. Only its
+            # literal fallback is safe; arbitrary conditional payloads are not.
+            if not any(
+                value in {
+                    "type(exc).__name__",
+                    "type(exc).__name__ if exc is not None else 'invalid_state'",
+                }
+                for value in positional
+            ):
                 failures.append(f"{relative}: {label!r} is not positional metadata")
             if any(keyword.arg == "exception_type" for keyword in call.keywords):
                 failures.append(f"{relative}: {label!r} leaves exception_type in extra")

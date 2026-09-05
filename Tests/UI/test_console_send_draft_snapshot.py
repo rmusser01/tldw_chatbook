@@ -45,6 +45,13 @@ async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
 
 def _ready_openai_app(monkeypatch, reply: str):
     app = _build_console_send_test_app()
+    # This in-memory composer harness has no durable trace repository.
+    # Exercise ordinary sending with the supported capture-off setting.
+    from tldw_chatbook import config as config_module
+
+    assert config_module.save_settings_to_cli_config(
+        {"console": {"exchange_capture": False}}
+    )
     _persist_console_provider_config(
         app,
         provider="openai",

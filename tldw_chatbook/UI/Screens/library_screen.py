@@ -14,7 +14,7 @@ import time
 import tomllib
 import uuid
 import webbrowser
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from contextlib import closing
