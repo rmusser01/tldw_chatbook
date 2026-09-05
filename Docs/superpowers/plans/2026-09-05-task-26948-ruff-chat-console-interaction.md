@@ -39,15 +39,15 @@
 - Consumes: batch label `ruff-chat-console-interaction`, authority cut `e555df102c950c29beed5e7119f433d35eee1f3c`, current branch base, and the 16-path digest above.
 - Produces: one commit containing only deterministic Ruff output on assigned Python paths plus an evidence report with drift, structural, focused-test, lint, replay, diagnostic, and governance results.
 
-- [ ] **Step 1: Reconcile the manifest against the exact branch base**
+- [x] **Step 1: Reconcile the manifest against the exact branch base**
 
   Parse the task and canonical evidence JSON, require 16 unique paths (12 tests and four production paths), recompute the canonical JSON-list digest, require every path to exist, and inspect `git diff --name-status --find-renames e555df102c950c29beed5e7119f433d35eee1f3c HEAD -- <paths>`. Record every modified, renamed, deleted, or already-formatted path; retain an upstream-clean path in the allowlist and structural proof.
 
-- [ ] **Step 2: Capture the structural baseline**
+- [x] **Step 2: Capture the structural baseline**
 
   Use the independently tested version-3 guard at `/tmp/task26947_format_guard.py` (SHA-256 `3fac070e94fe91cd152f956b19093c457c48787ea5449b54945b2305386b7471`) with Python 3.12.11 to capture `/tmp/task26948_before.json` for all 16 explicit paths. The guard must enforce the Global Constraints above and fail closed on ambiguous directive ownership.
 
-- [ ] **Step 3: Capture the focused behavioral baseline**
+- [x] **Step 3: Capture the focused behavioral baseline**
 
   Run exactly:
 
@@ -57,23 +57,23 @@
 
   Record the exit code, totals, and normalized JUnit failure/error keys. Treat any red baseline as inherited evidence, not permission to change behavior.
 
-- [ ] **Step 4: Apply Ruff only to the allowlist**
+- [x] **Step 4: Apply Ruff only to the allowlist**
 
   Invoke `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format` once with all 16 assigned paths supplied explicitly. Do not use `.` or a directory operand.
 
-- [ ] **Step 5: Require structural and scope parity**
+- [x] **Step 5: Require structural and scope parity**
 
   Compare all 16 paths against `/tmp/task26948_before.json` with the same guard. Require AST, ordered comments, inline directive attachment/position, standalone Ruff directive adjacency, and formatter-range equality. Require every changed Python path to belong to the 16-path allowlist and review the diff for handwritten behavior edits.
 
-- [ ] **Step 6: Run exact post-format verification**
+- [x] **Step 6: Run exact post-format verification**
 
   Run Ruff `check` and `format --check` on all 16 paths. Re-run the exact Step 3 pytest command with only the JUnit output changed to `/tmp/task26948_after.xml`, and require identical normalized failure/error keys. Run `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/CI/test_backlog_task_id_uniqueness.py`, `git diff --check`, and `python3.12 scripts/check_persistent_diagnostic_inventory.py --diff`.
 
-- [ ] **Step 7: Replay deterministic formatter bytes from the immutable base**
+- [x] **Step 7: Replay deterministic formatter bytes from the immutable base**
 
   For each assigned file Ruff changed, read the branch-base blob with `git show <branch-base>:<path>`, format that blob through Ruff 0.15.22 using `--stdin-filename <path> -`, and require the bytes to equal the worktree file. If an assigned path needs a separately justified safe lint fix, keep that proof and commit separate from the formatter replay.
 
-- [ ] **Step 8: Commit and report**
+- [x] **Step 8: Commit and report**
 
   Commit only the assigned Python paths changed by Ruff. Write the implementer report with the exact commit, changed/unchanged paths, every command and result, normalized failure-key comparison, and any persistent-diagnostic drift. Do not edit task closeout documentation in this commit.
 
@@ -90,15 +90,15 @@
 - Consumes: Task 1's commit, report, and clean task-scoped review.
 - Produces: checked acceptance criteria, concise implementation notes, a Done task record, and a merge-ready branch.
 
-- [ ] **Step 1: Validate the evidence package**
+- [x] **Step 1: Validate the evidence package**
 
   Confirm Task 1's report contains the exact base, digest, lineage, structural result, Ruff output, focused before/after counts and normalized keys, byte replay, persistent-diagnostic result, backlog guard, and `git diff --check`. Resolve every task-review Critical or Important finding through the bounded SDD fix loop.
 
-- [ ] **Step 2: Handle only proven derived-artifact drift**
+- [x] **Step 2: Handle only proven derived-artifact drift**
 
   If `scripts/check_persistent_diagnostic_inventory.py --diff` reports a source-layout-only change, inspect the affected statements, run the checker with `--statements <affected paths> --since <branch-base>`, regenerate with `--write`, re-run `--diff`, and commit only the generated inventory. Do not accept semantic diagnostic changes in this formatter task.
 
-- [ ] **Step 3: Close the Backlog record**
+- [x] **Step 3: Close the Backlog record**
 
   Add concise Implementation Notes containing every exact verification command/result and the focused-test rationale. Check all eight acceptance criteria, set status to `Done`, update the date, and state the ADR determination. Mark completed plan steps accurately.
 
