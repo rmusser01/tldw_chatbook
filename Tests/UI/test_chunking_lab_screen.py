@@ -550,7 +550,12 @@ async def test_sample_source_and_extent_are_visible_after_reopen(
 
 @pytest.mark.asyncio
 async def test_initial_load_survives_yielding_mount_handler(lab_app, monkeypatch):
-    """Mount-time scheduling must not silently abandon recovery initialization."""
+    """Mount-time scheduling must not silently abandon recovery initialization.
+
+    Args:
+        lab_app: Isolated application fixture for the mounted Lab screen.
+        monkeypatch: Pytest fixture for replacing the inherited mount handler.
+    """
     from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 
     async def yielding_mount(self):
