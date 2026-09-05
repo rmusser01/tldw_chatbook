@@ -19,7 +19,9 @@ import asyncio
 
 import pytest
 from textual.widgets import Button
+from textual.worker import WorkerState
 
+import tldw_chatbook.app as app_module
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -37,20 +39,28 @@ from Tests.UI.test_library_shell import (
 
 
 def _skipped_job(**overrides) -> LibraryIngestJob:
+    """A DONE job whose ``progress`` was built by the REAL producer.
+
+    (fix round 1, M-5) See the identical fixture/rationale in
+    ``Tests/Library/test_library_ingest_state.py`` -- nothing used to tie
+    the hand-written ``progress={"analysis_skipped": ...}`` to
+    ``app._library_ingest_done_progress``, so renaming that key would have
+    broken the feature in production behind a fully green suite.
+    """
+    source_path = overrides.get("source_path", "/tmp/notes.txt")
+    progress = overrides.pop("progress", None) or app_module._library_ingest_done_progress(
+        source_path,
+        was_duplicate=False,
+        payload={"analysis_skipped_reason": "no analysis provider is configured"},
+    )
     defaults = dict(
         job_id="ingest-job-1",
-        source_path="/tmp/notes.txt",
+        source_path=source_path,
         state=IngestJobState.DONE,
         media_id=7,
         submitted_at=100.0,
         finished_at=101.0,
-        progress={
-            "message": (
-                "Imported notes.txt — analysis skipped: no analysis "
-                "provider is configured"
-            ),
-            "analysis_skipped": "no analysis provider is configured",
-        },
+        progress=progress,
     )
     defaults.update(overrides)
     return LibraryIngestJob(**defaults)
@@ -218,6 +228,9 @@ async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
         )
         assert "✓ analyzed · ok.txt" in canvas_text
         assert "✗ analysis failed · bad.txt" in canvas_text
+        # (fix round 1, M-4) AC#2's actual promise is that the note is
+        # REPLACED, not merely that a new one also appears somewhere.
+        assert "analysis skipped" not in canvas_text
         # The action re-renders too: both ids are now accounted for (one
         # fixed, one failed-but-still-unanalysed) -- it must not vanish
         # while a genuinely unanalysed item remains, and it must not still
@@ -236,24 +249,70 @@ async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
 async def test_second_analyze_skipped_press_while_running_gets_the_existing_notice(
     monkeypatch,
 ):
+    """(fix round 1, I-4) The original version of this test built a
+    ``notices`` list, never pressed a second time, and never asserted it --
+    the only thing it actually checked was ``button.disabled``. This
+    presses a REAL first time (starting a real, blocked run), then calls
+    the handler a second time while that run is still active, and asserts
+    the seam's own "Analysis already running" notice fires."""
     app = _pilot_app()
     app.library_ingest_jobs.restore([_skipped_job()], next_id=2)
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _ingest_screen(host, pilot)
         _ready_provider(monkeypatch)
-        screen._library_media_analyze_running = True
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _unanalyzed(media_ids):
+            return media_ids
+
+        async def _one(media_id, *, resolution):
+            entered.set()
+            await release.wait()
+            return True
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot, entered.is_set, message="the first run never started"
+        )
+        assert screen._library_media_analyze_running is True
+        button_after_first_press = screen.query_one(
+            "#library-ingest-analyze-skipped", Button
+        )
+        assert button_after_first_press.disabled is True, (
+            "the action must disable while running"
+        )
 
         notices = []
         screen.app_instance.notify = lambda message, **kwargs: notices.append(
             (message, kwargs)
         )
-        button = await _wait_for_selector(
-            screen, pilot, "#library-ingest-analyze-skipped"
+        # A second physical click reaches a disabled Textual Button as a
+        # no-op, so this calls the handler directly -- exactly what the
+        # ruling names as the belt-and-braces path a stray keyboard route
+        # or a race could still reach.
+        screen.handle_library_ingest_analyze_skipped(
+            Button.Pressed(button_after_first_press)
         )
-        assert button.disabled is True, "the action must disable while running"
+        assert notices == [("Analysis already running", {"severity": "warning"})]
+
+        release.set()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_analyze_running is False,
+            message="the first run never settled",
+        )
 
 
 @pytest.mark.asyncio
@@ -291,3 +350,239 @@ async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
         # Still on the Import canvas -- the Media canvas's own select-mode
         # exit path was never exercised into an unrelated screen state.
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+
+
+# --- fix round 1: C-1 (mixed already-analysed set), I-1 (real reasons),
+# I-3 (origin-aware unmount notice) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
+    monkeypatch,
+):
+    """C-1: an Import-started run has no Skip/Overwrite card to arm. One of
+    the two skipped ids already has an analysis (e.g. it was fixed through
+    the Reader since the import completed) -- the press must run the
+    OTHER id, tell the user what it skipped, and never arm the Media
+    canvas's own choice anywhere."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [
+            _skipped_job(job_id="ingest-job-1", media_id=7, source_path="/tmp/a.txt"),
+            _skipped_job(job_id="ingest-job-2", media_id=9, source_path="/tmp/b.txt"),
+        ],
+        next_id=3,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        analyzed: list[str] = []
+
+        async def _unanalyzed(media_ids):
+            # "7" already has an analysis (fixed via the Reader); "9" does
+            # not.
+            return tuple(mid for mid in media_ids if mid != "7")
+
+        async def _one(media_id, *, resolution):
+            analyzed.append(media_id)
+            return True
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_analyze_running is False,
+            message="the run never settled",
+        )
+        await pilot.pause()
+
+        assert analyzed == ["9"], "must run exactly the still-unanalysed id"
+        assert screen._library_media_analyze_choice is None, (
+            "the Media canvas's Skip/Overwrite choice must never arm here"
+        )
+        assert not screen.query("#library-media-analyze-skip")
+        assert any(
+            message == "1 already analysed · skipped" for message, _ in notices
+        ), notices
+
+
+@pytest.mark.asyncio
+async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_nothing(
+    monkeypatch,
+):
+    """C-1's other leg: every id in the set already has an analysis --
+    still no silent no-op, and no worker runs."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [_skipped_job(job_id="ingest-job-1", media_id=7, source_path="/tmp/a.txt")],
+        next_id=2,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        analyzed: list[str] = []
+
+        async def _unanalyzed(media_ids):
+            return ()
+
+        async def _one(media_id, *, resolution):
+            analyzed.append(media_id)
+            return True
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+
+        assert analyzed == []
+        assert screen._library_media_analyze_choice is None
+        assert not screen.query("#library-media-analyze-skip")
+        assert any(message == "Nothing left to analyse" for message, _ in notices), (
+            notices
+        )
+
+
+@pytest.mark.asyncio
+async def test_analyze_outcome_reports_a_raised_exceptions_own_message(monkeypatch):
+    """I-1: a raised exception's own text is the reason, not the generic
+    catch-all -- matching an import row's own "analysis failed: <reason>"
+    honesty."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [
+            _skipped_job(
+                job_id="ingest-job-1", media_id=7, source_path="/tmp/flaky.txt"
+            )
+        ],
+        next_id=2,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+
+        async def _unanalyzed(media_ids):
+            return media_ids
+
+        async def _one(media_id, *, resolution):
+            raise RuntimeError("provider timeout")
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_analyze_running is False,
+            message="the run never settled",
+        )
+        await pilot.pause()
+
+        canvas_text = "\n".join(
+            str(row.renderable)
+            for row in screen.query("#library-ingest-queue-panel Static")
+        )
+        assert "✗ analysis failed · flaky.txt · provider timeout" in canvas_text
+
+
+@pytest.mark.asyncio
+async def test_import_run_that_dies_with_the_screen_names_the_import_run(
+    monkeypatch,
+):
+    """I-3: an Import-started run interrupted by leaving Library must point
+    the user back at the Import queue's own action, not Select mode's."""
+    app = _pilot_app()
+    app.library_ingest_jobs.restore(
+        [
+            _skipped_job(job_id="ingest-job-1", media_id=7, source_path="/tmp/a.txt"),
+            _skipped_job(job_id="ingest-job-2", media_id=9, source_path="/tmp/b.txt"),
+            _skipped_job(
+                job_id="ingest-job-3", media_id=11, source_path="/tmp/c.txt"
+            ),
+        ],
+        next_id=4,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        _ready_provider(monkeypatch)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _unanalyzed(media_ids):
+            return media_ids
+
+        async def _one(media_id, *, resolution):
+            if media_id != "9":
+                return True
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                raise
+            return True
+
+        screen._library_media_unanalyzed_ids = _unanalyzed
+        screen._analyze_one_library_media_item = _one
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+
+        button = await _wait_for_selector(
+            screen, pilot, "#library-ingest-analyze-skipped"
+        )
+        button.press()
+        await pilot.pause()
+        worker = next(
+            candidate
+            for candidate in host.workers
+            if candidate.group
+            == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+        )
+        await _wait_for_condition(
+            pilot, entered.is_set, message="the run never reached item 2"
+        )
+        await host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert worker.state is WorkerState.CANCELLED
+        assert notices, "a cancelled Import run must still say where it stopped"
+        assert notices[0][0] == (
+            "Analysis stopped at 1 of 3 · reopen the import run and press "
+            "Analyze N skipped to continue"
+        ), notices
+        assert notices[0][1].get("severity") == "warning"

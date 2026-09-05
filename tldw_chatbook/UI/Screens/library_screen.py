@@ -742,13 +742,16 @@ _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
 # Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
 # can never interleave two runs over the same ids.
 _ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
-# task-28007 AC#2: the one honest catch-all reason an ``on_item_done``
-# hook reports for a failed item. Covers every failure branch inside
-# ``_analyze_one_library_media_item``/``_generate_library_media_analysis``/
-# ``_save_library_media_analysis`` (empty content, a provider that
-# returned nothing, a failed save) without a signature change to any of
-# their bool-returning contracts -- all three ultimately mean the same
-# thing from here: no analysis exists for this item now.
+# task-28007 AC#2: the catch-all reason an ``on_item_done`` hook reports for
+# a failed item that raised no exception (fix round 1, I-1: a RAISED
+# exception's own ``str(exc)`` is used instead -- see the loop in
+# ``_analyze_library_media_selection``). Covers the no-exception failure
+# branches inside ``_analyze_one_library_media_item``/
+# ``_generate_library_media_analysis``/``_save_library_media_analysis``
+# (empty content, a provider that returned nothing, a failed save) without a
+# signature change to any of their bool-returning contracts -- all three
+# ultimately mean the same thing from here: no analysis exists for this item
+# now.
 _ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
@@ -2644,13 +2647,21 @@ class LibraryScreen(BaseAppScreen):
             tuple[tuple[str, ...], tuple[str, ...]] | None
         ) = None
         self._library_media_analyze_reason_cache: str | None = None
+        # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
+        # started from -- "media" (Select mode) or "import" (the Import
+        # queue's "Analyze N skipped"). Read only by ``on_unmount``'s
+        # interrupted-run notice, to send the user back to the control they
+        # actually used instead of always naming Select mode's.
+        self._library_media_analyze_origin: str = "media"
         # task-28007 AC#1/AC#2: outcomes recorded by the Import queue's
         # "Analyze N skipped" run-summary action, media-id-string ->
         # (ok, reason). Read by ``_build_library_ingest_state`` to overlay
         # each id's own row with a receipt and to exclude a fixed id from
         # the next render's count. Reused across runs of the action (never
-        # cleared wholesale) -- only the ids about to re-run are popped, so
-        # an id another run already fixed keeps its receipt on screen.
+        # cleared wholesale) -- each id's own entry is simply overwritten
+        # the moment that id's next fresh outcome lands (fix round 1, M-1:
+        # an eager pre-clear used to wipe every one of these on a press the
+        # seam went on to refuse, with nothing run to replace them).
         self._library_ingest_analyze_outcomes: dict[str, tuple[bool, str]] = {}
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
@@ -9704,10 +9715,25 @@ class LibraryScreen(BaseAppScreen):
             # unmount that lands DURING that pass (still awaiting
             # ``_library_media_unanalyzed_ids``) sees total == 0 and would
             # otherwise notify the nonsensical "stopped at 0 of 0".
+            # (fix round 1, I-3) The recovery pointer names the surface the
+            # interrupted run actually started from -- a run started from
+            # the Import queue's "Analyze N skipped" has no "Select ▸
+            # Analyze" to reopen; that copy stays for the Media-canvas
+            # (Select mode) origin only.
+            from_import = (
+                getattr(self, "_library_media_analyze_origin", "media") == "import"
+            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify) and self._library_media_analyze_total == 0:
                 notify(
                     "Analysis stopped before it started",
+                    severity="warning",
+                )
+            elif callable(notify) and from_import:
+                notify(
+                    f"Analysis stopped at {self._library_media_analyze_done} "
+                    f"of {self._library_media_analyze_total} · reopen the "
+                    "import run and press Analyze N skipped to continue",
                     severity="warning",
                 )
             elif callable(notify):
@@ -21092,7 +21118,9 @@ class LibraryScreen(BaseAppScreen):
         canvas.scroll_to_widget(heading, animate=False, top=True)
 
     def _update_library_ingest_dynamic_regions(
-        self, allow_structural_recompose: bool = True
+        self,
+        allow_structural_recompose: bool = True,
+        allow_screen_fallback: bool = True,
     ) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
 
@@ -21105,6 +21133,21 @@ class LibraryScreen(BaseAppScreen):
         Structural changes -- the type-group set (options panels) or the
         runtime header lines -- still take the context-preserving full
         recompose, as does any unexpected canvas shape.
+
+        Args:
+            allow_structural_recompose: Whether a structural state change
+                may request the legacy whole-screen recompose.
+            allow_screen_fallback: (task-28007 Task 3 fix round 1, I-2)
+                Whether a failed targeted update (the canvas query itself
+                raising, or a structural change above) may request that
+                fallback at all -- mirrors ``_sync_library_canvas``'s own
+                parameter. A caller mid an Import-run's ``finally``/
+                per-item repaint passes ``False``: an unmount that lands
+                mid-run can leave ``_library_selected_row_id`` still
+                pointing at Import while the canvas's own children are
+                already torn down, so ``query_one`` raises ``NoMatches``
+                here -- scheduling a whole-screen recompose on a dying
+                screen at that point is both useless and unsafe.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             # (task-2043 review) A late worker result while a DIFFERENT
@@ -21118,7 +21161,8 @@ class LibraryScreen(BaseAppScreen):
             summary = canvas.query_one(LibraryIngestPreflightSummary)
             queue = canvas.query_one(LibraryIngestQueuePanel)
         except (NoMatches, QueryError):
-            self._refresh_library_ingest_canvas_preserving_context()
+            if allow_screen_fallback:
+                self._refresh_library_ingest_canvas_preserving_context()
             return
         old_state = canvas.state
         structural = (
@@ -21129,7 +21173,8 @@ class LibraryScreen(BaseAppScreen):
         )
         canvas.state = new_state
         if structural and allow_structural_recompose:
-            self._refresh_library_ingest_canvas_preserving_context()
+            if allow_screen_fallback:
+                self._refresh_library_ingest_canvas_preserving_context()
             return
         summary.state = new_state
         queue.state = new_state
@@ -21283,6 +21328,20 @@ class LibraryScreen(BaseAppScreen):
         # fires for them, and it means a queue with nothing skipped never
         # pays for the resolver's I/O (it can shell out to the keychain) on
         # every keystroke-driven render.
+        #
+        # (fix round 1, M-2 -- considered, reverted) A short TTL memo was
+        # tried here, mirroring ``_library_media_analyze_reason``'s
+        # Select-mode one, but that memo resets on a clean session
+        # boundary (select-mode entry/exit); the ingest canvas has no such
+        # boundary; every read that lands DURING the TTL window --
+        # including the very next one, e.g. right after the config or a
+        # test's stub changes -- silently serves a stale answer with no
+        # natural point where it self-corrects except wall-clock decay.
+        # The cost this was guarding against is narrow (0.16 ms measured
+        # on the common path; the review's own worst case is a LOCKED
+        # keychain specifically for keyless Anthropic auth) and the
+        # review named it Minor/optional -- not worth trading correctness
+        # for.
         analyze_outcomes = getattr(self, "_library_ingest_analyze_outcomes", None) or {}
         analyze_skipped_ids = library_ingest_analyze_skipped_ids(jobs, analyze_outcomes)
         analysis_action_ready = bool(analyze_skipped_ids) and not (
@@ -37039,14 +37098,26 @@ class LibraryScreen(BaseAppScreen):
             event: The run-summary action's press.
         """
         event.stop()
-        media_ids = self._build_library_ingest_state().analyze_skipped_media_ids
+        # (fix round 1, M-3) The direct pure call, not a whole
+        # ``_build_library_ingest_state()`` -- that also pays for a second
+        # provider resolve on the same gesture for a value this handler
+        # never reads.
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        media_ids = library_ingest_analyze_skipped_ids(
+            jobs, self._library_ingest_analyze_outcomes
+        )
         if not media_ids:
             return
-        # A fresh attempt over an id clears any receipt this same action
-        # already left it -- the row's stale outcome must not linger
-        # through a run that is about to redo it.
-        for media_id in media_ids:
-            self._library_ingest_analyze_outcomes.pop(media_id, None)
+        # (fix round 1, M-1) No pre-clear here: a refusal inside
+        # ``_start_library_media_analyze`` (already running, provider went
+        # unready between render and press) used to leave every one of
+        # these ids' receipts wiped with nothing having run to replace
+        # them. ``_record_library_ingest_analyze_outcome`` already
+        # overwrites a stale entry unconditionally the moment THAT id's
+        # own fresh outcome lands, which is the only point clearing it
+        # early was ever protecting.
         self._start_library_media_analyze(
             media_ids,
             overwrite=False,
@@ -37074,7 +37145,10 @@ class LibraryScreen(BaseAppScreen):
             reason: Empty when ``ok``; otherwise why it was not.
         """
         self._library_ingest_analyze_outcomes[media_id] = (ok, reason)
-        self._update_library_ingest_dynamic_regions()
+        # (fix round 1, I-2 discipline) Mid-run repaints must never escalate
+        # to a whole-screen recompose -- same reason the settling sync in
+        # ``_analyze_library_media_selection``'s ``finally`` does not.
+        self._update_library_ingest_dynamic_regions(allow_screen_fallback=False)
 
     #: Presses landing this soon after the arming press are the same
     #: physical gesture (a double-click), not a decision (task-2160).
@@ -42511,7 +42585,10 @@ class LibraryScreen(BaseAppScreen):
                 queue) learn per-item outcomes without a second loop of its
                 own. NOT called for an id the AC#3 partition pass diverts
                 into the armed Skip/Overwrite choice -- that id ran through
-                neither branch, so there is no outcome to report yet.
+                neither branch, so there is no outcome to report yet. Its
+                presence also selects which surface ``on_unmount``'s
+                interrupted-run notice points back at (``self.
+                _library_media_analyze_origin``, fix round 1 I-3).
         """
         if self._library_media_analyze_running:
             notify = getattr(self.app_instance, "notify", None)
@@ -42541,6 +42618,13 @@ class LibraryScreen(BaseAppScreen):
             self._exit_library_media_select_mode(announce_discard=False)
             _sync_library_canvas(self, "media")
         self._library_media_analyze_running = True
+        # (fix round 1, I-3) The unmount notice needs to know where to send
+        # the user back to -- derived from ``on_item_done``'s presence, the
+        # same signal C-1's branch above already uses to distinguish the
+        # two origins.
+        self._library_media_analyze_origin = (
+            "import" if on_item_done is not None else "media"
+        )
         self.run_worker(
             self._analyze_library_media_selection(
                 media_ids,
@@ -42566,31 +42650,59 @@ class LibraryScreen(BaseAppScreen):
         One worker for the whole run (AC#4). A per-item failure -- a raise
         OR a provider that returned nothing -- is counted and the run
         continues; nothing aborts it. When ``overwrite`` is False and any
-        selected item already carries an analysis, NOTHING runs: the
-        Skip/Overwrite choice is armed in the receipt instead (AC#3).
+        selected item already carries an analysis: a Select-mode caller
+        (``on_item_done is None``) gets NOTHING run -- the Skip/Overwrite
+        choice is armed in the receipt instead (AC#3). An Import-run caller
+        (``on_item_done`` given) has no such card to show, so it auto-skips
+        the already-analysed ids instead and says so (fix round 1, C-1) --
+        see the docstring on the branch below.
 
         Args:
             media_ids: Ids to analyze, in browse order.
             resolution: The ready resolution the gesture already checked.
             overwrite: Whether analysed items are included.
-            on_item_done: See ``_start_library_media_analyze``.
+            on_item_done: See ``_start_library_media_analyze``. Its mere
+                presence also selects the C-1 auto-skip behavior above.
         """
         try:
             if not overwrite:
                 unanalyzed = await self._library_media_unanalyzed_ids(media_ids)
                 if len(unanalyzed) != len(media_ids):
-                    self._library_media_analyze_choice = (media_ids, unanalyzed)
-                    return
+                    if on_item_done is None:
+                        self._library_media_analyze_choice = (media_ids, unanalyzed)
+                        return
+                    # (fix round 1, C-1) The Import queue has no
+                    # Skip/Overwrite card to arm -- doing so here left an
+                    # Import-started run with NOTHING visible: no
+                    # receipts, no notice, the button just re-enabled with
+                    # its count unchanged. Auto-skip the already-analysed
+                    # ids and say so instead; if that leaves nothing to
+                    # run, say THAT and stop -- still no silent no-op.
+                    notify = getattr(self.app_instance, "notify", None)
+                    if not unanalyzed:
+                        if callable(notify):
+                            notify("Nothing left to analyse")
+                        return
+                    if callable(notify):
+                        already_analysed = len(media_ids) - len(unanalyzed)
+                        notify(f"{already_analysed} already analysed · skipped")
                 media_ids = unanalyzed
             self._library_media_analyze_total = len(media_ids)
             _sync_library_canvas(self, "media", allow_screen_fallback=False)
             for media_id in media_ids:
+                exc_reason = ""
                 try:
                     persisted = await self._analyze_one_library_media_item(
                         media_id, resolution=resolution
                     )
-                except Exception:
+                except Exception as exc:
                     persisted = False
+                    # (fix round 1, I-1) A raised exception carries a real,
+                    # specific reason -- capture it rather than falling
+                    # through to the generic catch-all, so the receipt says
+                    # something an import row's own "analysis failed:
+                    # <reason>" line would.
+                    exc_reason = str(exc)
                 if persisted:
                     self._library_media_analyze_done += 1
                 else:
@@ -42599,7 +42711,11 @@ class LibraryScreen(BaseAppScreen):
                     on_item_done(
                         media_id,
                         persisted,
-                        "" if persisted else _ANALYZE_ITEM_FAILED_REASON,
+                        (
+                            ""
+                            if persisted
+                            else (exc_reason or _ANALYZE_ITEM_FAILED_REASON)
+                        ),
                     )
                 # Progress only: if the user has left the media canvas
                 # mid-run, a missing canvas must NOT escalate to a
@@ -42627,8 +42743,16 @@ class LibraryScreen(BaseAppScreen):
                 # the Media-canvas-only callers (Select mode) never pay for
                 # an Import-canvas sync that is a no-op for them anyway
                 # (``_update_library_ingest_dynamic_regions`` itself skips
-                # work off the Import canvas).
-                self._update_library_ingest_dynamic_regions()
+                # work off the Import canvas). ``allow_screen_fallback=False``
+                # (fix round 1, I-2): this also runs on the cancellation
+                # path, same as the ``_sync_library_canvas`` call two lines
+                # up -- without it, an unmount landing here (canvas already
+                # torn down, ``_library_selected_row_id`` still pointing at
+                # Import) falls into a whole-screen recompose on a dying
+                # screen.
+                self._update_library_ingest_dynamic_regions(
+                    allow_screen_fallback=False
+                )
 
     async def _analyze_one_library_media_item(
         self, media_id: str, *, resolution: Any

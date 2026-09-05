@@ -6,6 +6,7 @@ import re
 
 import pytest
 
+import tldw_chatbook.app as app_module
 from tldw_chatbook.Library.ingest_capabilities import (
     field_available_for_backend,
     get_capabilities,
@@ -2738,23 +2739,44 @@ def test_analysis_hint_does_not_block_start() -> None:
 
 
 def _skipped_job(**overrides) -> LibraryIngestJob:
+    """A DONE job whose ``progress`` was built by the REAL producer.
+
+    (fix round 1, M-5) The old fixture hand-wrote
+    ``progress={"analysis_skipped": ...}``; nothing tied that literal key
+    to ``app._library_ingest_done_progress``, so renaming that key would
+    break the feature in production with a fully green suite. Building it
+    through the real function closes that gap.
+    """
+    source_path = overrides.get("source_path", "/tmp/notes.txt")
+    progress = overrides.pop("progress", None) or app_module._library_ingest_done_progress(
+        source_path,
+        was_duplicate=False,
+        payload={"analysis_skipped_reason": "no analysis provider is configured"},
+    )
     defaults = dict(
         job_id="ingest-job-1",
-        source_path="/tmp/notes.txt",
+        source_path=source_path,
         state=IngestJobState.DONE,
         media_id=7,
         submitted_at=100.0,
         finished_at=101.0,
-        progress={
-            "message": (
-                "Imported notes.txt — analysis skipped: no analysis "
-                "provider is configured"
-            ),
-            "analysis_skipped": "no analysis provider is configured",
-        },
+        progress=progress,
     )
     defaults.update(overrides)
     return LibraryIngestJob(**defaults)
+
+
+def test_analyze_skipped_ids_exclude_a_non_done_job_even_with_a_skip_note():
+    """(fix round 1, M-6) The ``state == DONE`` guard: an analysis-skipped
+    note is only ever meaningful on a FINISHED import -- a job still
+    mid-flight (or one that failed) must never be offered, even if it
+    happens to carry the same progress key."""
+    running = _skipped_job(state=IngestJobState.WRITING, media_id=7)
+    state = build_library_ingest_state(
+        (running,), form=LibraryIngestFormState(), analysis_action_ready=True
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
 
 
 def test_analyze_skipped_action_hidden_without_skipped_items():
