@@ -83,6 +83,11 @@ near-live path. The near-live path uses a small incremental clusterer:
 - A **user-named cluster is sticky:** new segments may still join it, but it is
   never auto-merged away, so a live rename cannot vanish mid-meeting.
 
+The clusterer is a **standalone pure-numpy module with no torch dependency**. It
+runs inside the worker next to the embedder (so the worker returns cluster ids,
+not embeddings), but because it is import-light it is unit-tested directly with
+synthetic embedding vectors, without spawning the subprocess.
+
 ### 3.4 Isolation: a diarizer subprocess
 
 The local backend runs in a **subprocess**, for three reasons: GIL isolation, so
@@ -108,8 +113,11 @@ costly, the documented fallback is a worker thread that accepts GIL contention.
 - **Call mode:** the mic ("You") is the local user and keeps its label; the
   system channel ("Others") holds the remote participants and is diarized into
   Speaker A/B/C.
-- **Room mode:** everyone shares the one mic, so that channel is diarized into
-  all the speakers.
+- **Room mode:** everyone shares the one mic (phase-1 segments carry no You/Others
+  label here), so that channel is diarized into all the speakers. Because no
+  channel identifies the local user, room mode has **no pre-named "You"**; every
+  speaker starts generic until renamed. "You" pre-naming applies only to the mic
+  channel in call mode.
 - **Hybrid limitation:** if the mic also captures someone sitting next to you,
   the whole mic channel is still "You" in v1. Diarizing the mic channel too is a
   later config option.
@@ -120,10 +128,14 @@ the diarizer's `assign`; the returned cluster id upgrades the segment's label
 from "Others" to a stable speaker a few seconds behind. Results reach the UI
 through the existing sink calls, serialized by the session lock; embedding
 happens **outside** the lock, over the subprocess pipe (phase 1's C2
-lock-across-blocking-work lesson).
+lock-across-blocking-work lesson). `assign` is bounded: if the worker does not
+answer within a small budget, the segment stays coarse (this is the backpressure
+path in §6.3), and the Stop pass labels it authoritatively.
 
-**Overlap / short bursts.** Segments too short to embed or flagged as overlap
-keep the coarse "You + Others" label; they are not attributed to a person.
+**Overlap / short bursts.** "Overlap" is the existing phase-1 `both` label (mic
+and system both active in call mode); this design adds no new overlap detector,
+and room mode has no overlap signal. Segments that are `both`, or too short to
+embed, keep the coarse "You + Others" label and are not attributed to a person.
 
 **Reconciliation on Stop.** The batch pass is authoritative. Live cluster ids are
 matched to final ones by embedding similarity, so a relabeled segment keeps the
@@ -172,6 +184,13 @@ renames are rare, so this cost is acceptable. If the meeting folder was deleted,
 the rename control is disabled with an explanation rather than maintaining a
 second authority.
 
+**Multi-device limitation.** The name map lives in the meeting folder, which is
+local and not synced; only the rendered transcript text syncs with the media
+item. So rename-after works on the device that holds the folder and is disabled
+elsewhere. Making names portable across devices means storing the map in the
+synced DB (not in `transcription_provenance_json`), which is deferred alongside
+voiceprint enrollment rather than solved here.
+
 ## 6. Config, dependencies, performance
 
 ### 6.1 Config (new keys under `[meetings]`)
@@ -216,8 +235,12 @@ You/Others labels.
 - **Subprocess start failure:** whole meeting on coarse labels; footer notes
   "speaker labels unavailable" with the reason. Mirrors the tap helper's
   mic-only fallback.
-- **Subprocess crash mid-meeting:** restart once (as the audio helper does); if
-  it fails again, the rest uses coarse labels and the footer says so. Recording
+- **Subprocess crash mid-meeting:** the clusterer's centroids live in the worker,
+  so a restart cannot continue the same speaker ids. To avoid showing the same
+  person under a new id (or two people under one), a crash sends the **rest of the
+  meeting to coarse labels** and the footer says so; the Stop batch pass then
+  labels the whole recording authoritatively. (One restart is still attempted so
+  a transient failure does not permanently disable the Stop pass.) Recording is
   never interrupted.
 - **Backpressure:** skip embedding, keep coarse; the segment is still
   transcribed.
