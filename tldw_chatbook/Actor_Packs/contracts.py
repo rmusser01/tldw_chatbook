@@ -93,6 +93,7 @@ _PERSONA_FIELDS = frozenset(
         "use_persona_state_context_default",
         "voice_defaults",
         "setup",
+        "policy_rules",
     }
 )
 _PERSONA_VOICE_FIELDS = frozenset(
@@ -121,6 +122,15 @@ _PERSONA_SETUP_FIELDS = frozenset(
         "completed_steps",
         "completed_at",
         "last_test_type",
+    }
+)
+_PERSONA_POLICY_RULE_FIELDS = frozenset(
+    {
+        "rule_kind",
+        "rule_name",
+        "allowed",
+        "require_confirmation",
+        "max_calls_per_turn",
     }
 )
 _LOCAL_ONLY_ACTOR_FIELDS = frozenset(
@@ -547,10 +557,17 @@ def _validate_actor_fields(actor_kind: str, actor_data: Mapping[str, Any]) -> No
             for key in actor_data.keys() & {"voice_defaults", "setup"}:
                 if type(actor_data[key]) is not dict:
                     raise ValueError
+            if (
+                "policy_rules" in actor_data
+                and type(actor_data["policy_rules"]) is not list
+            ):
+                raise ValueError
             if "voice_defaults" in actor_data:
                 _validate_persona_voice_defaults(actor_data["voice_defaults"])
             if "setup" in actor_data:
                 _validate_persona_setup(actor_data["setup"])
+            if "policy_rules" in actor_data:
+                _validate_persona_policy_rules(actor_data["policy_rules"])
             return
         text_fields = _CHARACTER_FIELDS - {
             "alternate_greetings",
@@ -650,6 +667,25 @@ def _validate_persona_setup(value: Mapping[str, Any]) -> None:
         raise ValueError
     if value.get("last_test_type") not in {None, "dry_run", "live_session"}:
         raise ValueError
+
+
+def _validate_persona_policy_rules(value: list[Any]) -> None:
+    for rule in value:
+        if (
+            type(rule) is not dict
+            or not {"rule_kind", "rule_name"} <= set(rule)
+            or not set(rule) <= _PERSONA_POLICY_RULE_FIELDS
+            or rule["rule_kind"] not in {"mcp_tool", "skill"}
+            or type(rule["rule_name"]) is not str
+            or not 1 <= len(rule["rule_name"]) <= 512
+        ):
+            raise ValueError
+        for key in {"allowed", "require_confirmation"} & set(rule):
+            if type(rule[key]) is not bool:
+                raise ValueError
+        max_calls = rule.get("max_calls_per_turn")
+        if max_calls is not None and (type(max_calls) is not int or max_calls < 1):
+            raise ValueError
 
 
 def _looks_like_raster(path: str, data: bytes) -> bool:
