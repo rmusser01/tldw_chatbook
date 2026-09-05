@@ -451,3 +451,27 @@ def test_partial_chunks_are_carried_not_dropped(tmp_path):
     mic(b"\x00\x20" * 290)             # 580 bytes: remainder 60 + 580 = 640 -> one more slice
     assert b"".join(got) == loud[:640] + (b"\x00\x20" * 320)
     assert cap.last_speech_position_s == pytest.approx(0.04)
+
+
+@pytest.fixture
+def meeting_capture_factory(tmp_path):
+    """Zero-arg factory for a ``MeetingCapture`` wired to fake mic/tap/writers."""
+
+    def factory(**kwargs):
+        cap, _, _, _ = _capture(tmp_path, **kwargs)
+        return cap
+
+    return factory
+
+
+def test_pcm_window_returns_recent_frames(meeting_capture_factory):
+    cap = meeting_capture_factory()  # existing test factory / fake recorder
+    cap._push_pcm("others", b"\x01\x00" * 16000)  # 1s of samples at t=[0,1)
+    cap._push_pcm("others", b"\x02\x00" * 16000)  # 1s at t=[1,2)
+    win = cap.pcm_window("others", 1.0, 2.0)
+    assert len(win) == 16000 * 2 and win[:2] == b"\x02\x00"
+
+
+def test_pcm_window_empty_when_evicted(meeting_capture_factory):
+    cap = meeting_capture_factory()
+    assert cap.pcm_window("others", 10_000.0, 10_001.0) == b""
