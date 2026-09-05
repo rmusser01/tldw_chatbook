@@ -388,7 +388,9 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == list(range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1))
+        assert [row[0] for row in versions] == list(
+            range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1)
+        )
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
