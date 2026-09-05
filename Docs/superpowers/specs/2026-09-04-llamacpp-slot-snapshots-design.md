@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Implemented through reviewed units 1–5; opt-in live harness and evidence closeout added. Feature remains In Progress because real-server persistence and same-image reuse evidence (AC5) is missing. See [verification evidence](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md).
+Status: Complete and merged into dev in [PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) on 2026-09-05. All 15 task criteria are checked; real text/image persistence and reuse evidence is recorded in the [live UAT report](../reviews/2026-09-05-llamacpp-slot-snapshots-uat.md). Automatic conversation binding, audio qualification, and Windows private storage remain deferred.
 
 Task: [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 

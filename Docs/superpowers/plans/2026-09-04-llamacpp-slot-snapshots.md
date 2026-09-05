@@ -12,7 +12,7 @@
 
 **Backlog:** [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
-**Status:** Units 1–6 and the integrated review fix wave are implemented. The [2026-09-05 live UAT](../reviews/2026-09-05-llamacpp-slot-snapshots-uat.md) found a confirmed-Restore/readiness race; its reviewed fix now passes the full normal-Models replay without diagnostic suppression using existing b10816/Gemma 4/projector assets. AC1/AC5 have measured text/image reuse and real retention/Delete evidence. The earlier missing-assets conclusion was incorrect. Branch integration and remaining repository gates are separate; see TASK-31552.
+**Status:** Complete and merged into dev in [PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) on 2026-09-05; TASK-31552 is Done. Units 1–6 and the integrated review fix wave are implemented. The [2026-09-05 live UAT](../reviews/2026-09-05-llamacpp-slot-snapshots-uat.md) records measured text/image reuse and real retention/Delete using b10816/Gemma 4/projector assets, the reviewed readiness-race fix, and the exact tested revision boundaries. The earlier missing-assets conclusion was incorrect. Historical checkpoint notes remain below.
 
 ADR required: yes
 
@@ -407,11 +407,11 @@ TLDW_LLAMA_SNAPSHOT_LIVE=1 python -m pytest Tests/LLM_Management/test_snapshot_l
 
 | Contract | Implemented by | Evidence |
 | --- | --- | --- |
-| Manual save/restore + timestamp names (AC1) | Tasks 2, 4, 5 | Store and real-route Pilot verified; real-model restart remains AC5 gate |
+| Manual save/restore + timestamp names (AC1) | Tasks 2, 4, 5 | Store, real-route Pilot, and real Models save/restart/restore UAT verified |
 | Profile-global newest-N retention (AC2) | Tasks 1, 2, 4 | Multi-model/clock/keep=1/failed-save tests |
 | Claim/readiness/privacy/compatibility (AC3) | Tasks 1–4 | Admission, process race, private-path and client tests |
 | Honest keyboard UI (AC4) | Task 5 | Production CSS at two sizes; confirmations/errors |
-| Real image reuse (AC5) | Task 6 | Harness implemented; measured live controls missing, AC5 open |
+| Real image reuse (AC5) | Task 6 | Live UAT: same-image reuse 105/106 versus changed-image/native text-prefix boundary 19/106; AC5 checked |
 | Unknown evidence cannot evict useful files (AC6) | Tasks 1, 2, 4 | Cross-layer invalidation before publication |
 | Integrity before Restore POST (AC7) | Tasks 2–4 | Same-length corruption, zero recorded POSTs |
 | Local-only management (AC8) | Tasks 1, 3 | Numeric addresses, decoy proxy, redirect recording |

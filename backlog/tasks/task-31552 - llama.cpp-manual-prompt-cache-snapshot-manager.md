@@ -31,8 +31,10 @@ The existing b10816/Gemma 4/vision-projector assets were used in live UAT on
 2026-09-05. The confirmed-Restore readiness race was fixed and independently
 reviewed. Final normal-UI UAT passes without diagnostic suppression, including
 measured text/image reuse and real retention/Delete. AC1/AC5 now have live evidence.
-PR review remediation and scoped local verification are complete; GitHub merge
-remains gated on current-head checks. See the
+PR review remediation and scoped local verification are complete.
+[PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) merged into dev
+on 2026-09-05 as `ec55a0ed3b4d5dc4b772254ba832dad030c566d3`.
+Earlier pending statements in the chronological notes below are historical. See the
 [UAT record](../../Docs/superpowers/reviews/2026-09-05-llamacpp-slot-snapshots-uat.md).
 
 The user approved integration of the follow-up review: compatibility-gated save
