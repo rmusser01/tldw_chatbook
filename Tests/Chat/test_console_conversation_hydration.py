@@ -38,6 +38,7 @@ from Tests.UI.test_console_native_chat_flow import (
 from tldw_chatbook.Chat.console_conversation_hydration import (
     apply_resume_settings_overrides,
     console_messages_from_conversation_tree,
+    hydrate_console_generation_settings,
     hydrate_console_session,
     load_console_conversation_tree,
 )
@@ -45,9 +46,20 @@ from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    CONSOLE_GENERATION_SETTINGS_METADATA_KEY,
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     default_console_session_settings,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -56,7 +68,8 @@ CONVERSATION_ID = "conv-fixture"
 
 
 def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> None:
-    base = ConsoleSessionSettings(provider="base", model="base-model")
+    current_endpoint = "https://current.example.test/v1/chat/completions"
+    app_config = {"api_settings": {"openai": {"api_url": current_endpoint}}}
     persisted = ConsoleSessionSettings(
         provider="openai",
         model="gpt-test",
@@ -80,25 +93,24 @@ def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> N
         source="user",
         pinned_prefill="metadata prefill must not win",
     )
-    metadata = {
-        "console_session_settings": {
-            "version": 1,
-            **persisted.__dict__,
-        },
-        "pinned_response_prefill": "Canonical prefill",
-    }
+    metadata = merge_console_generation_settings(
+        {"pinned_response_prefill": "Canonical prefill"},
+        snapshot_from_session_settings(persisted),
+    )
 
-    restored = apply_resume_settings_overrides(
-        base,
+    restored = hydrate_console_generation_settings(
+        app_config,
         {
             "system_prompt": "Canonical row prompt",
             "metadata": json.dumps(metadata),
         },
-    )
+    ).settings
 
     assert restored == ConsoleSessionSettings(
         **{
             **persisted.__dict__,
+            "base_url": current_endpoint,
+            "character_label": "",
             "system_prompt": "Canonical row prompt",
             "pinned_prefill": "Canonical prefill",
         }
@@ -894,13 +906,38 @@ async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_pa
         pinned_prefill="Stale snapshot prefill",
         source="user",
     )
-    source_store.replace_session_settings(source.id, latest)
+    submission = ConsoleSettingsSubmission(
+        submission_id="durable-resume-settings",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.QUICK_POPOVER,
+        origin=source_store.capture_console_settings_origin(source.id),
+        draft=ConsoleSettingsDraftState(
+            settings=latest,
+            context_policy_overrides=source.context_policy_overrides,
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=frozenset(),
+    )
+    commit = source_store.commit_console_settings_live(submission)
+    outcome = await source_store.persist_console_settings_commit_serialized(commit)
+    assert outcome.failed_components == frozenset()
 
     persisted = app.chachanotes_db.get_conversation_by_id(conversation_id)
     persisted_metadata = json.loads(persisted["metadata"])
     assert persisted_metadata["unrelated_owner"] == {"keep": True}
     assert persisted_metadata["console_session_settings"]["provider"] == "openai"
     assert persisted_metadata["console_session_settings"]["temperature"] == 0.22
+    assert (
+        persisted_metadata[CONSOLE_GENERATION_SETTINGS_METADATA_KEY]["provider"]
+        == "openai"
+    )
+    assert (
+        persisted_metadata[CONSOLE_GENERATION_SETTINGS_METADATA_KEY]["temperature"]
+        == 0.22
+    )
 
     tree = ChatConversationService(app.chachanotes_db).get_conversation_tree(
         conversation_id
@@ -911,10 +948,10 @@ async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_pa
         store=resumed_store,
         conversation_id=conversation_id,
         tree=tree,
-        settings=apply_resume_settings_overrides(
-            default_console_session_settings(app.app_config),
+        settings=hydrate_console_generation_settings(
+            app.app_config,
             tree["conversation"],
-        ),
+        ).settings,
     )
 
     assert resumed.settings is not None
