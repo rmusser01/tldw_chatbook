@@ -84,3 +84,6 @@ to match the collections/search+RAG post-cleanup template; library_skills_contro
 docstring re-checked and already correct. Durable evidence force-added (ledger + 3 reports + 5
 review diffs + this report). Report: .superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md.
 WAVE-4 COMPLETE.
+Task 4: complete (commits 6c71826b1 + 29039a6ad; battery green, sweep zero unexplained, probe slower-than-band under measured load — honest caveat recorded)
+ALL WAVE-4 TASKS COMPLETE — dispatching final whole-branch review (fable)
+FINAL REVIEW (wave 4): MERGE-READY WITH CONDITIONS (fable); fix wave + dev merge executed; see task-4-report + this commit.
