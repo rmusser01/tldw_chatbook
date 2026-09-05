@@ -47,7 +47,9 @@ class ResolvedLocalCharacterKey:
 
     def __post_init__(self) -> None:
         _validated_identity_text(self.data_authority_id, "data_authority_id")
-        if isinstance(self.character_id, bool) or not isinstance(self.character_id, int):
+        if isinstance(self.character_id, bool) or not isinstance(
+            self.character_id, int
+        ):
             raise TypeError("character_id must be an integer")
         if not 1 <= self.character_id <= _MAX_SQLITE_INTEGER:
             raise ValueError("character_id is outside SQLite's positive integer range")
@@ -114,11 +116,25 @@ def deserialize_character_conversation_key(
         raise ValueError("unsupported character-conversation identity version")
     tag = payload.get("tag")
     if tag == "resolved_local_character":
+        if set(payload) != {
+            "version",
+            "tag",
+            "data_authority_id",
+            "character_id",
+        }:
+            raise ValueError("invalid character-conversation identity fields")
         return ResolvedLocalCharacterKey(
             payload.get("data_authority_id"),  # type: ignore[arg-type]
             payload.get("character_id"),  # type: ignore[arg-type]
         )
     if tag == "unresolved_conversation":
+        if set(payload) != {
+            "version",
+            "tag",
+            "data_authority_id",
+            "conversation_id",
+        }:
+            raise ValueError("invalid character-conversation identity fields")
         return UnresolvedConversationKey(
             payload.get("data_authority_id"),  # type: ignore[arg-type]
             payload.get("conversation_id"),  # type: ignore[arg-type]
@@ -143,6 +159,7 @@ def _row_key(
 @dataclass(frozen=True)
 class CharacterConversationCursor:
     last_modified: str
+    created_at: str
     conversation_id: str
 
 
@@ -155,6 +172,7 @@ class CharacterConversationRow:
     character_label: str
     title: str
     last_modified: str
+    created_at: str
     is_current: bool
     selected_excerpt: str
 
@@ -179,6 +197,7 @@ class CharacterConversationRow:
         character_label: str,
         title: str,
         last_modified: str,
+        created_at: str,
         is_current: bool = False,
         selected_excerpt: str = "",
     ) -> CharacterConversationRow:
@@ -192,6 +211,7 @@ class CharacterConversationRow:
             character_label=character_label,
             title=title,
             last_modified=last_modified,
+            created_at=created_at,
             is_current=is_current,
             selected_excerpt=selected_excerpt,
         )
@@ -205,6 +225,7 @@ class CharacterConversationRow:
         character_label: str,
         title: str,
         last_modified: str,
+        created_at: str,
         is_current: bool = False,
         selected_excerpt: str = "",
     ) -> CharacterConversationRow:
@@ -218,6 +239,7 @@ class CharacterConversationRow:
             character_label=character_label,
             title=title,
             last_modified=last_modified,
+            created_at=created_at,
             is_current=is_current,
             selected_excerpt=selected_excerpt,
         )
@@ -310,11 +332,18 @@ class CharacterConversationNavigationService:
         )
 
     def keyword_search(
-        self, query: str, *, offset: int = 0, limit: int = 50
+        self,
+        query: str,
+        *,
+        character: ResolvedLocalCharacterKey | None = None,
+        offset: int = 0,
+        limit: int = 50,
     ) -> CharacterConversationPage:
         """Return a bounded page from the ready Keyword generation."""
 
-        return self._repository.keyword_search(query, offset=offset, limit=limit)
+        return self._repository.keyword_search(
+            query, character=character, offset=offset, limit=limit
+        )
 
     def page_for_character(
         self,
@@ -327,12 +356,47 @@ class CharacterConversationNavigationService:
 
         return self._repository.page_for_character(key, cursor=cursor, limit=limit)
 
+    def unavailable_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        query: str = "",
+    ) -> CharacterConversationPage:
+        """Return an explicit page containing only unresolved local chats."""
+
+        return self._repository.unavailable_page(
+            offset=offset,
+            limit=limit,
+            query=query,
+        )
+
     def repair_candidates(
         self, key: UnresolvedConversationKey
     ) -> tuple[CharacterRepairCandidate, ...]:
         """Return live same-authority repair choices."""
 
         return self._repository.repair_candidates(key)
+
+    def refresh_unresolved_evidence(
+        self, key: UnresolvedConversationKey
+    ) -> tuple[int, str] | None:
+        """Return current unresolved evidence and CAS version, if still unresolved."""
+
+        return self._repository.refresh_unresolved_evidence(key)
+
+    def validated_preview_messages(
+        self,
+        target: LocalCharacterConversationTarget,
+        *,
+        data_revision: int,
+        limit: int = 200,
+    ) -> tuple[dict[str, Any], ...] | None:
+        """Read a transcript only while its queried identity remains exact."""
+
+        return self._repository.validated_preview_messages(
+            target, data_revision=data_revision, limit=limit
+        )
 
     def repair(self, request: CharacterRepairRequest) -> CharacterRepairResult:
         """Compare-and-set one unresolved conversation's character identity."""

@@ -30,6 +30,7 @@ def test_resolved_and_unresolved_row_keys_cannot_collide() -> None:
         character_label="Ada",
         title="Resolved",
         last_modified="2026-09-03T12:00:00Z",
+        created_at="2026-09-01T10:00:00Z",
     )
     unresolved = CharacterConversationRow.unavailable(
         UnresolvedConversationKey("authority-A", "same-conversation"),
@@ -37,6 +38,7 @@ def test_resolved_and_unresolved_row_keys_cannot_collide() -> None:
         character_label="Ada",
         title="Unavailable",
         last_modified="2026-09-03T12:00:00Z",
+        created_at="2026-09-01T10:00:00Z",
     )
 
     assert resolved.row_key != unresolved.row_key
@@ -80,6 +82,7 @@ def test_unavailable_reason_changes_without_changing_unresolved_identity() -> No
         character_label="Historical Ada",
         title="Old chat",
         last_modified="2026-09-03T12:00:00Z",
+        created_at="2026-09-01T10:00:00Z",
     )
     changed = CharacterConversationRow.unavailable(
         key,
@@ -87,6 +90,7 @@ def test_unavailable_reason_changes_without_changing_unresolved_identity() -> No
         character_label="Historical Ada",
         title="Old chat",
         last_modified="2026-09-03T12:00:00Z",
+        created_at="2026-09-01T10:00:00Z",
     )
 
     assert missing.row_key == changed.row_key

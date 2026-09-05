@@ -1,6 +1,8 @@
 import importlib
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationNavigationService,
     CharacterKeywordIndexStatus,
@@ -29,27 +31,33 @@ def _chat(
     modified: str,
 ) -> None:
     authority = db.get_local_authority_id()
-    assert db.add_conversation(
-        {
-            "id": conversation_id,
-            "character_id": character_id,
-            "assistant_kind": "character",
-            "assistant_id": str(character_id),
-            "assistant_authority_id": authority,
-            "title": title,
-        }
-    ) == conversation_id
+    assert (
+        db.add_conversation(
+            {
+                "id": conversation_id,
+                "character_id": character_id,
+                "assistant_kind": "character",
+                "assistant_id": str(character_id),
+                "assistant_authority_id": authority,
+                "title": title,
+            }
+        )
+        == conversation_id
+    )
     message_id = f"message-{conversation_id}"
-    assert db.add_message(
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "role": "user",
-            "content": content,
-            "timestamp": modified,
-        }
-    ) == message_id
+    assert (
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": content,
+                "timestamp": modified,
+            }
+        )
+        == message_id
+    )
     db.set_conversation_active_leaf(conversation_id, message_id)
     with db.transaction() as connection:
         connection.execute(
@@ -244,6 +252,44 @@ def test_recent_groups_reserve_slot_for_nonempty_unavailable_group(
     assert groups[-1].rows[0].title == "Unavailable"
 
 
+def test_unavailable_page_reports_complete_total_and_excludes_resolved(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "unavailable-page.sqlite", client_id="recent")
+    character_id = _card(db, "Ada")
+    for index, conversation_id in enumerate(("resolved", "missing-1", "missing-2")):
+        _chat(
+            db,
+            conversation_id=conversation_id,
+            character_id=character_id,
+            title=conversation_id,
+            content=conversation_id,
+            modified=f"2026-09-03T10:00:0{index}Z",
+        )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET assistant_authority_id = NULL "
+            "WHERE id IN ('missing-1', 'missing-2')"
+        )
+
+    page = CharacterConversationNavigationService(db).unavailable_page(
+        offset=0,
+        limit=1,
+    )
+
+    assert page.total == 2
+    assert [row.unresolved.conversation_id for row in page.rows] == ["missing-2"]
+    assert all(row.target is None for row in page.rows)
+
+    filtered = CharacterConversationNavigationService(db).unavailable_page(
+        offset=0,
+        limit=20,
+        query="missing-1",
+    )
+    assert filtered.total == 1
+    assert [row.unresolved.conversation_id for row in filtered.rows] == ["missing-1"]
+
+
 def test_recent_groups_materialize_only_sql_bounded_sections(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "recent-sql-bound.sqlite", client_id="recent")
     for character_index in range(5):
@@ -255,9 +301,7 @@ def test_recent_groups_materialize_only_sql_bounded_sections(tmp_path: Path) -> 
                 character_id=character_id,
                 title=f"Chat {character_index}-{chat_index}",
                 content="bounded",
-                modified=(
-                    f"2026-09-03T1{character_index}:00:0{chat_index}Z"
-                ),
+                modified=(f"2026-09-03T1{character_index}:00:0{chat_index}Z"),
             )
     statements: list[str] = []
     db.get_connection().set_trace_callback(statements.append)
@@ -272,20 +316,19 @@ def test_recent_groups_materialize_only_sql_bounded_sections(tmp_path: Path) -> 
     materializing_queries = [
         statement
         for statement in statements
-        if "FROM conversations AS c" in statement
-        and "COUNT(" not in statement
+        if "FROM conversations AS c" in statement and "COUNT(" not in statement
     ]
     assert materializing_queries
     assert all("LIMIT" in statement for statement in materializing_queries)
     section_queries = [
-        statement
-        for statement in statements
-        if "GROUP BY c.character_id" in statement
+        statement for statement in statements if "GROUP BY c.character_id" in statement
     ]
     assert len(section_queries) == 1 and "LIMIT 2" in section_queries[0]
-    plan = db.get_connection().execute(
-        f"EXPLAIN QUERY PLAN {section_queries[0]}"
-    ).fetchall()
+    plan = (
+        db.get_connection()
+        .execute(f"EXPLAIN QUERY PLAN {section_queries[0]}")
+        .fetchall()
+    )
     assert plan
 
 
@@ -318,6 +361,94 @@ def test_character_page_keyset_has_no_skip_or_repeat(tmp_path: Path) -> None:
     assert len(set(row_ids)) == 5
     assert first.total == second.total == third.total == 5
     assert third.next_cursor is None
+
+
+@pytest.mark.parametrize("limit", [1, 2])
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_character_browse_uses_complete_date_key_without_skips_or_repeats(
+    tmp_path: Path, limit: int, unavailable: bool
+) -> None:
+    db = CharactersRAGDB(tmp_path / "date-key.sqlite", client_id="date-key")
+    character_id = _card(db, "Date ordering")
+    # IDs deliberately oppose creation order; the newest pair also ties on creation.
+    for conversation_id, created in (
+        ("z-old", "2026-09-01T10:00:00Z"),
+        ("b-new", "2026-09-03T10:00:00Z"),
+        ("a-new", "2026-09-03T10:00:00Z"),
+        ("y-middle", "2026-09-02T10:00:00Z"),
+    ):
+        _chat(
+            db,
+            conversation_id=conversation_id,
+            character_id=character_id,
+            title=conversation_id,
+            content="date ordering",
+            modified="2026-09-04T10:00:00Z",
+        )
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET created_at = ? WHERE id = ?",
+                (created, conversation_id),
+            )
+    if unavailable:
+        with db.transaction() as connection:
+            connection.execute("UPDATE conversations SET assistant_authority_id = NULL")
+    service = CharacterConversationNavigationService(db)
+    key = ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id)
+    expected = ["b-new", "a-new", "y-middle", "z-old"]
+    cursor = None
+    seen = []
+    for offset in range(0, 4, limit):
+        page = (
+            service.unavailable_page(offset=offset, limit=limit)
+            if unavailable
+            else service.page_for_character(key, cursor=cursor, limit=limit)
+        )
+        assert page.total == 4
+        assert [row.title for row in page.rows] == expected[offset : offset + limit]
+        seen.extend(row.title for row in page.rows)
+        cursor = page.next_cursor
+        if not unavailable and cursor is not None:
+            assert cursor.created_at == page.rows[-1].created_at
+    assert seen == expected
+    assert len(set(seen)) == 4
+    assert cursor is None
+    assert [row.title for row in service.recent_groups(row_limit=4)[0].rows] == expected
+
+
+def test_character_page_refresh_reselect_observes_order_key_mutation(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "date-refresh.sqlite", client_id="date-refresh")
+    character_id = _card(db, "Refresh")
+    for conversation_id in ("a", "b", "c"):
+        _chat(
+            db,
+            conversation_id=conversation_id,
+            character_id=character_id,
+            title=conversation_id,
+            content="refresh",
+            modified="2026-09-04T10:00:00Z",
+        )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET created_at = '2026-09-01T10:00:00Z'"
+        )
+    service = CharacterConversationNavigationService(db)
+    key = ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id)
+    first = service.page_for_character(key, limit=1)
+    assert [row.title for row in first.rows] == ["c"]
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET created_at = ? WHERE id = ?",
+            ("2026-09-03T10:00:00Z", "a"),
+        )
+    continued = service.page_for_character(key, cursor=first.next_cursor, limit=1)
+    assert [row.title for row in continued.rows] == ["b"]
+    assert continued.next_cursor is None
+    refreshed = service.page_for_character(key, limit=3)
+    assert [row.title for row in refreshed.rows] == ["a", "c", "b"]
+    assert refreshed.data_revision > first.data_revision
 
 
 def test_keyword_search_is_local_only_and_revalidates_data_revision(
@@ -379,16 +510,19 @@ def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> No
     service = CharacterConversationNavigationService(db)
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
 
-    assert db.add_message(
-        {
-            "id": "appended",
-            "conversation_id": "maintained",
-            "parent_message_id": "message-maintained",
-            "sender": "assistant",
-            "role": "assistant",
-            "content": "APPENDED_TERM",
-        }
-    ) == "appended"
+    assert (
+        db.add_message(
+            {
+                "id": "appended",
+                "conversation_id": "maintained",
+                "parent_message_id": "message-maintained",
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "APPENDED_TERM",
+            }
+        )
+        == "appended"
+    )
     db.set_conversation_active_leaf("maintained", "appended")
     assert service.keyword_index_status() is CharacterKeywordIndexStatus.ABSENT
     assert service.keyword_search("APPENDED_TERM").keyword_status is (
@@ -407,16 +541,19 @@ def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> No
     assert service.keyword_search("APPENDED_TERM").total == 0
     assert service.keyword_search("EDITED_TERM").total == 1
 
-    assert db.add_message(
-        {
-            "id": "alternate",
-            "conversation_id": "maintained",
-            "parent_message_id": "message-maintained",
-            "sender": "assistant",
-            "role": "assistant",
-            "content": "BRANCH_TERM",
-        }
-    ) == "alternate"
+    assert (
+        db.add_message(
+            {
+                "id": "alternate",
+                "conversation_id": "maintained",
+                "parent_message_id": "message-maintained",
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "BRANCH_TERM",
+            }
+        )
+        == "alternate"
+    )
     with db.transaction() as connection:
         connection.execute(
             "UPDATE messages SET variant_of = 'appended', "
@@ -441,10 +578,14 @@ def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> No
     assert db.soft_delete_message("alternate", expected_version=1)
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
     assert service.keyword_search("BRANCH_TERM").total == 0
-    plaintext = db.get_connection().execute(
-        "SELECT COUNT(*) FROM character_conversation_search_documents "
-        "WHERE body LIKE '%BRANCH_TERM%'"
-    ).fetchone()[0]
+    plaintext = (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM character_conversation_search_documents "
+            "WHERE body LIKE '%BRANCH_TERM%'"
+        )
+        .fetchone()[0]
+    )
     assert plaintext == 0
 
 
@@ -468,9 +609,12 @@ def test_keyword_dirty_ledger_and_missed_event_reconciliation(tmp_path: Path) ->
         preserve_descendants=True,
     )
     with db.transaction() as connection:
-        assert connection.execute(
-            "SELECT conversation_id FROM character_conversation_search_dirty"
-        ).fetchone()[0] == "reconcile-chat"
+        assert (
+            connection.execute(
+                "SELECT conversation_id FROM character_conversation_search_dirty"
+            ).fetchone()[0]
+            == "reconcile-chat"
+        )
         connection.execute("DELETE FROM character_conversation_search_dirty")
 
     assert service.reconcile_keyword_index() is CharacterKeywordIndexStatus.READY
@@ -552,10 +696,14 @@ def test_keyword_recovers_abandoned_build_and_cleans_superseded_rows(
     service = CharacterConversationNavigationService(restarted)
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
     assert service.keyword_search("RECOVERED_TERM").total == 1
-    generations = restarted.get_connection().execute(
-        "SELECT status, COUNT(*) FROM character_conversation_search_generations "
-        "GROUP BY status"
-    ).fetchall()
+    generations = (
+        restarted.get_connection()
+        .execute(
+            "SELECT status, COUNT(*) FROM character_conversation_search_generations "
+            "GROUP BY status"
+        )
+        .fetchall()
+    )
     assert [(row["status"], row[1]) for row in generations] == [("ready", 1)]
 
 
@@ -613,9 +761,7 @@ def test_keyword_search_fences_writer_during_snapshot_projection(
             )
         return original_project(conversation_id, connection=connection)
 
-    monkeypatch.setattr(
-        service._repository._projector, "project", project_with_barrier
-    )
+    monkeypatch.setattr(service._repository._projector, "project", project_with_barrier)
     try:
         result = service.keyword_search("STALE_BARRIER_TERM")
     finally:
@@ -921,39 +1067,56 @@ def test_repair_candidates_stay_in_authority_and_repair_uses_expected_version(
         content="resolved",
         modified="2026-09-03T11:00:00Z",
     )
-    assert service.repair_candidates(
-        UnresolvedConversationKey(authority, "already-resolved")
-    ) == ()
+    assert (
+        service.repair_candidates(
+            UnresolvedConversationKey(authority, "already-resolved")
+        )
+        == ()
+    )
 
     candidates = service.repair_candidates(unresolved)
     assert candidates
     assert {candidate.key.data_authority_id for candidate in candidates} == {authority}
-    assert service.repair_candidates(
-        UnresolvedConversationKey("different-authority", "repair-me")
-    ) == ()
-    assert service.repair(
-        CharacterRepairRequest(
-            unresolved=unresolved,
-            replacement=ResolvedLocalCharacterKey("different-authority", replacement_id),
-            expected_conversation_version=1,
+    assert (
+        service.repair_candidates(
+            UnresolvedConversationKey("different-authority", "repair-me")
         )
-    ) is CharacterRepairResult.INVALID_CANDIDATE
-    assert service.repair(
-        CharacterRepairRequest(
-            unresolved=unresolved,
-            replacement=ResolvedLocalCharacterKey(authority, replacement_id),
-            expected_conversation_version=99,
+        == ()
+    )
+    assert (
+        service.repair(
+            CharacterRepairRequest(
+                unresolved=unresolved,
+                replacement=ResolvedLocalCharacterKey(
+                    "different-authority", replacement_id
+                ),
+                expected_conversation_version=1,
+            )
         )
-    ) is CharacterRepairResult.STALE_VERSION
+        is CharacterRepairResult.INVALID_CANDIDATE
+    )
+    assert (
+        service.repair(
+            CharacterRepairRequest(
+                unresolved=unresolved,
+                replacement=ResolvedLocalCharacterKey(authority, replacement_id),
+                expected_conversation_version=99,
+            )
+        )
+        is CharacterRepairResult.STALE_VERSION
+    )
 
     before_revision = db.get_character_conversation_search_revision()
-    assert service.repair(
-        CharacterRepairRequest(
-            unresolved=unresolved,
-            replacement=ResolvedLocalCharacterKey(authority, replacement_id),
-            expected_conversation_version=1,
+    assert (
+        service.repair(
+            CharacterRepairRequest(
+                unresolved=unresolved,
+                replacement=ResolvedLocalCharacterKey(authority, replacement_id),
+                expected_conversation_version=1,
+            )
         )
-    ) is CharacterRepairResult.APPLIED
+        is CharacterRepairResult.APPLIED
+    )
     assert db.get_character_conversation_search_revision() == before_revision + 1
     repaired = db.get_conversation_by_id("repair-me")
     assert repaired is not None
@@ -993,11 +1156,15 @@ def test_keyword_backfill_reports_each_128_conversation_batch(tmp_path: Path) ->
     service: CharacterConversationNavigationService
 
     def record_progress(count: int) -> None:
-        row = db.get_connection().execute(
-            "SELECT processed_conversations "
-            "FROM character_conversation_search_generations "
-            "WHERE status = 'building'"
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT processed_conversations "
+                "FROM character_conversation_search_generations "
+                "WHERE status = 'building'"
+            )
+            .fetchone()
+        )
         assert row is not None
         observed.append((count, service.keyword_index_status(), int(row[0])))
 

@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Index-plan guards must accept the names the DDL actually uses
+
+**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
+no-statistics query-plan assertions passed for the Keyword indexes, but the
+index census guard rejected every pin because its evidence extractor only
+recognized `idx_` and `uq_` names. The schema used descriptive
+`character_conversation_search_*` names. A synthetic positive/negative pair
+reproduced the missing positive pin while preserving rejection of `not in`.
+Accepting standalone identifier literals fixed the guard without changing the
+DDL or labeling new indexes as pre-convention. The same qualification found
+that the schema allowlist scanner omitted the new dedicated DDL module; the
+live-schema parity test caught all five missing tables.
+
+**What to do.** Run both live-schema parity and index-plan inventory checks
+when moving DDL into a dedicated module. Register its source explicitly, keep
+real query-plan assertions, and verify a guard's name recognition before
+discarding evidence or weakening its inventory policy.
+
 ## CSS ratchet paydown must preserve inherited subjects and specificity
 
 **PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a

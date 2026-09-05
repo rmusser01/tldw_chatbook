@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -44,16 +46,19 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
         character_id = historical.add_character_card({"name": "Legacy"})
         assert character_id is not None
         for conversation_id in ("unique", "ambiguous"):
-            assert historical.add_conversation(
-                {
-                    "id": conversation_id,
-                    "character_id": character_id,
-                    "assistant_kind": "character",
-                    "assistant_id": str(character_id),
-                    "assistant_authority_id": authority,
-                    "title": conversation_id,
-                }
-            ) == conversation_id
+            assert (
+                historical.add_conversation(
+                    {
+                        "id": conversation_id,
+                        "character_id": character_id,
+                        "assistant_kind": "character",
+                        "assistant_id": str(character_id),
+                        "assistant_authority_id": authority,
+                        "title": conversation_id,
+                    }
+                )
+                == conversation_id
+            )
         with historical.transaction() as connection:
             connection.execute(
                 "UPDATE conversations SET assistant_authority_id = NULL "
@@ -68,16 +73,25 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
     try:
         connection = upgraded.get_connection()
         assert upgraded._get_db_version(connection) == 66
-        assert {row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?)"
-            , tuple(sorted(OWNED_OBJECTS))
-        )} == OWNED_OBJECTS
-        assert connection.execute(
-            "SELECT COUNT(*) FROM character_conversation_search_documents"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM character_conversation_search_generations"
-        ).fetchone()[0] == 0
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?)",
+                tuple(sorted(OWNED_OBJECTS)),
+            )
+        } == OWNED_OBJECTS
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM character_conversation_search_documents"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM character_conversation_search_generations"
+            ).fetchone()[0]
+            == 0
+        )
         links = {
             row["id"]: row["assistant_authority_id"]
             for row in connection.execute(
@@ -92,10 +106,15 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
     reopened = CharactersRAGDB(path, client_id="character-search-v66-reopen")
     try:
         assert reopened._get_db_version(reopened.get_connection()) == 66
-        assert reopened.get_connection().execute(
-            "SELECT data_revision FROM character_conversation_search_revision "
-            "WHERE singleton_id = 1"
-        ).fetchone()[0] == 1
+        assert (
+            reopened.get_connection()
+            .execute(
+                "SELECT data_revision FROM character_conversation_search_revision "
+                "WHERE singleton_id = 1"
+            )
+            .fetchone()[0]
+            == 1
+        )
     finally:
         reopened.close_connection()
 
@@ -140,3 +159,69 @@ def test_v66_fresh_schema_matches_migrated_tables_columns_indexes_and_triggers(
     finally:
         fresh.close_connection()
         migrated.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("index", "query", "params"),
+    [
+        (
+            "character_conversation_search_dirty_authority_revision",
+            (
+                "SELECT conversation_id FROM character_conversation_search_dirty "
+                "WHERE data_authority_id = ? AND source_revision <= ?"
+            ),
+            ("authority", 1),
+        ),
+        (
+            "character_conversation_search_documents_character",
+            (
+                "SELECT conversation_id FROM character_conversation_search_documents "
+                "WHERE data_authority_id = ? AND character_id = ? AND generation_id = ?"
+            ),
+            ("authority", 1, "generation"),
+        ),
+        (
+            "character_conversation_search_documents_revision",
+            (
+                "SELECT conversation_id FROM character_conversation_search_documents "
+                "WHERE data_authority_id = ? AND source_revision = ?"
+            ),
+            ("authority", 1),
+        ),
+        (
+            "character_conversation_search_generations_authority_status",
+            (
+                "SELECT generation_id FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND status = ?"
+            ),
+            ("authority", "failed"),
+        ),
+        (
+            "character_conversation_search_one_ready_generation",
+            (
+                "SELECT data_authority_id FROM character_conversation_search_generations "
+                "WHERE status = 'ready'"
+            ),
+            (),
+        ),
+    ],
+)
+def test_keyword_indexes_are_selected_without_statistics(
+    tmp_path: Path, index: str, query: str, params: tuple
+) -> None:
+    database = CharactersRAGDB(tmp_path / "keyword-plans.sqlite", client_id="plans")
+    try:
+        connection = database.get_connection()
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        plan = " ".join(
+            row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + query, params)
+        )
+        assert index in plan
+        assert "TEMP B-TREE" not in plan
+    finally:
+        database.close_connection()

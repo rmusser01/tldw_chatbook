@@ -41,16 +41,19 @@ def _message(
     role: str,
     content: str,
 ) -> None:
-    assert db.add_message(
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "parent_message_id": parent_id,
-            "sender": role,
-            "role": role,
-            "content": content,
-        }
-    ) == message_id
+    assert (
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "parent_message_id": parent_id,
+                "sender": role,
+                "role": role,
+                "content": content,
+            }
+        )
+        == message_id
+    )
 
 
 def _thinking_canary() -> str:
@@ -124,9 +127,9 @@ def test_projector_emits_only_selected_visible_user_and_assistant_path(
 
     service = CharacterConversationNavigationService(db)
     assert service.ensure_keyword_index().value == "ready"
-    assert [row.title for row in service.keyword_search("SELECTED_USER_CANARY").rows] == [
-        "Selected branch title"
-    ]
+    assert [
+        row.title for row in service.keyword_search("SELECTED_USER_CANARY").rows
+    ] == ["Selected branch title"]
     for excluded in (
         "SYSTEM_CANARY",
         "TOOL_CANARY",
@@ -136,9 +139,14 @@ def test_projector_emits_only_selected_visible_user_and_assistant_path(
         "NON_SELECTED_CANARY",
     ):
         assert service.keyword_search(excluded).rows == ()
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'SYSTEM_CANARY'"
-    ).fetchone()[0] == 1
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'SYSTEM_CANARY'"
+        )
+        .fetchone()[0]
+        == 1
+    )
 
 
 @pytest.mark.parametrize("defect", ["cycle", "dangling", "cross_conversation"])

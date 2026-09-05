@@ -464,13 +464,15 @@ class CharacterConversationSearchRepository:
             reserve_unavailable = unavailable_total > 0 and (
                 current_card is None or group_limit > 1
             )
-            resolved_slots = group_limit - int(current_card is not None) - int(
-                reserve_unavailable
+            resolved_slots = (
+                group_limit - int(current_card is not None) - int(reserve_unavailable)
             )
             summaries = self._recent_resolved_summaries(
                 connection,
                 exclude_character_id=(
-                    None if current_card is None else self._current_character.character_id
+                    None
+                    if current_card is None
+                    else self._current_character.character_id
                 ),
                 limit=resolved_slots,
             )
@@ -505,6 +507,35 @@ class CharacterConversationSearchRepository:
                 )
         return tuple(groups)
 
+    def unavailable_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+        query: str = "",
+    ) -> CharacterConversationPage:
+        """Return one explicit page containing only unresolved local chats."""
+
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        limit = self._bounded_limit(limit, maximum=50)
+        normalized_query = str(query or "").strip()[:200]
+        with self._database.transaction() as connection:
+            revision = self._revision(connection)
+            total = self._unavailable_total(connection, query=normalized_query)
+            sources = self._unavailable_sources(
+                connection,
+                limit=limit,
+                offset=offset,
+                query=normalized_query,
+            )
+        return CharacterConversationPage(
+            rows=tuple(self._presentation_row(source) for source in sources),
+            total=total,
+            next_cursor=None,
+            data_revision=revision,
+        )
+
     def page_for_character(
         self,
         key: ResolvedLocalCharacterKey,
@@ -520,12 +551,9 @@ class CharacterConversationSearchRepository:
         cursor_sql = ""
         params: list[object] = [self._authority, key.character_id]
         if cursor is not None:
-            cursor_sql = (
-                "AND (CAST(c.last_modified AS TEXT) < ? OR "
-                "(CAST(c.last_modified AS TEXT) = ? AND c.id < ?))"
-            )
+            cursor_sql = "AND (c.last_modified, c.created_at, c.id) < (?, ?, ?)"
             params.extend(
-                [cursor.last_modified, cursor.last_modified, cursor.conversation_id]
+                [cursor.last_modified, cursor.created_at, cursor.conversation_id]
             )
         params.append(limit + 1)
         with self._database.transaction() as connection:
@@ -547,6 +575,7 @@ class CharacterConversationSearchRepository:
                 f"""
                 SELECT c.id, c.title,
                        CAST(c.last_modified AS TEXT) AS last_modified,
+                       CAST(c.created_at AS TEXT) AS created_at,
                        c.character_id,
                        c.assistant_id, c.assistant_authority_id,
                        c.runtime_backend, c.assistant_kind,
@@ -559,7 +588,7 @@ class CharacterConversationSearchRepository:
                    AND c.assistant_authority_id = ?
                    AND c.character_id = ?
                    {cursor_sql}
-                 ORDER BY c.last_modified DESC, c.id DESC
+                 ORDER BY c.last_modified DESC, c.created_at DESC, c.id DESC
                  LIMIT ?
                 """,
                 tuple(params),
@@ -572,18 +601,23 @@ class CharacterConversationSearchRepository:
             last = result_rows[-1]
             assert last.target is not None
             next_cursor = CharacterConversationCursor(
-                last.last_modified, last.target.conversation_id
+                last.last_modified, last.created_at, last.target.conversation_id
             )
-        return CharacterConversationPage(
-            result_rows, int(total), next_cursor, revision
-        )
+        return CharacterConversationPage(result_rows, int(total), next_cursor, revision)
 
     def keyword_search(
-        self, query: str, *, offset: int = 0, limit: int = 50
+        self,
+        query: str,
+        *,
+        character: ResolvedLocalCharacterKey | None = None,
+        offset: int = 0,
+        limit: int = 50,
     ) -> CharacterConversationPage:
         """Search one read snapshot and fence it against a final source revision."""
 
         limit = self._bounded_limit(limit, maximum=50)
+        if character is not None and character.data_authority_id != self._authority:
+            return CharacterConversationPage((), 0, None, self._revision())
         if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if not isinstance(query, str) or not query.strip():
@@ -592,7 +626,12 @@ class CharacterConversationSearchRepository:
                 (), 0, None, revision, self.keyword_index_status()
             )
         for _attempt in range(2):
-            page = self._keyword_search_snapshot(query, offset=offset, limit=limit)
+            if character is None:
+                page = self._keyword_search_snapshot(query, offset=offset, limit=limit)
+            else:
+                page = self._keyword_search_snapshot(
+                    query, character=character, offset=offset, limit=limit
+                )
             if self._revision() == page.data_revision:
                 return page
         revision = self._revision()
@@ -601,7 +640,12 @@ class CharacterConversationSearchRepository:
         )
 
     def _keyword_search_snapshot(
-        self, query: str, *, offset: int, limit: int
+        self,
+        query: str,
+        *,
+        character: ResolvedLocalCharacterKey | None = None,
+        offset: int = 0,
+        limit: int = 50,
     ) -> CharacterConversationPage:
         match_query = '"' + query.strip().replace('"', '""') + '"'
         with self._database.transaction() as connection:
@@ -624,6 +668,8 @@ class CharacterConversationSearchRepository:
                 self._authority,
                 generation["generation_id"],
                 revision,
+                character.character_id if character is not None else None,
+                character.character_id if character is not None else None,
             )
             total = int(
                 connection.execute(
@@ -637,6 +683,7 @@ class CharacterConversationSearchRepository:
                      WHERE character_conversation_fts MATCH ?
                        AND d.data_authority_id = ? AND d.generation_id = ?
                        AND d.source_revision = ?
+                       AND (? IS NULL OR d.character_id = ?)
                        AND d.eligibility_digest = d.validated_eligibility_digest
                        AND c.deleted = 0 AND card.deleted = 0
                        AND c.runtime_backend = 'local'
@@ -671,8 +718,7 @@ class CharacterConversationSearchRepository:
                     if (
                         current is None
                         or current.source_revision != revision
-                        or current.eligibility_digest
-                        != candidate["eligibility_digest"]
+                        or current.eligibility_digest != candidate["eligibility_digest"]
                     ):
                         batch_rejected += 1
                         continue
@@ -701,7 +747,7 @@ class CharacterConversationSearchRepository:
     def _keyword_candidates(
         connection: sqlite3.Connection,
         *,
-        search_params: tuple[str, str, str, int],
+        search_params: tuple[str, str, str, int, int | None, int | None],
         limit: int,
         offset: int,
     ) -> list[sqlite3.Row]:
@@ -710,6 +756,7 @@ class CharacterConversationSearchRepository:
             SELECT d.conversation_id, d.title, d.body,
                    d.eligibility_digest, d.source_revision,
                    CAST(c.last_modified AS TEXT) AS last_modified,
+                   CAST(c.created_at AS TEXT) AS created_at,
                    c.character_id, c.assistant_id,
                    c.assistant_authority_id, c.runtime_backend,
                    c.assistant_kind, card.name AS card_name,
@@ -723,6 +770,7 @@ class CharacterConversationSearchRepository:
              WHERE character_conversation_fts MATCH ?
                AND d.data_authority_id = ? AND d.generation_id = ?
                AND d.source_revision = ?
+               AND (? IS NULL OR d.character_id = ?)
                AND d.eligibility_digest = d.validated_eligibility_digest
                AND c.deleted = 0 AND card.deleted = 0
                AND c.runtime_backend = 'local'
@@ -766,6 +814,71 @@ class CharacterConversationSearchRepository:
             )
             for row in rows
         )
+
+    def refresh_unresolved_evidence(
+        self, key: UnresolvedConversationKey
+    ) -> tuple[int, str] | None:
+        """Read the current unresolved identity evidence and CAS version atomically."""
+
+        if key.data_authority_id != self._authority:
+            return None
+        with self._database.transaction() as connection:
+            row = connection.execute(
+                "SELECT c.version, c.assistant_id, c.character_id, "
+                "c.assistant_authority_id, card.id AS live_card_id "
+                "FROM conversations AS c LEFT JOIN character_cards AS card "
+                "ON card.id = c.character_id AND card.deleted = 0 "
+                "WHERE c.id = ? AND c.deleted = 0 "
+                "AND c.runtime_backend = 'local' AND c.assistant_kind = 'character'",
+                (key.conversation_id,),
+            ).fetchone()
+            if row is None or self._is_resolved_conversation(row):
+                return None
+            historical = str(row["assistant_id"] or row["character_id"] or "Unknown")
+            return int(row["version"]), historical
+
+    def validated_preview_messages(
+        self,
+        target: LocalCharacterConversationTarget,
+        *,
+        data_revision: int,
+        limit: int = 200,
+    ) -> tuple[dict[str, Any], ...] | None:
+        """Atomically fence a preview read by revision and exact authority."""
+
+        limit = self._bounded_limit(limit, maximum=200)
+        if target.character.data_authority_id != self._authority:
+            return None
+        with self._database.transaction() as connection:
+            if self._revision(connection) != data_revision:
+                return None
+            owner = connection.execute(
+                "SELECT c.deleted, c.runtime_backend, c.assistant_kind, "
+                "c.assistant_authority_id, c.character_id, "
+                "card.id AS live_card_id, card.deleted AS card_deleted "
+                "FROM conversations AS c "
+                "LEFT JOIN character_cards AS card ON card.id = c.character_id "
+                "WHERE c.id = ?",
+                (target.conversation_id,),
+            ).fetchone()
+            if (
+                owner is None
+                or bool(owner["deleted"])
+                or owner["runtime_backend"] != "local"
+                or owner["assistant_kind"] != "character"
+                or owner["assistant_authority_id"] != self._authority
+                or owner["character_id"] != target.character.character_id
+                or owner["live_card_id"] is None
+                or bool(owner["card_deleted"])
+            ):
+                return None
+            rows = connection.execute(
+                "SELECT m.* FROM messages AS m "
+                "WHERE m.conversation_id = ? AND m.deleted = 0 "
+                "ORDER BY m.timestamp ASC, m.id ASC LIMIT ?",
+                (target.conversation_id, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
 
     def repair(self, request: CharacterRepairRequest) -> CharacterRepairResult:
         """Compare-and-set one exact unresolved local conversation identity."""
@@ -1124,9 +1237,7 @@ class CharacterConversationSearchRepository:
         except Exception:  # noqa: BLE001 - maintenance is a typed boundary
             return CharacterKeywordIndexStatus.FAILED
 
-    def _reconcile_generation(
-        self, generation_id: str
-    ) -> CharacterKeywordIndexStatus:
+    def _reconcile_generation(self, generation_id: str) -> CharacterKeywordIndexStatus:
         try:
             with self._database.transaction(immediate=True) as connection:
                 revision = self._revision(connection)
@@ -1270,7 +1381,14 @@ class CharacterConversationSearchRepository:
             (self._current_character.character_id,),
         ).fetchone()
 
-    def _unavailable_total(self, connection: sqlite3.Connection) -> int:
+    def _unavailable_total(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str = "",
+    ) -> int:
+        escaped_query = self._escape_like_query(query)
+        query_pattern = f"%{escaped_query.casefold()}%"
         return int(
             connection.execute(
                 """
@@ -1283,10 +1401,28 @@ class CharacterConversationSearchRepository:
                         OR typeof(c.character_id) != 'integer'
                         OR c.character_id < 1
                         OR card.id IS NULL OR card.deleted != 0)
+                   AND (? = ''
+                        OR LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\\'
+                        OR LOWER(COALESCE(c.id, '')) LIKE ? ESCAPE '\\'
+                        OR LOWER(COALESCE(c.assistant_id, '')) LIKE ? ESCAPE '\\'
+                        OR LOWER(COALESCE(card.name, '')) LIKE ? ESCAPE '\\')
                 """,
-                (self._authority,),
+                (
+                    self._authority,
+                    escaped_query,
+                    query_pattern,
+                    query_pattern,
+                    query_pattern,
+                    query_pattern,
+                ),
             ).fetchone()[0]
         )
+
+    @staticmethod
+    def _escape_like_query(query: str) -> str:
+        """Escape a literal user query for SQLite LIKE with ``\\`` escape."""
+
+        return query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def _recent_resolved_summaries(
         self,
@@ -1347,6 +1483,7 @@ class CharacterConversationSearchRepository:
             """
             SELECT c.id, c.title,
                    CAST(c.last_modified AS TEXT) AS last_modified,
+                   CAST(c.created_at AS TEXT) AS created_at,
                    c.character_id, c.assistant_id, c.assistant_authority_id,
                    c.runtime_backend, c.assistant_kind,
                    card.name AS card_name, card.deleted AS card_deleted
@@ -1356,7 +1493,7 @@ class CharacterConversationSearchRepository:
              WHERE c.deleted = 0 AND c.runtime_backend = 'local'
                AND c.assistant_kind = 'character'
                AND c.assistant_authority_id = ? AND c.character_id = ?
-             ORDER BY c.last_modified DESC, c.id DESC
+             ORDER BY c.last_modified DESC, c.created_at DESC, c.id DESC
              LIMIT ?
             """,
             (self._authority, character_id, row_limit),
@@ -1377,10 +1514,36 @@ class CharacterConversationSearchRepository:
         total: int,
         row_limit: int,
     ) -> CharacterConversationGroup:
-        sources = connection.execute(
+        sources = self._unavailable_sources(
+            connection,
+            limit=row_limit,
+            offset=0,
+        )
+        return CharacterConversationGroup(
+            key=UnresolvedConversationKey(
+                self._authority, "unavailable-character-conversations"
+            ),
+            character_label="Chats with unavailable characters",
+            rows=tuple(self._presentation_row(source) for source in sources),
+            total=total,
+            is_current=False,
+        )
+
+    def _unavailable_sources(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        limit: int,
+        offset: int,
+        query: str = "",
+    ) -> list[sqlite3.Row]:
+        escaped_query = self._escape_like_query(query)
+        query_pattern = f"%{escaped_query.casefold()}%"
+        return connection.execute(
             """
             SELECT c.id, c.title,
                    CAST(c.last_modified AS TEXT) AS last_modified,
+                   CAST(c.created_at AS TEXT) AS created_at,
                    c.character_id,
                    c.assistant_id, c.assistant_authority_id,
                    c.runtime_backend, c.assistant_kind,
@@ -1393,20 +1556,25 @@ class CharacterConversationSearchRepository:
                     OR typeof(c.character_id) != 'integer'
                     OR c.character_id < 1
                     OR card.id IS NULL OR card.deleted != 0)
-             ORDER BY c.last_modified DESC, c.id DESC
-             LIMIT ?
+               AND (? = ''
+                    OR LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(c.id, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(c.assistant_id, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(card.name, '')) LIKE ? ESCAPE '\\')
+             ORDER BY c.last_modified DESC, c.created_at DESC, c.id DESC
+             LIMIT ? OFFSET ?
             """,
-            (self._authority, row_limit),
-        ).fetchall()
-        return CharacterConversationGroup(
-            key=UnresolvedConversationKey(
-                self._authority, "unavailable-character-conversations"
+            (
+                self._authority,
+                escaped_query,
+                query_pattern,
+                query_pattern,
+                query_pattern,
+                query_pattern,
+                limit,
+                offset,
             ),
-            character_label="Chats with unavailable characters",
-            rows=tuple(self._presentation_row(source) for source in sources),
-            total=total,
-            is_current=False,
-        )
+        ).fetchall()
 
     def _presentation_row(
         self, source: Any, *, selected_excerpt: str = ""
@@ -1441,6 +1609,7 @@ class CharacterConversationSearchRepository:
                 character_label=label,
                 title=title,
                 last_modified=modified,
+                created_at=str(source["created_at"]),
                 is_current=target.character == self._current_character,
                 selected_excerpt=selected_excerpt,
             )
@@ -1458,6 +1627,7 @@ class CharacterConversationSearchRepository:
             character_label=label,
             title=title,
             last_modified=modified,
+            created_at=str(source["created_at"]),
             selected_excerpt=selected_excerpt,
         )
 
@@ -1480,6 +1650,10 @@ class CharacterConversationSearchRepository:
 
     @staticmethod
     def _bounded_limit(value: int, *, maximum: int) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 1 <= value <= maximum
+        ):
             raise ValueError(f"limit must be between 1 and {maximum}")
         return value
