@@ -2,7 +2,7 @@
 id: TASK-31663
 title: >-
   Inspect rail focus visibility and keyboard reachability
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, a11y, critique-2026-09-05]
@@ -32,4 +32,5 @@ shape/outline, not a stronger tint.
 - [ ] #2 No Tab stop in the rail is indication-free; the stop-3 gap is fixed or that widget is removed from the focus order
 - [ ] #3 The hidden-but-focusable left-rail widget is fixed so Tab routing from the composer is not silently absorbed (or the root cause is filed against the left rail with evidence)
 - [ ] #4 The section scrollbar thumb is visible against its track at both supported sizes
+- [ ] #5 (from 31662's AC#2 residue, review-required filing) The rail's pinned stack above the scroll body shrinks at small heights so Environment's four at-rest rows are visible at 80x24: 8 pinned lines today, 6 of them #console-send-authority-summary, over a 3-line scroll body (31662's measurement). Compress or make collapsible the send-authority block at constrained heights; keep its content reachable
 <!-- AC:END -->

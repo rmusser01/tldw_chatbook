@@ -41,4 +41,5 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [ ] #11 A persistent UNKNOWN root (no chat controller / no active session) must not sit on "Checking workspace…" with an inert Refresh indefinitely (31660 re-review obs — the AC#4 situation one state over)
 - [ ] #12 test_unknown_root_never_paints_the_unbound_copy asserts the rail is open after its toggle (vacuity guard); empty-state docs table and environment.py module docstring updated for the UNKNOWN state
 - [ ] #13 The fleet section's periodic _sync_console_agent_section recompose steals focus the same way the Environment poll did (its rows ARE focusable) -- apply the 31661 capture/restore + outside-rail guard there (review finding, 31661 round 1)
+- [ ] #14 row_fits_one_line measures with len() not rich.cells.cell_len — a CJK/wide-glyph title would be under-measured and ellipsize the primary (31662 review minor; one-line fix)
 <!-- AC:END -->
