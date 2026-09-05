@@ -77,6 +77,32 @@ list-and-preview layout.
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
   labels back in place.
+
+**Media's "Analyze"** (Media only) generates an analysis for every checked
+item in one run, in list order, on its own row under Clear/Export/Review:
+
+- Pressing it leaves select mode and reports progress **in the list**:
+  "Analyzing 3 of 40 · 2 failed" while it runs, then "✓ analyzed · 38 of 40
+  · 2 failed" when it settles ("✗ analyzed · 0 of 3 · 3 failed" if nothing
+  succeeded). **Retry failed** re-runs only the items that failed;
+  **Dismiss** clears the receipt. A clean run says just "✓ analyzed · 40 of
+  40" with no failure count and no Retry.
+- **Items that already have an analysis are never overwritten silently.**
+  If any checked item has one, the first press runs nothing and offers
+  "N of M already analyzed" with **Skip them** (analyze only the rest) and
+  **Overwrite** (analyze everything, replacing what is there) — no
+  Dismiss on this row; "Skip them" already is the change-nothing outcome
+  and retires the card.
+- One run at a time: a second press while one is in flight says "Analysis
+  already running" rather than starting a second.
+- With no analysis provider configured the action reads **"○ Analyze"** and
+  its tooltip carries the same reason the Reader's Generate gives.
+- The run belongs to the Library screen: leaving Library stops it, and a
+  notice says where it got to ("Analysis stopped at 3 of 40 · reopen Select
+  ▸ Analyze to continue; finished items are skipped"). Items already
+  analyzed are skipped by a fresh run, so continuing is just re-selecting
+  them and pressing Analyze again.
+
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -213,9 +239,13 @@ still spans the pane.
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
-  This section only edits text — it never calls a model; analysis is
-  produced at import time (the "Analyze after import" option) or written by
-  hand here.
+  Analysis is produced at import time (the "Analyze after import" option),
+  written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
+  once one exists) calls the configured analysis provider without leaving
+  the reading flow. With no provider configured it reads **"○ Generate"**
+  and its tooltip names the reason (the same wording the Select-mode bulk
+  **Analyze** tooltip and the Import "Analyze N skipped" gate use), so the
+  gap is visible before you click rather than after.
 - **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
@@ -581,3 +611,23 @@ in the import pipeline; details and verification pointers are on the
 database pages, pinned pager at 100x30 and 170x48, bounded complete facet
 chooser with an unambiguous "All types" choice, retained stale recovery,
 selection clearing, and metadata-only diagnostics).*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4: the
+Select-mode **Analyze** bulk action, its in-list receipt with Retry failed /
+Dismiss, the "N of M already analysed" Skip/Overwrite choice, the disabled
+"○ Analyze" reason, and the stop-notice when a run's screen goes away.
+Verified live at 235x52 with no provider configured, and in real-screen
+tests for the receipt copy and the run itself.)*
+
+*Verified against fix/media-wave4-d @ 759947bb1d — 2026-09-04 (final fix
+round, task-28007: the Skip/Overwrite choice row no longer offers Dismiss
+at the 235x52 reference width — it clipped to "Dism" against the Items
+pane's 36-cell floor — and "Skip them" already is the change-nothing
+outcome; the choice is now also retired on every browse-scope change
+(filter/query, page, type) and on leaving select mode, not just left to
+outlive them. Copy unified on en-US "analyzed"/"analyze" throughout,
+including the receipt string above. Added the Analysis tab's
+**Generate**/**Regenerate** control to this page's Analysis-tab
+description (AC#5) — it was previously undocumented. Verified in
+real-screen tests for the choice row's painted text and its scope-change
+invalidation.)*

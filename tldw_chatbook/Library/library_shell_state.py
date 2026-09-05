@@ -81,6 +81,14 @@ LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = (
 )
 LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."
 
+# task-28007 AC#4: the Media canvas's "Analyze selected" bulk action, same
+# pair. The provider-unready reason (from ``analysis_unavailable_reason``)
+# replaces the disabled tooltip when there is nothing to dispatch to.
+LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP = (
+    "Select one or more items to analyze them."
+)
+LIBRARY_ANALYZE_SELECTED_TOOLTIP = "Generate an analysis for the selected items."
+
 # task-4023 AC#1 (RC-07): disabled state finally joins the product's
 # non-colour vocabulary. Every disabled Library action label carries a
 # leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option

@@ -80,6 +80,7 @@ class LibraryMediaViewer(Vertical):
         highlights: Sequence[LibraryMediaHighlightRow] = (),
         editing_analysis: bool = False,
         generating_analysis: bool = False,
+        analysis_provider_reason: str = "",
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
@@ -105,6 +106,12 @@ class LibraryMediaViewer(Vertical):
 
         Args:
             viewer: Pure display state for the loaded item.
+            analysis_provider_reason: Why the Analysis tab's Generate
+                action cannot run (no configured provider, an unready
+                one), or "" when it can. The screen resolves it through
+                the same seam the handler and the ingest path use
+                (task-28007 AC#5), so the label and the post-click
+                refusal can never disagree.
             find_focus_pending: One-shot token from the Find gesture; the
                 bar it mounts takes focus, then the token is spent here so
                 later syncs never re-take focus (task-31269).
@@ -128,6 +135,7 @@ class LibraryMediaViewer(Vertical):
         self.highlights = tuple(highlights)
         self.editing_analysis = editing_analysis
         self.generating_analysis = generating_analysis
+        self.analysis_provider_reason = analysis_provider_reason
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
@@ -698,12 +706,23 @@ class LibraryMediaViewer(Vertical):
             )
             # task-28006: LLM generation, in the reading flow (no detour to
             # the manager). "Regenerate" when an analysis already exists.
-            yield Button(
-                "Regenerate" if self.viewer.analysis else "Generate",
+            # task-28007 AC#5: with no callable provider it says so at the
+            # control, in PR A's "○"-with-reason grammar, instead of
+            # accepting the click and answering with a toast.
+            reason = self.analysis_provider_reason
+            generate = Button(
+                library_disabled_action_label(
+                    "Regenerate" if self.viewer.analysis else "Generate",
+                    bool(reason),
+                ),
                 id="library-media-analysis-generate",
                 classes="library-canvas-action",
                 compact=True,
             )
+            if reason:
+                generate.disabled = True
+                generate.tooltip = reason
+            yield generate
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
         """Render the analysis edit ``TextArea`` prefilled with the current analysis.

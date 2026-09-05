@@ -732,3 +732,43 @@ def test_delete_receipt_count_defaults_zero_and_passes_through():
 
     floored_state = build_library_media_state(records, delete_receipt_count=-1)
     assert floored_state.delete_receipt_count == 0
+
+
+def test_analyze_receipt_fields_default_zero_and_pass_through():
+    """task-28007 AC#3/AC#4: the five bulk-Analyze receipt fields follow
+    ``delete_receipt_count`` exactly -- pure passthrough, defaulted so
+    every existing constructor call stays valid, counts floored at 0."""
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records)
+    assert default_state.analyze_receipt_total == 0
+    assert default_state.analyze_receipt_done == 0
+    assert default_state.analyze_receipt_failed == 0
+    assert default_state.analyze_receipt_running is False
+    assert default_state.analyze_choice_count == 0
+
+    running = build_library_media_state(
+        records,
+        analyze_receipt_total=40,
+        analyze_receipt_done=37,
+        analyze_receipt_failed=1,
+        analyze_receipt_running=True,
+        analyze_choice_count=2,
+    )
+    assert running.analyze_receipt_total == 40
+    assert running.analyze_receipt_done == 37
+    assert running.analyze_receipt_failed == 1
+    assert running.analyze_receipt_running is True
+    assert running.analyze_choice_count == 2
+
+    floored = build_library_media_state(
+        records,
+        analyze_receipt_total=-1,
+        analyze_receipt_done=-1,
+        analyze_receipt_failed=-1,
+        analyze_choice_count=-1,
+    )
+    assert floored.analyze_receipt_total == 0
+    assert floored.analyze_receipt_done == 0
+    assert floored.analyze_receipt_failed == 0
+    assert floored.analyze_choice_count == 0

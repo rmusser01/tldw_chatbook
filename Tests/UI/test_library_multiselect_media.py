@@ -13,6 +13,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Library.row_selection import RowSelection
 from tldw_chatbook.Library.library_export_scope import ExportScope
@@ -2157,3 +2158,356 @@ def test_space_action_noops_on_a_stale_page_and_under_a_confirm():
         mutate(fake)
         LibraryScreen.action_library_media_toggle_row_selection(fake)
         assert fake._library_media_row_selection.count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-28007 AC#3/AC#4 -- bulk Analyze in Select mode, with an in-list receipt
+# ---------------------------------------------------------------------------
+
+
+def _analyze_fake(
+    monkeypatch,
+    *,
+    ids=("3", "1", "2"),
+    checked=None,
+    analysed=(),
+    generate=None,
+):
+    """A media fake wired for the bulk-Analyze handler and its worker.
+
+    ``ids`` are in BROWSE order (the canvas row order), which is the order
+    the run must follow -- ``RowSelection.ids`` is a frozenset and cannot
+    carry it.
+    """
+    checked = tuple(ids) if checked is None else tuple(checked)
+    fake = _media_fake(select_mode=True)
+    fake._library_media_bulk_delete_in_flight = False
+    rows = tuple(
+        LibraryMediaRow(
+            media_id=media_id,
+            title=f"Item {media_id}",
+            media_type="article",
+            secondary="",
+            checked=media_id in checked,
+        )
+        for media_id in ids
+    )
+    state = LibraryMediaCanvasState(
+        rows=rows,
+        type_options=(None,),
+        active_type=None,
+        status_copy="",
+        empty_copy="",
+        selected_id="",
+        preview_lines=(),
+        count=len(rows),
+        select_mode=True,
+        selected_count=len(checked),
+    )
+    fake._build_library_media_state = lambda: state
+    fake._library_media_row_selection.select_all(checked)
+    fake._syncs = []
+    fake.refresh = lambda **k: fake._syncs.append(1)
+    fake._library_media_analyze_running = False
+    fake._library_media_analyze_total = 0
+    fake._library_media_analyze_done = 0
+    fake._library_media_analyze_failed_ids = ()
+    fake._library_media_analyze_choice = None
+    fake._library_media_analyze_reason_cache = None
+    fake.app_instance.app_config = {}
+    resolution = SimpleNamespace(ready=True)
+    monkeypatch.setattr(
+        library_screen_module,
+        "resolve_ingest_analysis_provider",
+        lambda config: resolution,
+    )
+    monkeypatch.setattr(
+        library_screen_module, "analysis_unavailable_reason", lambda _resolution: ""
+    )
+    for name in (
+        "_start_library_media_analyze",
+        "_analyze_library_media_selection",
+        "_analyze_one_library_media_item",
+        "_library_media_unanalyzed_ids",
+        "_clear_library_media_analyze_receipt",
+    ):
+        setattr(fake, name, types.MethodType(getattr(LibraryScreen, name), fake))
+
+    async def _detail(media_id, *, include_content):
+        return {
+            "id": media_id,
+            "content": f"content {media_id}",
+            "versions": [
+                {"analysis_content": "existing" if media_id in analysed else ""}
+            ],
+        }
+
+    fake._fetch_library_media_analysis_detail = _detail
+    generated = []
+
+    async def _generate(media_id, *, content, resolution, viewer_owned=True):
+        # Review round 1 (I3): the bulk loop owns none of the Reader's
+        # state, so it always passes viewer_owned=False.
+        assert viewer_owned is False, "a bulk item must not be viewer-owned"
+        generated.append(media_id)
+        return True if generate is None else generate(media_id)
+
+    fake._generate_library_media_analysis = _generate
+    fake._generated = generated
+    fake._worker_calls = []
+    fake.run_worker = lambda coro, **k: fake._worker_calls.append((coro, k))
+    return fake
+
+
+def _press(fake, handler):
+    handler(fake, SimpleNamespace(stop=lambda: None))
+
+
+@pytest.mark.asyncio
+async def test_analyze_selected_snapshots_browse_order_and_starts_one_worker(
+    monkeypatch,
+):
+    """AC#4: one exclusive worker in its own group, over the browse order."""
+    fake = _analyze_fake(monkeypatch)
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+
+    assert len(fake._worker_calls) == 1
+    coro, kwargs = fake._worker_calls[0]
+    assert kwargs.get("group") == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+    assert kwargs.get("exclusive") is True
+    assert kwargs.get("exit_on_error") is False
+    # Review-selected's precedent: the gesture leaves select mode.
+    assert fake._library_media_select_mode is False
+    assert fake._library_media_analyze_running is True
+
+    await coro
+    assert fake._generated == ["3", "1", "2"]
+    assert fake._library_media_analyze_total == 3
+    assert fake._library_media_analyze_done == 3
+    assert fake._library_media_analyze_failed_ids == ()
+    assert fake._library_media_analyze_running is False
+
+
+@pytest.mark.asyncio
+async def test_analyze_selected_arms_the_overwrite_choice_when_any_item_is_analysed(
+    monkeypatch,
+):
+    """AC#3: an analysed item is never overwritten without an explicit choice."""
+    fake = _analyze_fake(monkeypatch, analysed=("1",))
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    assert fake._generated == []
+    assert fake._library_media_analyze_choice == (("3", "1", "2"), ("3", "2"))
+    assert fake._library_media_analyze_total == 0
+    assert fake._library_media_analyze_running is False
+
+
+@pytest.mark.asyncio
+async def test_analyze_choice_skip_runs_only_the_unanalysed_ids(monkeypatch):
+    """AC#3: "Skip them" analyses exactly the items with no analysis."""
+    fake = _analyze_fake(monkeypatch, analysed=("1",))
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_skip)
+    assert len(fake._worker_calls) == 2
+    await fake._worker_calls[1][0]
+    assert fake._generated == ["3", "2"]
+    assert fake._library_media_analyze_total == 2
+    assert fake._library_media_analyze_choice is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_choice_overwrite_runs_every_selected_id(monkeypatch):
+    """AC#3: "Overwrite" is the explicit choice that includes analysed items."""
+    fake = _analyze_fake(monkeypatch, analysed=("1",))
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_overwrite)
+    await fake._worker_calls[1][0]
+    assert fake._generated == ["3", "1", "2"]
+    assert fake._library_media_analyze_total == 3
+    assert fake._library_media_analyze_choice is None
+
+
+@pytest.mark.asyncio
+async def test_analyze_per_item_failure_counts_and_never_aborts_the_run(monkeypatch):
+    """AC#4: a raise OR an unpersisted item counts as failed; the run goes on."""
+
+    def _generate(media_id):
+        if media_id == "1":
+            raise RuntimeError("provider exploded")
+        return media_id != "2"
+
+    fake = _analyze_fake(monkeypatch, generate=_generate)
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    assert fake._generated == ["3", "1", "2"]
+    assert fake._library_media_analyze_total == 3
+    assert fake._library_media_analyze_done == 1
+    assert fake._library_media_analyze_failed_ids == ("1", "2")
+    assert fake._library_media_analyze_running is False
+
+
+@pytest.mark.asyncio
+async def test_second_analyze_press_while_running_is_a_no_op_with_a_notice(
+    monkeypatch,
+):
+    """AC#4: one run at a time -- the second press says so instead of racing."""
+    fake = _analyze_fake(monkeypatch)
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    assert len(fake._worker_calls) == 1
+
+    fake._library_media_select_mode = True
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    assert len(fake._worker_calls) == 1
+    assert fake._notified[-1][0] == "Analysis already running"
+
+    await fake._worker_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_reruns_only_the_failed_ids(monkeypatch):
+    """AC#4: the receipt's Retry is scoped to what actually failed."""
+    fake = _analyze_fake(monkeypatch, generate=lambda mid: mid == "3")
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+    assert fake._library_media_analyze_failed_ids == ("1", "2")
+
+    fake._generated.clear()
+    _press(fake, LibraryScreen.handle_library_media_analyze_retry)
+    await fake._worker_calls[1][0]
+    assert fake._generated == ["1", "2"]
+    assert fake._library_media_analyze_total == 2
+
+
+def test_analyze_receipt_dismiss_clears_every_receipt_field(monkeypatch):
+    """AC#4: Dismiss returns the receipt fields to their defaults."""
+    fake = _analyze_fake(monkeypatch)
+    fake._library_media_analyze_total = 3
+    fake._library_media_analyze_done = 1
+    fake._library_media_analyze_failed_ids = ("1", "2")
+    fake._library_media_analyze_choice = (("1",), ())
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_receipt_dismiss)
+
+    assert fake._library_media_analyze_total == 0
+    assert fake._library_media_analyze_done == 0
+    assert fake._library_media_analyze_failed_ids == ()
+    assert fake._library_media_analyze_choice is None
+    assert fake._syncs
+
+
+@pytest.mark.asyncio
+async def test_analyze_skip_with_nothing_left_to_run_retires_the_choice(monkeypatch):
+    """AC#3: when EVERY selected item is analysed, "Skip them" means skip
+    all of them -- the row must retire, not stay armed and inert."""
+    fake = _analyze_fake(monkeypatch, ids=("1", "2"), analysed=("1", "2"))
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+    assert fake._library_media_analyze_choice == (("1", "2"), ())
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_skip)
+    assert len(fake._worker_calls) == 1  # nothing to run
+    assert fake._library_media_analyze_choice is None
+    assert fake._generated == []
+
+
+def test_analyze_press_repaints_the_canvas_when_it_leaves_select_mode(monkeypatch):
+    """Review round 1 (I4): leaving select mode without a canvas sync left
+    the checkbox toolbar painted over an already-cleared selection until
+    the worker's first sync -- a whole partition pass (one DB read per
+    selected id) later. task-31233's precedent syncs on the same line."""
+    fake = _analyze_fake(monkeypatch)
+    assert fake._syncs == []
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+
+    assert fake._library_media_select_mode is False
+    assert fake._syncs, "leaving select mode must repaint the canvas at once"
+    assert len(fake._worker_calls) == 1
+    fake._worker_calls[0][0].close()  # the captured coroutine is never run here
+
+
+@pytest.mark.asyncio
+async def test_bulk_run_never_touches_reader_state_and_counts_a_failed_save(
+    monkeypatch,
+):
+    """Review round 1 (I3): the generator is SHARED with the Reader's own
+    Generate. A bulk item must not clear the Reader's "Generating
+    analysis…" / editing flags, must not recompose the Reader once per
+    item (its empty-analysis path falls back to a whole-screen recompose),
+    and must not raise one toast per item. A save that fails is a FAILED
+    item -- it used to be swallowed and counted as done."""
+    fake = _analyze_fake(monkeypatch)
+    for name in (
+        "_generate_library_media_analysis",
+        "_save_library_media_analysis",
+        "_notify_library_media_analysis_warning",
+    ):
+        setattr(fake, name, types.MethodType(getattr(LibraryScreen, name), fake))
+    # id "1" returns nothing (the viewer-recompose path); the others reach
+    # the save, which fails (the swallowed-failure path).
+    fake._dispatch_library_media_analysis = (
+        lambda content, resolution: "" if content.endswith("1") else "an analysis"
+    )
+    fake._library_media_backing_id = lambda media_id: media_id
+    fake._selected_media_id = ""
+    fake._library_media_generating_analysis = True  # a Reader run in flight
+    fake._library_media_editing_analysis = True
+    recomposes = []
+    fake._sync_library_media_viewer_or_recompose = lambda: recomposes.append(1)
+    refreshed = []
+
+    async def _refresh(media_id, **_kwargs):
+        refreshed.append(media_id)
+
+    fake._refresh_library_media_detail = _refresh
+
+    async def _service_call(_callable, **_kwargs):
+        raise RuntimeError("media service is down")
+
+    fake._run_library_service_call = _service_call
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        save_analysis_version=lambda **_kwargs: None
+    )
+
+    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    await fake._worker_calls[0][0]
+
+    assert recomposes == [], "a bulk item must never recompose the Reader"
+    assert refreshed == [], "and must not re-fetch a detail nobody is reading"
+    assert fake._library_media_generating_analysis is True
+    assert fake._library_media_editing_analysis is True
+    assert fake._notified == [], "the receipt is the per-set report, not N toasts"
+    assert fake._library_media_analyze_done == 0
+    assert fake._library_media_analyze_failed_ids == ("3", "1", "2")
+
+
+@pytest.mark.asyncio
+async def test_reader_generate_keeps_its_own_state_and_warning(monkeypatch):
+    """The other half of I3: with ``viewer_owned`` defaulting True the
+    Reader's own Generate still clears its flag, recomposes, and warns."""
+    fake = _analyze_fake(monkeypatch)
+    fake._generate_library_media_analysis = types.MethodType(
+        LibraryScreen._generate_library_media_analysis, fake
+    )
+    fake._notify_library_media_analysis_warning = types.MethodType(
+        LibraryScreen._notify_library_media_analysis_warning, fake
+    )
+    fake._dispatch_library_media_analysis = lambda content, resolution: ""
+    recomposes = []
+    fake._sync_library_media_viewer_or_recompose = lambda: recomposes.append(1)
+    fake._library_media_generating_analysis = True
+
+    persisted = await fake._generate_library_media_analysis(
+        "7", content="body", resolution=SimpleNamespace(ready=True)
+    )
+
+    assert persisted is False
+    assert fake._library_media_generating_analysis is False
+    assert recomposes == [1]
+    assert fake._notified and "returned nothing" in fake._notified[0][0]
