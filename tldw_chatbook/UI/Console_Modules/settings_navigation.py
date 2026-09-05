@@ -20,6 +20,9 @@ from ..Navigation.conversation_settings_navigation import (
 )
 from ...Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
     ConsoleSettingsTransfer,
 )
 from ...Chat.console_provider_gateway import AuxiliaryCompletionRequest
@@ -38,6 +41,8 @@ from ...Constants import TAB_SETTINGS
 
 
 if TYPE_CHECKING:
+    from ...Chat.console_session_settings import ConsoleSessionSettings
+    from ...Chat.console_context_policy import ConsoleContextPolicyOverrides
     from ...Widgets.Console.console_settings_modal import (
         ConsoleSettingsCredentialRequest,
         ConsoleSettingsDraftSnapshot,
@@ -73,7 +78,6 @@ class ConsoleSettingsNavigationController:
         _console_default_readiness: Callable[..., Any],
         _console_run_active: Callable[..., Any],
         _console_settings_context_estimate_for_session: Callable[..., Any],
-        _console_settings_initial_draft: Callable[..., Any],
         _dispatch_console_settings_submission: Callable[..., Any],
         _ensure_console_chat_controller: Callable[..., Any],
         _ensure_console_chat_store: Callable[..., Any],
@@ -111,7 +115,6 @@ class ConsoleSettingsNavigationController:
         self._console_settings_context_estimate_for_session = (
             _console_settings_context_estimate_for_session
         )
-        self._console_settings_initial_draft = _console_settings_initial_draft
         self._dispatch_console_settings_submission = (
             _dispatch_console_settings_submission
         )
@@ -993,3 +996,29 @@ class ConsoleSettingsNavigationController:
             handoffs.release(claim)
         if self._pending_conversation_settings_return_claim is claim:
             self._pending_conversation_settings_return_claim = None
+
+    @staticmethod
+    def _console_settings_initial_draft(
+        settings: ConsoleSessionSettings,
+        context_policy: ConsoleContextPolicyOverrides,
+        *,
+        exposed_fields: frozenset[str],
+    ) -> ConsoleSettingsDraftState:
+        """Build one process-local transaction from an exact live snapshot."""
+
+        return ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=context_policy,
+            field_drafts=tuple(
+                ConsoleSettingsFieldDraft(
+                    name=name,
+                    effective_value=getattr(settings, name),
+                    profile_override=getattr(settings, name),
+                    provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                    dirty=False,
+                )
+                for name in sorted(exposed_fields)
+            ),
+            model_drafts=(),
+            endpoint_draft=None,
+        )
