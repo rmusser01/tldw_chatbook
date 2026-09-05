@@ -379,10 +379,27 @@ class SchedulerLoop:
             # TASK-31507: the heartbeat write is blocking file I/O (mkstemp +
             # rename); it must not run on the event loop. Awaited so a reader
             # observing the finished tick always sees its heartbeat.
+            heartbeat = asyncio.ensure_future(
+                asyncio.to_thread(self._record_heartbeat, now, error=tick_error)
+            )
             try:
-                await asyncio.to_thread(
-                    self._record_heartbeat, now, error=tick_error
-                )
+                await asyncio.shield(heartbeat)
+            except asyncio.CancelledError:
+                # Shutdown cancels tick() while it awaits the write (Qodo
+                # #2399 finding 2). The thread cannot be cancelled and must
+                # not mutate heartbeat state after the scheduler reports
+                # stopped, so wait for the started write to finish before
+                # propagating -- a reader observing the stopped scheduler
+                # then still sees this tick's heartbeat, not the previous
+                # one. A second cancellation while waiting abandons the
+                # wait: a forced double-cancel outranks the guarantee.
+                try:
+                    await asyncio.wait({heartbeat})
+                    if heartbeat.done() and not heartbeat.cancelled():
+                        heartbeat.exception()  # consume; observation never raises
+                except Exception:  # noqa: BLE001 -- best effort under cancel
+                    pass
+                raise
             except Exception:  # noqa: BLE001 -- observation never breaks the loop
                 logger.debug("scheduler heartbeat offload failed")
 
