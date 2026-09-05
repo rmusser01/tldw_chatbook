@@ -765,12 +765,13 @@ their own design and ADR check before implementation.
   exact feature ancestry, and rebase only the feature range. Resolve conflicts
   without losing either side's unrelated work; recheck schema/ADR/task-ID and
   derived-artifact collisions. Prefer rebasing before the first public push.
-- [ ] Run preflight and affected verification on the rebased tree. No full
+- [x] Run preflight and affected verification on the rebased tree. No full
   repository sweep without explicit approval. Create the PR against `dev`,
   with the retained verification and warning qualifications.
   TASK-31741 owns the discovered diagnostic-inventory and index-census guard
   gaps, including content-free Canvas failure logging and no-statistics plans.
-- [ ] Wait for Qodo through the app's recurring follow-up mechanism if needed.
+- [ ] Address Qodo on PR2432 in this active session. A proposed unattended
+  follow-up was rejected; persistent scheduling needs explicit user approval.
   Read review bodies, inline threads, issue comments and suggestions; maintain
   an item-by-item resolution ledger. Verify suggestions technically, implement
   valid corrections with tests, and reply with evidence to each applicable

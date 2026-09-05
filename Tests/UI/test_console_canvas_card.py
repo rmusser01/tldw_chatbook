@@ -4,6 +4,15 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.message_metadata import (
+    CanvasCardMetadata,
+    CanvasCardOriginMetadata,
+    MessageMetadata,
+)
 from tldw_chatbook.Widgets.Console.console_canvas_card import (
     ConsoleCanvasCard,
     ConsoleCanvasCardOpenRequested,
@@ -13,6 +22,7 @@ from tldw_chatbook.Widgets.Console.console_canvas_card import (
     canvas_card_signature,
     open_canvas_with_textual,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
 def _card(*, reopenable: bool = True) -> ConsoleCanvasCardPresentation:
@@ -45,17 +55,20 @@ def test_canvas_card_messages_distinguish_exact_revision_from_following_head():
     card = _card()
 
     exact = ConsoleCanvasCardOpenRequested(
+        session_id="session-a",
         canvas_id=card.canvas_id,
         revision_id=card.revision_id,
         follow_latest=False,
     )
     following = ConsoleCanvasCardOpenRequested(
+        session_id="session-a",
         canvas_id=card.canvas_id,
         revision_id=None,
         follow_latest=True,
     )
 
     assert exact.canvas_id == "canvas-a"
+    assert exact.session_id == "session-a"
     assert exact.revision_id == "revision-7"
     assert exact.follow_latest is False
     assert following.follow_latest is True
@@ -64,7 +77,9 @@ def test_canvas_card_messages_distinguish_exact_revision_from_following_head():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
 async def test_canvas_control_styles_keep_geometry_with_targeted_subjects(size):
-    card = ConsoleCanvasCard(_card(), message_id="style", card_index=0)
+    card = ConsoleCanvasCard(
+        _card(), session_id="session-a", message_id="style", card_index=0
+    )
     recovery = ConsoleCanvasOpenRecoveryCard("http://127.0.0.1:43121/canvas/")
 
     class _StyledCardApp(App[None]):
@@ -92,7 +107,10 @@ async def test_canvas_control_styles_keep_geometry_with_targeted_subjects(size):
 @pytest.mark.asyncio
 async def test_unavailable_canvas_card_disables_exact_reopen_but_keeps_head_route():
     widget = ConsoleCanvasCard(
-        _card(reopenable=False), message_id="assistant-7", card_index=0
+        _card(reopenable=False),
+        session_id="session-a",
+        message_id="assistant-7",
+        card_index=0,
     )
 
     class _CardApp(App[None]):
@@ -106,6 +124,92 @@ async def test_unavailable_canvas_card_disables_exact_reopen_but_keeps_head_rout
         assert exact.disabled is True
         assert "unavailable" in str(exact.tooltip).lower()
         assert following.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reconciled_canvas_card_posts_its_current_render_session() -> None:
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Synthetic answer",
+        id="assistant-card",
+        metadata=MessageMetadata(
+            canvas_cards=(
+                CanvasCardMetadata(
+                    canvas_id="canvas-a",
+                    revision_id="revision-7",
+                    title="Launch plan",
+                    sequence=7,
+                    digest="a" * 64,
+                    status="updated",
+                    origin=CanvasCardOriginMetadata("assistant-card", "run-7"),
+                    reopenable=True,
+                ),
+            )
+        ),
+    )
+    seen: list[ConsoleCanvasCardOpenRequested] = []
+
+    class _CardApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield transcript
+
+        def on_console_canvas_card_open_requested(
+            self, event: ConsoleCanvasCardOpenRequested
+        ) -> None:
+            seen.append(event)
+
+    transcript.set_messages([message], session_id="session-a")
+    async with _CardApp().run_test() as pilot:
+        await pilot.click("#canvas-open-revision-assistant-card-0")
+        await pilot.pause()
+        assert seen[-1].session_id == "session-a"
+
+        transcript.set_messages([message], session_id="session-b")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        replacement = transcript.query_one(
+            "#console-canvas-card-assistant-card-0", ConsoleCanvasCard
+        )
+        assert replacement.session_id == "session-b"
+        await pilot.click("#canvas-open-revision-assistant-card-0")
+        await pilot.pause()
+
+        assert [event.session_id for event in seen] == ["session-a", "session-b"]
+
+
+def test_canvas_row_build_uses_its_captured_session_after_transcript_switch() -> None:
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Synthetic answer",
+        id="assistant-delayed-card",
+        metadata=MessageMetadata(
+            canvas_cards=(
+                CanvasCardMetadata(
+                    canvas_id="canvas-a",
+                    revision_id="revision-7",
+                    title="Launch plan",
+                    sequence=7,
+                    digest="a" * 64,
+                    status="updated",
+                    origin=CanvasCardOriginMetadata("assistant-delayed-card", "run-7"),
+                    reopenable=True,
+                ),
+            )
+        ),
+    )
+
+    transcript.set_messages([message], session_id="session-a")
+    captured_row = next(
+        row for row in transcript._flat_transcript_rows() if row.kind == "canvas-card"
+    )
+    transcript.set_messages([message], session_id="session-b")
+
+    delayed_widget = transcript._build_row_widget(captured_row, track=False)
+
+    assert isinstance(delayed_widget, ConsoleCanvasCard)
+    assert delayed_widget.session_id == "session-a"
 
 
 @pytest.mark.asyncio

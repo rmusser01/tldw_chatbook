@@ -19766,10 +19766,15 @@ class ChatScreen(BaseAppScreen):
 
         event.stop()
         store = self._ensure_console_chat_store()
-        if store.active_session_id is None:
+        session_id = getattr(event, "session_id", None)
+        if (
+            type(session_id) is not str
+            or not session_id
+            or session_id != store.active_session_id
+        ):
             return
         await self._open_console_canvas_selection(
-            session_id=store.active_session_id,
+            session_id=session_id,
             canvas_id=event.canvas_id,
             revision_id=event.revision_id,
             follow_latest=event.follow_latest,

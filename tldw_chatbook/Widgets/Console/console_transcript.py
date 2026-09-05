@@ -1167,6 +1167,7 @@ class _TranscriptRow:
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
     video_card_spec: "ConsoleVideoCardSpec | None" = None
     canvas_card_spec: "ConsoleCanvasCardPresentation | None" = None
+    canvas_session_id: str | None = None
     assistant_turn: ConsoleAssistantTurn | None = None
     nested_rows: tuple["_TranscriptRow", ...] = ()
     activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
@@ -6463,13 +6464,19 @@ class ConsoleTranscript(VerticalScroll):
                 )
             )
             for index, card in enumerate(canvas_card_presentations(message)):
+                card_session_id = self._canvas_card_session_id()
                 rows.append(
                     _TranscriptRow(
                         key=f"canvas-card:{message.id}:{index}",
                         kind="canvas-card",
-                        signature=(message.id, *canvas_card_signature(card)),
+                        signature=(
+                            message.id,
+                            card_session_id,
+                            *canvas_card_signature(card),
+                        ),
                         message=message,
                         canvas_card_spec=card,
+                        canvas_session_id=card_session_id,
                         renderable=f"Canvas · {card.label}",
                     )
                 )
@@ -6801,6 +6808,12 @@ class ConsoleTranscript(VerticalScroll):
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
         ]
 
+    def _canvas_card_session_id(self) -> str | None:
+        """Return only an explicit render-session identity for card actions."""
+
+        identity = self._session_identity
+        return identity if type(identity) is str and identity else None
+
     def _cancel_selection_if_row_removed(self, widget: Widget) -> None:
         """Drop drag-selection state when its row widget is removed/rebuilt.
 
@@ -7041,6 +7054,7 @@ class ConsoleTranscript(VerticalScroll):
             card_index = int(row.key.rsplit(":", 1)[1])
             return ConsoleCanvasCard(
                 row.canvas_card_spec,
+                session_id=row.canvas_session_id,
                 message_id=row.message.id,
                 card_index=card_index,
             )

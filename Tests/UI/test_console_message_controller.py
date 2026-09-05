@@ -628,6 +628,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     screen._open_console_canvas_selection = open_selection
 
     exact = SimpleNamespace(
+        session_id=session.id,
         canvas_id="canvas-a",
         revision_id="revision-2",
         follow_latest=False,
@@ -656,6 +657,36 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
         revision_id="revision-2",
         follow_latest=False,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_session_id",
+    ["stale-session", None],
+    ids=["stale", "missing"],
+)
+async def test_production_canvas_card_handler_rejects_unowned_session_events(
+    event_session_id: str | None,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    store.create_session(session_id="current-session", title="Current Canvas card")
+    screen._open_console_canvas_selection = AsyncMock()
+    attributes = {
+        "canvas_id": "canvas-a",
+        "revision_id": "revision-2",
+        "follow_latest": False,
+        "stop": Mock(),
+    }
+    if event_session_id is not None:
+        attributes["session_id"] = event_session_id
+
+    event = SimpleNamespace(**attributes)
+    await screen.handle_console_canvas_card_open(event)
+
+    event.stop.assert_called_once_with()
+    screen._open_console_canvas_selection.assert_not_awaited()
 
 
 @pytest.mark.asyncio

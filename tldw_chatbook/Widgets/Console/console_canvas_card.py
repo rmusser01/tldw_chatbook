@@ -58,11 +58,13 @@ class ConsoleCanvasCardOpenRequested(Message):
     def __init__(
         self,
         *,
+        session_id: str | None,
         canvas_id: str,
         revision_id: str | None,
         follow_latest: bool,
     ) -> None:
         super().__init__()
+        self.session_id = session_id
         self.canvas_id = canvas_id
         self.revision_id = revision_id
         self.follow_latest = follow_latest
@@ -159,6 +161,7 @@ class ConsoleCanvasCard(Vertical):
         self,
         presentation: ConsoleCanvasCardPresentation,
         *,
+        session_id: str | None,
         message_id: str,
         card_index: int,
     ) -> None:
@@ -167,6 +170,7 @@ class ConsoleCanvasCard(Vertical):
             classes="console-transcript-canvas-card",
         )
         self.presentation = presentation
+        self.session_id = session_id
         self._id_suffix = f"{message_id}-{card_index}"
 
     def compose(self) -> ComposeResult:
@@ -208,6 +212,7 @@ class ConsoleCanvasCard(Vertical):
         event.stop()
         self.post_message(
             ConsoleCanvasCardOpenRequested(
+                session_id=self.session_id,
                 canvas_id=self.presentation.canvas_id,
                 revision_id=revision_id,
                 follow_latest=follow_latest,
