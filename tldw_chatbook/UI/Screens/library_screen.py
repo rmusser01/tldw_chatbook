@@ -3173,7 +3173,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_counter: int = 0
         self._library_notes_sync_active_token: int | None = None
         self._library_notes_sync_running: bool = False
-        self._library_notes_auto_sync_timer: Timer | None = None
         # The folder box's live (possibly uncommitted) text. Typing updates
         # only this field -- persisting to the TOML config on every
         # Input.Changed meant a full config rewrite + cache reload per
