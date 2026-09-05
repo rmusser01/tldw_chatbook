@@ -223,6 +223,33 @@ def resolve_ingest_analysis_provider(
     )
 
 
+def analysis_unavailable_reason(resolution: IngestAnalysisResolution) -> str:
+    """One-sentence reason an analysis call cannot be made now, or ``""``.
+
+    task-28007 AC#5: the Reader's Generate action learned this only AFTER
+    the click, as a toast. Both the disabled control's tooltip and the
+    handler's post-click guard read it from here, so the label and the
+    refusal can never say different things. ``short_reason`` (not
+    ``hint``) is the source: the hint is written for the ingest panel and
+    talks about imports.
+
+    Args:
+        resolution: The outcome of :func:`resolve_ingest_analysis_provider`.
+
+    Returns:
+        A capitalised, full-stopped sentence, or ``""`` when ready.
+    """
+    if resolution.ready:
+        return ""
+    # Strip BEFORE the fallback: a whitespace-only short_reason is truthy,
+    # and stripping it afterwards left "" for `reason[0]` to raise on. No
+    # resolution the resolver builds is blank today, but this is a public
+    # seam other gates feed resolutions into.
+    reason = (resolution.short_reason or "").strip() or NO_ANALYSIS_PROVIDER_REASON
+    sentence = reason[0].upper() + reason[1:]
+    return sentence if sentence.endswith(".") else f"{sentence}."
+
+
 def _optional_str(value: Any) -> Optional[str]:
     """Return a stripped non-empty string, else None."""
     if isinstance(value, str) and value.strip():

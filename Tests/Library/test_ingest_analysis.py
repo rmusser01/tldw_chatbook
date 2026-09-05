@@ -258,3 +258,79 @@ def test_keyed_ready_resolution_is_not_keyless() -> None:
     resolution = resolve_ingest_analysis_provider(config, environ={})
 
     assert resolution.keyless is False
+
+
+# --- task-28007 AC#5: the reason both the control and the guard speak -------
+
+
+def test_a_ready_resolution_has_no_unavailable_reason() -> None:
+    """The seam's "" contract: callers gate on truthiness, not on ``ready``."""
+    from tldw_chatbook.Library.ingest_analysis import analysis_unavailable_reason
+
+    config = {
+        "analysis_defaults": {"provider": "OpenAI"},
+        "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+    }
+    resolution = resolve_ingest_analysis_provider(config, environ={})
+
+    assert resolution.ready is True
+    assert analysis_unavailable_reason(resolution) == ""
+
+
+def test_every_not_ready_shape_yields_a_capitalised_sentence() -> None:
+    """All three not-ready branches the resolver can actually produce, read
+    off the resolver itself rather than hand-built fixtures -- a copy change
+    to ``short_reason`` must not silently ship a lowercase fragment."""
+    from tldw_chatbook.Library.ingest_analysis import analysis_unavailable_reason
+
+    # 1. Nothing configured at all.
+    none_configured = resolve_ingest_analysis_provider({}, environ={})
+    # 2. Configured and credentialled, but no chat handler can dispatch it (F5).
+    unsupported = resolve_ingest_analysis_provider(
+        {
+            "analysis_defaults": {"provider": "local_onnx"},
+            "api_settings": {"local_onnx": {"api_key": "sk-anything"}},
+        },
+        environ={},
+    )
+    # 3. Configured and dispatchable, but no credential.
+    unready = resolve_ingest_analysis_provider(
+        {"analysis_defaults": {"provider": "OpenAI"}}, environ={}
+    )
+
+    for resolution in (none_configured, unsupported, unready):
+        assert resolution.ready is False, resolution
+        sentence = analysis_unavailable_reason(resolution)
+        assert sentence, resolution
+        assert sentence[0].isupper(), sentence
+        assert sentence.endswith("."), sentence
+
+    assert (
+        analysis_unavailable_reason(none_configured)
+        == "No analysis provider is configured."
+    )
+    assert "local_onnx" in analysis_unavailable_reason(unsupported)
+    assert analysis_unavailable_reason(unready).startswith("OpenAI is not ready")
+
+
+def test_a_blank_short_reason_falls_back_instead_of_raising() -> None:
+    """This is a public seam other gates feed resolutions into, so a blank
+    (or whitespace-only) ``short_reason`` must degrade to the generic reason
+    rather than raising IndexError off ``reason[0]``."""
+    from tldw_chatbook.Library.ingest_analysis import (
+        IngestAnalysisResolution,
+        analysis_unavailable_reason,
+    )
+
+    for blank in ("", "   ", "\n\t"):
+        resolution = IngestAnalysisResolution(
+            provider="Whatever",
+            api_key=None,
+            ready=False,
+            short_reason=blank,
+            hint="",
+        )
+        assert (
+            analysis_unavailable_reason(resolution)
+            == "No analysis provider is configured."
+        ), blank
