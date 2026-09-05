@@ -472,3 +472,114 @@ async def settle_ui_without_pilot(service):
     async with asyncio.timeout(5):
         while service.view().operation_id is not None:
             await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["save", "restore"])
+async def test_preferences_invalidated_after_load_fail_safely_without_refresh(
+    snapshot_ui, action
+):
+    from tldw_chatbook import config
+    from tldw_chatbook.Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
+
+    h = snapshot_ui
+    await h.service.refresh()
+    h.service.start_save(0)
+    await settle_ui_without_pilot(h.service)
+    async with h.app.run_test(size=(80, 24)) as pilot:
+        await h.app.push_screen(LLMScreen(h.app))
+        await pilot.pause()
+        manager = h.app.screen.query_one(LlamaCppSnapshotManager)
+        assert not manager.query_one(f"#snapshot-{action}", Button).disabled
+        if action == "restore":
+            manager.query_one("#snapshot-restore", Button).press()
+            await pilot.pause()
+        # Invalidate the persisted profile after the visible draft/confirmation,
+        # without refreshing the service or widget before the user acts.
+        assert config.apply_settings_mutation_to_cli_config(
+            {"llamacpp_snapshots": {"keep_count": 0}}
+        ).fully_applied
+        before_posts = [call for call in h.calls if call[0] == "POST"]
+        before_work = tuple(h.store.working.rglob("*"))
+        if action == "restore":
+            h.app.screen.query_one("#confirm-button", Button).press()
+        else:
+            manager.query_one("#snapshot-save", Button).press()
+        await pilot.pause()
+        assert [call for call in h.calls if call[0] == "POST"] == before_posts
+        assert h.service.view().operation_id is None
+        assert tuple(h.store.working.rglob("*")) == before_work
+        for name in ("save", "restore", "apply", "keep", "enabled"):
+            assert manager.query_one(f"#snapshot-{name}").disabled
+        assert "Advanced Config" in str(
+            manager.query_one("#snapshot-disabled-reason").render()
+        )
+        before = len(h.calls)
+        await h.service.browse_catalog()
+        assert len(h.calls) == before
+        assert not manager.query_one("#snapshot-delete", Button).disabled
+        manager.query_one("#snapshot-delete", Button).press()
+        await pilot.pause()
+        h.app.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        assert not h.store.list_records().records
+
+
+@pytest.mark.asyncio
+async def test_details_observation_is_absolute_and_elapsed_timer_does_not_refresh(
+    snapshot_ui, monkeypatch
+):
+    from datetime import datetime
+
+    from tldw_chatbook.Widgets import llamacpp_snapshot_manager as module
+
+    h = snapshot_ui
+    async with h.app.run_test(size=(140, 45)) as pilot:
+        await h.app.push_screen(LLMScreen(h.app))
+        await pilot.pause()
+        manager = h.app.screen.query_one(module.LlamaCppSnapshotManager)
+        manager.query_one("#snapshot-details-panel", Collapsible).collapsed = False
+        h.hold.clear()
+        h.service.start_save(0)
+        try:
+            async with asyncio.timeout(5):
+                while h.service.view().status != "awaiting_ack":
+                    await pilot.pause(0.01)
+            view = h.service.view()
+            clock = [view.started_at + 10]
+            wall = [1800000000.0]
+            monkeypatch.setattr(
+                module,
+                "time",
+                SimpleNamespace(monotonic=lambda: clock[0], time=lambda: wall[0]),
+            )
+            manager._paint()
+            observed = max(slot.observed_at for slot in view.slots)
+            expected = (
+                datetime.fromtimestamp(wall[0] - (clock[0] - observed))
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M:%S")
+            )
+            details = str(manager.query_one("#snapshot-details").render())
+            assert expected in details and "ago" not in details
+            before_calls = tuple(h.calls)
+
+            def no_rebuild(*args, **kwargs):
+                raise AssertionError("Elapsed timer rebuilt a table")
+
+            with monkeypatch.context() as timer_guard:
+                for selector in ("#snapshot-slots", "#snapshot-records"):
+                    timer_guard.setattr(
+                        manager.query_one(selector), "clear", no_rebuild
+                    )
+                clock[0] += 3
+                wall[0] += 3
+                manager._paint_elapsed()
+                assert "13s" in str(
+                    manager.query_one("#snapshot-operation-status").render()
+                )
+                assert str(manager.query_one("#snapshot-details").render()) == details
+                assert tuple(h.calls) == before_calls
+        finally:
+            h.hold.set()
+            await settle_ui(pilot, h.service)

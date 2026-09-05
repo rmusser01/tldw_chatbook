@@ -74,6 +74,7 @@ class LlamaCppSnapshotService:
         self._catalog = CatalogPage((), None, None, None, False)
         self._catalog_request = 0
         self._unavailable: str | None = None
+        self._cleanup_warning: str | None = None
 
     def _spawn(self, coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine)
@@ -108,6 +109,7 @@ class LlamaCppSnapshotService:
     async def _initialize(self, root_factory: Callable[[], Path]) -> None:
         try:
             self.store = await self._file(lambda: SnapshotStore(root_factory()))
+            await self._reconcile_catalog()
             await self._load_catalog()
         except SnapshotError as exc:
             self._unavailable = exc.code
@@ -152,6 +154,7 @@ class LlamaCppSnapshotService:
     async def refresh(self) -> None:
         """Refresh catalog and same-generation readiness without relabelling evidence."""
         generation = self._current
+        await self._reconcile_catalog()
         await self._load_catalog()
         if generation is not None:
             await self._refresh_generation(generation)
@@ -165,6 +168,20 @@ class LlamaCppSnapshotService:
             raise _error("service_unavailable")
         await self._load_catalog(offset, limit)
         self._notify()
+
+    async def _reconcile_catalog(
+        self, terminated: frozenset[str] = frozenset()
+    ) -> bool:
+        """Retry only proven-safe cleanup; warnings do not disable management."""
+        if self.store is None:
+            return False
+        try:
+            failures = await self._file(self.store.reconcile, terminated)
+        except Exception:  # noqa: BLE001 - fixed warning; preserve teardown and browsing
+            self._cleanup_warning = "cleanup_failed"
+            return False
+        self._cleanup_warning = "cleanup_incomplete" if failures else None
+        return True
 
     async def _load_catalog(self, offset: int = 0, limit: int = 50) -> None:
         if self.store is None:
@@ -262,7 +279,10 @@ class LlamaCppSnapshotService:
             raise _error("service_unavailable")
         if generation.operation_id is not None:
             raise _error("operation_in_progress")
-        preferences = load_snapshot_preferences()
+        try:
+            preferences = load_snapshot_preferences()
+        except (ValueError, OSError):
+            raise _error("preferences_unavailable") from None
         # Attachment captures this launch's opt-in; only retention changes live.
         self._eligible(generation, slot_id)
         operation_id = uuid4().hex
@@ -429,10 +449,7 @@ class LlamaCppSnapshotService:
             except asyncio.CancelledError:
                 if not generation.operation.cancelled():
                     raise
-        if self.store is not None:
-            await self._file(
-                self.store.reconcile, frozenset({generation.descriptor.launch_id})
-            )
+        if await self._reconcile_catalog(frozenset({generation.descriptor.launch_id})):
             generation.working.clear()
         await self._close_client(generation)
         generation.operation_id = None
@@ -483,7 +500,7 @@ class LlamaCppSnapshotService:
                     if self.store is None
                     else "Start a managed llama.cpp server."
                 ),
-                None,
+                self._cleanup_warning,
                 compatibility,
                 str(self.store.root) if self.store is not None else None,
             )
@@ -496,7 +513,7 @@ class LlamaCppSnapshotService:
             self._catalog,
             generation.descriptor.disabled_reason
             or (None if self._valid(generation) else "Launch unavailable."),
-            generation.message or self._unavailable,
+            generation.message or self._cleanup_warning or self._unavailable,
             compatibility,
             str(self.store.root) if self.store is not None else None,
         )
