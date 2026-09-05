@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -244,6 +245,44 @@ def test_start_failure_sets_error_state(tmp_path, monkeypatch):
     session, capture, built = _session(tmp_path)
     monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **cb: False)
     assert session.start() is False and session.state == "error"
+
+
+def test_stop_emits_stopping_state_outside_the_lock(tmp_path):
+    session, capture, built = _session(tmp_path)
+    session.start()
+    seen = []
+
+    def listener(kind, payload):
+        if kind == "state" and payload == "stopping":
+            # Would deadlock if the session lock were held here.
+            box = []
+
+            def acquire_release():
+                acquired = session._lock.acquire(timeout=0.5)
+                box.append(acquired)
+                if acquired:
+                    session._lock.release()
+
+            t = threading.Thread(target=acquire_release)
+            t.start(); t.join()
+            seen.append(bool(box and box[0]))
+
+    session.subscribe(listener)
+    session.stop()
+    assert seen == [True]
+
+
+def test_final_after_stop_is_dropped_and_counted(tmp_path):
+    sink = RecordingSink()
+    session, capture, built = _session(tmp_path, sinks=[sink])
+    session.start()
+    capture.last_speech_position_s = 1.0
+    built[0].callbacks["on_final_transcript"]("kept")
+    result = session.stop()
+    built[0].callbacks["on_final_transcript"]("late")
+    assert [s.text for s in session.segments] == ["kept"]
+    assert result.segment_count == 1 and session.failed_segments == 1
+    assert [c for c in sink.calls if c[0] == "segment"][-1][1].text == "kept"
 
 
 # ---- LocalMeetingSink ----------------------------------------------------

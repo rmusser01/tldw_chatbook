@@ -140,6 +140,7 @@ class MeetingSession:
         self._lock = threading.RLock()
         self._last_end_s = 0.0
         self._result: MeetingResult | None = None
+        self._closing = False
 
     # ---- listeners --------------------------------------------------------
     def subscribe(self, listener: Callable[[str, Any], None]) -> None:
@@ -213,7 +214,8 @@ class MeetingSession:
         with self._lock:
             if self._result is not None:
                 return self._result
-            self._set_state("stopping")
+            self._closing = True
+        self._set_state("stopping")
         complete = True
         if self.service is not None:
             try:
@@ -226,11 +228,13 @@ class MeetingSession:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
             logger.error("capture stop failed: {}", exc)
+        with self._lock:
+            segment_count = len(self.segments)
         result = MeetingResult(
             meta=self.meta,
             ended_at=datetime.now().isoformat(timespec="seconds"),
             duration_s=float(self.capture.audio_position_s),
-            segment_count=len(self.segments),
+            segment_count=segment_count,
             transcription_complete=complete,
             failed_segments=self.failed_segments,
             stop_reason=reason,
@@ -252,6 +256,8 @@ class MeetingSession:
         return self.capture.dominant_source(start_s, end_s)
 
     def _on_partial(self, text: str) -> None:
+        if self._closing:
+            return
         end = float(self.capture.audio_position_s)
         label = self._label(max(0.0, end - PARTIAL_LABEL_WINDOW_S), end)
         self._emit("partial", (text, label))
@@ -261,24 +267,33 @@ class MeetingSession:
         text = (text or "").strip()
         if not text:
             return
+        late = False
+        segment: MeetingSegment | None = None
         with self._lock:
-            start = self._last_end_s
-            closed = self.capture.closed_runs_after(start)
-            end = closed[-1].end_s if closed else float(self.capture.last_speech_position_s)
-            if end <= start:
-                end = float(self.capture.audio_position_s)
-            wall_end = float(self._clock())
-            segment = MeetingSegment(
-                seq=len(self.segments),
-                t_audio_start=start,
-                t_audio_end=end,
-                t_wall_start=wall_end - (end - start),
-                t_wall_end=wall_end,
-                label=self._label(start, end),
-                text=text,
-            )
-            self.segments.append(segment)
-            self._last_end_s = end
+            if self._closing:
+                late = True
+            else:
+                start = self._last_end_s
+                closed = self.capture.closed_runs_after(start)
+                end = closed[-1].end_s if closed else float(self.capture.last_speech_position_s)
+                if end <= start:
+                    end = float(self.capture.audio_position_s)
+                wall_end = float(self._clock())
+                segment = MeetingSegment(
+                    seq=len(self.segments),
+                    t_audio_start=start,
+                    t_audio_end=end,
+                    t_wall_start=wall_end - (end - start),
+                    t_wall_end=wall_end,
+                    label=self._label(start, end),
+                    text=text,
+                )
+                self.segments.append(segment)
+                self._last_end_s = end
+        if late:
+            logger.warning("meeting: final transcript arrived after stop and was dropped: {!r}", text[:80])
+            self.failed_segments += 1
+            return
         self._emit("segment", segment)
         self._each_sink("on_segment", segment)
 
