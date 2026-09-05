@@ -545,6 +545,9 @@ _COLLECTIONS_FILE = "tldw_chatbook/UI/Library_Modules/prompt_collections.py"
 _PROMPTS_CONTROLLER_FILE = (
     "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py"
 )
+_SKILLS_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py"
+)
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -561,6 +564,7 @@ _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_LIBRARY_SCREEN_FILE, "LibraryScreen"),
     _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
     _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
+    _OwnerScope(_SKILLS_CONTROLLER_FILE, "LibrarySkillsController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -605,14 +609,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         WorkbenchHelpPanel,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _SKILLS_CONTROLLER_FILE,
+        "LibrarySkillsController",
         "_request_library_skill_trust_passphrase",
         SkillTrustPassphraseModal,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _SKILLS_CONTROLLER_FILE,
+        "LibrarySkillsController",
         "_request_library_skill_trust_bootstrap_passphrase",
         SkillTrustBootstrapModal,
     ),
@@ -1646,8 +1650,8 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     discovered = _discover_library_modal_edges(_production_owner_sources())
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
-    assert len(discovered) == len(declared) == 34
     _assert_exact_library_modal_inventory(discovered, declared)
+    assert len(discovered) == len(declared) == 34
 
 
 def test_library_modal_inventory_controller_route_uses_app_push_screen() -> None:
@@ -1705,6 +1709,21 @@ class LibraryPromptCollectionsController:
         pass
     def _unexpected_presenter(self):
         self._push_modal()(Hidden())
+""",
+        scope=scope,
+        expected_type=ConfirmationDialog,
+    )
+
+
+def test_library_modal_inventory_detects_skills_controller_injected_edge() -> None:
+    scope = _production_owner_scope("LibrarySkillsController")
+    _assert_synthetic_edge_is_rejected(
+        source="""
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
+class LibrarySkillsController:
+    async def _unexpected_presenter(self):
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        await push_screen_wait(Hidden())
 """,
         scope=scope,
         expected_type=ConfirmationDialog,
