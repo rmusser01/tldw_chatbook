@@ -534,6 +534,7 @@ from ..Library_Modules import (
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
+    _retry_failure_reason,
 )
 from ..Library_Modules.library_media_trash_browse_controller import (
     LibraryMediaTrashBrowseController,
@@ -2729,6 +2730,13 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        # task-31220: "<n> of <m> · <reason>" while the receipt above
+        # names ids whose Undo just FAILED -- the canvas then paints
+        # "✗ undo failed · <n> of <m> · <reason>" with "Retry undo"
+        # instead of a tick over a recovery that did not happen. Set only
+        # by the undo worker; cleared by it on full success and by every
+        # path that writes a fresh receipt.
+        self._library_media_delete_receipt_undo_failure: str = ""
         # task-31236: (set_id, name, was_active) of the most recently
         # dismissed review set -- rendered as an in-list undo receipt.
         self._library_media_review_dismiss_receipt: (
@@ -15480,6 +15488,9 @@ class LibraryScreen(BaseAppScreen):
                 selected_ids=self._library_media_row_selection.ids,
                 confirming_bulk_delete=self._library_media_confirming_bulk_delete,
                 delete_receipt_count=len(self._library_media_delete_receipt_ids),
+                delete_receipt_undo_failure=(
+                    self._library_media_delete_receipt_undo_failure
+                ),
                 type_choices_visible=self._library_media_type_choices_visible,
                 review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
                 **self._library_media_analyze_receipt_fields(),
@@ -15493,6 +15504,9 @@ class LibraryScreen(BaseAppScreen):
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
+            delete_receipt_undo_failure=(
+                self._library_media_delete_receipt_undo_failure
+            ),
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
             review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
@@ -15688,8 +15702,17 @@ class LibraryScreen(BaseAppScreen):
         committed: bool = False,
         remove_ids: tuple[str, ...] = (),
         upsert_items: tuple[Mapping[str, Any], ...] = (),
+        focus_identity: str = "",
     ) -> None:
         """Release the write interlock and refresh its full applied scope.
+
+        Args:
+            focus_identity: Control the completion refresh should land focus
+                on. That refresh recomposes the canvas and destroys whatever
+                the mutation's own tail focused (task-31220: live at 100x30
+                it ate the bulk-delete receipt's just-focused Undo), so a
+                mutation that owns a post-refresh focus target must send it
+                through here.
 
         task-31275: every committed Media write completes the SAME way,
         Trash-surface Restore and permanent delete included. The
@@ -15721,7 +15744,7 @@ class LibraryScreen(BaseAppScreen):
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
         ):
             return
-        controller.request(refresh_scope, focus_identity=None)
+        controller.request(refresh_scope, focus_identity=focus_identity or None)
         controller.request_facets(fingerprint=refresh_scope.fingerprint)
 
     def _library_media_mutation_summary(
@@ -24430,6 +24453,9 @@ class LibraryScreen(BaseAppScreen):
                 any recompose could change the live selection.
         """
         succeeded: list[str] = []
+        # task-31220: set once the outcome is known -- non-empty only when a
+        # "✓ deleted" receipt is what the user is left looking at.
+        undo_focus = ""
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             delete_media_item = getattr(service, "delete_media_item", None)
@@ -24472,6 +24498,11 @@ class LibraryScreen(BaseAppScreen):
             # this always reflects only what just happened, never a stale
             # earlier batch.
             self._library_media_delete_receipt_ids = tuple(succeeded)
+            # task-31220: a fresh receipt is a fresh claim -- never carry an
+            # earlier Undo's failure copy onto it.
+            self._library_media_delete_receipt_undo_failure = ""
+            if succeeded and not failed:
+                undo_focus = "#library-media-bulk-delete-undo"
 
             self._library_media_confirming_bulk_delete = False
             if failed:
@@ -24520,9 +24551,21 @@ class LibraryScreen(BaseAppScreen):
                 # selected. On the full-success path the selection was
                 # already cleared just above, so that extension is a
                 # no-op there and behavior is unchanged from before.
-                self._arm_library_list_entry_focus()
+                # task-31220: ...EXCEPT on the full-success path, which now
+                # ends on a "✓ deleted" receipt. The confirmation the user
+                # just answered promised "You can undo right away", so
+                # Enter must undo: focus goes to that receipt's Undo
+                # instead of a list row. A partial/total failure keeps the
+                # rule above (the first still-checked row), because there
+                # is no ✓ receipt to act on there.
+                if undo_focus:
+                    self.call_after_refresh(self._focus_library_control, undo_focus)
+                else:
+                    self._arm_library_list_entry_focus()
         finally:
-            self._complete_library_media_mutation(remove_ids=tuple(succeeded))
+            self._complete_library_media_mutation(
+                remove_ids=tuple(succeeded), focus_identity=undo_focus
+            )
 
     @on(Button.Pressed, "#library-media-bulk-delete-undo")
     def handle_library_media_bulk_delete_undo(self, event: Button.Pressed) -> None:
@@ -24603,6 +24646,10 @@ class LibraryScreen(BaseAppScreen):
             restore_media_item = getattr(service, "restore_media_item", None)
             restored_records: list[Mapping[str, Any]] = []
             failed: list[str] = []
+            # task-31220: the reader-facing reason for the FIRST failure,
+            # through the same exception -> reason mapping the stale-page
+            # Retry already uses -- one vocabulary, not two.
+            failure_reason = ""
             if callable(restore_media_item):
                 for media_id in media_ids:
                     try:
@@ -24624,8 +24671,11 @@ class LibraryScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
                         failed.append(media_id)
+                        failure_reason = failure_reason or _retry_failure_reason(exc)
             else:
+                # The one failure path with no exception to map.
                 failed = list(media_ids)
+                failure_reason = "restore is unavailable"
 
             if restored_records:
                 existing_ids = {
@@ -24645,6 +24695,14 @@ class LibraryScreen(BaseAppScreen):
                 ) + len(new_records)
 
             self._library_media_delete_receipt_ids = tuple(failed)
+            # task-31220: the receipt stops claiming success the moment its
+            # own recovery failed -- "✗ undo failed · <n> of <m> · <reason>"
+            # with "Retry undo" over exactly the ids still named above.
+            self._library_media_delete_receipt_undo_failure = (
+                f"{len(failed)} of {len(media_ids)} · {failure_reason}"
+                if failed
+                else ""
+            )
             if failed:
                 item_word = "item" if len(media_ids) == 1 else "items"
                 self._notify_library_media_delete_warning(
@@ -38841,6 +38899,7 @@ class LibraryScreen(BaseAppScreen):
                 # cleared at arm-time (``handle_library_media_delete``),
                 # so it always reflects only what just happened.
                 self._library_media_delete_receipt_ids = (media_id,)
+                self._library_media_delete_receipt_undo_failure = ""
                 self._library_media_detail = None
                 self._library_media_composed_detail = None
                 self._library_media_highlights = []

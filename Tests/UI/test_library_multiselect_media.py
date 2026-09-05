@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import inspect
+import sqlite3
 import types
 from types import SimpleNamespace
 
@@ -685,6 +686,95 @@ async def test_delete_receipt_absent_when_count_zero():
             pilot.app.query_one("#library-media-bulk-delete-undo", Button)
 
 
+class _GatedReceiptCanvasApp(ConsolidatedCSSApp):
+    """The delete receipt with the two action gates set independently."""
+
+    def __init__(
+        self,
+        *,
+        stale_action_reason: str = "",
+        mutation_action_reason: str = "",
+    ) -> None:
+        super().__init__()
+        self._stale_action_reason = stale_action_reason
+        self._mutation_action_reason = mutation_action_reason
+
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_delete_receipt_state(),
+            stale_action_reason=self._stale_action_reason,
+            mutation_action_reason=self._mutation_action_reason,
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_undo_stays_live_while_the_page_is_stale():
+    """task-31220: critique #5 saw "✓ deleted · 1 item · in Trash"
+    painted beside a DISABLED "○ Undo" -- the confirmation had just
+    promised "You can undo right away". Undo restores exactly the ids the
+    receipt names, so a stale PAGE cannot invalidate it: it is the
+    receipt's own recovery, not a page action."""
+    app = _GatedReceiptCanvasApp(
+        stale_action_reason="Media changed; retry to load a current page."
+    )
+    async with app.run_test() as pilot:
+        undo = pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+        assert str(undo.label) == "Undo"
+        assert undo.disabled is False
+        dismiss = pilot.app.query_one(
+            "#library-media-bulk-delete-receipt-dismiss", Button
+        )
+        assert dismiss.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_undo_is_gated_only_while_a_write_is_in_flight():
+    """The interlock still holds: a second mutation cannot be claimed
+    while one is genuinely in flight, so Undo says so rather than lying."""
+    app = _GatedReceiptCanvasApp(
+        mutation_action_reason="Media change in progress."
+    )
+    async with app.run_test() as pilot:
+        undo = pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+        assert str(undo.label) == "\u25cb Undo"
+        assert undo.disabled is True
+
+
+class _FailedUndoReceiptCanvasApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=dataclasses.replace(
+                _delete_receipt_state(),
+                delete_receipt_count=1,
+                delete_receipt_undo_failure="1 of 2 \u00b7 database is locked",
+            ),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_paints_the_failed_undo_state_with_retry_undo():
+    """task-31220: a receipt may only say "✓" while Undo can actually
+    run. When a restore fails the receipt states the failure in PR A's
+    two-row grammar and offers a retry over just the failed ids."""
+    app = _FailedUndoReceiptCanvasApp()
+    async with app.run_test() as pilot:
+        copy = pilot.app.query_one(
+            "#library-media-bulk-delete-receipt-copy", Static
+        )
+        assert (
+            str(copy.renderable)
+            == "\u2717 undo failed \u00b7 1 of 2 \u00b7 database is locked"
+        )
+        retry = pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+        assert str(retry.label) == "Retry undo"
+        assert retry.disabled is False
+        assert pilot.app.query_one(
+            "#library-media-bulk-delete-receipt-dismiss", Button
+        )
+
+
 class _MediaCanvasDismissReceiptApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
@@ -1048,6 +1138,8 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
     notified = []
     refresh_calls = []
     entry_focus_arm_calls = []
+    after_refresh_calls = []
+    focus_control_calls = []
     fake = SimpleNamespace(
         app_instance=SimpleNamespace(
             media_reading_scope_service=scope_service,
@@ -1056,6 +1148,17 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         _notified=notified,
         _refresh_calls=refresh_calls,
         _entry_focus_arm_calls=entry_focus_arm_calls,
+        # task-31220: a full-success delete lands focus on the receipt's
+        # Undo, so the promise the confirmation just made ("You can undo
+        # right away") is one Enter away.
+        _after_refresh_calls=after_refresh_calls,
+        _focus_control_calls=focus_control_calls,
+        call_after_refresh=lambda cb, *a, **k: after_refresh_calls.append(
+            (cb, a, k)
+        ),
+        _focus_library_control=lambda selector: focus_control_calls.append(
+            selector
+        ),
         _local_source_records={"media": tuple(records)},
         _local_source_counts=dict(counts),
         _library_media_row_selection=selection,
@@ -1074,6 +1177,7 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         # ``handle_library_media_delete_selected`` already cleared any
         # earlier one when it armed this confirmation.
         _library_media_delete_receipt_ids=(),
+        _library_media_delete_receipt_undo_failure="",
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
         # review round 2: pin that a full-success bulk delete re-arms
@@ -1160,6 +1264,8 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
         counts={"media": 3},
         selected_ids=[delete_a_identity, delete_b_identity],
     )
+    # A failed Undo from an EARLIER receipt must not colour this one.
+    fake._library_media_delete_receipt_undo_failure = "1 of 1 \u00b7 stale"
 
     await LibraryScreen._delete_library_media_selection(
         fake, (delete_a_identity, delete_b_identity)
@@ -1195,13 +1301,28 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # own docstring) -- only a full ``refresh(recompose=True)`` repaints
     # it, mirroring ``_delete_library_media_item``'s own tail.
     assert fake._refresh_calls == [{"recompose": True}]
-    # review round 2: a full-success bulk delete exits Select mode --
-    # exactly the "return to a list canvas" transition task-2856 AC1's
-    # entry-focus convention targets (mirrors ``_exit_library_media_
-    # viewer``'s own tail). Without this a keyboard-only user is left
-    # with nothing focused once the confirm row's "Delete" button (which
-    # had focus) is gone from the DOM after the recompose above.
-    assert fake._entry_focus_arm_calls == [True]
+    # task-31220 (supersedes review round 2's entry-focus pin here): a
+    # full-success bulk delete leaves a "✓ deleted" receipt, and the
+    # confirmation the user just answered promised "You can undo right
+    # away" -- so focus lands on that receipt's Undo, not on a list row.
+    # The failure paths below keep the entry-focus rule (first still-
+    # checked row), because there is no ✓ receipt to act on there.
+    assert fake._entry_focus_arm_calls == []
+    assert [args for _cb, args, _kw in fake._after_refresh_calls] == [
+        ("#library-media-bulk-delete-undo",)
+    ]
+    assert fake._after_refresh_calls[0][0] is fake._focus_library_control
+    # Live at 100x30 (task-31220): the mutation-completion refresh recomposes
+    # the canvas moments later and destroys the button just focused, so the
+    # target has to travel with THAT request too -- the same focus_identity
+    # channel every other Media focus target already uses.
+    request_events = [event for event in fake._mutation_events if event[0] == "request"]
+    assert request_events, fake._mutation_events
+    assert request_events[0][2].get("focus_identity") == (
+        "#library-media-bulk-delete-undo"
+    )
+    # A fresh receipt never inherits an older Undo's failure copy.
+    assert fake._library_media_delete_receipt_undo_failure == ""
     # task-3020 AC1: the in-flight guard is cleared once the worker
     # actually completes, so a legitimate follow-up bulk delete is never
     # left permanently blocked.
@@ -1276,6 +1397,9 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
     assert any(event[0] == "reconcile" for event in fake._mutation_events)
     assert any(event[0] == "request" for event in fake._mutation_events)
     assert any(event[0] == "facets" for event in fake._mutation_events)
+    # No ✓ receipt on this path, so the refresh carries no focus target.
+    request_events = [event for event in fake._mutation_events if event[0] == "request"]
+    assert request_events[0][2].get("focus_identity") is None
     assert fake._library_media_bulk_delete_in_flight is False
 
     db.close_connection()
@@ -1370,6 +1494,8 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     undo_a_identity = f"local:media:{undo_a_id}"
     undo_b_identity = f"local:media:{undo_b_id}"
     fake._library_media_delete_receipt_ids = (undo_a_identity, undo_b_identity)
+    # This receipt is a RETRY of a previously failed Undo.
+    fake._library_media_delete_receipt_undo_failure = "2 of 2 \u00b7 database is locked"
 
     await LibraryScreen._undo_library_media_bulk_delete(
         fake, (undo_a_identity, undo_b_identity)
@@ -1387,6 +1513,9 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     assert fake._local_source_counts["media"] == 3
 
     assert fake._library_media_delete_receipt_ids == ()
+    # task-31220: a clean Undo retires the receipt outright -- no failure
+    # copy left behind for the next one to inherit.
+    assert fake._library_media_delete_receipt_undo_failure == ""
     assert fake._notified == []
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._library_media_bulk_delete_in_flight is False
@@ -1400,6 +1529,65 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     assert any(event[0] == "request" for event in fake._mutation_events)
     assert any(event[0] == "facets" for event in fake._mutation_events)
 
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_failure_turns_the_receipt_into_the_failed_state(tmp_path):
+    """task-31220: a receipt may only say "✓" while Undo can actually
+    run, so a restore that raises must retitle the receipt rather than
+    leave a tick standing over a recovery that did not happen.
+
+    There is no cheap LIVE way to make ``restore_from_trash`` fail, so the
+    failure receipt is verified here, against the production coroutine
+    with a raising restore seam. The reason is the same exception ->
+    reason mapping the stale-page Retry already uses
+    (``_retry_failure_reason``), not a second vocabulary.
+    """
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-31220-undo-fail"
+    )
+    fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
+
+    async def restore_media_item(**kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        restore_media_item=restore_media_item
+    )
+    fake._library_media_delete_receipt_ids = ("1", "2")
+
+    await LibraryScreen._undo_library_media_bulk_delete(fake, ("1", "2"))
+
+    # The receipt still names the ids a retry would restore...
+    assert fake._library_media_delete_receipt_ids == ("1", "2")
+    # ...and now says why it could not.
+    assert (
+        fake._library_media_delete_receipt_undo_failure
+        == "2 of 2 \u00b7 database is locked"
+    )
+    assert fake._library_media_bulk_delete_in_flight is False
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_failure_reports_an_absent_restore_seam_as_its_reason(tmp_path):
+    """Fail closed with a reason: no ``restore_media_item`` at all is the
+    one failure path with no exception to map."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-31220-undo-noseam"
+    )
+    fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
+    fake.app_instance.media_reading_scope_service = None
+    fake._library_media_delete_receipt_ids = ("1",)
+
+    await LibraryScreen._undo_library_media_bulk_delete(fake, ("1",))
+
+    assert fake._library_media_delete_receipt_ids == ("1",)
+    assert (
+        fake._library_media_delete_receipt_undo_failure
+        == "1 of 1 \u00b7 restore is unavailable"
+    )
     db.close_connection()
 
 
@@ -1493,6 +1681,10 @@ async def test_undo_partial_failure_narrows_receipt_and_warns(tmp_path):
     assert fake._local_source_counts["media"] == 1
 
     assert fake._library_media_delete_receipt_ids == (missing_id,)
+    # task-31220: the receipt itself carries the failure, not just a toast.
+    assert fake._library_media_delete_receipt_undo_failure.startswith(
+        "1 of 2 \u00b7 "
+    )
     assert len(fake._notified) == 1
     message, kwargs = fake._notified[0]
     assert "1" in message

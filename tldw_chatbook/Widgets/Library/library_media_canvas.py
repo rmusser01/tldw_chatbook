@@ -875,6 +875,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         receipt_count = getattr(self.canvas, "delete_receipt_count", 0)
         if receipt_count:
             receipt_word = "item" if receipt_count == 1 else "items"
+            # task-31220 (critique #5): a receipt may only claim success
+            # while its Undo can actually run. A failed restore retitles it
+            # with the same ✗ glyph the Analyze receipt uses for a run
+            # where nothing succeeded, and Undo becomes a retry over the
+            # still-failed ids ``receipt_count`` now names.
+            undo_failure = getattr(self.canvas, "delete_receipt_undo_failure", "")
             # task-31270 (critique #4 P1): two rows -- copy, then actions --
             # at full width. A single content-width Horizontal clipped Undo
             # to "Und" at the Items pane's real width; same multi-row
@@ -889,7 +895,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # task-4025 (ADR-055 Pattern A): the receipt names the
                     # durable path too -- "· in Trash" points at the Trash
                     # view that outlives this receipt's Undo/Dismiss.
-                    f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
+                    f"✗ undo failed · {undo_failure}"
+                    if undo_failure
+                    else f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
                     classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
@@ -899,13 +907,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 actions.styles.height = "auto"
                 with actions:
+                    # task-31220: NOT ``_gate_stale_action``. Undo restores
+                    # exactly the ids this receipt names, so it is the
+                    # receipt's own recovery and a stale PAGE behind it
+                    # cannot invalidate it -- disabling it here broke the
+                    # confirmation's "You can undo right away" promise at
+                    # the one moment it mattered (critique #5). The shared
+                    # write interlock still applies, so a second mutation
+                    # can never be claimed while one is in flight.
+                    undo_label = "Retry undo" if undo_failure else "Undo"
                     undo = Button(
-                        "Undo",
+                        undo_label,
                         id="library-media-bulk-delete-undo",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield self._gate_stale_action(undo, "Undo")
+                    yield self._gate_mutation_action(undo, undo_label)
                     dismiss = Button(
                         "Dismiss",
                         id="library-media-bulk-delete-receipt-dismiss",

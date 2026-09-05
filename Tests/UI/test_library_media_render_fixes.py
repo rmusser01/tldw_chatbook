@@ -396,6 +396,41 @@ async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
+    """task-31220 (critique #5): the receipt painted "✓ deleted · 1 item
+    · in Trash" beside a DISABLED "○ Undo" because the page behind it
+    had gone stale -- the confirmation's "You can undo right away" broken
+    at the moment it mattered. Undo restores the ids the receipt itself
+    names, so the stale PAGE cannot invalidate it. Painted text on
+    purpose: the "○" marker is a label change a region assertion cannot
+    see."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        controller.freshness = "stale"
+        controller.stale_copy = "Media changed; retry to load a current page."
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "\u2713 deleted \u00b7 1 item \u00b7 in Trash" in painted, painted
+        assert "Undo" in painted, painted
+        assert "Dismiss" in painted, painted
+        assert "\u25cb" not in painted, painted
+        assert (
+            screen.query_one("#library-media-bulk-delete-undo", Button).disabled
+            is False
+        )
+
+
+@pytest.mark.asyncio
 async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
     """task-31270: the set-dismiss receipt clipped to `… Un` (live cap_83)."""
     host = _host()
