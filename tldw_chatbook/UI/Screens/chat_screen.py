@@ -3901,7 +3901,7 @@ class ChatScreen(BaseAppScreen):
                 draft_rebaser=(
                     self._ensure_console_chat_controller().rebase_console_settings_draft
                 ),
-                live_committer=self._settings_durability._commit_console_settings_submission_live,
+                live_committer=self._commit_console_settings_submission_live,
                 default_readiness_resolver=self._settings_durability._console_default_readiness,
             ),
             callback=self._apply_console_model_popover_result,
@@ -3920,7 +3920,7 @@ class ChatScreen(BaseAppScreen):
                 exclusive=False,
             )
             return
-        self._settings_durability._dispatch_console_settings_submission(result)
+        self._dispatch_console_settings_submission(result)
 
     def _dispatch_console_settings_submission(self, result: object) -> None:
         return self._settings_durability._dispatch_console_settings_submission(result)
@@ -7042,69 +7042,37 @@ class ChatScreen(BaseAppScreen):
     # action_state`) and for tests that poke it directly -- each proxies
     # straight through to `self._dictation`, so none of those call sites
     # needed to change.
-    @property
-    def _console_dictation_state(self) -> str:
-        return self._dictation._console_dictation_state
+    _console_dictation_state = _ControllerState(
+        "_dictation", "_console_dictation_state"
+    )
 
-    @_console_dictation_state.setter
-    def _console_dictation_state(self, value: str) -> None:
-        self._dictation._console_dictation_state = value
+    _console_dictation_session = _ControllerState(
+        "_dictation", "_console_dictation_session"
+    )
 
-    @property
-    def _console_dictation_session(self) -> Any:
-        return self._dictation._console_dictation_session
+    _console_dictation_partial = _ControllerState(
+        "_dictation", "_console_dictation_partial"
+    )
 
-    @_console_dictation_session.setter
-    def _console_dictation_session(self, value: Any) -> None:
-        self._dictation._console_dictation_session = value
+    _console_dictation_timer = _ControllerState(
+        "_dictation", "_console_dictation_timer"
+    )
 
-    @property
-    def _console_dictation_partial(self) -> str:
-        return self._dictation._console_dictation_partial
+    _console_dictation_elapsed_timer = _ControllerState(
+        "_dictation", "_console_dictation_elapsed_timer"
+    )
 
-    @_console_dictation_partial.setter
-    def _console_dictation_partial(self, value: str) -> None:
-        self._dictation._console_dictation_partial = value
+    _console_dictation_origin_session_id = _ControllerState(
+        "_dictation", "_console_dictation_origin_session_id"
+    )
 
-    @property
-    def _console_dictation_timer(self) -> Any:
-        return self._dictation._console_dictation_timer
+    _console_pending_voice_action = _ControllerState(
+        "_dictation", "_console_pending_voice_action"
+    )
 
-    @_console_dictation_timer.setter
-    def _console_dictation_timer(self, value: Any) -> None:
-        self._dictation._console_dictation_timer = value
-
-    @property
-    def _console_dictation_elapsed_timer(self) -> Any:
-        return self._dictation._console_dictation_elapsed_timer
-
-    @_console_dictation_elapsed_timer.setter
-    def _console_dictation_elapsed_timer(self, value: Any) -> None:
-        self._dictation._console_dictation_elapsed_timer = value
-
-    @property
-    def _console_dictation_origin_session_id(self) -> str | None:
-        return self._dictation._console_dictation_origin_session_id
-
-    @_console_dictation_origin_session_id.setter
-    def _console_dictation_origin_session_id(self, value: str | None) -> None:
-        self._dictation._console_dictation_origin_session_id = value
-
-    @property
-    def _console_pending_voice_action(self) -> str | None:
-        return self._dictation._console_pending_voice_action
-
-    @_console_pending_voice_action.setter
-    def _console_pending_voice_action(self, value: str | None) -> None:
-        self._dictation._console_pending_voice_action = value
-
-    @property
-    def _console_dictation_late_discard_ack(self) -> bool:
-        return self._dictation._console_dictation_late_discard_ack
-
-    @_console_dictation_late_discard_ack.setter
-    def _console_dictation_late_discard_ack(self, value: bool) -> None:
-        self._dictation._console_dictation_late_discard_ack = value
+    _console_dictation_late_discard_ack = _ControllerState(
+        "_dictation", "_console_dictation_late_discard_ack"
+    )
 
     # Message-cluster state moved to `ConsoleMessageController` (wave-3
     # console decomposition, task 1). These properties keep `self._console_
@@ -7133,53 +7101,25 @@ class ChatScreen(BaseAppScreen):
     # Note this is the OPPOSITE case to the binding rule's write-only proxy,
     # where the *getter* deliberately raises `RuntimeError`: that forbids a
     # direction the pre-move source never had, this restores one it did.
-    @property
-    def _last_console_action(self) -> Any:
-        return self._message._last_console_action
+    _last_console_action = _ControllerState("_message", "_last_console_action")
 
-    @_last_console_action.setter
-    def _last_console_action(self, value: Any) -> None:
-        self._message._last_console_action = value
+    _pending_console_delete_message_id = _ControllerState(
+        "_message", "_pending_console_delete_message_id"
+    )
 
-    @property
-    def _pending_console_delete_message_id(self) -> str | None:
-        return self._message._pending_console_delete_message_id
+    _console_original_attempt_previews = _ControllerState(
+        "_message", "_console_original_attempt_previews"
+    )
 
-    @_pending_console_delete_message_id.setter
-    def _pending_console_delete_message_id(self, value: str | None) -> None:
-        self._message._pending_console_delete_message_id = value
+    _console_speaking_message_id = _ControllerState(
+        "_message", "_console_speaking_message_id"
+    )
 
-    @property
-    def _console_original_attempt_previews(self) -> dict[str, str]:
-        return self._message._console_original_attempt_previews
+    _console_speech_states = _ControllerState("_message", "_console_speech_states")
 
-    @_console_original_attempt_previews.setter
-    def _console_original_attempt_previews(self, value: dict[str, str]) -> None:
-        self._message._console_original_attempt_previews = value
-
-    @property
-    def _console_speaking_message_id(self) -> str | None:
-        return self._message._console_speaking_message_id
-
-    @_console_speaking_message_id.setter
-    def _console_speaking_message_id(self, value: str | None) -> None:
-        self._message._console_speaking_message_id = value
-
-    @property
-    def _console_speech_states(self) -> dict[str, str]:
-        return self._message._console_speech_states
-
-    @_console_speech_states.setter
-    def _console_speech_states(self, value: dict[str, str]) -> None:
-        self._message._console_speech_states = value
-
-    @property
-    def _pending_console_swipe_selection(self) -> str | None:
-        return self._message._pending_console_swipe_selection
-
-    @_pending_console_swipe_selection.setter
-    def _pending_console_swipe_selection(self, value: str | None) -> None:
-        self._message._pending_console_swipe_selection = value
+    _pending_console_swipe_selection = _ControllerState(
+        "_message", "_pending_console_swipe_selection"
+    )
 
     def _sync_console_dictation_availability(self) -> None:
         """Refresh the mic button's dictation-availability tooltip.
@@ -7203,29 +7143,15 @@ class ChatScreen(BaseAppScreen):
     # fallback) and for tests that poke it directly -- each proxies
     # straight through to `self._hands_free`, so none of those call sites
     # needed to change.
-    @property
-    def _console_hands_free(self) -> ConsoleHandsFreeSession | None:
-        return self._hands_free._console_hands_free
+    _console_hands_free = _ControllerState("_hands_free", "_console_hands_free")
 
-    @_console_hands_free.setter
-    def _console_hands_free(self, value: ConsoleHandsFreeSession | None) -> None:
-        self._hands_free._console_hands_free = value
+    _console_hands_free_vad_degraded = _ControllerState(
+        "_hands_free", "_console_hands_free_vad_degraded"
+    )
 
-    @property
-    def _console_hands_free_vad_degraded(self) -> bool:
-        return self._hands_free._console_hands_free_vad_degraded
-
-    @_console_hands_free_vad_degraded.setter
-    def _console_hands_free_vad_degraded(self, value: bool) -> None:
-        self._hands_free._console_hands_free_vad_degraded = value
-
-    @property
-    def _console_hands_free_store_tap_installed(self) -> bool:
-        return self._hands_free._console_hands_free_store_tap_installed
-
-    @_console_hands_free_store_tap_installed.setter
-    def _console_hands_free_store_tap_installed(self, value: bool) -> None:
-        self._hands_free._console_hands_free_store_tap_installed = value
+    _console_hands_free_store_tap_installed = _ControllerState(
+        "_hands_free", "_console_hands_free_store_tap_installed"
+    )
 
     # Agent-cluster state moved to `ConsoleAgentController` (wave-4 console
     # decomposition, task 3). These three properties keep
@@ -7252,29 +7178,15 @@ class ChatScreen(BaseAppScreen):
     # get no proxy: no production code outside the moved methods ever read
     # or wrote them, and the tests that set the first one were repointed at
     # `screen._agent` alongside this move.
-    @property
-    def _console_agent_bridge(self) -> Any:
-        return self._agent._console_agent_bridge
+    _console_agent_bridge = _ControllerState("_agent", "_console_agent_bridge")
 
-    @_console_agent_bridge.setter
-    def _console_agent_bridge(self, value: Any) -> None:
-        self._agent._console_agent_bridge = value
+    _console_agent_drilldown_run_id = _ControllerState(
+        "_agent", "_console_agent_drilldown_run_id"
+    )
 
-    @property
-    def _console_agent_drilldown_run_id(self) -> str | None:
-        return self._agent._console_agent_drilldown_run_id
-
-    @_console_agent_drilldown_run_id.setter
-    def _console_agent_drilldown_run_id(self, value: str | None) -> None:
-        self._agent._console_agent_drilldown_run_id = value
-
-    @property
-    def _agent_section_user_dismissed_while_busy(self) -> bool:
-        return self._agent._agent_section_user_dismissed_while_busy
-
-    @_agent_section_user_dismissed_while_busy.setter
-    def _agent_section_user_dismissed_while_busy(self, value: bool) -> None:
-        self._agent._agent_section_user_dismissed_while_busy = value
+    _agent_section_user_dismissed_while_busy = _ControllerState(
+        "_agent", "_agent_section_user_dismissed_while_busy"
+    )
 
     # Legacy Workspace-search names remain assignable compatibility aliases.
     # Scalar reads/writes share Workspace's canonical browser state; row reads
@@ -7282,57 +7194,29 @@ class ChatScreen(BaseAppScreen):
     # rows. The bounded Input handler passes only query/disabled values, and the
     # Clear button delegates the complete transition to Workspace, so the screen
     # owns no duplicate browser backing state or refresh writer.
-    @property
-    def _console_workspace_conversation_query(self) -> str:
-        return self._workspace._console_workspace_conversation_query
+    _console_workspace_conversation_query = _ControllerState(
+        "_workspace", "_console_workspace_conversation_query"
+    )
 
-    @_console_workspace_conversation_query.setter
-    def _console_workspace_conversation_query(self, value: str) -> None:
-        self._workspace._console_workspace_conversation_query = value
+    _console_workspace_conversation_search_timer = _ControllerState(
+        "_workspace", "_console_workspace_conversation_search_timer"
+    )
 
-    @property
-    def _console_workspace_conversation_search_timer(self) -> Any:
-        return self._workspace._console_workspace_conversation_search_timer
+    _console_workspace_conversation_search_token = _ControllerState(
+        "_workspace", "_console_workspace_conversation_search_token"
+    )
 
-    @_console_workspace_conversation_search_timer.setter
-    def _console_workspace_conversation_search_timer(self, value: Any) -> None:
-        self._workspace._console_workspace_conversation_search_timer = value
+    _console_workspace_conversation_search_rows = _ControllerState(
+        "_workspace", "_console_workspace_conversation_search_rows"
+    )
 
-    @property
-    def _console_workspace_conversation_search_token(self) -> int:
-        return self._workspace._console_workspace_conversation_search_token
+    _console_workspace_conversation_search_total = _ControllerState(
+        "_workspace", "_console_workspace_conversation_search_total"
+    )
 
-    @_console_workspace_conversation_search_token.setter
-    def _console_workspace_conversation_search_token(self, value: int) -> None:
-        self._workspace._console_workspace_conversation_search_token = value
-
-    @property
-    def _console_workspace_conversation_search_rows(
-        self,
-    ) -> tuple[ConsoleWorkspaceConversationRow, ...]:
-        return self._workspace._console_workspace_conversation_search_rows
-
-    @_console_workspace_conversation_search_rows.setter
-    def _console_workspace_conversation_search_rows(
-        self, value: tuple[ConsoleWorkspaceConversationRow, ...]
-    ) -> None:
-        self._workspace._console_workspace_conversation_search_rows = value
-
-    @property
-    def _console_workspace_conversation_search_total(self) -> int | None:
-        return self._workspace._console_workspace_conversation_search_total
-
-    @_console_workspace_conversation_search_total.setter
-    def _console_workspace_conversation_search_total(self, value: int | None) -> None:
-        self._workspace._console_workspace_conversation_search_total = value
-
-    @property
-    def _console_workspace_conversation_search_error(self) -> str:
-        return self._workspace._console_workspace_conversation_search_error
-
-    @_console_workspace_conversation_search_error.setter
-    def _console_workspace_conversation_search_error(self, value: str) -> None:
-        self._workspace._console_workspace_conversation_search_error = value
+    _console_workspace_conversation_search_error = _ControllerState(
+        "_workspace", "_console_workspace_conversation_search_error"
+    )
 
     #: Per-session draft bookkeeping moved to `ConsoleSessionController`
     #: (wave-2 console decomposition, task 3). `self._console_visible_draft_
@@ -7342,13 +7226,9 @@ class ChatScreen(BaseAppScreen):
     #: `_submit_console_native_draft`/`_on_console_submission_accepted`, and
     #: `on_button_pressed`'s tab-close branch -- none of them this
     #: cluster's own -- needed no changes.
-    @property
-    def _console_visible_draft_session_id(self) -> str | None:
-        return self._session._console_visible_draft_session_id
-
-    @_console_visible_draft_session_id.setter
-    def _console_visible_draft_session_id(self, value: str | None) -> None:
-        self._session._console_visible_draft_session_id = value
+    _console_visible_draft_session_id = _ControllerState(
+        "_session", "_console_visible_draft_session_id"
+    )
 
     @property
     def _console_undo_histories(self) -> dict[str, ConsoleComposerUndoHistory]:
@@ -15262,7 +15142,7 @@ class ChatScreen(BaseAppScreen):
                     and current_snapshot.generation == opening_revision[1]
                     and current.draft_text() == opening_revision[2]
                 ):
-                    self._commands._clear_console_composer_draft()
+                    self._clear_console_composer_draft()
             return False
 
         if parse.kind == KIND_COMMAND:
@@ -15272,7 +15152,7 @@ class ChatScreen(BaseAppScreen):
             if composer is not None:
                 composer.restore_stashed_draft(stash)
             self._console_unknown_send_armed = None
-            await self._commands._dispatch_console_command(parse)
+            await self._dispatch_console_command(parse)
             return False
 
         if parse.kind == KIND_UNKNOWN:
@@ -15423,7 +15303,7 @@ class ChatScreen(BaseAppScreen):
         if refusal is not None:
             self.app_instance.notify(f"Not redirected: {refusal}", severity="warning")
             return
-        self._commands._clear_console_composer_draft()
+        self._clear_console_composer_draft()
         self.app_instance.notify("Redirect sent — correcting the running turn.")
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
@@ -19167,7 +19047,7 @@ class ChatScreen(BaseAppScreen):
             # would drop must not cost the user their draft or the card.
             return False
         card.set_questions(None)
-        self._commands._clear_console_composer_draft()
+        self._clear_console_composer_draft()
         controller.resolve_pending_question(clean_answers, request_id=request_id)
         return True
 
