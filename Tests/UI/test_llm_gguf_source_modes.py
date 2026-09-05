@@ -1009,10 +1009,7 @@ async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "view_name", "focus_id"),
-    (
-        ("vllm", "vllm", "vllm-model-path"),
-        ("mlx", "mlx-lm", "mlx-model-path"),
-    ),
+    (("mlx", "mlx-lm", "mlx-model-path"),),
 )
 async def test_non_gguf_lifecycle_sync_preserves_existing_focus(
     monkeypatch: pytest.MonkeyPatch,

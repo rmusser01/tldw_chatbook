@@ -786,7 +786,9 @@ class VllmSetupView(VerticalScroll):
     def _sync_fold_cue(self) -> None:
         """Paint a cue when the current compact/medium viewport has more work."""
 
-        cue = self.query_one("#vllm-fold-cue", Label)
+        cue = next(iter(self.query("#vllm-fold-cue").results(Label)), None)
+        if cue is None:
+            return
         cue.display = (
             not self.has_class("vllm-wide")
             and self.virtual_size.height > self.size.height

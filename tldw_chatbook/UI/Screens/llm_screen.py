@@ -5052,7 +5052,8 @@ class LLMScreen(LabScreen):
         self._replay_remote_runtime_handoff()
         self._replay_pending_installed_reveal()
         self._apply_vllm_view_state(focus=False)
-        if self.llm_window is not None and self.llm_window.active_view == "vllm":
+        window = getattr(self, "llm_window", None)
+        if window is not None and window.active_view == "vllm":
             self.call_after_refresh(self._adapt_vllm_rails)
 
     def _hydrate_model_install_progress(self) -> None:
