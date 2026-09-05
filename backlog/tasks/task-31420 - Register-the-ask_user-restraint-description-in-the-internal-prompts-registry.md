@@ -1,9 +1,11 @@
 ---
 id: TASK-31420
 title: Register the ask_user restraint description in the internal-prompts registry
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@Robert'
 created_date: '2026-09-04 19:28'
+updated_date: '2026-09-05 00:05'
 labels:
   - console
   - agents
@@ -20,17 +22,21 @@ The design spec (2026-08-19-console-user-interaction-design.md, section 5.1) ask
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The ask_user tool description is served from the internal-prompts registry with a stable key and the constant becomes its default
-- [ ] #2 The LocalToolSpec built by _default_specs reads the registry copy at spec-build time
-- [ ] #3 Existing ask_user tests pass unchanged and one test pins that a registry override reaches the spec
+- [x] #1 The ask_user tool description is served from the internal-prompts registry with a stable key and the constant becomes its default
+- [x] #2 The LocalToolSpec built by _default_specs reads the registry copy at spec-build time
+- [x] #3 Existing ask_user tests pass unchanged and one test pins that a registry override reaches the spec
 <!-- AC:END -->
 
-## Renumbering provenance
+## Implementation Plan
 
-Filed as task-31383 on 2026-09-04 (PR #2383, branch
-chore/console-interaction-follow-up-tasks). Renumbered to task-31420 the
-same day: while the PR waited, dev landed its own task-31383 ("Make failed
-Console replies offer Retry instead of Continue"), and under the 2026-08-21
-owner rule (TASK-19601) the older arrival keeps the id. 31420 is the first
-id above the highest task id on any remote branch or local worktree at the
-time (31419). No dependency, doc, or code referenced the old id.
+<!-- SECTION:PLAN:BEGIN -->
+1. Add PromptSpec agents.ask_user_tool_description to Internal_Prompts/agents_prompts.py with the ASK_USER_DESCRIPTION literal as its default (no placeholders; contract note on restraint + default-ON gate).
+2. local_tool_provider._default_specs reads the description through get_internal_prompt at spec-build time (lazy import; the constant stays the catalog default).
+3. Tests: golden parity between the catalog default and ASK_USER_DESCRIPTION; an override via the resolver's config seam reaches the built spec; existing ask_user suites unchanged.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+agents.ask_user_tool_description is a PromptSpec in Internal_Prompts/agents_prompts.py whose default is byte-identical to ASK_USER_DESCRIPTION (pinned by test_ask_user_tool_description_matches_source_constant). _default_specs builds the ask_user LocalToolSpec from get_internal_prompt('agents.ask_user_tool_description') at spec-build time (lazy import, so Internal_Prompts stays off the boot path -- census unchanged at 966), falling back to the constant if the resolver returns empty. An [internal_prompts.agents] override reaches the built spec (test_a_registry_override_reaches_the_built_spec). No placeholders; the contract note explains the default-ON gate and the busy sentence.
+<!-- SECTION:NOTES:END -->
