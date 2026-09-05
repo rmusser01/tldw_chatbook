@@ -320,27 +320,35 @@ class ChunkingLabScreen(BaseAppScreen):
             self._edit_task = asyncio.create_task(self._apply_edits())
 
     async def _apply_edits(self) -> None:
-        while self._edits:
-            edit = self._edits.popleft()
-            while True:
-                before = self.coordinator.session
-                if self.coordinator.guarded:
-                    await asyncio.sleep(0.01)
-                    continue
-                try:
-                    changed = await asyncio.to_thread(edit, before)
-                    if self.coordinator.session is not before:
+        while True:
+            while self._edits:
+                edit = self._edits.popleft()
+                while True:
+                    before = self.coordinator.session
+                    if self.coordinator.guarded:
+                        await asyncio.sleep(0.01)
                         continue
-                    self._observe_result_revisions()
-                    self.coordinator.set_session(changed)
-                except (ValueError, TypeError, RuntimeError) as exc:
-                    self._message(str(exc))
-                break
-        await self._refresh_session(edit_complete=True)
+                    try:
+                        changed = await asyncio.to_thread(edit, before)
+                        if self.coordinator.session is not before:
+                            continue
+                        self._observe_result_revisions()
+                        self.coordinator.set_session(changed)
+                    except (ValueError, TypeError, RuntimeError) as exc:
+                        self._message(str(exc))
+                    break
+            await self._refresh_session(edit_complete=True)
+            # Rendering yields: retain ownership of deltas queued during it.
+            if not self._edits:
+                return
 
     async def drain_edits(self) -> None:
         """Drain deltas before taking any Run/Save/export/navigation snapshot."""
-        while self._edit_task is not None and not self._edit_task.done():
+        while self._edits or (
+            self._edit_task is not None and not self._edit_task.done()
+        ):
+            if self._edit_task is None or self._edit_task.done():
+                self._edit_task = asyncio.create_task(self._apply_edits())
             await asyncio.shield(self._edit_task)
 
     @on(SampleRegion.Changed)

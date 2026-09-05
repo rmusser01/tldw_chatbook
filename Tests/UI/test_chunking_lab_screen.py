@@ -3,7 +3,9 @@
 import asyncio
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from textual import events
@@ -35,6 +37,58 @@ async def settle_lab(app, screen, pilot):
             for outcome in outcomes
         ), outcomes
         await pilot.pause()
+
+
+@contextmanager
+def hold_final_edit_render(screen):
+    """Pause only the consumer's first final render, not transition computation."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    refresh = screen._refresh_session
+
+    async def paused(*, edit_complete=False):
+        if edit_complete and not entered.is_set():
+            entered.set()
+            await asyncio.wait_for(release.wait(), 5)
+        await refresh(edit_complete=edit_complete)
+
+    with patch.object(screen, "_refresh_session", paused):
+        try:
+            yield entered, release
+        finally:
+            release.set()
+
+
+@pytest.mark.asyncio
+async def test_final_render_edit_is_consumed_without_another_keystroke(lab_app):
+    from tldw_chatbook.Chunking import lab_state
+
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        with hold_final_edit_render(screen) as (entered, release):
+            screen.queue_edit(
+                lambda session: lab_state.replace_sample(
+                    session, "first", {"kind": "paste"}
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 3)
+            session = screen.coordinator.session
+            assert session.samples[session.view["sample_hash"]]["text"] == "first"
+            screen.queue_edit(
+                lambda session: lab_state.replace_sample(
+                    session, "last", {"kind": "paste"}
+                )
+            )
+            release.set()
+            # No drain or new keystroke rescues the consumer's final-render tail.
+            await asyncio.wait_for(asyncio.shield(screen._edit_task), 5)
+            session = screen.coordinator.session
+            assert session.samples[session.view["sample_hash"]]["text"] == "last"
+            await screen.drain_edits()
+            assert not screen._edits
+            assert screen._edit_task.done()
 
 
 @pytest.mark.asyncio

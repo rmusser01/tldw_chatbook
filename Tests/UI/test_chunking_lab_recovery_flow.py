@@ -1,6 +1,7 @@
 """Recovery flow uses real temporary SQLite and the local child process."""
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -17,6 +18,67 @@ from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 def lab_app(tmp_path, monkeypatch):
     monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
     return _build_test_app()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["export", "navigation"])
+async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, boundary):
+    from Tests.UI.test_chunking_lab_screen import hold_final_edit_render, settle_lab
+    from tldw_chatbook.Chunking import lab_state
+    from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
+
+    async with lab_app.run_test(size=(80, 24)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(lab_app, screen, pilot)
+        exported = tmp_path / "tail-recovery.json"
+        with hold_final_edit_render(screen) as (entered, release):
+            screen.queue_edit(
+                lambda session: lab_state.replace_sample(
+                    session, "first", {"kind": "paste"}
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 3)
+            session = screen.coordinator.session
+            assert session.samples[session.view["sample_hash"]]["text"] == "first"
+            screen.queue_edit(
+                lambda session: lab_state.replace_sample(
+                    session, "last", {"kind": "paste"}
+                )
+            )
+            action = asyncio.create_task(
+                screen.file_operation("export-recovery", {"path": str(exported)})
+                if boundary == "export"
+                else screen.confirm_navigation()
+            )
+            try:
+                release.set()
+                result = await asyncio.wait_for(action, 5)
+            finally:
+                release.set()
+                await asyncio.gather(action, return_exceptions=True)
+        if boundary == "export":
+            document = json.loads(exported.read_text())["session"]
+            assert (
+                document["samples"][document["view"]["sample_hash"]]["text"] == "last"
+            )
+        else:
+            assert result is True
+
+            def read_checkpoint():
+                store = CheckpointStore(
+                    tmp_path / "chunking_lab.sqlite3", str(tmp_path)
+                )
+                try:
+                    return store.load()[0]
+                finally:
+                    store.close()
+
+            recovered = await asyncio.to_thread(read_checkpoint)
+            assert recovered.samples[recovered.view["sample_hash"]]["text"] == "last"
+        assert not screen._edits
+        assert screen._edit_task.done()
 
 
 @pytest.mark.asyncio
