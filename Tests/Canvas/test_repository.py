@@ -1327,6 +1327,49 @@ def test_valid_import_preserves_ids_branch_graph_source_and_reopen_hint(db) -> N
     ]
 
 
+def test_import_retains_well_formed_unknown_runtime_profile_inertly(db) -> None:
+    """Import storage must not coerce a future profile into executable canvas-v1."""
+
+    conversation_id, message_id = _owner(db)
+    repository = CanvasRepository(db)
+    canvas_id = str(uuid4())
+    revision_id = str(uuid4())
+    source = "<main>future profile</main>"
+    batch = CanvasImportBatch(
+        conversation_id=conversation_id,
+        documents=(
+            CanvasImportDocument(
+                canvas_id=canvas_id,
+                conversation_id=conversation_id,
+                created_at="2026-09-04T12:00:00+00:00",
+            ),
+        ),
+        revisions=(
+            CanvasImportRevision(
+                revision_id=revision_id,
+                canvas_id=canvas_id,
+                parent_revision_id=None,
+                sequence=1,
+                title="Future",
+                runtime_profile="canvas-v9",  # type: ignore[arg-type]
+                source=source,
+                content_sha256=_sha256(source),
+                source_bytes=len(source.encode("utf-8")),
+                actor_kind="user_import",
+                origin_message_id=message_id,
+                origin_turn_id="turn-future",
+                created_at="2026-09-04T12:00:00+00:00",
+            ),
+        ),
+    )
+
+    repository.import_batch(batch)
+
+    restored = repository.read_revision(conversation_id, revision_id)
+    assert restored.runtime_profile == "canvas-v9"
+    assert restored.source == source
+
+
 def test_import_prevalidation_collisions_and_injected_write_failure_are_atomic(
     db,
 ) -> None:

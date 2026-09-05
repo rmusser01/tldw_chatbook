@@ -71,7 +71,7 @@ class CanvasRevision:
     parent_revision_id: str | None
     sequence: int
     title: str
-    runtime_profile: CanvasRuntimeProfile
+    runtime_profile: str
     source: str
     content_sha256: str
     source_bytes: int
@@ -104,7 +104,7 @@ class CanvasRevisionMetadata:
     parent_revision_id: str | None
     sequence: int
     title: str
-    runtime_profile: CanvasRuntimeProfile
+    runtime_profile: str
     content_sha256: str
     source_bytes: int
     actor_kind: CanvasActorKind
@@ -152,7 +152,7 @@ class CanvasImportRevision:
     parent_revision_id: str | None
     sequence: int
     title: str
-    runtime_profile: CanvasRuntimeProfile
+    runtime_profile: str
     source: str
     content_sha256: str
     source_bytes: int
@@ -764,6 +764,75 @@ class CanvasRepository:
         )
 
     @classmethod
+    def import_batch_in_transaction(
+        cls,
+        cursor: sqlite3.Cursor,
+        batch: CanvasImportBatch,
+        *,
+        limits: CanvasRepositoryLimits | None = None,
+    ) -> CanvasImportResult:
+        """Validate and insert a complete archive graph in the caller transaction."""
+
+        if not cursor.connection.in_transaction:
+            raise CanvasRepositoryError("transaction_ownership_required")
+        if not isinstance(batch, CanvasImportBatch):
+            raise CanvasValidationError("invalid_import_batch")
+        repository = object.__new__(cls)
+        repository._limits = limits or CanvasRepositoryLimits()
+        conversation_id = _validated_owner_id(batch.conversation_id)
+        repository._require_active_owner(cursor, conversation_id)
+        repository._validate_import_batch(cursor, batch)
+        for document in batch.documents:
+            cursor.execute(
+                "INSERT INTO canvas_documents "
+                "(id, conversation_id, created_at, deleted, deleted_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    document.canvas_id,
+                    document.conversation_id,
+                    document.created_at,
+                    int(document.deleted_at is not None),
+                    document.deleted_at,
+                ),
+            )
+        for revision in sorted(
+            batch.revisions, key=lambda item: (item.canvas_id, item.sequence)
+        ):
+            cursor.execute(
+                _INSERT_REVISION_SQL,
+                (
+                    revision.revision_id,
+                    revision.canvas_id,
+                    revision.parent_revision_id,
+                    revision.sequence,
+                    revision.title,
+                    revision.runtime_profile,
+                    revision.source,
+                    revision.content_sha256,
+                    revision.source_bytes,
+                    revision.actor_kind,
+                    revision.origin_message_id,
+                    revision.origin_turn_id,
+                    revision.created_at,
+                    revision.deleted_at,
+                ),
+            )
+        if batch.reopen_canvas_id is not None:
+            cursor.execute(
+                "INSERT INTO canvas_conversation_hints "
+                "(conversation_id, last_canvas_id, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(conversation_id) DO UPDATE SET "
+                "last_canvas_id = excluded.last_canvas_id, "
+                "updated_at = excluded.updated_at",
+                (conversation_id, batch.reopen_canvas_id, _utc_now()),
+            )
+        return CanvasImportResult(
+            conversation_id=conversation_id,
+            canvases_imported=len(batch.documents),
+            revisions_imported=len(batch.revisions),
+        )
+
+    @classmethod
     def append_batch_in_transaction(
         cls,
         cursor: sqlite3.Cursor,
@@ -992,6 +1061,7 @@ class CanvasRepository:
         actor_kind: object,
         origin_message_id: str,
         origin_turn_id: str,
+        allow_inert_profile: bool = False,
     ) -> _RevisionValues:
         title = _validated_text(title, "title", self._limits.max_title_bytes)
         try:
@@ -1000,7 +1070,14 @@ class CanvasRepository:
             raise CanvasValidationError("invalid_source") from exc
         if source_bytes > self._limits.max_source_bytes_per_revision:
             raise CanvasQuotaError("revision_source_bytes")
-        if runtime_profile != "canvas-v1":
+        if allow_inert_profile:
+            from .archive import CanvasArchiveValidationError, validate_runtime_profile
+
+            try:
+                runtime_profile = validate_runtime_profile(runtime_profile)
+            except CanvasArchiveValidationError as exc:
+                raise CanvasValidationError("invalid_runtime_profile") from exc
+        elif runtime_profile != "canvas-v1":
             raise CanvasValidationError("unsupported_runtime_profile")
         if type(actor_kind) is not str or actor_kind not in _ACTOR_KINDS:
             raise CanvasValidationError("invalid_actor_kind")
@@ -1015,7 +1092,7 @@ class CanvasRepository:
         return _RevisionValues(
             title=title,
             source=source,
-            runtime_profile="canvas-v1",
+            runtime_profile=str(runtime_profile),
             actor_kind=actor_kind,
             origin_message_id=origin_message_id,
             origin_turn_id=origin_turn_id,
@@ -1126,6 +1203,7 @@ class CanvasRepository:
                 actor_kind=revision.actor_kind,
                 origin_message_id=revision.origin_message_id,
                 origin_turn_id=revision.origin_turn_id,
+                allow_inert_profile=True,
             )
             if (
                 revision.content_sha256 != values.content_sha256
@@ -1135,7 +1213,7 @@ class CanvasRepository:
                 raise CanvasValidationError("digest_mismatch")
             _validated_timestamp(revision.created_at, "created_at")
             _validated_optional_timestamp(revision.deleted_at, "deleted_at")
-            self._require_origin_owner(
+            self._require_import_origin_owner(
                 cursor, batch.conversation_id, revision.origin_message_id
             )
             revision_ids.add(revision_id)
@@ -1210,6 +1288,19 @@ class CanvasRepository:
         row = cursor.execute(
             "SELECT 1 FROM messages WHERE id = ? AND conversation_id = ? "
             "AND deleted = 0",
+            (origin_message_id, conversation_id),
+        ).fetchone()
+        if row is None:
+            raise CanvasValidationError("origin_owner_mismatch")
+
+    @staticmethod
+    def _require_import_origin_owner(
+        cursor: sqlite3.Cursor, conversation_id: str, origin_message_id: str
+    ) -> None:
+        """Accept historical soft-deleted origins while preserving ownership."""
+
+        row = cursor.execute(
+            "SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?",
             (origin_message_id, conversation_id),
         ).fetchone()
         if row is None:
@@ -1310,7 +1401,7 @@ class CanvasRepository:
 class _RevisionValues:
     title: str
     source: str
-    runtime_profile: CanvasRuntimeProfile
+    runtime_profile: str
     actor_kind: CanvasActorKind
     origin_message_id: str
     origin_turn_id: str

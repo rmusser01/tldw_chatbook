@@ -1,15 +1,19 @@
-"""Pure validation helpers for inert Chatbook Canvas archive records.
+"""Validation and bounded inert export helpers for Chatbook Canvas records.
 
-This module defines only archive metadata boundaries. It does not read source
-entries, compile Canvas documents, or mutate the Canvas repository.
+Source is streamed only as UTF-8 bytes for identity verification and archive
+copying. This module never parses, compiles, renders, or executes Canvas HTML.
 """
 
 from __future__ import annotations
 
+import codecs
+import hashlib
 import re
+import sqlite3
 from collections.abc import Mapping
 from datetime import datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from .limits import (
@@ -35,6 +39,11 @@ MAX_CANVAS_ARCHIVE_RUNTIME_PROFILE_BYTES = 64
 _RUNTIME_PROFILE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ACTOR_KINDS = frozenset({"assistant", "user_rename", "user_import"})
+CANVAS_ARCHIVE_IO_CHUNK_BYTES = 64 * 1024
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chatbooks.chatbook_models import CanvasArchiveManifest
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 class CanvasArchiveValidationError(ValueError):
@@ -43,6 +52,208 @@ class CanvasArchiveValidationError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(f"invalid Canvas archive: {code}")
+
+
+def export_canvas_archive(
+    db: CharactersRAGDB,
+    conversation_ids: tuple[str, ...],
+    work_dir: Path,
+) -> CanvasArchiveManifest | None:
+    """Stream selected durable Canvas histories into inert archive entries."""
+
+    from tldw_chatbook.Chatbooks.chatbook_models import (
+        CanvasArchiveDocument,
+        CanvasArchiveManifest,
+        CanvasArchiveReopenHint,
+        CanvasArchiveRevision,
+    )
+
+    if not conversation_ids:
+        return None
+    if len(set(conversation_ids)) != len(conversation_ids):
+        raise CanvasArchiveValidationError("duplicate_conversation_id")
+    for conversation_id in conversation_ids:
+        validate_bounded_identifier(
+            conversation_id,
+            field_name="conversation_id",
+            byte_limit=MAX_CANVAS_ARCHIVE_CONVERSATION_ID_BYTES,
+        )
+
+    placeholders = ", ".join("?" for _ in conversation_ids)
+    connection = db.get_connection()
+    rows = connection.execute(
+        "SELECT document.id, document.conversation_id, document.created_at, "
+        "document.deleted_at, revision.id, revision.parent_revision_id, "
+        "revision.sequence, revision.title, revision.runtime_profile, "
+        "revision.content_sha256, revision.html_bytes, revision.actor_kind, "
+        "revision.origin_message_id, revision.origin_turn_id, "
+        "revision.created_at, revision.deleted_at, message.conversation_id "
+        "FROM canvas_documents AS document "
+        "JOIN canvas_revisions AS revision ON revision.canvas_id = document.id "
+        "JOIN messages AS message ON message.id = revision.origin_message_id "
+        f"WHERE document.conversation_id IN ({placeholders}) "
+        "ORDER BY document.conversation_id, document.id, revision.sequence",
+        conversation_ids,
+    ).fetchall()
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    grouped: dict[str, list[sqlite3.Row]] = {}
+    document_order: list[str] = []
+    total_bytes = 0
+    for row in rows:
+        canvas_id = str(row[0])
+        conversation_id = str(row[1])
+        if str(row[16]) != conversation_id:
+            raise CanvasArchiveValidationError("origin_owner_mismatch")
+        if canvas_id not in grouped:
+            grouped[canvas_id] = []
+            document_order.append(canvas_id)
+        grouped[canvas_id].append(row)
+
+    documents = []
+    for canvas_id in document_order:
+        revisions = []
+        document_rows = grouped[canvas_id]
+        for row in document_rows:
+            revision_id = str(row[4])
+            source_path = canvas_revision_source_path(canvas_id, revision_id)
+            declared_bytes = int(row[10])
+            digest, actual_bytes = _stream_repository_source(
+                connection,
+                revision_id=revision_id,
+                destination=work_dir / source_path,
+            )
+            if actual_bytes != declared_bytes or digest != str(row[9]):
+                raise CanvasArchiveValidationError("stored_source_identity_mismatch")
+            total_bytes += actual_bytes
+            if total_bytes > MAX_CANVAS_ARCHIVE_SOURCE_BYTES:
+                raise CanvasArchiveValidationError("archive_source_byte_limit")
+            revisions.append(
+                CanvasArchiveRevision(
+                    revision_id=revision_id,
+                    parent_revision_id=str(row[5]) if row[5] is not None else None,
+                    sequence=int(row[6]),
+                    title=str(row[7]),
+                    runtime_profile=str(row[8]),
+                    source_path=source_path,
+                    content_sha256=digest,
+                    source_bytes=actual_bytes,
+                    actor_kind=str(row[11]),
+                    origin_message_id=str(row[12]),
+                    origin_turn_id=str(row[13]),
+                    created_at=str(row[14]),
+                    deleted_at=str(row[15]) if row[15] is not None else None,
+                )
+            )
+        first = document_rows[0]
+        documents.append(
+            CanvasArchiveDocument(
+                canvas_id=canvas_id,
+                conversation_id=str(first[1]),
+                created_at=str(first[2]),
+                deleted_at=str(first[3]) if first[3] is not None else None,
+                revisions=tuple(revisions),
+            )
+        )
+
+    hint_rows = connection.execute(
+        "SELECT hint.conversation_id, hint.last_canvas_id "
+        "FROM canvas_conversation_hints AS hint "
+        "JOIN canvas_documents AS document ON document.id = hint.last_canvas_id "
+        f"WHERE hint.conversation_id IN ({placeholders}) "
+        "AND document.deleted = 0 ORDER BY hint.conversation_id, hint.last_canvas_id",
+        conversation_ids,
+    ).fetchall()
+    hints = tuple(
+        CanvasArchiveReopenHint(
+            conversation_id=str(row[0]),
+            canvas_id=str(row[1]),
+        )
+        for row in hint_rows
+    )
+    return CanvasArchiveManifest(
+        extension_version=CANVAS_ARCHIVE_EXTENSION_VERSION,
+        total_source_bytes=total_bytes,
+        documents=tuple(documents),
+        reopen_hints=hints,
+    )
+
+
+def validate_exported_canvas_origins(
+    canvas_archive: CanvasArchiveManifest | None,
+    conversations: tuple[Mapping[str, object], ...],
+) -> None:
+    """Require Canvas origins to exist in the exact staged conversation graph."""
+
+    if canvas_archive is None:
+        return
+    staged_messages: dict[str, frozenset[str]] = {}
+    for conversation in conversations:
+        conversation_id = conversation.get("id")
+        messages = conversation.get("messages")
+        if not isinstance(conversation_id, str) or not isinstance(messages, list):
+            raise CanvasArchiveValidationError("invalid_staged_conversation")
+        if conversation_id in staged_messages:
+            raise CanvasArchiveValidationError("duplicate_conversation_id")
+        message_ids: set[str] = set()
+        for message in messages:
+            if not isinstance(message, Mapping) or not isinstance(
+                message.get("id"), str
+            ):
+                raise CanvasArchiveValidationError("invalid_staged_message")
+            message_id = str(message["id"])
+            if message_id in message_ids:
+                raise CanvasArchiveValidationError("duplicate_staged_message_id")
+            message_ids.add(message_id)
+        staged_messages[conversation_id] = frozenset(message_ids)
+
+    for document in canvas_archive.documents:
+        message_ids = staged_messages.get(document.conversation_id)
+        if message_ids is None:
+            raise CanvasArchiveValidationError("conversation_not_staged")
+        for revision in document.revisions:
+            if revision.origin_message_id not in message_ids:
+                raise CanvasArchiveValidationError("origin_message_not_staged")
+
+
+def _stream_repository_source(
+    connection: sqlite3.Connection,
+    *,
+    revision_id: str,
+    destination: Path,
+) -> tuple[str, int]:
+    """Read one source as bounded BLOB slices and verify strict UTF-8."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    offset = 1
+    total = 0
+    try:
+        with destination.open("xb") as handle:
+            while True:
+                row = connection.execute(
+                    "SELECT substr(CAST(html AS BLOB), ?, ?) "
+                    "FROM canvas_revisions WHERE id = ?",
+                    (offset, CANVAS_ARCHIVE_IO_CHUNK_BYTES, revision_id),
+                ).fetchone()
+                if row is None:
+                    raise CanvasArchiveValidationError("revision_not_found")
+                chunk = bytes(row[0] or b"")
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_DURABLE_SOURCE_BYTES_PER_REVISION:
+                    raise CanvasArchiveValidationError("revision_source_byte_limit")
+                decoder.decode(chunk, final=False)
+                digest.update(chunk)
+                handle.write(chunk)
+                offset += len(chunk)
+            decoder.decode(b"", final=True)
+    except UnicodeDecodeError:
+        raise CanvasArchiveValidationError("invalid_source_utf8") from None
+    return digest.hexdigest(), total
 
 
 def canvas_revision_source_path(canvas_id: str, revision_id: str) -> str:
@@ -208,6 +419,7 @@ def require_exact_fields(
 
 __all__ = [
     "CANVAS_ARCHIVE_EXTENSION_VERSION",
+    "CANVAS_ARCHIVE_IO_CHUNK_BYTES",
     "CANVAS_ARCHIVE_SUPPORTED_RUNTIME_PROFILE",
     "MAX_CANVASES_PER_CONVERSATION",
     "MAX_CANVAS_ARCHIVE_CONVERSATION_ID_BYTES",
@@ -222,11 +434,13 @@ __all__ = [
     "MAX_REVISIONS_PER_CANVAS",
     "CanvasArchiveValidationError",
     "canvas_revision_source_path",
+    "export_canvas_archive",
     "require_exact_fields",
     "validate_actor_kind",
     "validate_archive_uuid",
     "validate_bounded_identifier",
     "validate_digest",
+    "validate_exported_canvas_origins",
     "validate_inert_source_path_shape",
     "validate_non_negative_int",
     "validate_positive_int",

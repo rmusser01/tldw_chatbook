@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 import json
 import re
 import threading
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -29,7 +29,6 @@ from .chatbook_creator import ChatbookCreator
 from .chatbook_importer import ChatbookImporter
 from .chatbook_models import ContentType
 from .conflict_resolver import ConflictResolution
-
 
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 _REGISTRY_LOCKS: dict[Path, threading.RLock] = {}
@@ -919,6 +918,16 @@ class LocalChatbookService:
             "message": message,
             "path": str(output_path),
             "dependency_info": dependency_info,
+            "archive_version": (
+                dependency_info.get("archive_version")
+                if isinstance(dependency_info, dict)
+                else None
+            ),
+            "canvas_included": (
+                bool(dependency_info.get("canvas_included", False))
+                if isinstance(dependency_info, dict)
+                else False
+            ),
             "name": payload.get("name") or Path(output_path).stem,
             "cancelled": cancelled,
         }

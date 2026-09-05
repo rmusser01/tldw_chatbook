@@ -659,7 +659,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 67  # Conversation-owned immutable Canvas revision graphs.
+    _CURRENT_SCHEMA_VERSION = 68  # Preserve bounded inert Canvas runtime profiles.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7918,6 +7918,45 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v67_to_v68(self, conn: sqlite3.Connection) -> None:
+        """Widen Canvas storage to bounded, inert runtime profile identifiers."""
+
+        self._require_migration_entry_version(conn, 67, "V67→V68")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v67_to_v68_canvas_runtime_profiles.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V67→V68",
+                )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Canvas runtime migration foreign key audit failed")
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 68 "
+                    "WHERE schema_name = ? AND version = 67",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V67→V68] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 68:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V67→V68] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V67 to V68 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8137,6 +8176,7 @@ UPDATE db_schema_version
                     64: self._migrate_from_v64_to_v65,
                     65: self._migrate_from_v65_to_v66,
                     66: self._migrate_from_v66_to_v67,
+                    67: self._migrate_from_v67_to_v68,
                 }
 
                 if current_db_version == 0:

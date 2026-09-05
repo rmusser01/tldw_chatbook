@@ -1,28 +1,28 @@
 # test_chatbook_importer.py
 # Unit tests for chatbook importer
 
-import pytest
 import io
 import json
 import os
-import zipfile
-from pathlib import Path
-from datetime import datetime
-from unittest.mock import MagicMock, patch
 import sqlite3
-
 import sys
+import zipfile
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
-from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
-from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     encode_project_context_json,
 )
+from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
+from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
@@ -160,7 +160,16 @@ class TestChatbookImporter:
     ):
         chatbook_path = tmp_path / "private.zip"
         with zipfile.ZipFile(chatbook_path, "w") as archive:
-            archive.writestr("manifest.json", "{}")
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    ChatbookManifest(
+                        version=ChatbookVersion.V2,
+                        name="Private",
+                        description="privacy permissions",
+                    ).to_dict()
+                ),
+            )
             archive.writestr("content/private-note.md", "secret")
         observed: dict[str, int] = {}
 

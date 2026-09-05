@@ -9,6 +9,8 @@ from traceback import format_exception
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tldw_chatbook.Canvas.archive import (
     CANVAS_ARCHIVE_EXTENSION_VERSION,
@@ -252,6 +254,30 @@ def test_unknown_well_formed_runtime_profile_remains_inert_metadata() -> None:
 
     assert restored.runtime_profile == "canvas-v9"
     assert restored.is_runtime_supported is False
+
+
+@given(st.text(min_size=0, max_size=80))
+def test_runtime_profile_grammar_fails_closed_for_arbitrary_text(value: str) -> None:
+    """Only bounded lowercase hyphenated identifiers cross the archive boundary."""
+
+    valid = (
+        3 <= len(value.encode("utf-8")) <= 64
+        and value.isascii()
+        and value[0:1].islower()
+        and value[0:1].isalpha()
+        and "-" in value[1:]
+        and not value.endswith("-")
+        and "--" not in value
+        and all(
+            character.islower() or character.isdigit() or character == "-"
+            for character in value
+        )
+    )
+    if valid:
+        assert _revision(runtime_profile=value).runtime_profile == value
+    else:
+        with pytest.raises(CanvasArchiveValidationError):
+            _revision(runtime_profile=value)
 
 
 def test_document_rejects_foreign_parent_and_noncanonical_sequence() -> None:
