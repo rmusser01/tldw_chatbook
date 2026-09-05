@@ -105,12 +105,12 @@ async def test_screen_navigation_worker_transition_does_not_warn_unhandled():
     from Tests.UI.app_factory import _build_test_app
 
     warnings: list[str] = []
-    sink_id = loguru_root_logger.add(
-        lambda message: warnings.append(str(message)), level="WARNING"
-    )
-    try:
-        app = _build_test_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sink_id = loguru_root_logger.add(
+            lambda message: warnings.append(str(message)), level="WARNING"
+        )
+        try:
             worker = MagicMock(spec=Worker)
             worker.name = "handle_screen_navigation"
             worker.group = "screen-navigation"
@@ -122,8 +122,8 @@ async def test_screen_navigation_worker_transition_does_not_warn_unhandled():
                 Worker.StateChanged(worker, WorkerState.SUCCESS)
             )
             await pilot.pause()
-    finally:
-        loguru_root_logger.remove(sink_id)
+        finally:
+            loguru_root_logger.remove(sink_id)
 
     assert not [
         w
@@ -227,12 +227,12 @@ async def test_unknown_worker_group_still_warns_unhandled():
     from Tests.UI.app_factory import _build_test_app
 
     warnings: list[str] = []
-    sink_id = loguru_root_logger.add(
-        lambda message: warnings.append(str(message)), level="WARNING"
-    )
-    try:
-        app = _build_test_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sink_id = loguru_root_logger.add(
+            lambda message: warnings.append(str(message)), level="WARNING"
+        )
+        try:
             worker = MagicMock(spec=Worker)
             worker.name = "mystery_worker"
             worker.group = "task-2726-unknown-group"
@@ -241,8 +241,8 @@ async def test_unknown_worker_group_still_warns_unhandled():
                 Worker.StateChanged(worker, WorkerState.SUCCESS)
             )
             await pilot.pause()
-    finally:
-        loguru_root_logger.remove(sink_id)
+        finally:
+            loguru_root_logger.remove(sink_id)
 
     assert [
         w
