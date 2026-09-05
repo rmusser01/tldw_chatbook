@@ -18,11 +18,15 @@ the chooser bug needs the screen's focus-on-open):
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from types import SimpleNamespace
-from textual.widgets import Button, Input, OptionList
+from textual.widgets import Button, Input, OptionList, Static
+from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
@@ -44,7 +48,9 @@ from Tests.UI.test_library_media_reader_flow import (
 from Tests.UI.test_library_shell import (
     LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
+    _open_media_find,
     _seed_conversations,
+    _submit_content_search_query,
     _two_conversations,
     _wait_for_condition,
     _wait_for_selector,
@@ -247,7 +253,7 @@ async def _switch_to_analysis(screen, pilot) -> None:
         screen._library_media_reader_session, "analysis"
     )
     screen._sync_library_media_viewer_or_recompose()
-    await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-title")
+    await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
     await pilot.pause()
 
 
@@ -390,6 +396,78 @@ async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
+    """task-31220 (critique #5): the receipt painted "✓ deleted · 1 item
+    · in Trash" beside a DISABLED "○ Undo" because the page behind it
+    had gone stale -- the confirmation's "You can undo right away" broken
+    at the moment it mattered. Undo restores the ids the receipt itself
+    names, so the stale PAGE cannot invalidate it. Painted text on
+    purpose: the "○" marker is a label change a region assertion cannot
+    see."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        controller.freshness = "stale"
+        controller.stale_copy = "Media changed; retry to load a current page."
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "\u2713 deleted \u00b7 1 item \u00b7 in Trash" in painted, painted
+        assert "Undo" in painted, painted
+        assert "Dismiss" in painted, painted
+        assert "\u25cb" not in painted, painted
+        assert (
+            screen.query_one("#library-media-bulk-delete-undo", Button).disabled
+            is False
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_failed_undo_receipt_paints_its_reason_and_retry(size):
+    """task-31220: the ✗ state is the one this task added, so it gets the same
+    painted probe the ✓ state has. task-31270 clipped "Undo" to "Und" at the
+    Items pane's real width and only a painted assertion saw it; "Retry undo"
+    is four cells longer, and a reason can run to 80 chars."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._library_media_delete_receipt_undo_failure = (
+            "1 of 2 \u00b7 database is locked"
+        )
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        # The copy row is ``width: 100%; height: auto``, so a long reason wraps
+        # DOWNWARD rather than clipping or pushing the actions row off -- which
+        # is the behaviour this probe exists to confirm. Whitespace is collapsed
+        # across that wrap; clipping still fails it, because clipped characters
+        # do not come back.
+        flat = " ".join(painted.split())
+        assert "\u2717 undo failed \u00b7 1 of 2 \u00b7 database is locked" in flat, painted
+        # Unwrapped on its own row: "Retry undo" is four cells longer than the
+        # "Undo" that task-31270 saw clipped to "Und" at this width.
+        assert "Retry undo" in painted, painted
+        assert "Dismiss" in painted, painted
+        assert "\u2713 deleted" not in flat, painted
+        assert "\u25cb" not in painted, painted
+
+
+@pytest.mark.asyncio
 async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
     """task-31270: the set-dismiss receipt clipped to `… Un` (live cap_83)."""
     host = _host()
@@ -407,6 +485,411 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "✓ dismissed · 2 selected items" in painted, painted
         assert "Undo" in painted, painted
         assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
+    """task-28007 AC#4: the bulk-Analyze receipt is PR A's two-row grammar --
+    honest counts plus the two actions, readable in the ~38-col Items pane."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 38
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "\u2713 analyzed \u00b7 38 of 40 \u00b7 2 failed" in painted, painted
+        assert "Retry failed" in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_paints_the_running_copy():
+    """Review round 1 (I6): the frozen running copy had no test at all."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_running = True
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 0
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "Analyzing 3 of 40 \u00b7 2 failed" in painted, painted
+        # A run in flight offers neither action: nothing to retry yet, and a
+        # Dismiss that did not cancel would lie.
+        assert "Retry failed" not in painted, painted
+        assert "Dismiss" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_omits_the_failed_segment_and_retry_at_zero():
+    """Review round 1 (I6): the clean-run form -- no "· 0 failed", no Retry."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 40
+        screen._library_media_analyze_done = 40
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "\u2713 analyzed \u00b7 40 of 40" in painted, painted
+        assert "failed" not in painted, painted
+        assert "Retry failed" not in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
+    """Review round 1 (I5): "\u2713 analyzed \u00b7 0 of 3" was a checkmark over a
+    total failure. Retry is still offered -- only the glyph was dishonest."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_total = 3
+        screen._library_media_analyze_done = 0
+        screen._library_media_analyze_failed_ids = ("a", "b", "c")
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        painted = _painted(host, receipt.region)
+        assert "\u2717 analyzed \u00b7 0 of 3 \u00b7 3 failed" in painted, painted
+        assert "\u2713" not in painted, painted
+        assert "Retry failed" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_overwrite_choice_paints_both_options():
+    """task-28007 AC#3: the already-analysed choice is armed IN the receipt row."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_choice = (
+            ("local:media:1", "local:media:2"),
+            ("local:media:2",),
+        )
+        _sync_library_canvas(screen, "media")
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-analyze-receipt"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert receipt.region.width <= _items_pane_width(screen)
+        painted = _painted(host, receipt.region)
+        assert "1 of 2 already analyzed" in painted, painted
+        assert "—" not in painted, painted  # R3: no dangling dash
+        assert "Skip them" in painted, painted
+        assert "Overwrite" in painted, painted
+        # (final review, I-1) A THIRD button did not fit the Items pane at
+        # its 36-cell floor: the row painted "Skip them  Overwrite  Dism".
+        # "Skip them" already IS the change-nothing outcome and retires the
+        # card, so the choice state offers no Dismiss at all.
+        assert "Dism" not in painted, painted
+        assert not screen.query("#library-media-analyze-receipt-dismiss")
+
+
+@pytest.mark.asyncio
+async def test_a_scope_change_clears_the_armed_analyze_choice():
+    """(final review, I-1/M-3) The choice is a PENDING action over a
+    snapshot of ids, armed after select mode already exited -- so nothing
+    used to invalidate it. Changing the browse scope (here: the filter)
+    must retire it rather than keep offering "Overwrite" over ids the user
+    can no longer see."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_choice = (
+            ("local:media:1", "local:media:2"),
+            ("local:media:2",),
+        )
+        _sync_library_canvas(screen, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
+
+        screen._request_library_media_filter("beta")
+        await pilot.pause()
+        assert screen._library_media_analyze_choice is None
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+
+
+@pytest.mark.asyncio
+async def test_an_import_origin_run_paints_no_receipt_on_the_media_canvas():
+    """(final review, I-2) An "Analyze N skipped" run drives the SAME
+    screen-owned counters, so its progress used to render as a Media
+    receipt on a canvas the user never started it from -- whose "Retry
+    failed" would then re-run those ids as a media run, leaving the Import
+    rows saying "analysis failed" forever. The Import surface has its own
+    per-row receipts; the Media canvas must show nothing for that run,
+    while it runs and after it settles."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_analyze_origin = "import"
+        screen._library_media_analyze_running = True
+        screen._library_media_analyze_total = 3
+        screen._library_media_analyze_done = 1
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+
+        screen._library_media_analyze_running = False
+        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-analyze-receipt")
+        assert not screen.query("#library-media-analyze-retry")
+
+
+@pytest.mark.asyncio
+async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
+    """task-28007 AC#4: Analyze is readable beside (below) Export and Review.
+
+    Measured: the Items pane is 36 cells and Clear/Export/Review already
+    take 33 of them, so a fourth 13-cell action on that row clipped every
+    label. Analyze therefore rides its own row -- the same multi-row
+    grammar Delete already uses -- and this pins BOTH rows readable."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        row = await _wait_for_selector(
+            screen, pilot, "#library-media-select-actions"
+        )
+        analyze_row = screen.query_one("#library-media-select-analyze")
+        await pilot.pause()
+        await pilot.pause()
+        pane = _items_pane_width(screen)
+        assert row.region.width <= pane
+        assert analyze_row.region.width <= pane
+        painted = _painted(host, row.region)
+        assert "Export" in painted, painted
+        assert "Review" in painted, painted
+        analyze_painted = _painted(host, analyze_row.region)
+        assert "Analyze" in analyze_painted, analyze_painted
+
+
+@pytest.mark.asyncio
+async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
+    """Review round 1 (I4 + the missing end-to-end pin): the REAL button
+    press must drop the select-mode toolbar at once (not one partition
+    pass later) and the finished run must paint its own receipt -- the
+    other painted tests set the canvas fields by hand."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        analyzed = []
+
+        async def _one(media_id, *, resolution):
+            analyzed.append(media_id)
+            return True
+
+        screen._analyze_one_library_media_item = _one
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._toggle_library_media_select_mode()
+            await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-selected"
+            )
+            screen.query_one("#library-media-row-0").press()
+            screen.query_one("#library-media-row-1").press()
+            await pilot.pause()
+            screen.query_one("#library-media-analyze-selected", Button).press()
+            await pilot.pause()
+            assert not screen.query("#library-media-select-actions")
+            assert not screen.query("#library-media-select-analyze")
+            receipt = await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-receipt"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_analyze_running is False,
+                message="the run never settled",
+            )
+            await pilot.pause()
+            painted = _painted(host, receipt.region)
+        assert len(analyzed) == 2, analyzed
+        assert "\u2713 analyzed \u00b7 2 of 2" in painted, painted
+        assert "Dismiss" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
+    """Review round 1 (I2): the worker is owned by this screen, so Textual
+    cancels it on unmount, and navigating back builds a NEW LibraryScreen
+    whose receipt fields start empty -- an arbitrary prefix would be
+    analysed with nothing on screen ever saying so."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def _one(media_id, *, resolution):
+            if media_id != "b":
+                return True
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return True
+
+        screen._analyze_one_library_media_item = _one
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._start_library_media_analyze(("a", "b", "c"), overwrite=True)
+        worker = next(
+            candidate
+            for candidate in host.workers
+            if candidate.group
+            == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+        )
+        await _wait_for_condition(
+            pilot, entered.is_set, message="the run never reached item 2"
+        )
+        await host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert cancelled.is_set(), "the in-flight item must be cancelled"
+        assert worker.state is WorkerState.CANCELLED
+        assert notices, "a cancelled run must say where it stopped"
+        assert notices[0][0] == (
+            "Analysis stopped at 1 of 3 · reopen Select ▸ Analyze to "
+            "continue; finished items are skipped"
+        ), notices
+        assert notices[0][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
+    """task-28007 Task 3 (N1): an unmount that lands DURING the AC#3
+    partition pass -- before ``_library_media_analyze_total`` is ever
+    stamped -- must not notify the nonsensical "stopped at 0 of 0"."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        notices = []
+        screen.app_instance.notify = lambda message, **kwargs: notices.append(
+            (message, kwargs)
+        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _blocked_unanalyzed(media_ids):
+            entered.set()
+            await release.wait()
+            return media_ids
+
+        screen._library_media_unanalyzed_ids = _blocked_unanalyzed
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._start_library_media_analyze(("a", "b"), overwrite=False)
+        worker = next(
+            candidate
+            for candidate in host.workers
+            if candidate.group
+            == library_screen_module._ANALYZE_SELECTED_WORKER_GROUP
+        )
+        await _wait_for_condition(
+            pilot,
+            entered.is_set,
+            message="the run never reached the partition pass",
+        )
+        assert screen._library_media_analyze_total == 0
+        await host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert worker.state is WorkerState.CANCELLED
+        assert notices, "a run cancelled before its total is known must still say so"
+        assert notices[0][0] == "Analysis stopped before it started", notices
+        assert notices[0][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_analyze_bulk_action_follows_the_selection_in_place():
+    """task-28007 AC#4, learning task-28242's Qodo #2335 lesson: the
+    in-place row-toggle patcher must flip Analyze alongside Export/Review
+    /Delete, or the first checked row leaves it disabled until some
+    unrelated recompose. The provider gate still outranks the count."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            screen._toggle_library_media_select_mode()
+            await _wait_for_selector(
+                screen, pilot, "#library-media-analyze-selected"
+            )
+            assert (
+                screen.query_one("#library-media-analyze-selected", Button).disabled
+                is True
+            )
+            screen.query_one("#library-media-row-1").press()
+            await pilot.pause()
+            analyze = screen.query_one("#library-media-analyze-selected", Button)
+            assert analyze.disabled is False, "checked rows must arm Analyze"
+            assert "Analyze" in str(analyze.label)
+
+            # And the provider gate wins over the count: an unready
+            # provider keeps it off with its own reason.
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "No analysis provider is configured.",
+            )
+            screen._library_media_analyze_reason_cache = None
+            screen.query_one("#library-media-row-0").press()
+            await pilot.pause()
+            gated = screen.query_one("#library-media-analyze-selected", Button)
+            assert gated.disabled is True
+            assert gated.tooltip == "No analysis provider is configured."
 
 
 # ---------------------------------------------------------------------------
@@ -952,3 +1435,534 @@ async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_
         await pilot.pause()
         assert screen._library_media_find_open is False
         assert not screen.query("#library-media-content-search-controls")
+
+
+# ---------------------------------------------------------------------------
+# Wave 4 PR C (tasks 31276 / 31277 / 31274) -- merged after PR B landed.
+# ---------------------------------------------------------------------------
+
+
+def _find_host() -> LibraryProductionCSSHarness:
+    """A reader item whose body carries several matches for "item"."""
+    app = _build_media_test_app()
+    items = _two_media_items()
+    for item in items:
+        item["content"] = "\n".join(
+            f"Line {number} mentions the item." for number in range(1, 9)
+        )
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_row(host, y: int) -> str:
+    """Return the whole painted screen row at ``y`` (pane join included)."""
+    strips = list(host.screen._compositor.render_strips())
+    return strips[y].text
+
+
+@pytest.mark.asyncio
+async def test_find_bar_keeps_its_place_through_submit_and_next():
+    """task-31276 (critique #4 P2): submitting must not relocate the bar.
+
+    task-15774 docked an ACTIVE search to the top of the viewer, so Enter
+    teleported the whole bar from under the mode row to above the Reader
+    header and shoved that header down six rows (live cap_20). The bar's
+    anchor is the mode row, at every stage of the gesture: open, submit,
+    match navigation.
+
+    The header row this pins used to be the "Local Media item" identity
+    line; task-31277 made that line server-only, so the title -- now the
+    Reader header's own top text row -- is the anchor.
+    """
+    host = _find_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_media_find(screen, pilot)
+        controls = screen.query_one("#library-media-content-search-controls")
+        mode_row = screen.query_one("#library-media-reader-mode-toolbar")
+        header = screen.query_one("#library-media-viewer-title")
+        opened_y = controls.region.y
+        assert mode_row.region.y < opened_y
+        assert header.region.y < opened_y
+
+        await _submit_content_search_query(screen, pilot, "item")
+        status = screen.query_one("#library-media-content-search-status")
+        assert "Match 1 of" in _painted(host, status.region), _painted(
+            host, status.region
+        )
+        assert screen.query_one(
+            "#library-media-content-search-controls"
+        ).region.y == opened_y
+        assert (
+            screen.query_one("#library-media-reader-mode-toolbar").region.y
+            == mode_row.region.y
+        )
+        assert (
+            screen.query_one("#library-media-viewer-title").region.y
+            == header.region.y
+        )
+
+        screen.query_one("#library-media-content-search-next", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one(
+            "#library-media-content-search-controls"
+        ).region.y == opened_y
+
+
+@pytest.mark.asyncio
+async def test_no_join_artifact_after_find_closes():
+    """task-31276 (critique #4 P2): no `┐─────` run at the pane join.
+
+    After Escape closed Find, a five-cell rule appeared in the pane-grip
+    columns immediately left of the Reader header and persisted across
+    later interactions (14 live captures; absent on a fresh open). It is
+    the focused grip's accent end-caps: the grip is as tall as the shell,
+    so an outline can only paint its FIRST and LAST rows.
+
+    Sampled over the Reader's first three rows on purpose. task-31277
+    removed the identity line, so the pane's first row is now `‹ Back` and
+    the title is the second -- a single-row sample on the title is blind to
+    the outline-top, which paints on the first row (proved: restoring
+    `outline-top`/`outline-bottom` on the grip leaves a title-row-only
+    assertion passing).
+    """
+    host = _find_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        def join_slices() -> list[str]:
+            """The five grip columns left of the Reader, top three rows."""
+            viewer = screen.query_one("#library-media-viewer")
+            title = screen.query_one("#library-media-viewer-title")
+            # The sample must actually cover the header: Back, title, toolbar.
+            assert title.region.y - viewer.region.y <= 2, (
+                title.region,
+                viewer.region,
+            )
+            # task-31272 (PR B) removed "‹ Back" from the side-by-side layout,
+            # so the pane's first row is the title row itself; the sample
+            # still starts at the viewer's top edge, where the grip paints.
+            return [
+                _painted_row(host, y)[title.region.x - 5 : title.region.x]
+                for y in range(viewer.region.y, viewer.region.y + 3)
+            ]
+
+        async def settled_join() -> list[str]:
+            await pilot.pause()
+            await pilot.pause()
+            return join_slices()
+
+        fresh_join = join_slices()
+        assert not any("─" in row for row in fresh_join), fresh_join
+        title = screen.query_one("#library-media-viewer-title")
+        assert "Product Demo Video" in _painted_row(host, title.region.y)
+
+        # Find opened then closed. The rule lands in the grip columns, so
+        # the header's own region cannot see it -- the join is the assertion.
+        await _open_media_find(screen, pilot)
+        await pilot.press("escape")
+        after_find = await settled_join()
+        assert not any("─" in row for row in after_find), after_find
+        assert after_find == fresh_join, (fresh_join, after_find)
+
+        # A mode-tab click.
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        after_tab = await settled_join()
+        assert not any("─" in row for row in after_tab), after_tab
+        assert after_tab == fresh_join, (fresh_join, after_tab)
+
+        # The More menu opened then dismissed.
+        screen.query_one("#library-media-reader-more", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        after_more = await settled_join()
+        assert not any("─" in row for row in after_more), after_more
+        assert after_more == fresh_join, (fresh_join, after_more)
+
+
+def _plain_local_host() -> LibraryProductionCSSHarness:
+    """Two local items with neither an author nor a URL.
+
+    ``_two_media_items`` carries an author on both rows, so it can never
+    show the empty byline row task-31277 collapses. The type is ``pdf`` --
+    outside ``_MARKDOWN_MEDIA_TYPES`` -- so no Rendered|Raw strip can enter
+    the chrome count whatever the content sniffs as, and one deliberately
+    long line proves the reading measure.
+    """
+    app = _build_media_test_app()
+    long_line = (
+        "The recorded discussion ran long and this single unbroken sentence "
+        "exists to prove that the reading measure wraps the body well before "
+        "the full width of a 235 column terminal ever gets used up by prose."
+    )
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Roadmap Recording {index}",
+            # pdf is outside _MARKDOWN_MEDIA_TYPES, so no Rendered|Raw strip
+            # can appear and the chrome count is independent of the sniff.
+            "type": "pdf",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "keywords": ["roadmap"],
+            "content": "\n".join(
+                [f"Line 1 of recording {index}.", long_line]
+                + [f"Line {number} of recording {index}." for number in range(2, 40)]
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_local_reader_chrome_stops_before_the_sixth_row():
+    """task-31277 (critique #4 P2): nine rows of chrome before the first
+    content line (measured live at 235x52). The identity line restates what the Media list already
+    said, the byline row paints empty when an item has no author or URL,
+    and the section header repeats the selected mode tab. Counted from the
+    reader pane's top edge to the first content line, inclusive of the
+    content box's top border: Back, title, toolbar, mode row, border."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+        body = screen.query_one("#library-media-viewer-content-text")
+        chrome = body.region.y - viewer.region.y
+        painted = _painted(host, viewer.region)
+        assert chrome <= 5, (chrome, painted.splitlines()[:10])
+        # An identity line only a server item needs, and a byline row with
+        # nothing to say, are simply not composed.
+        assert not screen.query("#library-media-reader-identity")
+        assert not screen.query("#library-media-reader-byline")
+        assert "Local Media item" not in painted, painted
+        assert "Roadmap Recording 1" in painted, painted
+        assert "Line 1 of recording 1." in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
+    """task-31277 AC#3: the mode row is the label; a `Read`/`Analysis`
+    section header directly beneath it spent a row of the reading surface
+    saying the same word twice."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        read_body = screen.query_one("#library-media-reader-mode-read")
+        assert not read_body.query(".destination-section"), list(
+            read_body.query(".destination-section")
+        )
+        assert "Read" not in _painted(
+            host, screen.query_one("#library-media-viewer-content").region
+        )
+
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
+        await pilot.pause()
+        assert not screen.query("#library-media-viewer-analysis-title")
+        # Re-queried after the recompose: the press replaces these widgets.
+        analysis_body = screen.query_one("#library-media-reader-mode-analysis")
+        mode_row = screen.query_one("#library-media-reader-mode-toolbar")
+        assert analysis_body.region.y == mode_row.region.bottom, (
+            analysis_body.region,
+            mode_row.region,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reader_body_wraps_at_a_reading_measure():
+    """task-31277 AC#4: prose ran ~150 cells at 235 columns, against
+    DESIGN.md's 65-75. The body caps at ~90 cells; the bordered box keeps
+    the full pane width so its border still spans the pane."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        box = screen.query_one("#library-media-viewer-content")
+        body = screen.query_one("#library-media-viewer-content-text")
+        assert box.region.width > 120, box.region
+        assert body.region.width <= 92, (body.region, box.region)
+        # Painted proof the wrap index was built at the capped width: the
+        # long line's tail lands on the row below it, not off at column 150.
+        rows = _painted(host, body.region).splitlines()
+        assert "The recorded discussion ran long" in rows[1], rows[:4]
+        assert "terminal ever gets used up by prose." not in rows[1], rows[:4]
+
+
+def _transcript_host() -> LibraryProductionCSSHarness:
+    """Two video items whose transcripts are sectioned with `##` headings."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Product Demo {index}",
+            "type": "video",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "content": (
+                "## Section 1\n\nThe host opens the demo.\n\n"
+                "## Section 2\n\nThe dashboard walkthrough begins.\n"
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_video_transcript_headings_render_instead_of_painting_hashes():
+    """task-31277 AC#5: `_is_markdown_media` gated the content sniff on a
+    media-type allowlist that excluded video/audio, so a transcript whose
+    sections are `## Section 1` painted the hashes literally."""
+    host = _transcript_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        assert screen.query("#library-media-viewer-content-markdown"), list(
+            screen.query_one("#library-media-viewer-content").children
+        )
+        painted = _painted(
+            host, screen.query_one("#library-media-viewer-content").region
+        )
+        assert "Section 1" in painted, painted
+        assert "##" not in painted, painted
+
+
+def _keyword_media_items() -> list[dict[str, object]]:
+    """Rows whose keyword appears in NO title and NO body (task-31274)."""
+    return [
+        {
+            "id": "media-1",
+            "title": "Opening remarks",
+            "type": "article",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "keywords": ["day2"],
+            "content": "Transcript of the opening remarks session.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Closing remarks",
+            "type": "article",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "keywords": ["day3"],
+            "content": "Transcript of the closing remarks session.",
+            "version": 1,
+        },
+    ]
+
+
+async def _apply_media_filter(screen, pilot, query: str) -> None:
+    """Type into the Items filter and wait for the browse scope to apply."""
+    screen.query_one("#library-media-filter", Input).value = query
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_browse_controller.applied_scope is not None
+            and screen._library_media_browse_controller.applied_scope.query == query
+        ),
+        message=f"The media filter never applied query {query!r}.",
+    )
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
+    """task-31274: a keyword-tagged row is found by its keyword alone.
+
+    ``day2`` is a keyword on exactly one seeded row and appears in no title
+    and no body, so a hit is provably keyword-driven.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "day2")
+
+        titles = [row.title for row in screen._build_library_media_state().rows]
+        assert titles == ["Opening remarks"], titles
+        painted = _painted(host, screen.query_one("#library-media-list").region)
+        assert "Opening remarks" in painted, painted
+        assert "Closing remarks" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_media_filter_miss_names_the_fields_it_searched():
+    """task-31274 AC#3: the empty state says what the filter searched."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "zz")
+
+        status = screen.query_one("#library-media-status", Static)
+        assert str(status.renderable) == (
+            "No media matched “zz” in titles, content or keywords."
+        )
+        assert not screen.query_one(
+            "#library-media-filter-clear", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_media_filter_placeholder_names_the_fields_it_searches():
+    """task-31274 AC#2: the input says keywords are matched too."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        placeholder = screen.query_one("#library-media-filter", Input).placeholder
+        # Short on purpose: Textual paints only the first wrapped line of a
+        # placeholder, and the default Items pane fits ~15 cells (task-31274).
+        assert placeholder == "Title/keyword…"
+        assert len(placeholder) <= 15
+
+
+# ---------------------------------------------------------------------------
+# Wave 4 PR D (task-28007 AC#5) -- Generate says why it is off.
+# ---------------------------------------------------------------------------
+
+
+def _analysed_host() -> LibraryProductionCSSHarness:
+    """Two local items, each already carrying a current analysis version.
+
+    Drives the "Regenerate" spelling of the same action, which is gated by
+    the same reason and would otherwise go unpinned.
+    """
+    app = _build_media_test_app()
+    items = _two_media_items()
+    for index, item in enumerate(items, 1):
+        item["versions"] = [
+            {"version_number": 1, "analysis_content": f"Analysis of item {index}"}
+        ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.parametrize(
+    ("host_factory", "expected_label"),
+    [(_host, "○ Generate"), (_analysed_host, "○ Regenerate")],
+)
+@pytest.mark.asyncio
+async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configured(
+    host_factory, expected_label
+):
+    """Critique #4 P1: the Reader's Generate learned that no analysis
+    provider is configured only AFTER the click, as a toast. It now wears
+    the resolver's own reason, in the ``○``-with-reason grammar PR A gave
+    Find -- and the post-click guard still refuses with the same words.
+    Both spellings of the action ("Generate" / "Regenerate") are gated."""
+    host = host_factory()  # the test config configures no analysis provider
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is True
+        assert str(generate.label) == expected_label
+        # The marker is not just on the widget -- it reaches the glass.
+        assert expected_label in _painted(host, generate.region)
+        assert str(generate.tooltip) == "No analysis provider is configured."
+        # Belt and braces: the handler refuses with the same sentence.
+        warnings: list[str] = []
+        screen._notify_library_media_analysis_warning = warnings.append
+        screen.handle_library_media_analysis_generate(
+            SimpleNamespace(stop=lambda: None)
+        )
+        await pilot.pause()
+        assert warnings == ["No analysis provider is configured."]
+        assert screen._library_media_generating_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
+    monkeypatch,
+):
+    """Review I1: ``resolve_ingest_analysis_provider`` can shell out to the
+    macOS keychain (Anthropic subscription auth, 5s TTL) -- so resolving it
+    on EVERY viewer sync would put a synchronous subprocess on the Textual
+    event loop for every Reader gesture. Only ``_compose_analysis`` consumes
+    the reason, so only the Analysis tab pays for it."""
+    from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
+    calls: list[object] = []
+    not_ready = IngestAnalysisResolution(
+        provider="",
+        api_key=None,
+        ready=False,
+        short_reason="no analysis provider is configured",
+        hint="",
+    )
+
+    def _recording_resolver(config):
+        calls.append(config)
+        return not_ready
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "resolve_ingest_analysis_provider",
+        _recording_resolver,
+    )
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        calls.clear()
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        assert calls == [], (
+            f"the Read tab resolved the analysis provider {len(calls)} time(s)"
+        )
+
+        await _switch_to_analysis(screen, pilot)
+        calls.clear()
+        screen._sync_library_media_viewer_or_recompose()
+        await pilot.pause()
+        assert len(calls) == 1, (
+            f"the Analysis tab resolved the provider {len(calls)} times per sync"
+        )
+        # And the gate did not cost the feature: the reason still lands.
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatch):
+    """The counterpart: a ready resolution leaves the action untouched --
+    no marker, no tooltip, no disabled state."""
+    from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "resolve_ingest_analysis_provider",
+        lambda _config: IngestAnalysisResolution(
+            provider="OpenAI",
+            api_key="sk-test",
+            ready=True,
+            short_reason="",
+            hint="",
+            dispatch_name="openai",
+        ),
+    )
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is False
+        assert str(generate.label) == "Generate"
+        assert generate.tooltip is None

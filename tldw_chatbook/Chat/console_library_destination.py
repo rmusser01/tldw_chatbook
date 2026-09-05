@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING
 from unicodedata import category
 from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
@@ -91,6 +94,11 @@ def resolve_console_destination(
             model=model,
             endpoint_identity=_UNKNOWN_ENDPOINT_IDENTITY,
             egress_class=ConsoleEgressClass.UNKNOWN,
+            endpoint_provenance=getattr(
+                resolution,
+                "endpoint_provenance",
+                ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
+            ),
         )
 
     scheme, hostname, port, ip = parsed
@@ -105,6 +113,11 @@ def resolve_console_destination(
         model=model,
         endpoint_identity=endpoint_identity,
         egress_class=egress_class,
+        endpoint_provenance=getattr(
+            resolution,
+            "endpoint_provenance",
+            ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
+        ),
     )
 
 

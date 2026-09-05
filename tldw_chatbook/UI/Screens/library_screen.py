@@ -14,10 +14,17 @@ import time
 import tomllib
 import uuid
 import webbrowser
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from enum import Enum
-from contextlib import closing
+from contextlib import closing, suppress
 from functools import partial
 import hashlib
 from pathlib import Path
@@ -126,7 +133,10 @@ from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
 from ...Chat.Chat_Functions import chat_api_call, extract_response_content
-from ...Library.ingest_analysis import resolve_ingest_analysis_provider
+from ...Library.ingest_analysis import (
+    analysis_unavailable_reason,
+    resolve_ingest_analysis_provider,
+)
 from ...Library.ingest_capabilities import (
     capabilities_for_backend,
     get_capabilities,
@@ -160,6 +170,7 @@ from ...Library.library_ingest_state import (
     clamp_chunk_size,
     format_ingest_progress_line,
     ingest_progress_action_signature,
+    library_ingest_analyze_skipped_ids,
     library_ingest_retry_available,
     library_ingest_retry_label,
     parse_keywords,
@@ -297,21 +308,11 @@ from ...Prompt_Management.prompt_batch_models import (
     PromptBatchTarget,
 )
 from ...Library.library_skills_state import (
-    DEFAULT_SKILL_BROWSE_PAGE_SIZE,
-    MAX_SKILL_BROWSE_PAGE,
     SkillBrowseResult,
     SkillBrowseScope,
-    SkillEditorState,
-    build_skill_editor_state,
     build_skills_list_state,
-    classify_skill_save_error,
     coerce_skill_editor_mode,
     coerce_skill_reader_mode,
-    compose_skill_markdown,
-    reconcile_skill_allowed_tools,
-    skill_allowed_tools_sequence,
-    skill_invocation_copy,
-    skill_review_identity_line,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
@@ -485,24 +486,9 @@ from ...Widgets.Library import (
     PROMPT_DISCARD_TOOLTIP_DIRTY,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
-    SKILL_DISCARD_TOOLTIP_CLEAN,
-    SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
-    next_skill_context,
-    skill_context_toggle_label,
-    skill_disable_model_label,
     skill_editor_warning_lines,
-    skill_script_grant_line,
-    skill_trust_approve_tooltip,
-    skill_trust_panel_remediation_copy,
-    skill_trust_review_enabled,
-    skill_trust_review_preview,
-    skill_trust_review_tooltip,
-    skill_trust_state_line,
-    skill_trust_unlock_enabled,
-    skill_trust_unlock_tooltip,
-    skill_user_invocable_label,
 )
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
@@ -548,6 +534,7 @@ from ..Library_Modules import (
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
+    _retry_failure_reason,
 )
 from ..Library_Modules.library_media_trash_browse_controller import (
     LibraryMediaTrashBrowseController,
@@ -583,6 +570,8 @@ from ..Library_Modules.library_notes_work_session import (
 )
 from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
+from ..Library_Modules.library_skills_controller import LibrarySkillsController
+from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -590,7 +579,6 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 from .model_browser_state import install_failure_message
-from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -734,6 +722,41 @@ _MEDIA_VIEW_VIEWER = "viewer"
 #: Qodo on #2378: one name for the review-set auto-resume worker group, shared
 #: by registration (_maybe_auto_resume_review_set) and cancellation.
 _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
+# task-28007 AC#4: ONE exclusive worker group for the Select-mode bulk
+# Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
+# can never interleave two runs over the same ids.
+_ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
+# task-28007 (Qodo review round, PR #2400 #1): the two surfaces a bulk-
+# Analyze run can start from. Named once so the init default
+# (``_library_media_analyze_origin``), its assignment in
+# ``_start_library_media_analyze``, and its two readers (the unmount
+# notice, the receipt-fields guard) cannot drift apart from one another.
+_ANALYZE_ORIGIN_MEDIA = "media"
+_ANALYZE_ORIGIN_IMPORT = "import"
+# task-28007 AC#2: the catch-all reason an ``on_item_done`` hook reports for
+# a failed item that raised no exception (fix round 1, I-1: a RAISED
+# exception's own ``str(exc)`` is used instead -- see the loop in
+# ``_analyze_library_media_selection``). Covers the no-exception failure
+# branches inside ``_analyze_one_library_media_item``/
+# ``_generate_library_media_analysis``/``_save_library_media_analysis``
+# (empty content, a provider that returned nothing, a failed save) without a
+# signature change to any of their bool-returning contracts -- all three
+# ultimately mean the same thing from here: no analysis exists for this item
+# now.
+_ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
+# task-28007 (Qodo review round, PR #2400 #3): the ``on_item_done`` reason
+# recorded for an id the AC#3 partition pass auto-skips (an Import-run id
+# that already carries an analysis) rather than running -- ``_apply_
+# analyze_outcome`` (``library_ingest_state.py``) reads this to paint
+# "already analyzed" instead of the generic "analyzed" receipt.
+_ANALYZE_AUTO_SKIP_REASON = "already analyzed"
+# task-31220 (Qodo review round, PR #2412 #3): the copy each Trash mutation
+# releases its controller claim with. Named once because both the worker
+# body's own pre-commit failure and the claim seam's rollback (a fence or
+# ``run_worker`` that refused before any worker ran) mean the same thing to
+# the person looking at the row: nothing happened to it.
+_TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
+_TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -2076,7 +2099,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
         )
-        self._library_skill_choice_presented_generation = -1
         self._library_new_profile_admission = bool(
             getattr(app_instance, "library_new_profile_admission", False)
         )
@@ -2182,6 +2204,12 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
+        # Constructed early -- see LibrarySkillsState's own module docstring
+        # ("new wrinkle" paragraph): must exist before the shared reader-
+        # preferences tuple-unpack below AND before `editor_mode`/
+        # `reader_mode`'s own original lines, both of which keep running
+        # untouched and route through the generated shim into this object.
+        self._skills_state = LibrarySkillsState()
         self._conversation_reader_controller = LibraryConversationReaderController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
@@ -2402,6 +2430,113 @@ class LibraryScreen(BaseAppScreen):
                 lambda **k: self._refresh_search_rag_panel_state_widgets(**k)
             ),
         )
+        self._skills_controller = LibrarySkillsController(
+            self,
+            skills_state_accessor=lambda: self._skills_state,
+            library_skill_import_coordinator_accessor=(
+                lambda: self._library_skill_import_coordinator
+            ),
+            set_library_skill_import_coordinator=(
+                lambda value: setattr(self, "_library_skill_import_coordinator", value)
+            ),
+            library_skills_browse_controller_accessor=(
+                lambda: self._library_skills_browse_controller
+            ),
+            set_library_skills_browse_controller=(
+                lambda value: setattr(self, "_library_skills_browse_controller", value)
+            ),
+            run_library_service_call=(
+                lambda *args, **kwargs: self._run_library_service_call(
+                    *args, **kwargs
+                )
+            ),
+            sanitize_media_field=lambda *a, **k: self._sanitize_media_field(*a, **k),
+            sanitize_note_content=(
+                lambda *a, **k: self._sanitize_note_content(*a, **k)
+            ),
+            refresh_local_source_snapshot=(
+                lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
+            ),
+            library_entry_route_key=lambda: self._library_entry_route_key(),
+            library_entry_reconcile_is_current=(
+                lambda *a, **k: self._library_entry_reconcile_is_current(*a, **k)
+            ),
+            capture_library_entry_focus=lambda: self._capture_library_entry_focus(),
+            restore_library_entry_focus=(
+                lambda *a, **k: self._restore_library_entry_focus(*a, **k)
+            ),
+            library_selected_row_id_accessor=lambda: self._library_selected_row_id,
+            set_library_selected_row_id=(
+                lambda value: setattr(self, "_library_selected_row_id", value)
+            ),
+            library_snapshot_state_generation_accessor=(
+                lambda: self._library_snapshot_state_generation
+            ),
+            library_entry_reconcile_dirty_accessor=(
+                lambda: self._library_entry_reconcile_dirty
+            ),
+            library_entry_reconcile_pending_accessor=(
+                lambda: self._library_entry_reconcile_pending
+            ),
+            library_canvas_projection_depth_accessor=(
+                lambda: self._library_canvas_projection_depth
+            ),
+            library_canvas_resync_pending_accessor=(
+                lambda: self._library_canvas_resync_pending
+            ),
+            set_library_canvas_resync_pending=(
+                lambda value: setattr(self, "_library_canvas_resync_pending", value)
+            ),
+            library_skills_import_open_accessor=(
+                lambda: self._library_skills_import_open
+            ),
+            library_skills_import_path_accessor=(
+                lambda: self._library_skills_import_path
+            ),
+            library_skills_import_status_accessor=(
+                lambda: self._library_skills_import_status
+            ),
+            library_skills_import_review_name_accessor=(
+                lambda: self._library_skills_import_review_name
+            ),
+            library_skills_import_in_flight_accessor=(
+                lambda: self._library_skills_import_in_flight
+            ),
+            library_skills_import_generation_accessor=(
+                lambda: self._library_skills_import_generation
+            ),
+            set_library_skills_import_generation=(
+                lambda value: setattr(self, "_library_skills_import_generation", value)
+            ),
+            approve_library_skill_trust=(
+                lambda *a, **k: self._approve_library_skill_trust(*a, **k)
+            ),
+            begin_library_skill_save=(
+                lambda *a, **k: self._begin_library_skill_save(*a, **k)
+            ),
+            build_library_skills_state=lambda: self._build_library_skills_state(),
+            call_library_skill_trust_service=(
+                lambda *a, **k: self._call_library_skill_trust_service(*a, **k)
+            ),
+            exit_library_skill_editor_guarded=(
+                lambda *a, **k: self._exit_library_skill_editor_guarded(*a, **k)
+            ),
+            persist_library_skill_editor_mode=(
+                lambda *a, **k: self._persist_library_skill_editor_mode(*a, **k)
+            ),
+            refresh_library_skills_trust_posture=(
+                lambda: self._refresh_library_skills_trust_posture()
+            ),
+            request_library_skills_browse=(
+                lambda *a, **k: self._request_library_skills_browse(*a, **k)
+            ),
+            reset_library_skill_editor_state=(
+                lambda *a, **k: self._reset_library_skill_editor_state(*a, **k)
+            ),
+            start_library_skills_import=(
+                lambda: self._start_library_skills_import()
+            ),
+        )
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
@@ -2410,7 +2545,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
-            self._library_skills_reader_preferences,
+            self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
         collections_capture_scope = getattr(
             self.app_instance,
@@ -2448,10 +2583,10 @@ class LibraryScreen(BaseAppScreen):
                 LIBRARY_PROMPTS_READER_PROFILE,
             )
         )
-        self._library_skills_reader_layout: AdaptiveReaderEffectiveLayout = (
+        self._skills_state.reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
-                self._library_skills_reader_preferences,
+                self._skills_state.reader_preferences,
                 LIBRARY_SKILLS_READER_PROFILE,
             )
         )
@@ -2484,7 +2619,7 @@ class LibraryScreen(BaseAppScreen):
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
-            "skills_items": self._library_skills_reader_preferences.items_open,
+            "skills_items": self._skills_state.reader_preferences.items_open,
         }
         self._conversations_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
@@ -2506,7 +2641,7 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_skills_reader_persistence_locks = {
+        self._skills_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -2602,6 +2737,13 @@ class LibraryScreen(BaseAppScreen):
         # entered, set to the succeeded subset when a delete completes, and
         # narrowed to only the still-failed ids by a partial Undo.
         self._library_media_delete_receipt_ids: tuple[str, ...] = ()
+        # task-31220: "<n> of <m> · <reason>" while the receipt above
+        # names ids whose Undo just FAILED -- the canvas then paints
+        # "✗ undo failed · <n> of <m> · <reason>" with "Retry undo"
+        # instead of a tick over a recovery that did not happen. Set only
+        # by the undo worker; cleared by it on full success and by every
+        # path that writes a fresh receipt.
+        self._library_media_delete_receipt_undo_failure: str = ""
         # task-31236: (set_id, name, was_active) of the most recently
         # dismissed review set -- rendered as an in-list undo receipt.
         self._library_media_review_dismiss_receipt: (
@@ -2610,6 +2752,40 @@ class LibraryScreen(BaseAppScreen):
         # Qodo on #2366: one in-flight undo owns the receipt until it
         # settles (blocks a second Undo and a racing receipt-close).
         self._review_dismiss_undo_in_flight: bool = False
+        # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run. One
+        # in-flight flag (a second press is refused with a notice), the
+        # receipt's own counts, the failed ids Retry re-runs, and the
+        # armed "N already analyzed — Skip them | Overwrite" choice
+        # (all_ids, unanalyzed_ids) that AC#3 requires before anything is
+        # overwritten. ``_library_media_analyze_reason_cache`` memoises
+        # the provider reason for the whole select-mode session: resolving
+        # it is not free (Anthropic claude_subscription readiness shells
+        # out to the keychain), so it is resolved once per entry, never
+        # per sync or per row.
+        self._library_media_analyze_running: bool = False
+        self._library_media_analyze_total: int = 0
+        self._library_media_analyze_done: int = 0
+        self._library_media_analyze_failed_ids: tuple[str, ...] = ()
+        self._library_media_analyze_choice: (
+            tuple[tuple[str, ...], tuple[str, ...]] | None
+        ) = None
+        self._library_media_analyze_reason_cache: str | None = None
+        # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
+        # started from -- "media" (Select mode) or "import" (the Import
+        # queue's "Analyze N skipped"). Read only by ``on_unmount``'s
+        # interrupted-run notice, to send the user back to the control they
+        # actually used instead of always naming Select mode's.
+        self._library_media_analyze_origin: str = _ANALYZE_ORIGIN_MEDIA
+        # task-28007 AC#1/AC#2: outcomes recorded by the Import queue's
+        # "Analyze N skipped" run-summary action, media-id-string ->
+        # (ok, reason). Read by ``_build_library_ingest_state`` to overlay
+        # each id's own row with a receipt and to exclude a fixed id from
+        # the next render's count. Reused across runs of the action (never
+        # cleared wholesale) -- each id's own entry is simply overwritten
+        # the moment that id's next fresh outcome lands (fix round 1, M-1:
+        # an eager pre-clear used to wipe every one of these on a press the
+        # seam went on to refuse, with nothing run to replace them).
+        self._library_ingest_analyze_outcomes: dict[str, tuple[bool, str]] = {}
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
@@ -2879,7 +3055,7 @@ class LibraryScreen(BaseAppScreen):
             sync_view=lambda: self._sync_library_skills_browse_result,
             request_is_active=lambda: (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-                and self._library_skills_view == "list"
+                and self._skills_state.view == "list"
             ),
         )
         self._library_media_browse_controller = LibraryMediaBrowseController(
@@ -2935,18 +3111,11 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(library_config, Mapping)
             else None
         )
-        self._library_skill_editor_mode = coerce_skill_editor_mode(
+        self._skills_state.editor_mode = coerce_skill_editor_mode(
             library_config.get("skill_editor_mode")
             if isinstance(library_config, Mapping)
             else None
         )
-        self._library_skill_tool_catalog: tuple[str, ...] = ()
-        self._library_skill_tool_filter: str = ""
-        self._library_skill_tool_captured: tuple[str, ...] = ()
-        self._library_skill_tool_picker_changed: bool = False
-        self._library_skill_more_actions_open: bool = False
-        self._library_skill_trust_details_open: bool = False
-        self._library_skill_mutation_in_flight: bool = False
         # Explicit provenance for an unsaved canonical structured copy.
         # Legacy block edits can clear both lane origins, so origins cannot
         # truthfully distinguish conversion/duplication from ordinary edits.
@@ -2993,87 +3162,13 @@ class LibraryScreen(BaseAppScreen):
         # ``call_after_refresh`` after every prompt-editor (re)compose,
         # mirroring ``_library_note_editor_armed``.
         self._library_prompt_editor_armed: bool = False
-        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
-        # are pure in-memory operations over the already-fetched
-        # ``get_context`` snapshot payload.
-        # ``_selected_skill_name`` is recording-only for now -- the
-        # in-canvas skill detail/trust editor lands in a later task -- same
-        # posture ``handle_library_prompt_row`` originally had before its
-        # own editor landed.
-        self._library_skills_sort: str = "name"
-        self._library_skills_filter: str = ""
-        self._library_skills_filter_cursor_context: tuple[int, int] | None = None
-        self._selected_skill_name: str = ""
+        # Skills list/detail/trust-editor canvas state now lives in
+        # LibrarySkillsState -- see that module's own docstring/field
+        # comments for the per-field detail that used to live here.
         # Toolbar Import… state is projected from the app-owned coordinator.
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
-        # Skill detail/trust editor (Task 4 of the Skills sub-project).
-        # Mirrors the prompts editor's own state shape
-        # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
-        # ``_selected_skill_name`` (above, Task 3) doubles as the
-        # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
-        # ``_selected_prompt_id is None``), a real name means "editing an
-        # existing skill", routed through by NAME (skills are keyed by name,
-        # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
-        # complication, ``detail["name"]`` is already the stable identity).
-        self._library_skills_view: str = "list"
-        self._library_skill_reader_mode = coerce_skill_reader_mode(None)
-        # task-14902: True while the skills sort chooser's direct-pick
-        # strip replaces the list toolbar row (the Notes Sort pattern).
-        self._library_skills_sort_choices_visible: bool = False
-        self._library_skill_detail: Mapping[str, Any] | None = None
-        self._library_skill_detail_generation: int = 0
-        self._library_skill_detail_loading: bool = False
-        self._library_skill_detail_error: str = ""
-        self._library_skill_detail_retryable: bool = False
-        self._library_skill_original_name: str = ""
-        self._library_skill_editor_state: SkillEditorState | None = None
-        self._library_skill_dirty: bool = False
-        self._library_skill_status: str = ""
-        self._library_skill_conflict: bool = False
-        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
-        # Textual fires when a widget mounts with a non-empty initial value
-        # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
-        self._library_skill_editor_armed: bool = False
-        # The trust panel's currently-captured review (from
-        # ``capture_review``'s result mapping), or ``None`` when no review
-        # is active for the open skill. Reset every time a (different)
-        # skill is opened -- unlike ``skills_screen.py``'s
-        # ``_active_trust_review`` (which persists across row selection
-        # within one long-lived screen instance and needs its own
-        # staleness reconciliation), this editor always starts a fresh
-        # session per open, so no extra staleness check is needed.
-        self._library_skill_active_review: dict[str, Any] | None = None
-        # Task 7 (skills-script-execution): whether the open skill has a
-        # standing "always allow scripts" grant, cached here since checking
-        # it re-scans the skill's on-disk directory (fingerprint match) and
-        # so is only ever read off-thread -- see
-        # ``_refresh_library_skill_script_grant``. Reset alongside
-        # ``_library_skill_active_review`` on every (re)open; the panel's
-        # compose default of "not granted" is corrected in place moments
-        # later by that off-thread fetch.
-        self._library_skill_script_grant: bool = False
-        # task-415: inline two-step delete (mirrors
-        # ``_library_media_confirming_delete``): the first Delete press
-        # arms this; only the recomposed confirm button actually deletes.
-        self._library_skill_confirming_delete: bool = False
-        # task-417: one-shot flag armed by a create-save; the next editor
-        # recompose scrolls the action row (Save + status) back into view
-        # instead of landing at the top away from what the user pressed.
-        self._library_skill_scroll_pending: bool = False
-        # Task 5 (skills-foundation): the Skills-list header's adaptive
-        # trust posture (``SkillTrustService.trust_posture()`` -- Task 3),
-        # cached here since it's read off-thread (may touch the OS
-        # keyring), never on the compose path. ``""`` hides the header --
-        # see ``_refresh_library_skills_trust_posture``.
-        self._library_skills_trust_posture: str = ""
-        # Confirm-gate for the destructive Reset action (wipes the trust
-        # manifest -- every skill drops back to needs-review). Armed by
-        # either the list header's standalone Reset button or the editor's
-        # ``quarantined_manifest_error`` trust panel's own Reset button --
-        # both share this single flag/handler set since only one of the
-        # two views is ever mounted at a time.
-        self._library_skill_trust_confirming_reset: bool = False
+        self._skills_state.reader_mode = coerce_skill_reader_mode(None)
         self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
@@ -3702,7 +3797,7 @@ class LibraryScreen(BaseAppScreen):
                 (
                     "esc",
                     "close more actions"
-                    if self._library_skill_more_actions_open
+                    if self._skills_state.more_actions_open
                     else "back to skills list",
                 )
             )
@@ -5316,11 +5411,11 @@ class LibraryScreen(BaseAppScreen):
             or self._library_prompts_mutation_in_flight
             or self._library_prompt_dirty
             or self._library_prompt_conflict_snapshot is not None
-            or self._library_skill_mutation_in_flight
-            or self._library_skill_dirty
-            or self._library_skill_conflict
-            or self._library_skill_confirming_delete
-            or self._library_skill_more_actions_open
+            or self._skills_state.mutation_in_flight
+            or self._skills_state.dirty
+            or self._skills_state.conflict
+            or self._skills_state.confirming_delete
+            or self._skills_state.more_actions_open
             or self._export_state.running
             or self._library_ingest_start_consent is not None
             or self._library_media_confirming_bulk_delete
@@ -7082,54 +7177,8 @@ class LibraryScreen(BaseAppScreen):
         shell.sync_layout(layout)
         self._library_prompts_reader_layout = layout
 
-    def _sync_library_skills_reader_layout_from_shell(
-        self,
-        priority: Literal["library", "items"] | None = None,
-    ) -> None:
-        """Resolve the settled Skills shell and patch it in place."""
-        try:
-            shell = self.query_one(
-                "#library-skills-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return
-        width = shell.region.width
-        if width <= 0:
-            return
-        previous = self._library_skills_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        if (
-            priority is None
-            and self._library_skills_view == "list"
-            and self._library_skills_reader_preferences.items_open
-        ):
-            items_priority_floor = (
-                2 * PANE_GRIP_WIDTH
-                + LIBRARY_SKILLS_READER_PROFILE.list_min_width
-                + LIBRARY_SKILLS_READER_PROFILE.work_min_width
-            )
-            if width >= items_priority_floor:
-                priority = "items"
-        elif (
-            priority is None
-            and previous is not None
-            and previous.priority_pane == "items"
-        ):
-            previous = dataclasses.replace(previous, priority_pane=None)
-        layout = resolve_adaptive_reader_layout(
-            width,
-            self._library_skills_reader_preferences,
-            LIBRARY_SKILLS_READER_PROFILE,
-            previous=previous,
-            priority=priority,
-        )
-        shell.sync_layout(layout)
-        self._library_skills_reader_layout = layout
+    def _sync_library_skills_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None = None) -> None:
+        return self._skills_controller._sync_library_skills_reader_layout_from_shell(priority)
 
     def _sync_library_conversation_reader_layout_from_shell(
         self,
@@ -7222,25 +7271,8 @@ class LibraryScreen(BaseAppScreen):
             library_config[section_name] = section
         section[key] = value
 
-    def _mirror_library_skills_reader_preference(
-        self,
-        key: Literal["library_open", "items_open"],
-        value: bool,
-    ) -> None:
-        """Mirror one optimistic Skills pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "skills_reader"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[key] = value
+    def _mirror_library_skills_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
+        return self._skills_controller._mirror_library_skills_reader_preference(key, value)
 
     def _replace_library_reader_preference(
         self,
@@ -7256,7 +7288,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
-            "skills": "_library_skills_reader_preferences",
+            "skills": "_skills_state.reader_preferences",
         }
         attribute = attributes[destination]
         preferences = operator.attrgetter(attribute)(self)
@@ -7400,7 +7432,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
-            "skills": "_library_skills_reader_preferences",
+            "skills": "_skills_state.reader_preferences",
         }[destination]
         locks = {
             "media": self._library_media_reader_persistence_locks,
@@ -7409,7 +7441,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
             "prompts": self._library_prompts_reader_persistence_locks,
-            "skills": self._library_skills_reader_persistence_locks,
+            "skills": self._skills_state.reader_persistence_locks,
         }[destination]
         section = (
             "library.reader"
@@ -7742,7 +7774,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
-            self._library_skills_reader_preferences,
+            self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
@@ -7752,7 +7784,7 @@ class LibraryScreen(BaseAppScreen):
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
-            "skills_items": self._library_skills_reader_preferences.items_open,
+            "skills_items": self._skills_state.reader_preferences.items_open,
         }
         persistence_authorities: tuple[
             tuple[
@@ -8020,7 +8052,7 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_SKILLS,
             LIBRARY_ROW_CREATE_SKILL,
         }:
-            layout = self._library_skills_reader_layout
+            layout = self._skills_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -9516,7 +9548,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
+            and self._skills_state.view == "list"
         ):
             # A restored Skills route may begin its exact page before mount,
             # when Textual cannot own a worker yet. Re-kick the retained scope
@@ -9647,6 +9679,50 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        if self._library_media_analyze_running:
+            # task-28007 AC#4: this screen owns the bulk-Analyze worker, so
+            # Textual cancels it here (Widget._on_unmount -> cancel_node),
+            # and navigating back builds a NEW LibraryScreen, so the
+            # receipt's five fields die with this instance. Say where it
+            # stopped BEFORE any await below, while the counts are still
+            # true -- the cancelled worker cannot resume until this handler
+            # yields. Finished items persisted; the rest simply never ran,
+            # and a fresh run skips what is already analyzed.
+            #
+            # (task-28007 Task 3, N1) ``_library_media_analyze_total`` is
+            # only stamped once the AC#3 partition pass resolves -- an
+            # unmount that lands DURING that pass (still awaiting
+            # ``_library_media_unanalyzed_ids``) sees total == 0 and would
+            # otherwise notify the nonsensical "stopped at 0 of 0".
+            # (fix round 1, I-3) The recovery pointer names the surface the
+            # interrupted run actually started from -- a run started from
+            # the Import queue's "Analyze N skipped" has no "Select ▸
+            # Analyze" to reopen; that copy stays for the Media-canvas
+            # (Select mode) origin only.
+            from_import = (
+                getattr(self, "_library_media_analyze_origin", _ANALYZE_ORIGIN_MEDIA)
+                == _ANALYZE_ORIGIN_IMPORT
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify) and self._library_media_analyze_total == 0:
+                notify(
+                    "Analysis stopped before it started",
+                    severity="warning",
+                )
+            elif callable(notify) and from_import:
+                notify(
+                    f"Analysis stopped at {self._library_media_analyze_done} "
+                    f"of {self._library_media_analyze_total} · reopen the "
+                    "import run and press Analyze N skipped to continue",
+                    severity="warning",
+                )
+            elif callable(notify):
+                notify(
+                    f"Analysis stopped at {self._library_media_analyze_done} "
+                    f"of {self._library_media_analyze_total} · reopen "
+                    "Select ▸ Analyze to continue; finished items are skipped",
+                    severity="warning",
+                )
         self._disarm_library_list_entry_focus()
         self._invalidate_library_notes_tree_for_unmount()
         self._conversations_state.reader_mounted_authority = False
@@ -9675,7 +9751,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await lifecycle_worker.wait()
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     "Pending Library lifecycle write failed during unmount."
                 )
         if self._library_lifecycle_pending_persist is not None:
@@ -9758,33 +9834,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _restore_library_skills_scope(state: Mapping[str, Any]) -> SkillBrowseScope:
-        """Return a dispatch-safe applied Skills scope from screen state."""
-        saved = state.get("library_skills_scope")
-        if isinstance(saved, SkillBrowseScope):
-            raw = dataclasses.asdict(saved)
-        elif type(saved) is dict:
-            raw = saved
-        else:
-            raw = {
-                "query": state.get("library_skills_filter", ""),
-                "sort": state.get("library_skills_sort", "name"),
-                "page": 1,
-            }
-        query = raw.get("query", "")
-        page = raw.get("page", 1)
-        if type(query) is not str:
-            query = ""
-        if type(page) is not int or not 1 <= page <= MAX_SKILL_BROWSE_PAGE:
-            page = 1
-        try:
-            return SkillBrowseScope(
-                query=query,
-                sort=raw.get("sort", "name"),
-                page=page,
-                page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
-            )
-        except (TypeError, ValueError):
-            return SkillBrowseScope()
+        return LibrarySkillsController._restore_library_skills_scope(state)
 
     @staticmethod
     def _restore_library_collections_page(state: Mapping[str, Any]) -> int:
@@ -9977,7 +10027,7 @@ class LibraryScreen(BaseAppScreen):
                 "filter": skill_scope.query,
                 "page": skill_scope.page,
             }
-            source_list_adjusted = self._library_skills_view != "list"
+            source_list_adjusted = self._skills_state.view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             controller = self._library_collections_capture_controller
             applied = controller.state.applied_scope if controller is not None else None
@@ -10279,8 +10329,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
         restored_skills_scope = self._restore_library_skills_scope(state)
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
-        self._library_skills_sort = restored_skills_scope.sort
-        self._library_skills_filter = restored_skills_scope.query
+        self._skills_state.sort = restored_skills_scope.sort
+        self._skills_state.filter = restored_skills_scope.query
         self._collections_state.requested_page = (
             self._restore_library_collections_page(state)
         )
@@ -10345,10 +10395,10 @@ class LibraryScreen(BaseAppScreen):
                     page=scope.get("page", 1),
                 )
                 self._library_skills_browse_controller.invalidate(receipt_skills_scope)
-                self._library_skills_sort = receipt_skills_scope.sort
-                self._library_skills_filter = receipt_skills_scope.query
-                self._library_skills_view = "list"
-                self._selected_skill_name = ""
+                self._skills_state.sort = receipt_skills_scope.sort
+                self._skills_state.filter = receipt_skills_scope.query
+                self._skills_state.view = "list"
+                self._skills_state.selected_skill_name = ""
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
                 self._collections_state.requested_page = scope.get("page", 1)
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
@@ -10518,7 +10568,7 @@ class LibraryScreen(BaseAppScreen):
         if row_id in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT):
             return getattr(self, "_library_prompts_view", "list") == "list"
         if row_id in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL):
-            return getattr(self, "_library_skills_view", "list") == "list"
+            return getattr(self._skills_state, "view", "list") == "list"
         if row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             return bool(self.query("#library-conversations-canvas"))
         return False
@@ -11542,11 +11592,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_view,
             self._library_media_view,
             self._library_prompts_view,
-            self._library_skills_view,
+            self._skills_state.view,
             self._selected_note_id,
             self._selected_media_id,
             self._selected_prompt_id,
-            self._selected_skill_name,
+            self._skills_state.selected_skill_name,
         )
 
     def _library_entry_canvas_host(self) -> Vertical | None:
@@ -13064,47 +13114,8 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, int) else None
 
-    async def _skills_context_or_none(
-        self, get_context: Any, **kwargs: Any
-    ) -> Mapping[str, Any] | None:
-        """Fetch the local skills context, degrading quietly on failure.
-
-        Runs inside the same ``asyncio.gather`` as the notes/media/
-        conversations/prompts fetch (see ``_list_local_source_snapshot``).
-        Mirrors ``_prompts_count_or_none``: the seam is optional (guarded by
-        ``callable(get_context)`` at the call site), so when it is missing
-        this method is never invoked, and when it *is* present but raises,
-        the failure is swallowed and ``None`` is returned -- the Skills
-        rail row then renders uncounted with an empty context payload
-        rather than surfacing an error or failing the whole snapshot
-        fetch.
-
-        Unlike prompts (whose rail count and exact browse result have
-        separate owners), a single ``get_context`` call here supplies both:
-        the count is derived from its
-        ``available_skills``/``blocked_skills`` lengths by the caller, and
-        the same payload is stashed for a future Skills canvas to render.
-
-        Args:
-            get_context: The bound ``skills_scope_service.get_context``
-                callable to invoke.
-            **kwargs: Forwarded to ``get_context`` (``mode``).
-
-        Returns:
-            The normalized ``get_context`` payload (``available_skills`` +
-            ``blocked_skills``), or ``None`` if the call failed or returned
-            something other than a ``Mapping``.
-        """
-        try:
-            result = await self._run_library_service_call(
-                get_context, isolate_in_worker=True, **kwargs
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to fetch local skills context; Skills row will show no count."
-            )
-            return None
-        return result if isinstance(result, Mapping) else None
+    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
+        return await self._skills_controller._skills_context_or_none(get_context, **kwargs)
 
     async def _study_count_or_none(
         self, count_callable: Any, label: str, **kwargs: Any
@@ -14772,7 +14783,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._library_skills_reader_layout,
+                    layout=self._skills_state.reader_layout,
                     id_prefix="library-skills",
                     library_label="Library",
                     items_label="Skills",
@@ -15083,9 +15094,9 @@ class LibraryScreen(BaseAppScreen):
                         )
                     elif (
                         shell.canvas_kind == "skills"
-                        and self._library_skills_view == "editor"
+                        and self._skills_state.view == "editor"
                     ):
-                        if self._library_skill_editor_state is None:
+                        if self._skills_state.editor_state is None:
                             yield Static(
                                 "Loading skill…",
                                 id="library-skill-loading",
@@ -15093,7 +15104,7 @@ class LibraryScreen(BaseAppScreen):
                                 markup=False,
                             )
                         else:
-                            editor_state = self._library_skill_editor_state
+                            editor_state = self._skills_state.editor_state
                             yield LibrarySkillsListCanvas(
                                 mode="editor",
                                 editor_state=editor_state,
@@ -15104,21 +15115,21 @@ class LibraryScreen(BaseAppScreen):
                                         trust_blocked=editor_state.trust_blocked,
                                     )
                                 ),
-                                status=self._library_skill_status,
-                                conflict=self._library_skill_conflict,
-                                active_review=self._library_skill_active_review,
+                                status=self._skills_state.status,
+                                conflict=self._skills_state.conflict,
+                                active_review=self._skills_state.active_review,
                                 # Same source of truth ``_save_library_skill`` uses
                                 # for its own ``is_create`` -- an empty
-                                # ``_selected_skill_name`` means there is no
+                                # ``self._skills_state.selected_skill_name`` means there is no
                                 # existing skill on disk to rename, so the Name
                                 # Input stays editable. Reached both via a real
                                 # skill row (existing skill, name set) and via
                                 # the Create rail's "New skill" row
                                 # (``_enter_library_skill_create_editor`` leaves
-                                # ``_selected_skill_name`` empty).
-                                is_create=not self._selected_skill_name,
-                                dirty=self._library_skill_dirty,
-                                confirming_delete=self._library_skill_confirming_delete,
+                                # ``self._skills_state.selected_skill_name`` empty).
+                                is_create=not self._skills_state.selected_skill_name,
+                                dirty=self._skills_state.dirty,
+                                confirming_delete=self._skills_state.confirming_delete,
                                 scroll_to_actions=self._consume_library_skill_scroll_pending(),
                                 skill_path=self._library_skill_on_disk_path(),
                                 # Task 5: the editor's own trust panel renders a
@@ -15128,14 +15139,14 @@ class LibraryScreen(BaseAppScreen):
                                 # needs the same confirm-gate the list header
                                 # uses -- both share one screen-level flag/handler
                                 # set since only one view is ever mounted.
-                                confirming_reset=self._library_skill_trust_confirming_reset,
+                                confirming_reset=self._skills_state.trust_confirming_reset,
                                 id="library-skills-canvas",
                             )
                     elif shell.canvas_kind == "skills":
                         yield LibrarySkillsListCanvas(
                             self._build_library_skills_state(),
-                            sort_mode=self._library_skills_sort,
-                            filter_value=self._library_skills_filter,
+                            sort_mode=self._skills_state.sort,
+                            filter_value=self._skills_state.filter,
                             import_open=self._library_skills_import_open,
                             import_path=self._library_skills_import_path,
                             import_status=self._library_skills_import_status,
@@ -15153,10 +15164,10 @@ class LibraryScreen(BaseAppScreen):
                             # Task 5: the adaptive trust header + its
                             # confirm-gated standalone Reset action, computed
                             # off-thread (see ``_refresh_library_skills_trust_posture``).
-                            trust_posture=self._library_skills_trust_posture,
-                            confirming_reset=self._library_skill_trust_confirming_reset,
+                            trust_posture=self._skills_state.trust_posture,
+                            confirming_reset=self._skills_state.trust_confirming_reset,
                             sort_choices_visible=(
-                                self._library_skills_sort_choices_visible
+                                self._skills_state.sort_choices_visible
                             ),
                             id="library-skills-canvas",
                         )
@@ -15484,8 +15495,12 @@ class LibraryScreen(BaseAppScreen):
                 selected_ids=self._library_media_row_selection.ids,
                 confirming_bulk_delete=self._library_media_confirming_bulk_delete,
                 delete_receipt_count=len(self._library_media_delete_receipt_ids),
+                delete_receipt_undo_failure=(
+                    self._library_media_delete_receipt_undo_failure
+                ),
                 type_choices_visible=self._library_media_type_choices_visible,
                 review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
+                **self._library_media_analyze_receipt_fields(),
             )
         state = build_library_media_browse_state(
             controller.applied_result,
@@ -15496,9 +15511,13 @@ class LibraryScreen(BaseAppScreen):
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
+            delete_receipt_undo_failure=(
+                self._library_media_delete_receipt_undo_failure
+            ),
             type_choices_visible=self._library_media_type_choices_visible,
             sort_choices_visible=self._library_media_sort_choices_visible,
             review_dismiss_receipt_name=self._review_dismiss_receipt_name(),
+            **self._library_media_analyze_receipt_fields(),
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15516,6 +15535,71 @@ class LibraryScreen(BaseAppScreen):
         """Display name for the pending dismiss-undo receipt, "" when none."""
         receipt = self._library_media_review_dismiss_receipt
         return receipt[1] if receipt is not None else ""
+
+    def _library_media_analyze_receipt_fields(self) -> dict[str, Any]:
+        """Canvas inputs for the bulk-Analyze receipt (task-28007 AC#3/AC#4).
+
+        (final review, I-2) An Import-origin run ("Analyze N skipped")
+        drives the SAME screen-owned counters, so without this guard its
+        progress rendered as a Media receipt on a canvas the user never
+        started it from -- and that receipt's "Retry failed" re-ran those
+        ids as a MEDIA run, leaving the Import rows still saying
+        "analysis failed" and still counting in ``N``. The Import surface
+        reports itself, per row, with its own disabled action for
+        progress; the Media canvas shows nothing for that run.
+        """
+        if (
+            getattr(self, "_library_media_analyze_origin", _ANALYZE_ORIGIN_MEDIA)
+            == _ANALYZE_ORIGIN_IMPORT
+        ):
+            return {
+                "analyze_receipt_total": 0,
+                "analyze_receipt_done": 0,
+                "analyze_receipt_failed": 0,
+                "analyze_receipt_running": False,
+                "analyze_choice_count": 0,
+            }
+        choice = self._library_media_analyze_choice
+        return {
+            # On the armed-choice path the total IS the pressed selection
+            # ("N of M already analyzed"); no run has set a total yet.
+            "analyze_receipt_total": (
+                len(choice[0])
+                if choice is not None
+                else self._library_media_analyze_total
+            ),
+            "analyze_receipt_done": self._library_media_analyze_done,
+            "analyze_receipt_failed": len(self._library_media_analyze_failed_ids),
+            "analyze_receipt_running": self._library_media_analyze_running,
+            "analyze_choice_count": (
+                0 if choice is None else len(choice[0]) - len(choice[1])
+            ),
+        }
+
+    def _library_media_analyze_reason(self) -> str:
+        """Why bulk Analyze is off, memoised for one select-mode session.
+
+        task-28007 AC#4: the bulk action wears the same sentence the
+        Reader's Generate does (AC#5), but this one is read on EVERY media
+        canvas sync, and ``resolve_ingest_analysis_provider`` is not free
+        (Anthropic ``claude_subscription`` readiness shells out to the
+        macOS keychain behind a 5s TTL). So it is resolved once per
+        select-mode entry and dropped on exit -- the gesture itself
+        re-resolves, so a provider configured mid-session is never refused
+        on a stale memo.
+
+        Returns:
+            The resolver's reason while select mode is on and no provider
+            is ready; "" otherwise.
+        """
+        if not self._library_media_select_mode:
+            self._library_media_analyze_reason_cache = None
+            return ""
+        if self._library_media_analyze_reason_cache is None:
+            self._library_media_analyze_reason_cache = (
+                self._library_media_analysis_provider_reason()
+            )
+        return self._library_media_analyze_reason_cache
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
@@ -15546,14 +15630,20 @@ class LibraryScreen(BaseAppScreen):
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
+            # Final review M-3: not ``stale_copy`` -- a failed Retry
+            # overwrites that with "Couldn't retry · <reason>", which does
+            # not explain why every OTHER gated action (Export, sort, ...)
+            # is disabled. ``stale_reason`` names why the page went stale
+            # and a failed retry never touches it.
             "stale_action_reason": (
-                controller.stale_copy if controller.freshness == "stale" else ""
+                controller.stale_reason if controller.freshness == "stale" else ""
             ),
             "mutation_action_reason": (
                 "Media change in progress."
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
+            "analysis_action_reason": self._library_media_analyze_reason(),
             "compact": False,
             "show_preview": False,
         }
@@ -15561,6 +15651,62 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
         return (None, *self._library_media_browse_controller.type_options)
+
+    def _claim_library_media_mutation(
+        self,
+        work: Coroutine[Any, Any, None],
+        *,
+        on_failure: Callable[[], object] | None = None,
+    ) -> None:
+        """Claim the shared write interlock, fence reads, and schedule ``work``.
+
+        task-31220: the ONE place ``_library_media_bulk_delete_in_flight``
+        is taken (ADR-055's one-flag, one-group rule made structural). Every
+        worker body releases it in a ``finally``, so the only unrecoverable
+        window was a claim that never reached a worker at all -- if fencing
+        or ``run_worker`` raised, the coroutine was never awaited, no
+        ``finally`` ran, and Media stayed wedged behind ``Media change in
+        progress.`` until the app restarted (critique #5). Releasing here
+        makes "the interlock is released on every path" true by
+        construction rather than by auditing six hand-written call sites.
+
+        Args:
+            work: The mutation coroutine to run under the interlock.
+            on_failure: Roll back a SURFACE-level claim the caller took
+                before this seam (Qodo on #2412: both Trash handlers claim
+                their controller -- generation advanced,
+                ``mutation_pending=True`` published -- before calling here,
+                and releasing only the shared flag left Trash's own
+                controls disabled and its refreshes dropped for the rest of
+                the session). Runs after the shared release, mirroring the
+                worker bodies' own ``finally`` order, and can never replace
+                the fence/scheduling error the caller needs.
+
+        Returns:
+            None.
+        """
+        self._library_media_bulk_delete_in_flight = True
+        try:
+            self._begin_library_media_mutation()
+            self.run_worker(
+                work, exclusive=True, group="library_media_bulk_delete"
+            )
+        except BaseException:
+            # Review M-3: a worker cancelled BEFORE its first step runs no
+            # ``finally``, so the flag would survive -- but nothing cancels
+            # this group (only node removal / app teardown does), and the
+            # flag dies with the screen. Do NOT "fix" that with a second
+            # flag; ADR-055's one-flag rule is what this seam exists for.
+            work.close()
+            # Review M-1: the release already happened (the flag is cleared
+            # before any DOM work), so a failure repainting the canvas must
+            # not replace the fence/scheduling error the caller needs.
+            with suppress(Exception):
+                self._complete_library_media_mutation()
+            if on_failure is not None:
+                with suppress(Exception):
+                    on_failure()
+            raise
 
     def _begin_library_media_mutation(self) -> MediaBrowseScope:
         """Fence page/facet reads before the shared durable Media write."""
@@ -15583,10 +15729,25 @@ class LibraryScreen(BaseAppScreen):
         committed: bool = False,
         remove_ids: tuple[str, ...] = (),
         upsert_items: tuple[Mapping[str, Any], ...] = (),
-        refresh_normal_media: bool = True,
-        stale_normal_media: bool = False,
+        focus_identity: str = "",
     ) -> None:
-        """Release the write interlock and refresh its full applied scope."""
+        """Release the write interlock and refresh its full applied scope.
+
+        Args:
+            focus_identity: Control the completion refresh should land focus
+                on. That refresh recomposes the canvas and destroys whatever
+                the mutation's own tail focused (task-31220: live at 100x30
+                it ate the bulk-delete receipt's just-focused Undo), so a
+                mutation that owns a post-refresh focus target must send it
+                through here.
+
+        task-31275: every committed Media write completes the SAME way,
+        Trash-surface Restore and permanent delete included. The
+        honest-stale gate (``Media changed; retry to load a current
+        page.``) exists for changes the app did NOT make; leaving a
+        mutation the app performed itself fenced-and-stale demanded a
+        manual Retry for a change the screen already knew about.
+        """
         scope = self._library_media_mutation_scope
         has_authority = (
             self._library_media_mutation_authority
@@ -15600,22 +15761,17 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_media_browse_state(None)
             return
         controller = self._library_media_browse_controller
-        if stale_normal_media:
-            controller.mark_stale_after_trash_restore()
-        elif refresh_normal_media and (committed or remove_ids or upsert_items):
-            controller.reconcile_committed_mutation(
-                remove_ids=remove_ids,
-                upsert_items=upsert_items,
-            )
-        if not refresh_normal_media:
-            return
+        controller.reconcile_committed_mutation(
+            remove_ids=remove_ids,
+            upsert_items=upsert_items,
+        )
         refresh_scope = scope or controller.mutation_refresh_scope
         if (
             not has_authority
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
         ):
             return
-        controller.request(refresh_scope, focus_identity=None)
+        controller.request(refresh_scope, focus_identity=focus_identity or None)
         controller.request_facets(fingerprint=refresh_scope.fingerprint)
 
     def _library_media_mutation_summary(
@@ -16082,9 +16238,14 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_row_selection.count > 0
             or self._library_media_confirming_bulk_delete
         )
+        # (final review, I-1/M-3) Unconditional: with an empty selection
+        # this is a no-op for everything BUT the armed Skip/Overwrite
+        # choice, which is armed precisely when select mode is already off
+        # -- so the old ``changed`` guard skipped the one thing a scope
+        # change has to retire. Only the notice stays behind the guard.
+        self._exit_library_media_select_mode(announce_discard=False)
         if not changed:
             return
-        self._exit_library_media_select_mode(announce_discard=False)
         self._library_media_selection_notice = "Selection cleared."
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
@@ -18335,170 +18496,14 @@ class LibraryScreen(BaseAppScreen):
         )
         return values
 
-    def _build_library_skill_tool_catalog(self) -> tuple[str, ...]:
-        """Return the existing builtin/local tool names a Skill may restrict."""
-        try:
-            from ...Agents.tool_catalog import BuiltinToolProvider
-
-            names = [entry.name for entry in BuiltinToolProvider().list_catalog()]
-            console_config = getattr(self.app_instance, "app_config", {}).get(
-                "console", {}
-            )
-            local_enabled = bool(
-                isinstance(console_config, Mapping)
-                and coerce_bool_setting(
-                    console_config.get("local_tools_enabled"), False
-                )
-            )
-            if local_enabled:
-                from ...Agents.local_tool_provider import LocalToolProvider
-
-                configured_root = console_config.get("workspace_root")
-                workspace_root = (
-                    Path(str(configured_root)).expanduser()
-                    if configured_root
-                    else Path.cwd()
-                )
-                names.extend(
-                    entry.name
-                    for entry in LocalToolProvider(
-                        workspace_root=workspace_root
-                    ).list_catalog()
-                )
-        except Exception:
-            logger.warning("Library Skill tool catalog is temporarily unavailable.")
-            return ()
-        return tuple(dict.fromkeys(names))
-
     def _library_skills_list_canvas_kwargs(self) -> dict[str, Any]:
-        """Return list-only inputs for the retained Skills Items pane."""
-        values = self._library_skills_canvas_kwargs(consume_scroll=False)
-        values.update(
-            state=self._build_library_skills_state(),
-            mode="list",
-            editor_state=None,
-            warnings="",
-            status="",
-            conflict=False,
-            active_review=None,
-            confirming_delete=False,
-            scroll_to_actions=False,
-            skill_path="",
-            import_open=False,
-            import_path="",
-            import_status="",
-            import_review_name="",
-            mutation_in_flight=False,
-            more_actions_open=False,
-            trust_details_open=False,
-            script_access_granted=False,
-        )
-        return values
+        return self._skills_controller._library_skills_list_canvas_kwargs()
 
     def _library_skill_work_pane_kwargs(self) -> dict[str, Any]:
-        """Return the active non-list projection for the Skills Work pane."""
-        values = self._library_skills_canvas_kwargs()
-        if self._library_skills_import_open:
-            values["mode"] = "list"
-        values["state"] = None
-        values["sort_choices_visible"] = False
-        values["reader_mode"] = self._library_skill_reader_mode
-        return values
+        return self._skills_controller._library_skill_work_pane_kwargs()
 
-    def _library_skills_canvas_kwargs(
-        self, *, consume_scroll: bool = True
-    ) -> dict[str, Any]:
-        """Return every compose input for the mounted Skills canvas."""
-        values: dict[str, Any] = {
-            "state": None,
-            "sort_mode": self._library_skills_sort,
-            "filter_value": self._library_skills_filter,
-            "mode": "list",
-            "trust_posture": self._library_skills_trust_posture,
-            "confirming_reset": self._library_skill_trust_confirming_reset,
-            "editor_state": None,
-            "warnings": "",
-            "status": "",
-            "conflict": False,
-            "active_review": None,
-            "is_create": not self._selected_skill_name,
-            "dirty": self._library_skill_dirty,
-            "confirming_delete": self._library_skill_confirming_delete,
-            "scroll_to_actions": False,
-            "skill_path": "",
-            "import_open": False,
-            "import_path": "",
-            "import_status": "",
-            "import_review_name": "",
-            "import_in_flight": False,
-            "import_package_kind": "",
-            "import_recovery_actions": (),
-            "import_retryable": False,
-            "sort_choices_visible": False,
-            "editor_mode": self._library_skill_editor_mode,
-            "tool_catalog": self._library_skill_tool_catalog,
-            "tool_filter": self._library_skill_tool_filter,
-            "mutation_in_flight": self._library_skill_mutation_in_flight,
-            "more_actions_open": self._library_skill_more_actions_open,
-            "trust_details_open": self._library_skill_trust_details_open,
-            "script_access_granted": self._library_skill_script_grant,
-            "detail_notice": "",
-            "detail_retryable": False,
-        }
-        if self._library_skills_view == "editor":
-            editor_state = self._library_skill_editor_state
-            if editor_state is None:
-                values["mode"] = "loading"
-                values["detail_notice"] = (
-                    self._library_skill_detail_error or "Loading skill…"
-                )
-                values["detail_retryable"] = self._library_skill_detail_retryable
-            else:
-                values.update(
-                    {
-                        "mode": "editor",
-                        "editor_state": editor_state,
-                        "warnings": "\n".join(
-                            skill_editor_warning_lines(
-                                live_name=editor_state.name,
-                                trust_status=editor_state.trust_status,
-                                trust_blocked=editor_state.trust_blocked,
-                            )
-                        ),
-                        "status": self._library_skill_status,
-                        "conflict": self._library_skill_conflict,
-                        "active_review": self._library_skill_active_review,
-                        "scroll_to_actions": (
-                            self._consume_library_skill_scroll_pending()
-                            if consume_scroll
-                            else False
-                        ),
-                        "skill_path": self._library_skill_on_disk_path(),
-                    }
-                )
-            return values
-
-        values.update(
-            {
-                "state": self._build_library_skills_state(),
-                "import_open": self._library_skills_import_open,
-                "import_path": self._library_skills_import_path,
-                "import_status": self._library_skills_import_status,
-                "import_review_name": self._library_skills_import_review_name,
-                "import_in_flight": self._library_skills_import_in_flight,
-                "import_package_kind": (
-                    self._library_skill_import_coordinator.snapshot.package_kind
-                ),
-                "import_recovery_actions": (
-                    self._library_skill_import_coordinator.snapshot.recovery_actions
-                ),
-                "import_retryable": (
-                    self._library_skill_import_coordinator.snapshot.retryable
-                ),
-                "sort_choices_visible": self._library_skills_sort_choices_visible,
-            }
-        )
-        return values
+    def _library_skills_canvas_kwargs(self, *, consume_scroll: bool = True) -> dict[str, Any]:
+        return self._skills_controller._library_skills_canvas_kwargs(consume_scroll=consume_scroll)
 
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
@@ -18854,7 +18859,7 @@ class LibraryScreen(BaseAppScreen):
             context_payload,
             query="",
             sort=controller.visible_result.scope.sort,
-            selected_name=self._selected_skill_name,
+            selected_name=self._skills_state.selected_skill_name,
         )
         return dataclasses.replace(
             state,
@@ -18877,7 +18882,7 @@ class LibraryScreen(BaseAppScreen):
         controller = self._library_skills_browse_controller
         token = controller.begin(scope)
         focused = getattr(self, "focused", None)
-        self._library_skills_filter_cursor_context = (
+        self._skills_state.filter_cursor_context = (
             (token, focused.cursor_position)
             if focus_identity == LIBRARY_SKILLS_FILTER_ID and isinstance(focused, Input)
             else None
@@ -18888,113 +18893,11 @@ class LibraryScreen(BaseAppScreen):
             focus_identity=focus_identity,
         )
 
-    def _sync_library_skills_browse_result(
-        self,
-        result: SkillBrowseResult,
-        focus_identity: str | None,
-    ) -> LibraryEntryReconcileResult:
-        """Project one accepted Skills generation and restore stable focus."""
-        controller = self._library_skills_browse_controller
-        if (
-            result.request_token != controller.result.request_token
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-            or self._library_skills_view != "list"
-        ):
-            return LibraryEntryReconcileResult.SUPERSEDED
+    def _sync_library_skills_browse_result(self, result: SkillBrowseResult, focus_identity: str | None) -> LibraryEntryReconcileResult:
+        return self._skills_controller._sync_library_skills_browse_result(result, focus_identity)
 
-        self._library_skills_filter = controller.scope.query
-        self._library_skills_sort = controller.scope.sort
-        focused = getattr(self, "focused", None)
-        live_focus_id = getattr(focused, "id", None)
-        if (
-            isinstance(focused, (Button, Input))
-            and isinstance(live_focus_id, str)
-            and live_focus_id.startswith("library-skills-")
-        ):
-            focus_identity = live_focus_id
-        cursor_context = self._library_skills_filter_cursor_context
-        cursor_position = (
-            focused.cursor_position
-            if isinstance(focused, Input) and live_focus_id == LIBRARY_SKILLS_FILTER_ID
-            else cursor_context[1]
-            if cursor_context is not None and cursor_context[0] == result.request_token
-            else None
-        )
-
-        def restore_focus() -> None:
-            if not focus_identity:
-                return
-            if result.status == "loading" and focus_identity in {
-                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
-                LIBRARY_SKILLS_PAGE_NEXT_ID,
-                LIBRARY_SKILLS_RETRY_ID,
-            }:
-                return
-            if focus_identity in {
-                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
-                LIBRARY_SKILLS_PAGE_NEXT_ID,
-                LIBRARY_SKILLS_RETRY_ID,
-            }:
-                self._focus_library_skills_page_control(focus_identity)
-                return
-            try:
-                target = self.query_one(f"#{focus_identity}", Widget)
-            except (NoMatches, QueryError):
-                return
-            if not getattr(target, "disabled", False):
-                target.focus()
-                if cursor_position is not None and isinstance(target, Input):
-                    target.cursor_position = cursor_position
-
-        if _sync_library_canvas(
-            self,
-            "skills",
-            then=restore_focus,
-            allow_screen_fallback=False,
-        ):
-            return LibraryEntryReconcileResult.APPLIED
-        return LibraryEntryReconcileResult.FAILED
-
-    def _focus_library_skills_page_control(self, invoked: str) -> None:
-        """Restore pager focus without landing on a disabled control."""
-        opposite = {
-            LIBRARY_SKILLS_PAGE_PREVIOUS_ID: LIBRARY_SKILLS_PAGE_NEXT_ID,
-            LIBRARY_SKILLS_PAGE_NEXT_ID: LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
-            LIBRARY_SKILLS_RETRY_ID: LIBRARY_SKILLS_FILTER_ID,
-        }[invoked]
-        for control_id in (invoked, opposite, LIBRARY_SKILLS_FILTER_ID):
-            try:
-                control = self.query_one(f"#{control_id}", Widget)
-            except (NoMatches, QueryError):
-                continue
-            if not getattr(control, "disabled", False):
-                control.focus()
-                return
-
-    def _refresh_library_skills_after_committed_mutation(
-        self,
-        *,
-        scope: SkillBrowseScope | None = None,
-    ) -> None:
-        """Invalidate exact totals after a durable Skill or trust change.
-
-        Retained rows may remain visible, but they are explicitly stale and
-        inert until the source-owned page refresh succeeds.
-        """
-        controller = self._library_skills_browse_controller
-        refresh_scope = scope or controller.mutation_refresh_scope
-        if controller.applied_result is not None:
-            controller.retain_stale_items(
-                controller.retained_items,
-                stale_copy="Skills changed; refresh the page before acting.",
-            )
-        else:
-            controller.invalidate(refresh_scope)
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-        ):
-            self._request_library_skills_browse(refresh_scope)
+    def _refresh_library_skills_after_committed_mutation(self, *, scope: SkillBrowseScope | None = None) -> None:
+        return self._skills_controller._refresh_library_skills_after_committed_mutation(scope=scope)
 
     def _refresh_library_skills_trust_posture(self) -> None:
         """Kick an off-thread read of the Skills trust service's posture.
@@ -19021,14 +18924,14 @@ class LibraryScreen(BaseAppScreen):
         if not callable(posture_fn):
             should_repaint = (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-                and self._library_skills_view == "list"
+                and self._skills_state.view == "list"
                 and (
-                    bool(self._library_skills_trust_posture)
+                    bool(self._skills_state.trust_posture)
                     or bool(self.query("#library-skills-trust-header"))
                 )
             )
             self.workers.cancel_group(self, "library_skills_trust_posture")
-            self._library_skills_trust_posture = ""
+            self._skills_state.trust_posture = ""
             if should_repaint:
                 _sync_library_canvas(
                     self,
@@ -19043,71 +18946,8 @@ class LibraryScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
-    async def _load_library_skills_trust_posture(
-        self, posture_fn
-    ) -> LibraryEntryReconcileResult:
-        """Await the off-thread ``trust_posture()`` call and apply the result.
-
-        Args:
-            posture_fn: The trust service's bound ``trust_posture`` method
-                (captured by ``_refresh_library_skills_trust_posture`` so
-                this never re-reads ``local_skill_trust_service`` itself --
-                irrelevant here, but keeps this a pure "run this callable
-                off-thread" step).
-        """
-        route_key = self._library_entry_route_key()
-        generation = self._library_snapshot_state_generation
-        try:
-            posture = await asyncio.to_thread(posture_fn)
-        except Exception:
-            posture = ""
-        self._library_skills_trust_posture = posture if isinstance(posture, str) else ""
-        if (
-            route_key != self._library_entry_route_key()
-            or not self._library_entry_reconcile_is_current(generation, route_key)
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-            or self._library_skills_view != "list"
-        ):
-            return LibraryEntryReconcileResult.SUPERSEDED
-        identity = self._capture_library_entry_focus()
-        prior_callback: Callable[[], None] | None = None
-        pending = (generation, route_key)
-        if (
-            self._library_entry_reconcile_dirty
-            and self._library_entry_reconcile_pending == pending
-        ):
-            try:
-                canvas = self.query_one(
-                    "#library-skills-canvas", LibrarySkillsListCanvas
-                )
-            except (NoMatches, QueryError):
-                canvas = None
-            if canvas is not None:
-                prior_callback = canvas._post_recompose_callback
-
-        def finish_posture_sync() -> None:
-            if prior_callback is not None:
-                prior_callback()
-            if identity is not None:
-                self._restore_library_entry_focus(
-                    identity,
-                    generation=generation,
-                    route_key=route_key,
-                )
-
-        follow_up = (
-            finish_posture_sync
-            if prior_callback is not None or identity is not None
-            else None
-        )
-        if _sync_library_canvas(
-            self,
-            "skills",
-            then=follow_up,
-            allow_screen_fallback=False,
-        ):
-            return LibraryEntryReconcileResult.APPLIED
-        return LibraryEntryReconcileResult.FAILED
+    async def _load_library_skills_trust_posture(self, posture_fn) -> LibraryEntryReconcileResult:
+        return await self._skills_controller._load_library_skills_trust_posture(posture_fn)
 
     async def _refresh_library_media_detail(
         self,
@@ -20983,7 +20823,9 @@ class LibraryScreen(BaseAppScreen):
         canvas.scroll_to_widget(heading, animate=False, top=True)
 
     def _update_library_ingest_dynamic_regions(
-        self, allow_structural_recompose: bool = True
+        self,
+        allow_structural_recompose: bool = True,
+        allow_screen_fallback: bool = True,
     ) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
 
@@ -20996,6 +20838,29 @@ class LibraryScreen(BaseAppScreen):
         Structural changes -- the type-group set (options panels) or the
         runtime header lines -- still take the context-preserving full
         recompose, as does any unexpected canvas shape.
+
+        Args:
+            allow_structural_recompose: Whether a structural state change
+                may request the legacy whole-screen recompose.
+            allow_screen_fallback: (task-28007 Task 3 fix round 1, I-2)
+                Whether a failed targeted update (the canvas query itself
+                raising, or a structural change above) may request that
+                fallback at all -- mirrors ``_sync_library_canvas``'s own
+                parameter. A caller mid an Import-run's ``finally``/
+                per-item repaint passes ``False``: an unmount that lands
+                mid-run can leave ``_library_selected_row_id`` still
+                pointing at Import while the canvas's own children are
+                already torn down, so ``query_one`` raises ``NoMatches``
+                here -- scheduling a whole-screen recompose on a dying
+                screen at that point is both useless and unsafe.
+                (Task 3 re-review, N-1) It is part of the STRUCTURAL
+                branch's condition, not a check inside it: barring the
+                fallback must degrade to the targeted repaint below, never
+                to no repaint at all. ``canvas.state`` is a plain
+                attribute, so returning after assigning it painted
+                nothing -- which is exactly the stuck-disabled
+                "Analyze N skipped" button the run's ``finally`` repaint
+                exists to prevent.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             # (task-2043 review) A late worker result while a DIFFERENT
@@ -21009,7 +20874,8 @@ class LibraryScreen(BaseAppScreen):
             summary = canvas.query_one(LibraryIngestPreflightSummary)
             queue = canvas.query_one(LibraryIngestQueuePanel)
         except (NoMatches, QueryError):
-            self._refresh_library_ingest_canvas_preserving_context()
+            if allow_screen_fallback:
+                self._refresh_library_ingest_canvas_preserving_context()
             return
         old_state = canvas.state
         structural = (
@@ -21019,7 +20885,7 @@ class LibraryScreen(BaseAppScreen):
             or new_state.unavailable_line != old_state.unavailable_line
         )
         canvas.state = new_state
-        if structural and allow_structural_recompose:
+        if structural and allow_structural_recompose and allow_screen_fallback:
             self._refresh_library_ingest_canvas_preserving_context()
             return
         summary.state = new_state
@@ -21168,6 +21034,31 @@ class LibraryScreen(BaseAppScreen):
             )
         elif consent is not None and consent.candidate_changed:
             start_confirm_line = "Selection changed. Start again to queue."
+        # (task-28007 AC#1/AC#2) Only resolve Task 1's provider reason when
+        # there is actually something to gate: no pre-existing test seeds a
+        # job with an ``analysis_skipped`` progress note, so this never
+        # fires for them, and it means a queue with nothing skipped never
+        # pays for the resolver's I/O (it can shell out to the keychain) on
+        # every keystroke-driven render.
+        #
+        # (fix round 1, M-2 -- considered, reverted) A short TTL memo was
+        # tried here, mirroring ``_library_media_analyze_reason``'s
+        # Select-mode one, but that memo resets on a clean session
+        # boundary (select-mode entry/exit); the ingest canvas has no such
+        # boundary; every read that lands DURING the TTL window --
+        # including the very next one, e.g. right after the config or a
+        # test's stub changes -- silently serves a stale answer with no
+        # natural point where it self-corrects except wall-clock decay.
+        # The cost this was guarding against is narrow (0.16 ms measured
+        # on the common path; the review's own worst case is a LOCKED
+        # keychain specifically for keyless Anthropic auth) and the
+        # review named it Minor/optional -- not worth trading correctness
+        # for.
+        analyze_outcomes = getattr(self, "_library_ingest_analyze_outcomes", None) or {}
+        analyze_skipped_ids = library_ingest_analyze_skipped_ids(jobs, analyze_outcomes)
+        analysis_action_ready = bool(analyze_skipped_ids) and not (
+            self._library_media_analysis_provider_reason()
+        )
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -21181,6 +21072,10 @@ class LibraryScreen(BaseAppScreen):
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
             analysis_unready_hint=analysis_unready_hint,
+            # (final review, M-7) Already resolved above for the gate --
+            # passing it lets ``build_library_ingest_state`` skip a second,
+            # redundant ``library_ingest_analyze_skipped_ids`` call.
+            analyze_skipped_media_ids=analyze_skipped_ids,
             # (task-3314/3313) ``getattr`` quiet-degrade: several test
             # suites build this screen via ``object.__new__`` and seed only
             # the fields they exercise (the Clear-finished armed_at read
@@ -21193,6 +21088,9 @@ class LibraryScreen(BaseAppScreen):
             retry_confirm_armed=getattr(
                 self, "_library_ingest_retry_confirm_armed", False
             ),
+            analyze_outcomes=analyze_outcomes,
+            analysis_action_ready=analysis_action_ready,
+            analyze_running=getattr(self, "_library_media_analyze_running", False),
         )
 
     # ----- Notes editor: save, autosave, conflict policy -----------------
@@ -23497,7 +23395,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._library_collections_capture_controller.unmount()
         if row_id != LIBRARY_ROW_BROWSE_SKILLS:
-            self._library_skills_filter_cursor_context = None
+            self._skills_state.filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
         if (
@@ -23587,7 +23485,7 @@ class LibraryScreen(BaseAppScreen):
         # (editor manifest_error panel or the list header) and then
         # switching rail rows away leaves it armed, and it can reappear
         # unprompted on a later, unrelated entry into the skills view.
-        self._library_skill_trust_confirming_reset = False
+        self._skills_state.trust_confirming_reset = False
         # (task-2043) The ingest form now PERSISTS across rail switches --
         # the old full reset discarded a typed path/metadata on every
         # switch, destructive for multi-batch workflows (round-2 critique).
@@ -23678,7 +23576,7 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_notes_stage_visibility()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
+            and self._skills_state.view == "list"
         ):
             # The strict posture projection requires its retained owner to exist.
             self._refresh_library_skills_trust_posture()
@@ -24339,12 +24237,23 @@ class LibraryScreen(BaseAppScreen):
         bulk-delete confirmation (task-2853 AC4).
 
         Shared by every path that leaves select mode -- the "Done" toggle
-        and the type-filter cycle (which resets select mode as a side
-        effect) -- so neither can strand
+        and the scope changes (filter/query, page, type) that reset select
+        mode as a side effect -- so neither can strand
         ``_library_media_confirming_bulk_delete`` in a stale ``True``
         state. Announces the discard ("copy states it", AC4) only when
         ``announce_discard`` and the selection being cleared is non-empty;
         an already-empty selection has nothing to discard.
+
+        (final review, I-1/M-3) It is also the one invalidation boundary
+        for the armed Skip/Overwrite choice. That card is a PENDING action
+        over a snapshot of ids, armed AFTER select mode already exited, so
+        nothing used to retire it: it survived re-entering and leaving
+        select mode, a filter change and a page change, still offering
+        "Overwrite" over ids the user could no longer see. Every scope
+        change reaches this method (see
+        ``_clear_library_media_selection_for_scope_change``, which now
+        always calls it), so clearing it here covers all four paths
+        without a fifth call site.
 
         Args:
             announce_discard: Whether to surface the "Selection discarded"
@@ -24355,6 +24264,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_selection_discarded(discarded)
         self._library_media_select_mode = False
         self._library_media_confirming_bulk_delete = False
+        self._library_media_analyze_choice = None
         self._library_media_row_selection.clear()
 
     def _notify_library_media_selection_discarded(self, count: int) -> None:
@@ -24507,12 +24417,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_bulk_delete = False
             _sync_library_canvas(self, "media")
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._delete_library_media_selection(media_ids),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._delete_library_media_selection(media_ids)
         )
 
     def action_library_media_bulk_delete_cancel(self) -> None:
@@ -24574,6 +24480,9 @@ class LibraryScreen(BaseAppScreen):
                 any recompose could change the live selection.
         """
         succeeded: list[str] = []
+        # task-31220: set once the outcome is known -- non-empty only when a
+        # "✓ deleted" receipt is what the user is left looking at.
+        undo_focus = ""
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             delete_media_item = getattr(service, "delete_media_item", None)
@@ -24616,6 +24525,11 @@ class LibraryScreen(BaseAppScreen):
             # this always reflects only what just happened, never a stale
             # earlier batch.
             self._library_media_delete_receipt_ids = tuple(succeeded)
+            # task-31220: a fresh receipt is a fresh claim -- never carry an
+            # earlier Undo's failure copy onto it.
+            self._library_media_delete_receipt_undo_failure = ""
+            if succeeded and not failed:
+                undo_focus = "#library-media-bulk-delete-undo"
 
             self._library_media_confirming_bulk_delete = False
             if failed:
@@ -24664,9 +24578,21 @@ class LibraryScreen(BaseAppScreen):
                 # selected. On the full-success path the selection was
                 # already cleared just above, so that extension is a
                 # no-op there and behavior is unchanged from before.
-                self._arm_library_list_entry_focus()
+                # task-31220: ...EXCEPT on the full-success path, which now
+                # ends on a "✓ deleted" receipt. The confirmation the user
+                # just answered promised "You can undo right away", so
+                # Enter must undo: focus goes to that receipt's Undo
+                # instead of a list row. A partial/total failure keeps the
+                # rule above (the first still-checked row), because there
+                # is no ✓ receipt to act on there.
+                if undo_focus:
+                    self.call_after_refresh(self._focus_library_control, undo_focus)
+                else:
+                    self._arm_library_list_entry_focus()
         finally:
-            self._complete_library_media_mutation(remove_ids=tuple(succeeded))
+            self._complete_library_media_mutation(
+                remove_ids=tuple(succeeded), focus_identity=undo_focus
+            )
 
     @on(Button.Pressed, "#library-media-bulk-delete-undo")
     def handle_library_media_bulk_delete_undo(self, event: Button.Pressed) -> None:
@@ -24699,12 +24625,8 @@ class LibraryScreen(BaseAppScreen):
         media_ids = self._library_media_delete_receipt_ids
         if not media_ids:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._undo_library_media_bulk_delete(media_ids),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._undo_library_media_bulk_delete(media_ids)
         )
 
     @on(Button.Pressed, "#library-media-bulk-delete-receipt-dismiss")
@@ -24718,6 +24640,10 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_delete_receipt_ids = ()
+        # task-31220: Dismiss retires the WHOLE receipt, the failure copy
+        # included -- otherwise the next receipt inherits a "✗ undo failed"
+        # claim about a batch the user already dismissed.
+        self._library_media_delete_receipt_undo_failure = ""
         _sync_library_canvas(self, "media")
 
     async def _undo_library_media_bulk_delete(self, media_ids: tuple[str, ...]) -> None:
@@ -24751,6 +24677,10 @@ class LibraryScreen(BaseAppScreen):
             restore_media_item = getattr(service, "restore_media_item", None)
             restored_records: list[Mapping[str, Any]] = []
             failed: list[str] = []
+            # task-31220: the reader-facing reason for the FIRST failure,
+            # through the same exception -> reason mapping the stale-page
+            # Retry already uses -- one vocabulary, not two.
+            failure_reason = ""
             if callable(restore_media_item):
                 for media_id in media_ids:
                     try:
@@ -24772,8 +24702,11 @@ class LibraryScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
                         failed.append(media_id)
+                        failure_reason = failure_reason or _retry_failure_reason(exc)
             else:
+                # The one failure path with no exception to map.
                 failed = list(media_ids)
+                failure_reason = "restore is unavailable"
 
             if restored_records:
                 existing_ids = {
@@ -24793,6 +24726,14 @@ class LibraryScreen(BaseAppScreen):
                 ) + len(new_records)
 
             self._library_media_delete_receipt_ids = tuple(failed)
+            # task-31220: the receipt stops claiming success the moment its
+            # own recovery failed -- "✗ undo failed · <n> of <m> · <reason>"
+            # with "Retry undo" over exactly the ids still named above.
+            self._library_media_delete_receipt_undo_failure = (
+                f"{len(failed)} of {len(media_ids)} · {failure_reason}"
+                if failed
+                else ""
+            )
             if failed:
                 item_word = "item" if len(media_ids) == 1 else "items"
                 self._notify_library_media_delete_warning(
@@ -25182,12 +25123,11 @@ class LibraryScreen(BaseAppScreen):
         claim = controller.claim_mutation()
         if claim is None or claim.target != captured:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
+        self._claim_library_media_mutation(
             self._permanently_delete_library_media_from_trash(claim),
-            exclusive=True,
-            group="library_media_bulk_delete",
+            on_failure=lambda: controller.finish_mutation_failure(
+                claim, _TRASH_PERMANENT_DELETE_FAILURE_COPY
+            ),
         )
 
     async def _permanently_delete_library_media_from_trash(
@@ -25219,7 +25159,7 @@ class LibraryScreen(BaseAppScreen):
                 result,
                 media_id=target.backing_media_id,
             ):
-                failure_copy = "Could not delete this media item permanently."
+                failure_copy = _TRASH_PERMANENT_DELETE_FAILURE_COPY
                 return
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
@@ -25228,11 +25168,11 @@ class LibraryScreen(BaseAppScreen):
                 claim, notice
             )
         finally:
-            self._complete_library_media_mutation(
-                committed=committed,
-                refresh_normal_media=False,
-                stale_normal_media=False,
-            )
+            # task-31275: the permanently deleted row was already out of the
+            # normal Media page, but ``_begin_library_media_mutation`` fenced
+            # that page AND its facets -- completing normally is what lifts
+            # the fence, so returning to Media needs no manual Retry.
+            self._complete_library_media_mutation(committed=committed)
             if failure_copy is not None:
                 accepted = (
                     self._library_media_trash_browse_controller.finish_mutation_failure(
@@ -25273,15 +25213,15 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_media_bulk_delete_in_flight:
             return
-        claim = self._library_media_trash_browse_controller.claim_mutation()
+        controller = self._library_media_trash_browse_controller
+        claim = controller.claim_mutation()
         if claim is None:
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
+        self._claim_library_media_mutation(
             self._restore_library_media_from_trash(claim),
-            exclusive=True,
-            group="library_media_bulk_delete",
+            on_failure=lambda: controller.finish_mutation_failure(
+                claim, _TRASH_RESTORE_FAILURE_COPY
+            ),
         )
 
     async def _restore_library_media_from_trash(
@@ -25311,6 +25251,7 @@ class LibraryScreen(BaseAppScreen):
         """
         target = claim.target
         committed = False
+        restored_items: tuple[Mapping[str, Any], ...] = ()
         failure_copy: str | None = None
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -25339,7 +25280,7 @@ class LibraryScreen(BaseAppScreen):
                         type(exc).__name__,
                     )
             if restored_record is None:
-                failure_copy = "Could not restore this media item."
+                failure_copy = _TRASH_RESTORE_FAILURE_COPY
                 return
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
@@ -25349,6 +25290,15 @@ class LibraryScreen(BaseAppScreen):
             )
             if not committed:
                 return
+
+            # task-31275: the same bounded summary the bulk-delete Undo path
+            # hands back, so the fenced page reconciles its OWN restore
+            # instead of demanding a manual Retry on return to Media.
+            restored_items = (
+                self._library_media_mutation_summary(
+                    f"local:media:{target.backing_media_id}", restored_record
+                ),
+            )
 
             existing_ids = {
                 self._source_record_id(record)
@@ -25372,8 +25322,7 @@ class LibraryScreen(BaseAppScreen):
         finally:
             self._complete_library_media_mutation(
                 committed=committed,
-                refresh_normal_media=False,
-                stale_normal_media=committed,
+                upsert_items=restored_items,
             )
             if failure_copy is not None:
                 accepted = (
@@ -26098,14 +26047,14 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the skills sort control.
         """
         event.stop()
-        self._library_skills_sort_choices_visible = (
-            not self._library_skills_sort_choices_visible
+        self._skills_state.sort_choices_visible = (
+            not self._skills_state.sort_choices_visible
         )
 
         def focus_open_strip() -> None:
             self._focus_library_choice_strip_active(
                 ".library-skills-sort-choice",
-                self._library_skills_sort,
+                self._skills_state.sort,
             )
 
         def focus_opener() -> None:
@@ -26116,7 +26065,7 @@ class LibraryScreen(BaseAppScreen):
             "skills",
             then=(
                 focus_open_strip
-                if self._library_skills_sort_choices_visible
+                if self._skills_state.sort_choices_visible
                 else focus_opener
             ),
         )
@@ -26132,9 +26081,9 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         requested = str(getattr(event.button, "choice_value", "") or "")
-        self._library_skills_sort_choices_visible = False
+        self._skills_state.sort_choices_visible = False
         if requested in _LIBRARY_SKILLS_SORT_MODES:
-            self._library_skills_sort = requested
+            self._skills_state.sort = requested
             scope = dataclasses.replace(
                 self._library_skills_browse_controller.mutation_refresh_scope,
                 sort=requested,
@@ -26157,12 +26106,12 @@ class LibraryScreen(BaseAppScreen):
             event: Input submission event emitted by the skills filter box.
         """
         event.stop()
-        self._library_skills_filter = self._safe_text(
+        self._skills_state.filter = self._safe_text(
             event.value, max_length=200
         ).strip()
         scope = dataclasses.replace(
             self._library_skills_browse_controller.mutation_refresh_scope,
-            query=self._library_skills_filter,
+            query=self._skills_state.filter,
             page=1,
         )
         self._request_library_skills_browse(
@@ -26172,54 +26121,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")
     def handle_library_skills_page_previous(self, event: Button.Pressed) -> None:
-        """Request the preceding exact Skills page.
-
-        Args:
-            event: Button press event emitted by the Previous control.
-        """
-        event.stop()
-        controller = self._library_skills_browse_controller
-        applied = controller.applied_result
-        if applied is None or applied.page <= 1 or controller.freshness != "fresh":
-            return
-        self._request_library_skills_browse(
-            controller.scope_for_page(applied.page - 1),
-            focus_identity=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
-        )
+        return self._skills_controller.handle_library_skills_page_previous(event)
 
     @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
     def handle_library_skills_page_next(self, event: Button.Pressed) -> None:
-        """Request the following exact Skills page.
-
-        Args:
-            event: Button press event emitted by the Next control.
-        """
-        event.stop()
-        controller = self._library_skills_browse_controller
-        applied = controller.applied_result
-        if (
-            applied is None
-            or applied.page >= applied.total_pages
-            or controller.freshness != "fresh"
-        ):
-            return
-        self._request_library_skills_browse(
-            controller.scope_for_page(applied.page + 1),
-            focus_identity=LIBRARY_SKILLS_PAGE_NEXT_ID,
-        )
+        return self._skills_controller.handle_library_skills_page_next(event)
 
     @on(Button.Pressed, f"#{LIBRARY_SKILLS_RETRY_ID}")
     def handle_library_skills_retry(self, event: Button.Pressed) -> None:
-        """Retry the last requested Skills page or stale-page refresh.
-
-        Args:
-            event: Button press event emitted by the Retry control.
-        """
-        event.stop()
-        self._request_library_skills_browse(
-            self._library_skills_browse_controller.scope,
-            focus_identity=LIBRARY_SKILLS_RETRY_ID,
-        )
+        return self._skills_controller.handle_library_skills_retry(event)
 
     @on(Button.Pressed, "#library-skills-import")
     def handle_library_skills_import(self, event: Button.Pressed) -> None:
@@ -26408,10 +26318,10 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_skill_import_coordinator.dismiss()
         self._reset_library_skill_editor_state()
-        self._selected_skill_name = name
+        self._skills_state.selected_skill_name = name
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "trust"
+        self._skills_state.view = "editor"
+        self._skills_state.reader_mode = "trust"
         self.run_worker(
             self._refresh_library_skill_detail(name),
             exclusive=True,
@@ -26452,28 +26362,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_skill_import_coordinator.update_draft_path(event.value)
 
     @on(Input.Submitted, "#library-skills-import-path")
-    def handle_library_skills_import_path_submitted(
-        self, event: Input.Submitted
-    ) -> None:
-        """Run the import when Enter is pressed in the Import row's path field.
-
-        Args:
-            event: Input submission event emitted by the Import row's
-                path field.
-        """
-        event.stop()
-        self._start_library_skills_import()
+    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
+        return self._skills_controller.handle_library_skills_import_path_submitted(event)
 
     @on(Button.Pressed, "#library-skills-import-run")
     def handle_library_skills_import_run(self, event: Button.Pressed) -> None:
-        """Run the import when the Import row's "Import" action is pressed.
-
-        Args:
-            event: Button press event emitted by the Import row's
-                "Import" action.
-        """
-        event.stop()
-        self._start_library_skills_import()
+        return self._skills_controller.handle_library_skills_import_run(event)
 
     @on(Button.Pressed, "#library-skills-import-retry")
     def handle_library_skills_import_retry(self, event: Button.Pressed) -> None:
@@ -26506,7 +26400,7 @@ class LibraryScreen(BaseAppScreen):
                 "An import is already in progress."
             )
             return
-        if self._library_skills_view != "list":
+        if self._skills_state.view != "list":
             return
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
@@ -26569,11 +26463,11 @@ class LibraryScreen(BaseAppScreen):
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
             or not snapshot.candidates
-            or self._library_skill_choice_presented_generation == snapshot.generation
+            or self._skills_state.choice_presented_generation == snapshot.generation
         ):
             return
         choice_generation = snapshot.generation
-        self._library_skill_choice_presented_generation = choice_generation
+        self._skills_state.choice_presented_generation = choice_generation
 
         def resolve(candidate: str | None) -> None:
             if (
@@ -26635,10 +26529,10 @@ class LibraryScreen(BaseAppScreen):
         skill_name = getattr(event.button, "skill_name", None)
         self._reset_library_skill_editor_state()
         if isinstance(skill_name, str):
-            self._selected_skill_name = skill_name
+            self._skills_state.selected_skill_name = skill_name
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "overview"
+        self._skills_state.view = "editor"
+        self._skills_state.reader_mode = "overview"
         if isinstance(skill_name, str):
             # Exclusive in its own group so rapidly switching rows cancels
             # the previous in-flight detail fetch instead of letting a
@@ -26651,199 +26545,20 @@ class LibraryScreen(BaseAppScreen):
             )
         _sync_library_canvas(self, "skills")
 
-    def _claim_library_skill_detail_generation(self) -> int:
-        """Start one Skill detail request and return its settlement fence."""
-        self._library_skill_detail_generation += 1
-        self._library_skill_detail_loading = True
-        self._library_skill_detail_error = ""
-        self._library_skill_detail_retryable = False
-        return self._library_skill_detail_generation
-
     def _invalidate_library_skill_detail_generation(self) -> None:
-        """Refuse every pending Skill detail settlement."""
-        self._library_skill_detail_generation += 1
-        self._library_skill_detail_loading = False
-        self._library_skill_detail_error = ""
-        self._library_skill_detail_retryable = False
+        return self._skills_controller._invalidate_library_skill_detail_generation()
 
-    def _library_skill_detail_request_is_current(
-        self, *, skill_name: str, generation: int
-    ) -> bool:
-        """Return whether one detail outcome still owns the Skills Work pane."""
-        return bool(
-            generation == self._library_skill_detail_generation
-            and skill_name == self._selected_skill_name
-            and self._library_skills_view == "editor"
-        )
+    def _library_skill_detail_request_is_current(self, *, skill_name: str, generation: int) -> bool:
+        return self._skills_controller._library_skill_detail_request_is_current(skill_name=skill_name, generation=generation)
 
-    def _apply_library_skill_detail_failure(self, copy: str) -> None:
-        """Keep the selected Skill in place and expose a scoped retry."""
-        self._library_skill_detail_loading = False
-        self._library_skill_detail_error = copy
-        self._library_skill_detail_retryable = True
-        if self.is_mounted:
-            _sync_library_canvas(self, "skills")
-
-    async def _refresh_library_skill_detail(
-        self,
-        skill_name: str,
-        *,
-        request_generation: int | None = None,
-    ) -> None:
-        """Fetch and store the full detail for a selected Library skill.
-
-        Mirrors ``_refresh_library_prompt_detail``: offloads the (possibly
-        blocking) ``get_skill`` service call via ``_run_library_service_call``
-        and recomposes once the fetched detail (or a cleared state) has
-        been stored.
-
-        Args:
-            skill_name: The Library skill name to fetch full detail for.
-        """
-        if request_generation is None:
-            request_generation = self._claim_library_skill_detail_generation()
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        get_skill = getattr(service, "get_skill", None)
-        if not callable(get_skill):
-            if self._library_skill_detail_request_is_current(
-                skill_name=skill_name, generation=request_generation
-            ):
-                self._apply_library_skill_detail_failure(
-                    "Couldn’t load the selected Skill. The local service is unavailable."
-                )
-            return
-        failed = False
-        try:
-            detail = await self._run_library_service_call(
-                get_skill,
-                skill_name,
-                mode="local",
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to load Library skill detail for {skill_name!r}."
-            )
-            detail = None
-            failed = True
-        # Discard out-of-order results: the same stale-race guard as
-        # ``_refresh_library_prompt_detail``.
-        if not self._library_skill_detail_request_is_current(
-            skill_name=skill_name, generation=request_generation
-        ):
-            return
-        if not isinstance(detail, Mapping):
-            self._apply_library_skill_detail_failure(
-                "Couldn’t load the selected Skill. Try again."
-                if failed
-                else "This Skill is no longer available. Refresh the list and try again."
-            )
-            return
-        self._library_skill_detail_loading = False
-        self._library_skill_detail_error = ""
-        self._library_skill_detail_retryable = False
-        self._apply_library_skill_detail(detail)
-
-    def _apply_library_skill_detail(self, detail: Mapping[str, Any]) -> None:
-        """Store a freshly-fetched skill detail and (re)render the editor.
-
-        Shared by the initial open (``_refresh_library_skill_detail``) and
-        a successful Save (whose response mapping is already a full detail
-        -- see ``_save_library_skill``'s docstring for why no separate
-        "refresh snapshot" fetch is needed there).
-
-        Args:
-            detail: A skill detail mapping shaped like ``get_skill``'s (or
-                a save call's) response.
-        """
-        self._library_skill_detail = dict(detail)
-        self._library_skill_detail_loading = False
-        self._library_skill_detail_error = ""
-        self._library_skill_detail_retryable = False
-        self._library_skill_editor_state = build_skill_editor_state(
-            self._library_skill_detail
-        )
-        self._library_skill_original_name = self._library_skill_editor_state.name
-        self._library_skill_dirty = False
-        self._library_skill_status = ""
-        self._library_skill_conflict = False
-        self._library_skill_active_review = None
-        self._library_skill_script_grant = False
-        self._library_skill_tool_catalog = self._build_library_skill_tool_catalog()
-        self._library_skill_tool_filter = ""
-        self._library_skill_tool_captured = skill_allowed_tools_sequence(
-            self._library_skill_editor_state.allowed_tools_csv
-        )
-        self._library_skill_tool_picker_changed = False
-        self._library_skill_more_actions_open = False
-        self._library_skill_trust_details_open = False
-        self._library_skill_mutation_in_flight = False
-        self._library_skill_editor_armed = False
-        if self.is_mounted:
-            # Deterministic (task-15457 review I4b): arming is
-            # dirty-tracking, not cosmetics -- a follow-up lost to the
-            # canvas-pump race leaves the editor unarmed, so it rides the
-            # canvas's own post-recompose hook rather than the screen's.
-            _sync_library_canvas(self, "skills", then=self._arm_library_skill_editor)
-        # Task 7: not part of ``get_skill``'s response, so it needs its own
-        # off-thread fetch -- see ``_refresh_library_skill_script_grant``.
-        self._refresh_library_skill_script_grant()
+    async def _refresh_library_skill_detail(self, skill_name: str, *, request_generation: int | None = None) -> None:
+        return await self._skills_controller._refresh_library_skill_detail(skill_name, request_generation=request_generation)
 
     def _arm_library_skill_editor(self) -> None:
-        """Enable dirty-tracking once the skill editor's mount-time
-        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
-        initial values) has already been delivered, so it is never mistaken
-        for a real edit.
-        """
-        self._library_skill_editor_armed = True
+        return self._skills_controller._arm_library_skill_editor()
 
     def _enter_library_skill_create_editor(self) -> None:
-        """Open the in-canvas skill editor on a blank, not-yet-saved record.
-
-        Entered via the Create rail's "New skill" row
-        (``LIBRARY_ROW_CREATE_SKILL``, whose ``target_id`` is ``"skills"``
-        -- the SAME canvas kind Browse > Skills targets), mirroring
-        ``_enter_library_prompt_create_editor``'s "New prompt" row.
-
-        ``_selected_skill_name`` stays ``""``: the sentinel
-        ``_save_library_skill`` already reads (``is_create = not name``)
-        to route its scope-service ``create_skill`` call instead of
-        ``update_skill``, and the sentinel ``compose_content`` reads
-        (``is_create=not self._selected_skill_name``) to keep the Name
-        Input editable (an existing skill's Name Input is disabled --
-        there is no rename primitive).
-
-        ``_library_skill_editor_state`` is built directly from an empty
-        mapping (``build_skill_editor_state({})``) rather than left
-        ``None``: ``compose_content``'s skills-editor branch gates on
-        ``_library_skill_editor_state is None`` to show a "Loading
-        skill…" placeholder while the async detail fetch
-        (``_refresh_library_skill_detail``) is in flight -- there is no
-        fetch for a brand-new record, so leaving it ``None`` would show
-        that placeholder forever.
-        """
-        self._selected_skill_name = ""
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "edit"
-        self._library_skill_detail = {}
-        self._invalidate_library_skill_detail_generation()
-        self._library_skill_editor_state = build_skill_editor_state({})
-        self._library_skill_original_name = ""
-        self._library_skill_dirty = False
-        self._library_skill_status = ""
-        self._library_skill_conflict = False
-        self._library_skill_active_review = None
-        self._library_skill_script_grant = False
-        self._library_skill_tool_catalog = self._build_library_skill_tool_catalog()
-        self._library_skill_tool_filter = ""
-        self._library_skill_tool_captured = ()
-        self._library_skill_tool_picker_changed = False
-        self._library_skill_more_actions_open = False
-        self._library_skill_trust_details_open = False
-        self._library_skill_mutation_in_flight = False
-        self._library_skill_confirming_delete = False
-        self._library_skill_scroll_pending = False
-        self._library_skill_editor_armed = False
+        return self._skills_controller._enter_library_skill_create_editor()
 
     def _reset_library_skill_editor_state(self) -> None:
         """Clear all in-canvas Library skill editor/save/trust state.
@@ -26852,395 +26567,74 @@ class LibraryScreen(BaseAppScreen):
         so every exit from the editor leaves save/conflict/trust-review
         tracking clean for the next skill.
         """
-        self._library_skills_view = "list"
-        self._library_skill_reader_mode = "overview"
+        self._skills_state.view = "list"
+        self._skills_state.reader_mode = "overview"
         self._invalidate_library_skill_detail_generation()
-        self._library_skill_detail = None
-        self._library_skill_original_name = ""
-        self._library_skill_editor_state = None
-        self._library_skill_dirty = False
-        self._library_skill_status = ""
-        self._library_skill_conflict = False
-        self._library_skill_active_review = None
-        self._library_skill_script_grant = False
-        self._library_skill_tool_filter = ""
-        self._library_skill_tool_captured = ()
-        self._library_skill_tool_picker_changed = False
-        self._library_skill_more_actions_open = False
-        self._library_skill_trust_details_open = False
-        self._library_skill_mutation_in_flight = False
-        self._library_skill_confirming_delete = False
-        self._library_skill_trust_confirming_reset = False
-        self._library_skill_scroll_pending = False
-        self._library_skill_editor_armed = False
+        self._skills_state.detail = None
+        self._skills_state.original_name = ""
+        self._skills_state.editor_state = None
+        self._skills_state.dirty = False
+        self._skills_state.status = ""
+        self._skills_state.conflict = False
+        self._skills_state.active_review = None
+        self._skills_state.script_grant = False
+        self._skills_state.tool_filter = ""
+        self._skills_state.tool_captured = ()
+        self._skills_state.tool_picker_changed = False
+        self._skills_state.more_actions_open = False
+        self._skills_state.trust_details_open = False
+        self._skills_state.mutation_in_flight = False
+        self._skills_state.confirming_delete = False
+        self._skills_state.trust_confirming_reset = False
+        self._skills_state.scroll_pending = False
+        self._skills_state.editor_armed = False
 
     def _consume_library_skill_scroll_pending(self) -> bool:
-        """One-shot read of the create-save scroll-back flag (task-417).
-
-        Returns:
-            ``True`` exactly once per arm -- the first recompose after a
-            create-save scrolls the action row into view, later ones don't.
-        """
-        pending = self._library_skill_scroll_pending
-        self._library_skill_scroll_pending = False
-        return pending
-
-    def _library_skill_text_fields_match_state(self) -> bool:
-        """True when every live text field equals the editor state's value.
-
-        task-417: a recompose (e.g. the post-create snapshot refresh)
-        remounts the editor's Inputs/TextArea, whose spurious mount-time
-        ``Changed`` events can arrive AFTER any ``call_after_refresh``
-        re-arm -- the armed-flag dance alone cannot win that race. A mount
-        echo always carries the state's own values, so value equality is
-        the reliable spurious-vs-real discriminator.
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return False
-        fields = self._read_library_skill_editor_fields()
-        if fields is None:
-            return False
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-        return (
-            raw_name == (state.name or "")
-            and raw_description == (state.description or "")
-            and raw_argument_hint == (state.argument_hint or "")
-            and raw_allowed_tools_csv == (state.allowed_tools_csv or "")
-            and raw_model == (state.model or "")
-            and raw_body == (state.body or "")
-        )
+        return self._skills_controller._consume_library_skill_scroll_pending()
 
     def _library_skill_on_disk_path(self) -> str:
-        """The selected skill's on-disk directory, for remediation copy.
-
-        Empty when the service or selection is unavailable (the copy
-        helper falls back to generic wording).
-        """
-        service = getattr(self.app_instance, "local_skills_service", None)
-        skills_dir = getattr(service, "skills_dir", None)
-        name = self._selected_skill_name
-        if skills_dir is None or not name:
-            return ""
-        try:
-            return str(Path(skills_dir) / name)
-        except Exception:
-            return ""
-
-    def _mark_library_skill_dirty(self, *, force: bool = False) -> None:
-        """Record an in-progress skill edit.
-
-        Ignored until ``_library_skill_editor_armed`` is set (see that
-        flag's docstring), and -- unless ``force`` -- ignored when the live
-        text fields still equal the editor state (a mount-time ``Changed``
-        echo, task-417). The toggle/cycle buttons mutate the state BEFORE
-        marking, so they pass ``force=True``. Unlike the notes editor,
-        this never arms an autosave timer -- the skill editor is
-        explicit-Save-only.
-        """
-        if not self._library_skill_editor_armed:
-            return
-        if not force and self._library_skill_text_fields_match_state():
-            return
-        self._library_skill_dirty = True
-        # task-449: dirty-marking never recomposes, so the Discard button's
-        # initial disabled render is patched live here.
-        self._set_library_skill_discard_enabled(True)
-        # task-417: a lingering "Saved." is stale the moment new edits
-        # exist -- clear it alongside the dirty mark.
-        if self._library_skill_status:
-            self._update_library_skill_status_static("")
-
-    def _read_library_skill_live_name(self) -> str:
-        """Read the Name Input's current (possibly unsaved) value.
-
-        Falls back to the editor state's own name when the Input isn't
-        mounted (e.g. the conflict banner, which doesn't render the field
-        Inputs).
-        """
-        try:
-            return self.query_one("#library-skill-name", Input).value
-        except (NoMatches, QueryError):
-            state = self._library_skill_editor_state
-            return state.name if state is not None else ""
+        return self._skills_controller._library_skill_on_disk_path()
 
     def _update_library_skill_warnings_static(self, *, name: str | None = None) -> None:
-        """Targeted update of ``#library-skill-warnings``, no recompose.
-
-        Args:
-            name: The live Name field value to compute the shadow warning
-                against. Defaults to the current editor state's name (used
-                right after a trust action, where the Name field itself
-                hasn't changed).
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        if name is None:
-            name = state.name
-        try:
-            warnings_static = self.query_one("#library-skill-warnings", Static)
-        except (NoMatches, QueryError):
-            return
-        lines = skill_editor_warning_lines(
-            live_name=name,
-            trust_status=state.trust_status,
-            trust_blocked=state.trust_blocked,
-        )
-        warnings_static.update("\n".join(lines))
+        return self._skills_controller._update_library_skill_warnings_static(name=name)
 
     def _update_library_skill_status_static(self, text: str) -> None:
-        """Targeted update of ``#library-skill-save-status``, no recompose.
-
-        Args:
-            text: The status copy to show (``""`` clears it).
-        """
-        self._library_skill_status = text
-        try:
-            status_static = self.query_one("#library-skill-save-status", Static)
-        except (NoMatches, QueryError):
-            return
-        status_static.update(text)
+        return self._skills_controller._update_library_skill_status_static(text)
 
     def _render_library_skill_trust_panel(self) -> None:
-        """Targeted update of the trust panel's state/changed-files/buttons,
-        no recompose -- called after every trust action and after a
-        successful Save, so an in-progress (unsaved) edit elsewhere in the
-        editor is never discarded by a full rebuild.
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        try:
-            self.query_one("#library-skill-trust-state", Static).update(
-                skill_trust_state_line(state.trust_status, state.trust_changed_files)
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one("#library-skill-trust-remediation", Static).update(
-                skill_trust_panel_remediation_copy(
-                    state.trust_status, self._library_skill_on_disk_path()
-                )
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one("#library-skill-trust-review-identity", Static).update(
-                skill_review_identity_line(self._library_skill_active_review)
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one("#library-skill-trust-review-files", Static).update(
-                ", ".join(
-                    str(item)
-                    for item in (
-                        (self._library_skill_active_review or {}).get("changed_files")
-                        or []
-                    )
-                )
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one("#library-skill-trust-review-content", Static).update(
-                skill_trust_review_preview(self._library_skill_active_review)
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            unlock_button = self.query_one("#library-skill-trust-unlock", Button)
-            unlock_button.disabled = not skill_trust_unlock_enabled(state.trust_status)
-            # F-018: reason/action tooltips flip in place with `disabled`.
-            unlock_button.tooltip = skill_trust_unlock_tooltip(state.trust_status)
-        except (NoMatches, QueryError):
-            pass
-        try:
-            review_button = self.query_one("#library-skill-trust-review", Button)
-            review_button.disabled = not skill_trust_review_enabled(
-                state.trust_status, state.trust_blocked
-            )
-            review_button.tooltip = skill_trust_review_tooltip(
-                state.trust_status, state.trust_blocked
-            )
-        except (NoMatches, QueryError):
-            pass
-        try:
-            approve_button = self.query_one("#library-skill-trust-approve", Button)
-            approve_button.disabled = self._library_skill_active_review is None
-            approve_button.tooltip = skill_trust_approve_tooltip(
-                self._library_skill_active_review is not None
-            )
-        except (NoMatches, QueryError):
-            pass
-        # Task 7 (skills-script-execution): reads the CACHED grant
-        # (``_library_skill_script_grant``), never the trust service
-        # directly -- ``script_execution_granted`` re-scans the skill's
-        # on-disk directory to verify its fingerprint, which is blocking
-        # file I/O this method (called from synchronous event handlers) must
-        # not perform. ``_refresh_library_skill_script_grant`` is what keeps
-        # the cache current, off-thread.
-        try:
-            self.query_one("#library-skill-script-grant", Static).update(
-                skill_script_grant_line(self._library_skill_script_grant)
-            )
-            self.query_one(
-                "#library-skill-script-grant-revoke", Button
-            ).disabled = not self._library_skill_script_grant
-        except (NoMatches, QueryError):
-            pass
+        return self._skills_controller._render_library_skill_trust_panel()
 
     @on(Input.Changed, "#library-skill-name")
     def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
-        """Mark the open skill dirty on a Name edit, and live-refresh the
-        shadow-name warning (unconditionally, not gated by "armed" -- the
-        warning is a plain live read, not a dirty-tracking concern).
-
-        Args:
-            event: Input change event emitted by the editor's Name field.
-        """
-        self._mark_library_skill_dirty()
-        self._update_library_skill_warnings_static(name=event.value)
+        return self._skills_controller.handle_library_skill_name_changed(event)
 
     @on(Input.Changed, "#library-skill-argument-hint")
     @on(Input.Changed, "#library-skill-allowed-tools")
     def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
-        """Mark the open skill dirty on a field edit.
-
-        Args:
-            event: Input change event emitted by one of the editor's
-                single-line fields.
-        """
-        self._mark_library_skill_dirty()
+        return self._skills_controller.handle_library_skill_input_changed(event)
 
     @on(Input.Changed, "#library-skill-description")
     def handle_library_skill_description_changed(self, event: Input.Changed) -> None:
-        """Mark dirty on a Description edit and sync the derived-hint (review
-        finding).
-
-        The "No description set" hint (rendered only when the skill's
-        description was auto-derived from its body) is compose-time-only, so
-        without this it would linger beneath a now-populated field. It is
-        meaningful only while the field is still empty.
-
-        Args:
-            event: Input change event emitted by the Description field.
-        """
-        self._mark_library_skill_dirty()
-        self._sync_library_skill_description_hint(event.value)
-
-    def _sync_library_skill_description_hint(self, live_value: str) -> None:
-        """Show the derived-description hint only while the field is empty."""
-        state = self._library_skill_editor_state
-        should_show = bool(
-            state is not None and state.description_derived and not live_value.strip()
-        )
-        for hint in self.query("#library-skill-description-hint"):
-            if isinstance(hint, Static):
-                hint.display = should_show
+        return self._skills_controller.handle_library_skill_description_changed(event)
 
     @on(TextArea.Changed, "#library-skill-body")
     def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
-        """Mark the open skill dirty on a Body edit.
-
-        Args:
-            event: Text change event emitted by the editor's Body TextArea.
-        """
-        self._mark_library_skill_dirty()
-
-    def _update_library_skill_toggle_buttons(self) -> None:
-        """Targeted label update for the user-invocable/disable-model/context
-        toggle Buttons, no recompose."""
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        try:
-            self.query_one(
-                "#library-skill-user-invocable", Button
-            ).label = skill_user_invocable_label(state.user_invocable)
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one("#library-skill-invocation-copy", Static).update(
-                skill_invocation_copy(
-                    state.user_invocable, state.disable_model_invocation
-                )
-            )
-            self.query_one("#library-skill-argument-fields").display = bool(
-                self._library_skill_editor_mode == "advanced" or state.user_invocable
-            )
-        except (NoMatches, QueryError):
-            pass
+        return self._skills_controller.handle_library_skill_body_changed(event)
 
     @on(Button.Pressed, "#library-skill-editor-mode")
     async def handle_library_skill_editor_mode(self, event: Button.Pressed) -> None:
-        """Switch mounted Skill presentations and remember the display choice."""
-        event.stop()
-        self._snapshot_library_skill_live_fields()
-        requested = (
-            "basic" if self._library_skill_editor_mode == "advanced" else "advanced"
-        )
-        try:
-            canvas = self.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
-        except NoMatches:
-            return
-        await canvas.set_editor_mode(requested)
-        self._library_skill_editor_mode = requested
-        library_config = self.app_instance.app_config.setdefault("library", {})
-        if isinstance(library_config, dict):
-            library_config["skill_editor_mode"] = requested
-        self.run_worker(
-            self._persist_library_skill_editor_mode(requested),
-            group="library_skill_editor_mode",
-            exclusive=True,
-        )
+        return await self._skills_controller.handle_library_skill_editor_mode(event)
 
     @on(Button.Pressed, "#library-skill-mode-overview")
     @on(Button.Pressed, "#library-skill-mode-edit")
     @on(Button.Pressed, "#library-skill-mode-trust")
     @on(Button.Pressed, "#library-skill-mode-files")
     def handle_library_skill_reader_mode(self, event: Button.Pressed) -> None:
-        """Switch the selected Skill's explicit work-pane projection."""
-        event.stop()
-        requested = coerce_skill_reader_mode(event.button.id.rsplit("-", 1)[-1])
-        if not self._selected_skill_name and requested != "edit":
-            return
-        if self._library_skill_reader_mode == "edit":
-            self._snapshot_library_skill_live_fields()
-        if requested == self._library_skill_reader_mode:
-            return
-        self._library_skill_reader_mode = requested
-        _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skill_reader_mode(event)
 
     @on(Button.Pressed, "#library-skill-detail-retry")
     def handle_library_skill_detail_retry(self, event: Button.Pressed) -> None:
-        """Retry only the still-selected Skill detail with a fresh fence."""
-        event.stop()
-        name = self._selected_skill_name
-        if (
-            not name
-            or self._library_skill_mutation_in_flight
-            or not self._library_skill_detail_retryable
-        ):
-            return
-        generation = self._claim_library_skill_detail_generation()
-        self.run_worker(
-            self._refresh_library_skill_detail(
-                name,
-                request_generation=generation,
-            ),
-            exclusive=True,
-            group="library_skill_detail",
-        )
-        _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skill_detail_retry(event)
 
     async def _persist_library_skill_editor_mode(self, mode: str) -> None:
         """Persist one admitted Skill display mode without blocking Textual."""
@@ -27261,151 +26655,34 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-skill-tool-filter")
     def handle_library_skill_tool_filter(self, event: Input.Changed) -> None:
-        """Filter picker rows without changing the Skill's allowlist content."""
-        self._library_skill_tool_filter = event.value
-        try:
-            self.query_one(
-                "#library-skill-work-pane", LibrarySkillWorkPane
-            ).set_tool_filter(event.value)
-        except (NoMatches, QueryError):
-            return
+        return self._skills_controller.handle_library_skill_tool_filter(event)
 
     @on(SelectionList.SelectedChanged, "#library-skill-tool-picker")
-    def handle_library_skill_tool_selection(
-        self, event: SelectionList.SelectedChanged
-    ) -> None:
-        """Apply only a user-driven tool restriction edit to the canonical draft."""
-        try:
-            canvas = self.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
-        except (NoMatches, QueryError):
-            return
-        if canvas.rebuilding_tool_picker or not self._library_skill_editor_armed:
-            return
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        visible = {selection.value for selection in event.selection_list.options}
-        selected = set(skill_allowed_tools_sequence(state.allowed_tools_csv))
-        selected.difference_update(visible)
-        selected.update(str(value) for value in event.selection_list.selected)
-        current_selected = set(skill_allowed_tools_sequence(state.allowed_tools_csv))
-        if selected == current_selected:
-            return
-        reconciled = reconcile_skill_allowed_tools(
-            self._library_skill_tool_captured,
-            selected=tuple(selected),
-            catalog_order=self._library_skill_tool_catalog,
-            picker_changed=True,
-        )
-        self._library_skill_tool_picker_changed = True
-        self._library_skill_editor_state = dataclasses.replace(
-            state, allowed_tools_csv=", ".join(reconciled)
-        )
-        self._mark_library_skill_dirty(force=True)
-        try:
-            self.query_one(
-                "#library-skill-disable-model", Button
-            ).label = skill_disable_model_label(state.disable_model_invocation)
-        except (NoMatches, QueryError):
-            pass
-        try:
-            self.query_one(
-                "#library-skill-context", Button
-            ).label = skill_context_toggle_label(state.context)
-        except (NoMatches, QueryError):
-            pass
+    def handle_library_skill_tool_selection(self, event: SelectionList.SelectedChanged) -> None:
+        return self._skills_controller.handle_library_skill_tool_selection(event)
 
     @on(Button.Pressed, "#library-skill-user-invocable")
     def handle_library_skill_user_invocable_toggle(self, event: Button.Pressed) -> None:
-        """Toggle the open skill's ``user_invocable`` flag.
-
-        Args:
-            event: Button press event emitted by the user-invocable toggle.
-        """
-        event.stop()
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        self._library_skill_editor_state = dataclasses.replace(
-            state, user_invocable=not state.user_invocable
-        )
-        self._mark_library_skill_dirty(force=True)
-        self._update_library_skill_toggle_buttons()
+        return self._skills_controller.handle_library_skill_user_invocable_toggle(event)
 
     @on(Button.Pressed, "#library-skill-disable-model")
     def handle_library_skill_disable_model_toggle(self, event: Button.Pressed) -> None:
-        """Toggle the open skill's ``disable_model_invocation`` flag.
-
-        Args:
-            event: Button press event emitted by the disable-model toggle.
-        """
-        event.stop()
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        self._library_skill_editor_state = dataclasses.replace(
-            state, disable_model_invocation=not state.disable_model_invocation
-        )
-        self._mark_library_skill_dirty(force=True)
-        self._update_library_skill_toggle_buttons()
+        return self._skills_controller.handle_library_skill_disable_model_toggle(event)
 
     @on(Button.Pressed, "#library-skill-context")
     def handle_library_skill_context_toggle(self, event: Button.Pressed) -> None:
-        """Cycle the open skill's ``context`` field between ``inline``/``fork``.
-
-        Args:
-            event: Button press event emitted by the context cycler.
-        """
-        event.stop()
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        self._library_skill_editor_state = dataclasses.replace(
-            state, context=next_skill_context(state.context)
-        )
-        self._mark_library_skill_dirty(force=True)
-        self._update_library_skill_toggle_buttons()
-
-    def _read_library_skill_editor_fields(
-        self,
-    ) -> tuple[str, str, str, str, str, str] | None:
-        """Read the skill editor's current (possibly unsaved) field values.
-
-        Returns:
-            ``(name, description, argument_hint, allowed_tools_csv, model,
-            body)`` read from the live widgets, or ``None`` if the editor
-            isn't mounted.
-        """
-        try:
-            name = self.query_one("#library-skill-name", Input).value
-            description = self.query_one("#library-skill-description", Input).value
-            argument_hint = self.query_one("#library-skill-argument-hint", Input).value
-            body = self.query_one("#library-skill-body", TextArea).text
-        except (NoMatches, QueryError):
-            return None
-        state = self._library_skill_editor_state
-        if state is None:
-            return None
-        allowed_tools_csv = state.allowed_tools_csv
-        model = state.model or ""
-        return name, description, argument_hint, allowed_tools_csv, model, body
+        return self._skills_controller.handle_library_skill_context_toggle(event)
 
     @on(Button.Pressed, "#library-skill-save")
     def handle_library_skill_save(self, event: Button.Pressed) -> None:
-        """Explicitly save the open skill (there is no autosave).
-
-        Args:
-            event: Button press event emitted by the editor's "Save" action.
-        """
-        event.stop()
-        self._begin_library_skill_save()
+        return self._skills_controller.handle_library_skill_save(event)
 
     def _begin_library_skill_save(self) -> bool:
         """Admit one save and expose its shared lifecycle interlock."""
         if not self._library_skill_save_available():
             return False
         self._snapshot_library_skill_live_fields()
-        self._library_skill_mutation_in_flight = True
+        self._skills_state.mutation_in_flight = True
         self._sync_library_skill_lifecycle_actions()
         self.run_worker(
             self._run_library_skill_save(),
@@ -27415,346 +26692,49 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     async def _run_library_skill_save(self) -> None:
-        """Hold the shared editor interlock for one durable Skill save."""
-        try:
-            await self._save_library_skill()
-        finally:
-            self._library_skill_mutation_in_flight = False
-            if self.is_mounted:
-                self._sync_library_skill_lifecycle_actions()
+        return await self._skills_controller._run_library_skill_save()
 
     async def _save_library_skill(self) -> None:
-        """Save the open Library skill's current editor text.
+        return await self._skills_controller._save_library_skill()
 
-        Unlike the prompts editor (whose ``update_prompt_by_id`` has no
-        caller-supplied expected-version parameter, forcing a manual
-        pre-read staleness check), ``LocalSkillsService.update_skill``
-        accepts ``expected_version`` directly and raises
-        ``local_skill_version_conflict:...`` itself on a real mismatch --
-        so this never needs its own pre-read; ``classify_skill_save_error``
-        classifies whatever the real write call raises/returns.
-
-        The create/update response mapping is already a full skill detail
-        (``LocalSkillsService._response_for_record``'s shape, same as
-        ``get_skill``'s), so a successful save's "refresh snapshot" is just
-        rebuilding the editor state from THIS call's own result -- no
-        second service round-trip needed. This is also how the
-        save-marks-needs-review re-quarantine becomes visible without any
-        special-casing: the write never passes ``trust_approved=True``, so
-        a currently-trusted skill's post-save ``trust_status`` in the
-        response is already ``quarantined_modified``.
-        """
-        if self._library_skills_view != "editor":
-            return
-        name = self._selected_skill_name
-        is_create = not name
-        base_state = self._library_skill_editor_state
-        if base_state is None:
-            return
-        fields = self._read_library_skill_editor_fields()
-        if fields is None:
-            return
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-
-        live_name = self._sanitize_media_field(raw_name, max_length=64)
-        description = self._sanitize_note_content(
-            raw_description, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
-        )
-        argument_hint = self._sanitize_media_field(raw_argument_hint, max_length=500)
-        allowed_tools_csv = self._sanitize_note_content(
-            raw_allowed_tools_csv, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
-        )
-        model = self._sanitize_media_field(raw_model, max_length=128)
-        body = self._sanitize_note_content(
-            raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
-        )
-
-        if is_create:
-            editor_name = live_name or base_state.name
-        else:
-            # Renaming an existing skill isn't supported -- the service has
-            # no rename primitive, and ``update_skill`` writes under the
-            # ORIGINAL directory name regardless of what the frontmatter's
-            # ``name`` field says. The Name Input is disabled for existing
-            # skills (see ``LibrarySkillsListCanvas._compose_editor``), but
-            # this pins the persisted name defensively too: even if the
-            # live value somehow diverged, the frontmatter written to disk
-            # never does, so a save can never get marked
-            # ``validation_status: "invalid"`` (name != parent directory
-            # name) the way it silently did before this fix.
-            editor_name = base_state.name
-
-        write_state = dataclasses.replace(
-            base_state,
-            name=editor_name,
-            description=description,
-            argument_hint=argument_hint or None,
-            allowed_tools_csv=allowed_tools_csv,
-            model=model or None,
-        )
-        content = compose_skill_markdown(write_state, body=body)
-
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        create_skill = getattr(service, "create_skill", None)
-        update_skill = getattr(service, "update_skill", None)
-
-        result: Any = None
-        exc: Exception | None = None
-        if is_create:
-            if not callable(create_skill):
-                return
-            try:
-                result = await self._run_library_service_call(
-                    create_skill,
-                    mode="local",
-                    name=write_state.name,
-                    content=content,
-                    isolate_in_worker=True,
-                )
-            except Exception as caught:
-                exc = caught
-        else:
-            if not callable(update_skill):
-                return
-            try:
-                result = await self._run_library_service_call(
-                    update_skill,
-                    name,
-                    mode="local",
-                    content=content,
-                    expected_version=base_state.version,
-                    isolate_in_worker=True,
-                )
-            except Exception as caught:
-                exc = caught
-
-        # Discard out-of-order results, same stale-race guard as
-        # ``_refresh_library_skill_detail``/``_save_library_prompt``'s
-        # equivalent ``prompt_id != self._selected_prompt_id`` check --
-        # applied uniformly for creates too (``name`` was already ``""``
-        # at capture time when ``is_create``, so this still lets a
-        # still-in-flight create through as long as nothing else got
-        # selected meanwhile, but bails if a DIFFERENT skill's editor
-        # opened while this create was in flight).
-        if name != self._selected_skill_name or self._library_skills_view != "editor":
-            return
-
-        if exc is not None:
-            logger.opt(exception=True).warning(
-                f"Library skill save failed for {name!r}."
-            )
-            outcome = classify_skill_save_error(None, str(exc), exc)
-        else:
-            outcome = classify_skill_save_error(result, "", None)
-
-        if outcome == "version-conflict":
-            self._enter_library_skill_conflict()
-            return
-        if outcome != "ok":
-            self._update_library_skill_status_static(
-                LIBRARY_SKILL_SAVE_STATUS_COPY.get(
-                    outcome, LIBRARY_SKILL_SAVE_STATUS_COPY["error"]
-                )
-            )
-            return
-
-        self._apply_library_skill_save_success(result, is_create=is_create)
-
-    def _apply_library_skill_save_success(
-        self, result: Any, *, is_create: bool
-    ) -> None:
-        """Apply a successful save's response: rebuild state, clear dirty,
-        show "Saved.", and refresh the trust panel + warnings in place.
-
-        Args:
-            result: The create/update call's response mapping (a full
-                skill detail).
-            is_create: Whether this save created a brand-new skill (adopts
-                the new name as ``_selected_skill_name`` and kicks a
-                snapshot refresh so the rail badge/list pick up the new
-                row).
-        """
-        if not isinstance(result, Mapping):
-            self._update_library_skill_status_static(
-                LIBRARY_SKILL_SAVE_STATUS_COPY["error"]
-            )
-            return
-        # Deliberately NOT ``_apply_library_skill_detail`` (which recomposes
-        # + re-arms): recomposing here would remount fresh Input/TextArea
-        # widgets while the editor is still armed, and Textual's spurious
-        # mount-time ``Changed`` event for a non-empty initial value would
-        # immediately re-mark the just-saved skill dirty -- same discipline
-        # ``_save_library_prompt``'s success tail documents.
-        self._library_skill_detail = dict(result)
-        self._library_skill_editor_state = build_skill_editor_state(
-            self._library_skill_detail
-        )
-        self._library_skill_tool_captured = skill_allowed_tools_sequence(
-            self._library_skill_editor_state.allowed_tools_csv
-        )
-        self._library_skill_tool_picker_changed = False
-        self._library_skill_original_name = self._library_skill_editor_state.name
-        self._library_skill_dirty = False
-        # A content save changes the exact files/fingerprint that any prior
-        # trust receipt identified. Never leave that receipt approvable.
-        self._library_skill_active_review = None
-        self._refresh_library_skills_after_committed_mutation()
-        # task-449: this success tail deliberately never recomposes, so the
-        # Discard button is re-disabled in place alongside the dirty clear.
-        self._set_library_skill_discard_enabled(False)
-        if is_create:
-            self._selected_skill_name = self._library_skill_editor_state.name
-            # task-417: the snapshot refresh below lands a recompose that
-            # would reset the canvas scroll to the top, away from the Save
-            # button the user just pressed -- arm the one-shot scroll-back.
-            self._library_skill_scroll_pending = True
-            # A brand-new skill changes the list's membership/count, so the
-            # Skills rail badge and list must pick up the new row now --
-            # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
-            # post-create refresh.
-            self._refresh_local_source_snapshot()
-        self._update_library_skill_status_static(
-            (
-                "Saved. Review trust before using this Skill with the agent."
-                if is_create
-                else LIBRARY_SKILL_SAVE_STATUS_COPY["ok"]
-            )
-        )
-        self._update_library_skill_warnings_static(
-            name=self._read_library_skill_live_name()
-        )
-        self._render_library_skill_trust_panel()
-        if is_create and self.is_mounted:
-            # The first durable save changes the editor's structural truth:
-            # it gains a real trust panel and saved-clean lifecycle. Replace
-            # the canvas once at that commit point, never for display-mode or
-            # ordinary lifecycle changes.
-            self._library_skill_editor_armed = False
-            _sync_library_canvas(
-                self,
-                "skills",
-                then=self._arm_library_skill_editor,
-            )
-        # Task 7: saved content changes the skill's fingerprint, which
-        # invalidates any prior standing script grant -- re-check off-thread
-        # rather than let a just-invalidated grant keep showing as active.
-        self._refresh_library_skill_script_grant()
+    def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
+        return self._skills_controller._apply_library_skill_save_success(result, is_create=is_create)
 
     def _enter_library_skill_conflict(self) -> None:
-        """Recompose into the save-conflict banner (Reload only -- see the
-        brief's narrower scope vs. the prompts editor's Overwrite+Reload;
-        ``update_skill``'s own ``expected_version`` guard is what raised
-        this, so nothing here needs to preserve/replay the user's kept
-        text the way the prompts conflict path does).
-        """
-        self._library_skill_conflict = True
-        self._library_skill_status = ""
-        if self.is_mounted:
-            self._sync_library_skill_lifecycle_actions()
+        return self._skills_controller._enter_library_skill_conflict()
 
     @on(Button.Pressed, "#library-skill-conflict-reload")
     def handle_library_skill_conflict_reload(self, event: Button.Pressed) -> None:
-        """Discard the conflicting edit and refetch the skill's fresh detail.
-
-        Args:
-            event: Button press event emitted by the conflict banner's
-                "Reload" action.
-        """
-        event.stop()
-        name = self._selected_skill_name
-        if not name:
-            return
-        self._library_skill_conflict = False
-        self.run_worker(
-            self._refresh_library_skill_detail(name),
-            exclusive=True,
-            group="library_skill_detail",
-        )
+        return self._skills_controller.handle_library_skill_conflict_reload(event)
 
     async def _flush_library_skill_save(self) -> bool:
-        """Veto leaving the skill editor while an edit is unsaved.
-
-        Mirrors ``_flush_library_prompt_save`` exactly: the skill editor is
-        explicit-Save-only, so this simply reports whether it is safe to
-        proceed -- ``False`` whenever ``_library_skill_dirty`` is set.
-
-        Returns:
-            ``True`` when there is nothing unsaved (safe to proceed);
-            ``False`` when a dirty edit must be resolved first.
-        """
-        return not self._library_skill_dirty
+        return await self._skills_controller._flush_library_skill_save()
 
     def _notify_skill_dirty_veto(self) -> None:
-        """Tell the user WHY a skill-editor exit was just vetoed (task-449).
-
-        Every ``_flush_library_skill_save`` veto site calls this so a
-        blocked Back / skill-row / rail-row click never reads as a dead
-        button. Warning severity matches the trust-action toasts.
-        """
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(LIBRARY_SKILL_DIRTY_VETO_COPY, severity="warning")
+        return self._skills_controller._notify_skill_dirty_veto()
 
     def _set_library_skill_discard_enabled(self, enabled: bool) -> None:
-        """Patch the Discard button's disabled state in place (task-449).
-
-        Dirty-marking and the save-success tail both deliberately avoid a
-        recompose (see ``_apply_library_skill_save_success``), so the
-        Discard button's initial ``disabled=not dirty`` render must be
-        kept current by hand at those two transitions.
-        """
-        self._sync_library_skill_lifecycle_actions()
-        for button in self.query("#library-skill-discard"):
-            if isinstance(button, Button):
-                button.disabled = not enabled
-                # F-018: the reason/action tooltip flips in place with
-                # `disabled` (this patcher exists precisely to avoid a
-                # recompose, so the compose-time tooltip would go stale).
-                button.tooltip = (
-                    SKILL_DISCARD_TOOLTIP_DIRTY
-                    if enabled
-                    else SKILL_DISCARD_TOOLTIP_CLEAN
-                )
+        return self._skills_controller._set_library_skill_discard_enabled(enabled)
 
     def _sync_library_skill_lifecycle_actions(self) -> bool:
-        """Patch the mounted Skill action strip from screen-owned state."""
-        try:
-            canvas = self.query_one("#library-skill-work-pane", LibrarySkillWorkPane)
-            canvas.sync_lifecycle_actions(
-                dirty=self._library_skill_dirty,
-                conflict=self._library_skill_conflict,
-                confirming_delete=self._library_skill_confirming_delete,
-                mutation_in_flight=self._library_skill_mutation_in_flight,
-                more_actions_open=self._library_skill_more_actions_open,
-                is_create=not self._selected_skill_name,
-            )
-        except (NoMatches, QueryError):
-            return False
-        return True
+        return self._skills_controller._sync_library_skill_lifecycle_actions()
 
     def _library_skill_editor_active(self) -> bool:
         """True while the in-canvas skill editor is the live view (task-424)."""
         return (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL)
-            and self._library_skills_view == "editor"
+            and self._skills_state.view == "editor"
         )
 
     def _library_skill_save_available(self) -> bool:
         """Return whether the lifecycle currently exposes a Skill save."""
         return bool(
             self._library_skill_editor_active()
-            and (self._library_skill_dirty or not self._selected_skill_name)
-            and not self._library_skill_conflict
-            and not self._library_skill_confirming_delete
-            and not self._library_skill_mutation_in_flight
+            and (self._skills_state.dirty or not self._skills_state.selected_skill_name)
+            and not self._skills_state.conflict
+            and not self._skills_state.confirming_delete
+            and not self._skills_state.mutation_in_flight
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -28209,9 +27189,9 @@ class LibraryScreen(BaseAppScreen):
         # not fire an action the visible chrome no longer offers (review
         # finding for the delete-confirm case).
         if (
-            self._library_skill_conflict
-            or self._library_skill_confirming_delete
-            or self._library_skill_mutation_in_flight
+            self._skills_state.conflict
+            or self._skills_state.confirming_delete
+            or self._skills_state.mutation_in_flight
         ):
             return
         self._begin_library_skill_save()
@@ -28220,8 +27200,8 @@ class LibraryScreen(BaseAppScreen):
         """Escape: leave the editor, honoring the unsaved-changes guard (task-424)."""
         if not self._library_skill_editor_active():
             return
-        if self._library_skill_more_actions_open:
-            self._library_skill_more_actions_open = False
+        if self._skills_state.more_actions_open:
+            self._skills_state.more_actions_open = False
             self._sync_library_skill_lifecycle_actions()
             try:
                 self.query_one("#library-skill-more-actions", Button).focus()
@@ -28251,11 +27231,7 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     def _focus_library_skill_name(self) -> None:
-        """Focus the create editor's Name field (task-424)."""
-        try:
-            self.query_one("#library-skill-name", Input).focus()
-        except (NoMatches, QueryError):
-            pass
+        return self._skills_controller._focus_library_skill_name()
 
     def _focus_library_ingest_path(self) -> None:
         """Focus the Ingest canvas's path field (task-3302 AC#1, MI-03).
@@ -28359,72 +27335,23 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:
-        """Return the Library skills canvas from the editor to its list view.
-
-        Vetoed while dirty (see ``_flush_library_skill_save``) so Back
-        never silently discards an unsaved edit.
-
-        Args:
-            event: Button press event emitted by the "‹ Back to list" action.
-        """
-        event.stop()
-        await self._exit_library_skill_editor_guarded()
+        return await self._skills_controller.handle_library_skill_back(event)
 
     @on(Button.Pressed, "#library-skill-cancel")
     def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
-        """Cancel a never-saved Skill draft and return to the list."""
-        event.stop()
-        if self._selected_skill_name or self._library_skill_mutation_in_flight:
-            return
-        self._reset_library_skill_editor_state()
-        self._refresh_local_source_snapshot()
-        _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skill_cancel(event)
 
     @on(Button.Pressed, "#library-skill-more-actions")
     def handle_library_skill_more_actions(self, event: Button.Pressed) -> None:
-        """Reveal saved-clean secondary actions without changing the draft."""
-        event.stop()
-        if self._library_skill_dirty or self._library_skill_mutation_in_flight:
-            return
-        self._snapshot_library_skill_live_fields()
-        self._library_skill_more_actions_open = (
-            not self._library_skill_more_actions_open
-        )
-        self._sync_library_skill_lifecycle_actions()
-        try:
-            self.query_one("#library-skill-more-actions", Button).focus()
-        except (NoMatches, QueryError):
-            pass
+        return self._skills_controller.handle_library_skill_more_actions(event)
 
     @on(Button.Pressed, "#library-skill-trust-view-details")
     def handle_library_skill_trust_view_details(self, event: Button.Pressed) -> None:
-        """Open the healthy trust detail region without changing editor mode."""
-        event.stop()
-        self._snapshot_library_skill_live_fields()
-        self._library_skill_trust_details_open = True
-        _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skill_trust_view_details(event)
 
     @on(Button.Pressed, "#library-skill-discard")
     def handle_library_skill_discard(self, event: Button.Pressed) -> None:
-        """Leave the skill editor WITHOUT saving the dirty edit (task-449).
-
-        The explicit counterpart to the dirty vetoes: Back and every row
-        switch refuse to move while ``_library_skill_dirty`` is set, so
-        this button is the one deliberate way out that drops the edit.
-        Same exit tail as a clean Back (reset + snapshot + recompose); the
-        button renders disabled until the editor is actually dirty, so a
-        stray click on a clean editor can't discard anything.
-
-        Args:
-            event: Button press event emitted by the "Discard changes"
-                action.
-        """
-        event.stop()
-        if not self._library_skill_dirty:
-            return
-        self._reset_library_skill_editor_state()
-        self._refresh_local_source_snapshot()
-        _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skill_discard(event)
 
     @on(Button.Pressed, "#library-skill-delete")
     def handle_library_skill_delete(self, event: Button.Pressed) -> None:
@@ -28440,10 +27367,10 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
-        if self._library_skills_view != "editor" or not self._selected_skill_name:
+        if self._skills_state.view != "editor" or not self._skills_state.selected_skill_name:
             return
         self._snapshot_library_skill_live_fields()
-        self._library_skill_confirming_delete = True
+        self._skills_state.confirming_delete = True
         if self.is_mounted:
             self._sync_library_skill_lifecycle_actions()
             try:
@@ -28452,42 +27379,7 @@ class LibraryScreen(BaseAppScreen):
                 pass
 
     def _snapshot_library_skill_live_fields(self) -> None:
-        """Fold the editor's live (possibly unsaved) field values back into
-        ``_library_skill_editor_state`` so a state-driven recompose renders
-        exactly what the user had typed (task-415's confirm step).
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        fields = self._read_library_skill_editor_fields()
-        if fields is None:
-            return
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-        self._library_skill_editor_state = dataclasses.replace(
-            state,
-            # Rename is unsupported; existing skills keep their name (the
-            # Name Input is disabled there anyway), create mode keeps the
-            # typed name.
-            name=raw_name if not self._selected_skill_name else state.name,
-            description=raw_description,
-            # A typed description is no longer "derived from the body", so a
-            # state-driven recompose must not re-show the "No description
-            # set" hint next to the populated field (review finding). Stays
-            # derived only while the field is still empty.
-            description_derived=state.description_derived
-            and not raw_description.strip(),
-            argument_hint=raw_argument_hint,
-            allowed_tools_csv=raw_allowed_tools_csv,
-            model=raw_model,
-            body=raw_body,
-        )
+        return self._skills_controller._snapshot_library_skill_live_fields()
 
     @on(Button.Pressed, "#library-skill-delete-confirm")
     def handle_library_skill_delete_confirm(self, event: Button.Pressed) -> None:
@@ -28499,39 +27391,24 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         if (
-            self._library_skills_view != "editor"
-            or not self._selected_skill_name
-            or self._library_skill_mutation_in_flight
+            self._skills_state.view != "editor"
+            or not self._skills_state.selected_skill_name
+            or self._skills_state.mutation_in_flight
         ):
             return
-        self._library_skill_mutation_in_flight = True
+        self._skills_state.mutation_in_flight = True
         self._sync_library_skill_lifecycle_actions()
         self.run_worker(
             self._run_library_skill_delete(
-                self._selected_skill_name,
-                self._library_skill_detail_generation,
+                self._skills_state.selected_skill_name,
+                self._skills_state.detail_generation,
             ),
             exclusive=True,
             group="library_skill_delete",
         )
 
-    async def _run_library_skill_delete(
-        self, skill_name: str, request_generation: int
-    ) -> None:
-        """Hold the shared editor interlock for one durable Skill delete."""
-        try:
-            await self._delete_library_skill(
-                skill_name,
-                request_generation=request_generation,
-            )
-        finally:
-            if self._library_skill_detail_request_is_current(
-                skill_name=skill_name,
-                generation=request_generation,
-            ):
-                self._library_skill_mutation_in_flight = False
-                if self.is_mounted:
-                    self._sync_library_skill_lifecycle_actions()
+    async def _run_library_skill_delete(self, skill_name: str, request_generation: int) -> None:
+        return await self._skills_controller._run_library_skill_delete(skill_name, request_generation)
 
     @on(Button.Pressed, "#library-skill-delete-cancel")
     def handle_library_skill_delete_cancel(self, event: Button.Pressed) -> None:
@@ -28544,11 +27421,11 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         # Fields stay editable during the confirmation, so fold any edit
         # typed there back into state before the state-driven recompose --
-        # otherwise the recompose reverts it while _library_skill_dirty
+        # otherwise the recompose reverts it while self._skills_state.dirty
         # stays True, and a later Save would persist the reverted value
         # (review finding). Mirrors the arm path's snapshot.
         self._snapshot_library_skill_live_fields()
-        self._library_skill_confirming_delete = False
+        self._skills_state.confirming_delete = False
         if self.is_mounted:
             self._sync_library_skill_lifecycle_actions()
             try:
@@ -28556,99 +27433,11 @@ class LibraryScreen(BaseAppScreen):
             except (NoMatches, QueryError):
                 pass
 
-    async def _delete_library_skill(
-        self, skill_name: str, *, request_generation: int
-    ) -> None:
-        """Delete the selected Library skill, then return to the list view.
+    async def _delete_library_skill(self, skill_name: str, *, request_generation: int) -> None:
+        return await self._skills_controller._delete_library_skill(skill_name, request_generation=request_generation)
 
-        Args:
-            skill_name: The Library skill name to delete.
-        """
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        delete_skill = getattr(service, "delete_skill", None)
-        if not callable(delete_skill):
-            self._update_library_skill_status_static("Skill deletion is unavailable.")
-            return
-        state = self._library_skill_editor_state
-        version = state.version if state is not None else None
-        try:
-            result = await self._run_library_service_call(
-                delete_skill,
-                skill_name,
-                mode="local",
-                expected_version=version,
-                isolate_in_worker=True,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to delete Library skill {skill_name!r}."
-            )
-            if not self._library_skill_detail_request_is_current(
-                skill_name=skill_name,
-                generation=request_generation,
-            ):
-                return
-            self._update_library_skill_status_static("Could not delete this skill.")
-            return
-
-        if not self._library_skill_detail_request_is_current(
-            skill_name=skill_name,
-            generation=request_generation,
-        ):
-            return
-
-        deleted = (
-            bool(result.get("deleted", True))
-            if isinstance(result, Mapping)
-            else bool(result)
-        )
-        if not deleted:
-            self._update_library_skill_status_static(
-                "This skill changed elsewhere — refresh and try again."
-            )
-            return
-
-        self._reset_library_skill_editor_state()
-        self._library_skills_filter = ""
-        self._refresh_library_skills_after_committed_mutation(
-            scope=dataclasses.replace(
-                self._library_skills_browse_controller.mutation_refresh_scope,
-                query="",
-            )
-        )
-        self._refresh_local_source_snapshot()
-
-    async def _request_library_skill_trust_passphrase(
-        self,
-        *,
-        title: str | None = None,
-        message: str | None = None,
-    ) -> str | None:
-        """Push the shared ``SkillTrustPassphraseModal`` and await a passphrase.
-
-        Mirrors ``skills_screen.SkillsScreen._request_skill_trust_passphrase``
-        (reused, not forked): never bootstraps from this editor, so
-        ``confirm_bootstrap`` is always ``False``. task-418: ``title``/
-        ``message`` let a caller present its real purpose (the approve
-        flow) instead of "Unlock Local Skill Trust".
-        """
-        push_screen_wait = getattr(self.app, "push_screen_wait", None)
-        if not callable(push_screen_wait):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Local skill trust passphrase prompt is unavailable.",
-                    severity="warning",
-                )
-            return None
-        result = await push_screen_wait(
-            SkillTrustPassphraseModal(
-                confirm_bootstrap=False, title=title, message=message
-            )
-        )
-        if isinstance(result, str) and result:
-            return result
-        return None
+    async def _request_library_skill_trust_passphrase(self, *, title: str | None = None, message: str | None = None) -> str | None:
+        return await self._skills_controller._request_library_skill_trust_passphrase(title=title, message=message)
 
     async def _call_library_skill_trust_service(
         self,
@@ -28704,150 +27493,13 @@ class LibraryScreen(BaseAppScreen):
         return result, True
 
     async def _refresh_library_skill_trust_status(self) -> None:
-        """Re-fetch the open skill's trust status and patch the trust panel
-        in place (no recompose -- see ``_render_library_skill_trust_panel``).
-        """
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        state = self._library_skill_editor_state
-        if not name or state is None:
-            return
-        result, ok = await self._call_library_skill_trust_service(
-            "status_for_skill", name
-        )
-        if not ok or result is None:
-            return
-        if not self._library_skill_detail_request_is_current(
-            skill_name=name,
-            generation=generation,
-        ):
-            return
-        self._library_skill_editor_state = dataclasses.replace(
-            self._library_skill_editor_state,
-            trust_status=result.trust_status,
-            trust_blocked=result.trust_blocked,
-            trust_changed_files=tuple(result.changed_files),
-        )
-        self._render_library_skill_trust_panel()
-        self._update_library_skill_warnings_static(
-            name=self._read_library_skill_live_name()
-        )
+        return await self._skills_controller._refresh_library_skill_trust_status()
 
     def _refresh_library_skill_script_grant(self) -> None:
-        """Kick an off-thread read of the open skill's script-execution grant.
-
-        Task 7 (skills-script-execution): mirrors
-        ``_refresh_library_skills_trust_posture``'s shape rather than
-        routing through ``_call_library_skill_trust_service`` -- that
-        helper toasts a warning whenever the trust service is unavailable,
-        which is correct for an explicit user action (Unlock/Review/
-        Approve) but would be noisy fired silently on every skill open in
-        a deployment with no local trust service wired (e.g. server mode).
-        ``SkillTrustService.script_execution_granted`` re-scans the skill's
-        on-disk directory to verify its fingerprint, so -- like
-        ``trust_posture()`` -- it is NEVER called on the compose/event-loop
-        thread, only from here via ``asyncio.to_thread`` in
-        ``_load_library_skill_script_grant`` below. Called whenever the
-        skill editor opens on an existing skill
-        (``_apply_library_skill_detail``) and after a Save
-        (``_apply_library_skill_save_success``), since editing content
-        invalidates any prior grant.
-        """
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
-        granted_fn = getattr(trust_service, "script_execution_granted", None)
-        if not name or not callable(granted_fn):
-            self._library_skill_script_grant = False
-            return
-        self.run_worker(
-            self._load_library_skill_script_grant(name, generation, granted_fn),
-            exclusive=True,
-            group="library_skill_script_grant",
-            exit_on_error=False,
-        )
-
-    async def _load_library_skill_script_grant(
-        self,
-        name: str,
-        generation: int,
-        granted_fn,
-    ) -> None:
-        """Await the off-thread grant lookup and patch the trust panel.
-
-        Args:
-            name: The skill name captured at kick-off time (by
-                ``_refresh_library_skill_script_grant``), used to discard an
-                out-of-order result if a different skill is open by the
-                time this resolves.
-            generation: The retained Work session captured at kick-off time.
-            granted_fn: The trust service's bound
-                ``script_execution_granted`` method (captured at kick-off
-                so this never re-reads ``local_skill_trust_service``
-                itself).
-        """
-        try:
-            granted = await asyncio.to_thread(granted_fn, name)
-        except Exception:
-            granted = False
-        if not self._library_skill_detail_request_is_current(
-            skill_name=name,
-            generation=generation,
-        ):
-            return
-        self._library_skill_script_grant = bool(granted)
-
-        # task-8 (skills-script-execution) fix: NOT a direct call. This
-        # coroutine's own ``asyncio.to_thread`` round trip can resolve
-        # before ``_apply_library_skill_detail``'s own ``refresh(recompose=
-        # True)`` (posted moments earlier, on this same screen's message
-        # queue) has actually remounted the editor -- a real trust service
-        # doing real disk I/O usually loses that race, but there is no
-        # guarantee, and a fast trust service (or a slow recompose under
-        # load) can win it. A direct call here would then query widgets
-        # that do not exist YET, silently no-op through this method's own
-        # ``except (NoMatches, QueryError): pass`` guards, and never retry
-        # -- leaving the panel stuck showing "not granted"/disabled forever
-        # even though ``_library_skill_script_grant`` is correctly True in
-        # memory. ``call_after_refresh`` was the original answer, and
-        # task-15457 quietly invalidated it: the editor recompose it was
-        # ordering against became CANVAS-scoped (`_sync_library_canvas`,
-        # driven by the canvas's own message pump), which a SCREEN-level
-        # ``call_after_refresh`` has no ordering against -- the render fired
-        # before the canvas's children existed, swallowed ``NoMatches``, and
-        # never retried (task-15790, measured: grant stored True, render ran,
-        # button absent). Ride the same canvas post-recompose hook the
-        # caller's arming follow-up already rides; it runs `then` only once
-        # the canvas's new children are actually mounted.
-        def _render_then_arm() -> None:
-            self._render_library_skill_trust_panel()
-            if not self._library_skill_editor_armed:
-                self._arm_library_skill_editor()
-
-        _sync_library_canvas(self, "skills", then=_render_then_arm)
+        return self._skills_controller._refresh_library_skill_script_grant()
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
-        """Push the confirm-passphrase bootstrap modal and await a passphrase.
-
-        Structural twin of ``_request_library_skill_trust_passphrase``: the
-        only difference is which modal it drives -- this one CREATES a
-        brand-new passphrase (twice-entry confirmed by
-        ``SkillTrustBootstrapModal`` itself), the other unlocks an existing
-        one.
-        """
-        push_screen_wait = getattr(self.app, "push_screen_wait", None)
-        if not callable(push_screen_wait):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Local skill trust passphrase prompt is unavailable.",
-                    severity="warning",
-                )
-            return None
-        result = await push_screen_wait(SkillTrustBootstrapModal())
-        if isinstance(result, str) and result:
-            return result
-        return None
+        return await self._skills_controller._request_library_skill_trust_bootstrap_passphrase()
 
     @on(Button.Pressed, "#library-skills-trust-action")
     def handle_library_skills_trust_action(self, event: Button.Pressed) -> None:
@@ -28879,41 +27531,7 @@ class LibraryScreen(BaseAppScreen):
             self._open_first_blocked_skill()
 
     def _begin_library_skill_trust_setup(self) -> None:
-        self.run_worker(
-            self._setup_library_skill_trust(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
-
-    async def _setup_library_skill_trust(self) -> None:
-        """Set up trust from the list header's "setup"/"resetup" action.
-
-        Task 5 ambiguity resolution: "Set up" is reset-then-bootstrap ONLY
-        when a stale manifest already exists (``trust_store.has_manifest()``
-        -- the ``needs_resetup``/orphaned-manifest upgrade case). A truly
-        fresh install (no manifest at all, ``needs_setup``) skips the reset
-        entirely -- there is nothing to clear -- and goes straight to
-        ``bootstrap_trust``, matching the editor's own first-run
-        ``_bootstrap_library_skill_trust`` flow. Both the header's "setup"
-        and "resetup" action ids route here (``handle_library_skills_trust_action``
-        above); the manifest check itself is what decides whether a reset
-        actually happens, not the action id.
-        """
-        service = getattr(self.app_instance, "local_skill_trust_service", None)
-        if service is None:
-            return
-        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
-        if passphrase is None:
-            return
-        if getattr(service, "trust_store", None) and service.trust_store.has_manifest():
-            await self._call_library_skill_trust_service("reset_trust")
-        _, ok = await self._call_library_skill_trust_service(
-            "bootstrap_trust", passphrase
-        )
-        if ok:
-            self._refresh_library_skills_after_committed_mutation()
-            self._refresh_library_skills_trust_posture()
-            self._refresh_local_source_snapshot()
+        return self._skills_controller._begin_library_skill_trust_setup()
 
     @on(Button.Pressed, "#library-skills-trust-reset")
     def handle_library_skills_trust_reset_request(self, event: Button.Pressed) -> None:
@@ -28928,81 +27546,17 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the Reset button.
         """
         event.stop()
-        self._library_skill_trust_confirming_reset = True
+        self._skills_state.trust_confirming_reset = True
         if self.is_mounted:
             _sync_library_canvas(self, "skills")
 
     @on(Button.Pressed, "#library-skills-trust-reset-cancel")
     def handle_library_skills_trust_reset_cancel(self, event: Button.Pressed) -> None:
-        """Back out of the Reset confirm row without resetting anything.
-
-        Args:
-            event: Button press event emitted by the confirm row's Cancel.
-        """
-        event.stop()
-        self._library_skill_trust_confirming_reset = False
-        if self.is_mounted:
-            _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skills_trust_reset_cancel(event)
 
     @on(Button.Pressed, "#library-skills-trust-reset-confirm")
     def handle_library_skills_trust_reset_confirm(self, event: Button.Pressed) -> None:
-        """Run the confirmed destructive Reset (Task 5).
-
-        Args:
-            event: Button press event emitted by the confirm row's Reset.
-        """
-        event.stop()
-        self._library_skill_trust_confirming_reset = False
-        self.run_worker(
-            self._do_library_skill_trust_reset(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
-
-    async def _do_library_skill_trust_reset(self) -> None:
-        """Wipe all local trust state, then refresh whichever view is open.
-
-        Always refreshes the list header's posture (a stale ``locked``/
-        ``needs_resetup`` header must never linger after a successful
-        reset) and the shared local-source snapshot. When the editor's own
-        ``quarantined_manifest_error`` trust panel is what triggered this
-        (rather than the list header), also re-fetches the OPEN skill's own
-        trust status -- mirrors the per-skill re-fetch
-        ``_bootstrap_library_skill_trust`` already does after a bootstrap --
-        so the panel doesn't keep showing "manifest cannot be verified"
-        against a trust store that was just wiped.
-        """
-        _, ok = await self._call_library_skill_trust_service("reset_trust")
-        if not ok:
-            return
-        self._refresh_library_skills_after_committed_mutation()
-        self._refresh_library_skills_trust_posture()
-        self._refresh_local_source_snapshot()
-        name = self._selected_skill_name
-        if (
-            self._library_skills_view == "editor"
-            and name
-            and self._library_skill_editor_state is not None
-        ):
-            result, ok = await self._call_library_skill_trust_service(
-                "status_for_skill", name
-            )
-            if (
-                ok
-                and result is not None
-                and name == self._selected_skill_name
-                and self._library_skills_view == "editor"
-                and self._library_skill_editor_state is not None
-            ):
-                self._library_skill_editor_state = dataclasses.replace(
-                    self._library_skill_editor_state,
-                    trust_status=result.trust_status,
-                    trust_blocked=result.trust_blocked,
-                    trust_changed_files=tuple(result.changed_files),
-                )
-            self._library_skill_active_review = None
-        if self.is_mounted:
-            _sync_library_canvas(self, "skills")
+        return self._skills_controller.handle_library_skills_trust_reset_confirm(event)
 
     def _open_first_blocked_skill(self) -> None:
         """Open the first trust-blocked skill's editor (header "review" action).
@@ -29021,193 +27575,18 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _open_library_skill_editor_for_review(self, skill_name: str) -> None:
-        """Open ``skill_name``'s editor, the same steps a real row press runs.
-
-        Deliberately NOT a refactor of ``handle_library_skill_row`` itself
-        (that handler stays untouched) -- just the same flush-veto, reset,
-        select, switch-to-editor-view, kick-the-off-thread-detail-fetch,
-        recompose sequence, sourced from a name instead of a row Button's
-        ``skill_name`` attribute.
-
-        Args:
-            skill_name: The blocked skill's name to open.
-        """
-        if not await self._flush_library_skill_save():
-            self._notify_skill_dirty_veto()
-            return
-        self._reset_library_skill_editor_state()
-        self._selected_skill_name = skill_name
-        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "trust"
-        self.run_worker(
-            self._refresh_library_skill_detail(skill_name),
-            exclusive=True,
-            group="library_skill_detail",
-        )
-        _sync_library_canvas(self, "skills")
+        return await self._skills_controller._open_library_skill_editor_for_review(skill_name)
 
     @on(Button.Pressed, "#library-skill-trust-setup")
     def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
-        """Bootstrap local skill trust from the editor's first-run setup state.
-
-        Only rendered while ``trust_status == "trust_uninitialized"`` (a
-        brand-new, never-bootstrapped trust store) -- the Phase-1 gate fix
-        for the finding that a fresh install had no live-UI path to create
-        the trust passphrase at all.
-
-        Args:
-            event: Button press event emitted by the trust panel's "Set up
-                skill trust" action.
-        """
-        event.stop()
-        # task-417: any trust action supersedes a lingering "Saved.".
-        self._update_library_skill_status_static("")
-        self.run_worker(
-            self._bootstrap_library_skill_trust(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
-
-    async def _bootstrap_library_skill_trust(self) -> None:
-        """Create the initial trust baseline via a confirm-passphrase modal.
-
-        Unlike every other trust action here, ``bootstrap_trust`` is called
-        directly (never preceded by ``unlock_with_passphrase`` -- it takes
-        the new passphrase itself and derives+stores fresh keys). A full
-        recompose follows a successful bootstrap, not the usual targeted
-        ``_render_library_skill_trust_panel`` patch: the panel's layout
-        itself changes shape here, from the first-run setup state to the
-        normal Unlock/Review/Approve row, which a no-recompose patch can't
-        produce since those buttons don't exist in the DOM yet.
-        """
-        if (
-            self._library_skills_view != "editor"
-            or self._library_skill_editor_state is None
-        ):
-            return
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
-        if passphrase is None:
-            return
-        _, ok = await self._call_library_skill_trust_service(
-            "bootstrap_trust", passphrase
-        )
-        if not ok:
-            return
-        self._refresh_library_skills_after_committed_mutation()
-        if (
-            name
-            and self._library_skill_detail_request_is_current(
-                skill_name=name,
-                generation=generation,
-            )
-            and self._library_skill_editor_state is not None
-        ):
-            result, status_ok = await self._call_library_skill_trust_service(
-                "status_for_skill", name
-            )
-            if (
-                status_ok
-                and result is not None
-                and self._library_skill_detail_request_is_current(
-                    skill_name=name,
-                    generation=generation,
-                )
-            ):
-                self._library_skill_editor_state = dataclasses.replace(
-                    self._library_skill_editor_state,
-                    trust_status=result.trust_status,
-                    trust_blocked=result.trust_blocked,
-                    trust_changed_files=tuple(result.changed_files),
-                )
-        self._refresh_local_source_snapshot()
-        if name and self._library_skill_detail_request_is_current(
-            skill_name=name,
-            generation=generation,
-        ):
-            self._library_skill_active_review = None
-        if (
-            name
-            and self.is_mounted
-            and self._library_skill_detail_request_is_current(
-                skill_name=name,
-                generation=generation,
-            )
-        ):
-            # Disarm dirty-tracking before the recompose (mirrors
-            # ``_apply_library_skill_detail``): remounting the Inputs with
-            # their existing values still fires their initial
-            # ``Input.Changed`` -- without this, still-armed dirty-tracking
-            # would misread that as a real edit and wrongly mark the editor
-            # dirty (vetoing the next Back/row-switch for no reason).
-            self._library_skill_dirty = False
-            self._library_skill_editor_armed = False
-            _sync_library_canvas(
-                self,
-                "skills",
-                then=self._arm_library_skill_editor,
-            )
+        return self._skills_controller.handle_library_skill_trust_setup(event)
 
     @on(Button.Pressed, "#library-skill-trust-unlock")
     def handle_library_skill_trust_unlock(self, event: Button.Pressed) -> None:
-        """Unlock local skill trust for this session via the passphrase modal.
-
-        Args:
-            event: Button press event emitted by the trust panel's "Unlock"
-                action.
-        """
-        event.stop()
-        # task-417: any trust action supersedes a lingering "Saved.".
-        self._update_library_skill_status_static("")
-        self.run_worker(
-            self._unlock_library_skill_trust(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
+        return self._skills_controller.handle_library_skill_trust_unlock(event)
 
     async def _unlock_library_skill_trust(self) -> None:
-        """Unlock local skill trust for this session via the passphrase modal.
-
-        Task 5: reused by BOTH the editor's own "Unlock" trust-panel action
-        AND the list header's "unlock" action (posture ``locked``) -- this
-        originally returned immediately unless already in the editor,
-        which made the header's Unlock a silent no-op (browsing the list
-        is exactly where ``locked`` posture is shown). Editor mode still
-        gets the original no-recompose targeted panel patch
-        (``_refresh_library_skill_trust_status``) so an in-progress unsaved
-        edit elsewhere in the editor is never discarded by a full rebuild;
-        list mode instead refreshes the header's posture AND the shared
-        local-source snapshot -- the list rows' trust glyphs and the
-        header's blocked-count both derive from that snapshot
-        (``_build_library_skills_state``), so refreshing posture alone
-        would leave every row's ``⚠``/``✓`` and the "N need review" count
-        stale until some later snapshot refresh (matches the sibling
-        ``_setup_library_skill_trust``/``_do_library_skill_trust_reset``
-        handlers). The list view has no unsaved-edit state to lose.
-        """
-        editor_name = (
-            self._selected_skill_name if self._library_skills_view == "editor" else None
-        )
-        generation = self._library_skill_detail_generation
-        passphrase = await self._request_library_skill_trust_passphrase()
-        if passphrase is None:
-            return
-        _, ok = await self._call_library_skill_trust_service(
-            "unlock_with_passphrase", passphrase
-        )
-        if not ok:
-            return
-        self._refresh_library_skills_after_committed_mutation()
-        if editor_name and self._library_skill_detail_request_is_current(
-            skill_name=editor_name,
-            generation=generation,
-        ):
-            await self._refresh_library_skill_trust_status()
-        elif editor_name is None and self._library_skills_view != "editor":
-            self._refresh_library_skills_trust_posture()
-            self._refresh_local_source_snapshot()
+        return await self._skills_controller._unlock_library_skill_trust()
 
     @on(Button.Pressed, "#library-skill-trust-review")
     def handle_library_skill_trust_review(self, event: Button.Pressed) -> None:
@@ -29227,49 +27606,21 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _review_library_skill_trust(self) -> None:
-        if self._library_skills_view != "editor" or not self._selected_skill_name:
-            return
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        result, ok = await self._call_library_skill_trust_service(
-            "capture_review", name
-        )
-        if not ok or not isinstance(result, Mapping) or not result.get("review_id"):
-            return
-        if not self._library_skill_detail_request_is_current(
-            skill_name=name,
-            generation=generation,
-        ):
-            return
-        self._library_skill_active_review = dict(result)
-        self._render_library_skill_trust_panel()
+        return await self._skills_controller._review_library_skill_trust()
 
     @on(Button.Pressed, "#library-skill-trust-approve")
     def handle_library_skill_trust_approve(self, event: Button.Pressed) -> None:
-        """Approve the captured trust review via the passphrase modal.
-
-        Args:
-            event: Button press event emitted by the trust panel's
-                "Approve" action.
-        """
-        event.stop()
-        # task-417: any trust action supersedes a lingering "Saved.".
-        self._update_library_skill_status_static("")
-        self.run_worker(
-            self._approve_library_skill_trust(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
+        return self._skills_controller.handle_library_skill_trust_approve(event)
 
     async def _approve_library_skill_trust(self) -> None:
         if (
-            self._library_skills_view != "editor"
-            or self._library_skill_active_review is None
+            self._skills_state.view != "editor"
+            or self._skills_state.active_review is None
         ):
             return
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        review_id = self._library_skill_active_review.get("review_id")
+        name = self._skills_state.selected_skill_name
+        generation = self._skills_state.detail_generation
+        review_id = self._skills_state.active_review.get("review_id")
         if not review_id:
             return
         passphrase = await self._request_library_skill_trust_passphrase(
@@ -29313,7 +27664,7 @@ class LibraryScreen(BaseAppScreen):
                 skill_name=name,
                 generation=generation,
             ):
-                self._library_skill_active_review = None
+                self._skills_state.active_review = None
                 self._render_library_skill_trust_panel()
                 await self._refresh_library_skill_trust_status()
             return
@@ -29323,53 +27674,12 @@ class LibraryScreen(BaseAppScreen):
             generation=generation,
         ):
             return
-        self._library_skill_active_review = None
+        self._skills_state.active_review = None
         await self._refresh_library_skill_trust_status()
 
     @on(Button.Pressed, "#library-skill-script-grant-revoke")
     def handle_library_skill_script_grant_revoke(self, event: Button.Pressed) -> None:
-        """Revoke the open skill's standing script-execution grant.
-
-        Args:
-            event: Button press event emitted by the trust panel's "Revoke
-                script access" action.
-        """
-        event.stop()
-        self.run_worker(
-            self._revoke_library_skill_script_grant(),
-            exclusive=True,
-            group="library_skill_trust",
-        )
-
-    async def _revoke_library_skill_script_grant(self) -> None:
-        """Drop the open skill's standing script grant, then patch the panel.
-
-        Task 7 (skills-script-execution): the counterpart to whatever
-        confirm-card action (Task 6) called ``grant_script_execution`` in
-        the first place -- a grant the user cannot see or withdraw here
-        would be a real hole. ``revoke_script_execution`` raises
-        ``ValueError`` on a malformed skill name, which
-        ``_call_library_skill_trust_service`` already catches and reports
-        via the standard failure toast, so no extra guard is needed here.
-        The outcome is applied directly (no re-fetch) since a successful
-        revoke unambiguously means "not granted".
-        """
-        if self._library_skills_view != "editor" or not self._selected_skill_name:
-            return
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        _, ok = await self._call_library_skill_trust_service(
-            "revoke_script_execution", name
-        )
-        if not ok:
-            return
-        if not self._library_skill_detail_request_is_current(
-            skill_name=name,
-            generation=generation,
-        ):
-            return
-        self._library_skill_script_grant = False
-        self._render_library_skill_trust_panel()
+        return self._skills_controller.handle_library_skill_script_grant_revoke(event)
 
     @on(Button.Pressed, "#library-prompts-import")
     async def handle_library_prompts_import(self, event: Button.Pressed) -> None:
@@ -31887,13 +30197,13 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-            and self._library_skills_sort_choices_visible
+            and self._skills_state.view == "list"
+            and self._skills_state.sort_choices_visible
         ):
             return (
                 "sort",
                 "#library-skills-sort",
-                "_library_skills_sort_choices_visible",
+                "_skills_state.sort_choices_visible",
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
@@ -31923,7 +30233,7 @@ class LibraryScreen(BaseAppScreen):
             "_library_media_type_choices_visible": "media",
             "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
-            "_library_skills_sort_choices_visible": "skills",
+            "_skills_state.sort_choices_visible": "skills",
             "_export_state.quality_choices_visible": "export",
         }[visibility_attr]
         _sync_library_canvas(
@@ -36890,6 +35200,75 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_expanded_details.add(job_id)
         self._update_library_ingest_dynamic_regions()
 
+    @on(Button.Pressed, "#library-ingest-analyze-skipped")
+    def handle_library_ingest_analyze_skipped(self, event: Button.Pressed) -> None:
+        """Analyze every import row this queue still shows analysis-skipped.
+
+        task-28007 AC#1/AC#2: reuses Task 2's run seam verbatim
+        (``_start_library_media_analyze``) over the ids
+        ``_build_library_ingest_state`` already resolved, and threads
+        ``on_item_done`` so each id's outcome lands back on its OWN Import
+        row. A second press while a run is active gets the seam's own
+        "Analysis already running" notice; the button itself also disables
+        while running (belt and braces, this file's established
+        convention).
+
+        Args:
+            event: The run-summary action's press.
+        """
+        event.stop()
+        # (fix round 1, M-3) The direct pure call, not a whole
+        # ``_build_library_ingest_state()`` -- that also pays for a second
+        # provider resolve on the same gesture for a value this handler
+        # never reads.
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        media_ids = library_ingest_analyze_skipped_ids(
+            jobs, self._library_ingest_analyze_outcomes
+        )
+        if not media_ids:
+            return
+        # (fix round 1, M-1) No pre-clear here: a refusal inside
+        # ``_start_library_media_analyze`` (already running, provider went
+        # unready between render and press) used to leave every one of
+        # these ids' receipts wiped with nothing having run to replace
+        # them. ``_record_library_ingest_analyze_outcome`` already
+        # overwrites a stale entry unconditionally the moment THAT id's
+        # own fresh outcome lands, which is the only point clearing it
+        # early was ever protecting.
+        self._start_library_media_analyze(
+            media_ids,
+            overwrite=False,
+            on_item_done=self._record_library_ingest_analyze_outcome,
+        )
+        # ``_start_library_media_analyze`` flips the in-flight flag
+        # synchronously before the worker's first await -- repaint now so
+        # the button disables immediately rather than waiting for the
+        # first item's own callback.
+        self._update_library_ingest_dynamic_regions()
+
+    def _record_library_ingest_analyze_outcome(
+        self, media_id: str, ok: bool, reason: str
+    ) -> None:
+        """Record one bulk-Analyze outcome and repaint the Import queue.
+
+        The seam's ``on_item_done`` hook (task-28007 AC#2). Repainting
+        here -- not only after the whole run settles -- is what makes each
+        row's receipt appear as its own item finishes, matching the Media
+        canvas's own per-item progress syncs.
+
+        Args:
+            media_id: The item's canonical media id.
+            ok: Whether an analysis was produced and persisted.
+            reason: Empty when ``ok``; otherwise why it was not.
+        """
+        self._library_ingest_analyze_outcomes[media_id] = (ok, reason)
+        # (fix round 1, I-2 discipline) Mid-run repaints must never escalate
+        # to a whole-screen recompose -- same reason the settling sync in
+        # ``_analyze_library_media_selection``'s ``finally`` does not.
+        self._update_library_ingest_dynamic_regions(allow_screen_fallback=False)
+
     #: Presses landing this soon after the arming press are the same
     #: physical gesture (a double-click), not a decision (task-2160).
     _CLEAR_FINISHED_DEAD_ZONE_SECONDS = 0.3
@@ -36956,6 +35335,19 @@ class LibraryScreen(BaseAppScreen):
                     IngestJobState.SKIPPED,
                 )
             ]
+            # task-28007 (Qodo review round, PR #2400 #2): a bulk-Analyze
+            # outcome is keyed only by media id for the screen's whole
+            # lifetime -- without pruning it here, a LATER job reusing this
+            # same media id (a re-import, a newer document version) would
+            # inherit this stale outcome, hiding "Analyze N skipped" for it
+            # and painting its row as already analyzed even though the
+            # current version has no analysis. Pop exactly the ids of the
+            # jobs actually leaving the registry now, not the recent-
+            # imports ledger extension below (those were already gone
+            # before this press).
+            for job in terminal:
+                if job.media_id is not None:
+                    self._library_ingest_analyze_outcomes.pop(str(job.media_id), None)
             known = {job.job_id for job in terminal}
             terminal.extend(
                 job
@@ -40233,9 +38625,7 @@ class LibraryScreen(BaseAppScreen):
             for item in keywords_raw.split(",")
             if (cleaned := self._sanitize_media_field(item, max_length=200).strip())
         ]
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
+        self._claim_library_media_mutation(
             self._save_library_media_edit(
                 media_id,
                 title=title,
@@ -40277,49 +38667,64 @@ class LibraryScreen(BaseAppScreen):
             keywords: New keywords, already split from the comma-separated
                 edit input.
         """
-        service = getattr(self.app_instance, "media_reading_scope_service", None)
-        update_media_item = getattr(service, "update_media_item", None)
         updated_item: Mapping[str, Any] | None = None
         committed = False
-        if callable(update_media_item):
-            try:
-                await self._run_library_service_call(
-                    update_media_item,
-                    mode="local",
-                    media_id=self._required_library_media_backing_id(media_id),
-                    title=title,
-                    author=author,
-                    url=url,
-                    keywords=keywords,
-                    isolate_in_worker=True,
-                )
-                committed = True
-                # Keep the broad landing/rail cache in step; the exact Media
-                # page remains controller-owned.
-                self._patch_local_media_record(
-                    media_id, title=title, author=author, url=url, keywords=keywords
-                )
-                current = next(
-                    (
-                        item
-                        for item in self._library_media_browse_controller.retained_items
-                        if item["id"] == media_id
-                    ),
-                    None,
-                )
-                if current is not None:
-                    updated_item = dict(current, title=title)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to save Library media edit for {media_id!r}."
-                )
-                self._notify_library_media_edit_warning(
-                    "Could not save media changes; showing the latest saved version."
-                )
-        else:
-            self._notify_library_media_edit_warning("Media editing is unavailable.")
-        self._library_media_editing = False
+        # task-31220: the ``finally`` spans the WHOLE body, not just the
+        # trailing detail re-fetch -- the unavailable-service notice above it
+        # was outside the old guard, so a notify that raised (app teardown)
+        # left the shared write interlock claimed with no way to release it.
         try:
+            service = getattr(
+                self.app_instance, "media_reading_scope_service", None
+            )
+            update_media_item = getattr(service, "update_media_item", None)
+            if callable(update_media_item):
+                try:
+                    await self._run_library_service_call(
+                        update_media_item,
+                        mode="local",
+                        media_id=self._required_library_media_backing_id(media_id),
+                        title=title,
+                        author=author,
+                        url=url,
+                        keywords=keywords,
+                        isolate_in_worker=True,
+                    )
+                    committed = True
+                    # Keep the broad landing/rail cache in step; the exact
+                    # Media page remains controller-owned.
+                    self._patch_local_media_record(
+                        media_id,
+                        title=title,
+                        author=author,
+                        url=url,
+                        keywords=keywords,
+                    )
+                    current = next(
+                        (
+                            item
+                            for item in (
+                                self._library_media_browse_controller.retained_items
+                            )
+                            if item["id"] == media_id
+                        ),
+                        None,
+                    )
+                    if current is not None:
+                        updated_item = dict(current, title=title)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to save Library media edit for {media_id!r}."
+                    )
+                    self._notify_library_media_edit_warning(
+                        "Could not save media changes; showing the latest "
+                        "saved version."
+                    )
+            else:
+                self._notify_library_media_edit_warning(
+                    "Media editing is unavailable."
+                )
+            self._library_media_editing = False
             await self._refresh_library_media_detail(media_id)
         finally:
             self._complete_library_media_mutation(
@@ -40436,12 +38841,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_delete = False
             self.refresh(recompose=True)
             return
-        self._library_media_bulk_delete_in_flight = True
-        self._begin_library_media_mutation()
-        self.run_worker(
-            self._delete_library_media_item(media_id),
-            exclusive=True,
-            group="library_media_bulk_delete",
+        self._claim_library_media_mutation(
+            self._delete_library_media_item(media_id)
         )
 
     async def _delete_library_media_item(self, media_id: str) -> None:
@@ -40536,6 +38937,7 @@ class LibraryScreen(BaseAppScreen):
                 # cleared at arm-time (``handle_library_media_delete``),
                 # so it always reflects only what just happened.
                 self._library_media_delete_receipt_ids = (media_id,)
+                self._library_media_delete_receipt_undo_failure = ""
                 self._library_media_detail = None
                 self._library_media_composed_detail = None
                 self._library_media_highlights = []
@@ -40842,6 +39244,13 @@ class LibraryScreen(BaseAppScreen):
             ),
             editing_analysis=self._library_media_editing_analysis,
             generating_analysis=self._library_media_generating_analysis,
+            # Review I1: gated on the tab that renders it -- see the twin
+            # gate in ``_sync_library_media_viewer_state``.
+            analysis_provider_reason=(
+                self._library_media_analysis_provider_reason()
+                if self._library_media_reader_session.mode == "analysis"
+                else ""
+            ),
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -41085,6 +39494,21 @@ class LibraryScreen(BaseAppScreen):
         # decides it changes under resizes and pane toggles, and a viewer
         # attribute missing from this compare silently never updates.
         back_visible = self._library_media_reader_exit_available()
+        # task-28007 AC#5: a compose input like any other -- resolved once
+        # per sync and read by both halves below.
+        # Review I1: only ``_compose_analysis`` consumes this, and
+        # ``resolve_ingest_analysis_provider`` is not always cheap -- for
+        # ``provider = "Anthropic"`` with ``auth_source =
+        # "claude_subscription"`` readiness shells out to the macOS keychain
+        # behind a 5s TTL, which human-paced Reader gestures would miss on
+        # every sync. So it is resolved only on the tab that shows it. The
+        # compare stays honest: ``reader_mode`` is itself a compose input,
+        # so switching tabs recomposes and picks the reason up.
+        analysis_provider_reason = (
+            self._library_media_analysis_provider_reason()
+            if self._library_media_reader_session.mode == "analysis"
+            else ""
+        )
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
@@ -41093,6 +39517,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
             and viewer.editing_analysis == self._library_media_editing_analysis
+            and viewer.analysis_provider_reason == analysis_provider_reason
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
@@ -41139,6 +39564,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.highlights = highlights
             viewer.editing_analysis = self._library_media_editing_analysis
             viewer.generating_analysis = self._library_media_generating_analysis
+            viewer.analysis_provider_reason = analysis_provider_reason
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
@@ -41446,6 +39872,21 @@ class LibraryScreen(BaseAppScreen):
             analysis=analysis,
             generating=self._library_media_generating_analysis,
             editing=self._library_media_editing_analysis,
+        )
+
+    def _library_media_analysis_provider_reason(self) -> str:
+        """Why the Reader's Generate cannot run, or "" when it can.
+
+        task-28007 AC#5: resolved through the same seam the Generate
+        handler and the ingest path use, so the disabled control's reason,
+        the post-click refusal, and the import receipt are one sentence
+        with one source. Called once per viewer build/sync.
+
+        Returns:
+            The user-facing reason, or "" when an analysis call can be made.
+        """
+        return analysis_unavailable_reason(
+            resolve_ingest_analysis_provider(self.app_instance.app_config)
         )
 
     def _consume_library_media_find_focus(self) -> bool:
@@ -41953,8 +40394,13 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _save_library_media_analysis(
-        self, media_id: str, *, content: str, analysis_content: str
-    ) -> None:
+        self,
+        media_id: str,
+        *,
+        content: str,
+        analysis_content: str,
+        viewer_owned: bool = True,
+    ) -> bool:
         """Persist an analysis edit as a new document version, then re-fetch detail.
 
         Guards against a missing ``save_analysis_version`` service or a
@@ -41968,10 +40414,20 @@ class LibraryScreen(BaseAppScreen):
             content: The current document content, sent unchanged alongside
                 the edited analysis (``save_analysis_version`` requires it).
             analysis_content: The edited analysis text to persist.
+            viewer_owned: False when the caller is the task-28007 bulk run
+                rather than the Reader. A bulk item must not clear the
+                Reader's editing flag, must not raise one toast per item
+                (its receipt counts the failure), and must not re-fetch a
+                detail nobody is reading.
+
+        Returns:
+            True when the analysis actually persisted. The bulk run counts
+            a failed save as a failed item -- this used to be swallowed.
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         save_analysis_version = getattr(service, "save_analysis_version", None)
         service_media_id = self._library_media_backing_id(media_id)
+        saved = False
         if callable(save_analysis_version):
             try:
                 await self._run_library_service_call(
@@ -41982,19 +40438,29 @@ class LibraryScreen(BaseAppScreen):
                     analysis_content=analysis_content,
                     isolate_in_worker=True,
                 )
+                saved = True
             except Exception:
                 logger.opt(exception=True).warning(
                     f"Failed to save Library media analysis for {media_id!r}."
                 )
-                self._notify_library_media_analysis_warning(
-                    "Could not save analysis changes; showing the latest saved version."
-                )
-        else:
+                if viewer_owned:
+                    self._notify_library_media_analysis_warning(
+                        "Could not save analysis changes; showing the latest "
+                        "saved version."
+                    )
+        elif viewer_owned:
             self._notify_library_media_analysis_warning(
                 "Analysis editing is unavailable."
             )
-        self._library_media_editing_analysis = False
-        await self._refresh_library_media_detail(media_id)
+        if viewer_owned:
+            self._library_media_editing_analysis = False
+        if viewer_owned or media_id == self._selected_media_id:
+            # A bulk item nobody is reading needs no detail re-fetch (that
+            # call pulls the whole document and then discards it for any id
+            # that is not the open selection); the OPEN item still refreshes
+            # so the Reader never shows a stale analysis.
+            await self._refresh_library_media_detail(media_id)
+        return saved
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.
@@ -42028,11 +40494,12 @@ class LibraryScreen(BaseAppScreen):
         if not media_id:
             return
         resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
-        if not resolution.ready:
-            self._notify_library_media_analysis_warning(
-                resolution.hint
-                or f"Analysis provider not ready: {resolution.short_reason}"
-            )
+        reason = analysis_unavailable_reason(resolution)
+        if reason:
+            # Belt and braces behind the disabled control (AC#5): same
+            # sentence the button already wears, so a click that somehow
+            # lands (a stale mount, a keyboard route) never contradicts it.
+            self._notify_library_media_analysis_warning(reason)
             return
         detail = (
             self._library_media_detail
@@ -42055,8 +40522,13 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _generate_library_media_analysis(
-        self, media_id: str, *, content: str, resolution: Any
-    ) -> None:
+        self,
+        media_id: str,
+        *,
+        content: str,
+        resolution: Any,
+        viewer_owned: bool = True,
+    ) -> bool:
         """Dispatch the analysis LLM call off-thread, then persist the result.
 
         Always clears the generating flag and re-fetches detail so the
@@ -42068,6 +40540,15 @@ class LibraryScreen(BaseAppScreen):
             content: The document content to analyze.
             resolution: The ready ``IngestAnalysisResolution`` describing the
                 provider, credential, and sampling parameters.
+            viewer_owned: False when the task-28007 bulk run is the caller.
+                A bulk item must not clear the Reader's "Generating
+                analysis…" state (a concurrent Reader generation owns it),
+                must not recompose the Reader, and must not toast per item.
+
+        Returns:
+            True when an analysis was produced and handed to the save seam.
+            task-28007 AC#4: the bulk run counts failures from this, since
+            a provider that returns nothing raises nothing.
         """
         try:
             analysis_text = await asyncio.to_thread(
@@ -42079,15 +40560,20 @@ class LibraryScreen(BaseAppScreen):
             )
             analysis_text = ""
         analysis_text = (analysis_text or "").strip()
-        self._library_media_generating_analysis = False
+        if viewer_owned:
+            self._library_media_generating_analysis = False
         if not analysis_text:
-            self._notify_library_media_analysis_warning(
-                "Analysis generation returned nothing; the item is unchanged."
-            )
-            self._sync_library_media_viewer_or_recompose()
-            return
-        await self._save_library_media_analysis(
-            media_id, content=content, analysis_content=analysis_text
+            if viewer_owned:
+                self._notify_library_media_analysis_warning(
+                    "Analysis generation returned nothing; the item is unchanged."
+                )
+                self._sync_library_media_viewer_or_recompose()
+            return False
+        return await self._save_library_media_analysis(
+            media_id,
+            content=content,
+            analysis_content=analysis_text,
+            viewer_owned=viewer_owned,
         )
 
     def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
@@ -42123,6 +40609,393 @@ class LibraryScreen(BaseAppScreen):
             api_key_resolved=True,
         )
         return extract_response_content(response)
+
+    @on(Button.Pressed, "#library-media-analyze-selected")
+    def handle_library_media_analyze_selected(self, event: Button.Pressed) -> None:
+        """Analyze every selected media item in one run (task-28007 AC#4).
+
+        The selection is snapshotted from the RENDERED rows, not from
+        ``RowSelection.ids``: that is a frozenset and carries no order,
+        while the run has to follow the browse order the user is looking
+        at. ("Review selected" reaches the same order the other way round
+        -- it hands the unordered ids to ``_review_selected_worker`` and
+        re-derives their order in there -- but a run that reports
+        "Analyzing 3 of 40" as it goes needs the order before it starts.)
+
+        Args:
+            event: The Select-mode "Analyze" bulk-action button press.
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        rows = self._build_library_media_state().rows
+        self._start_library_media_analyze(
+            tuple(row.media_id for row in rows if row.checked), overwrite=False
+        )
+
+    @on(Button.Pressed, "#library-media-analyze-skip")
+    def handle_library_media_analyze_skip(self, event: Button.Pressed) -> None:
+        """Run the armed choice over the un-analyzed items only (AC#3).
+
+        Args:
+            event: The receipt row's "Skip them" press.
+        """
+        event.stop()
+        choice = self._library_media_analyze_choice
+        if choice is None:
+            return
+        if not choice[1]:
+            # Every selected item already had one: skipping them all
+            # leaves nothing to run, so retire the choice rather than
+            # leaving a dead row armed.
+            self._clear_library_media_analyze_receipt()
+            _sync_library_canvas(self, "media")
+            return
+        # Already partitioned, and these ids have no analysis by
+        # construction -- ``overwrite=True`` skips a second read pass, it
+        # does not overwrite anything.
+        self._start_library_media_analyze(choice[1], overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-overwrite")
+    def handle_library_media_analyze_overwrite(self, event: Button.Pressed) -> None:
+        """Run the armed choice over every selected item (AC#3's explicit yes).
+
+        Args:
+            event: The receipt row's "Overwrite" press.
+        """
+        event.stop()
+        choice = self._library_media_analyze_choice
+        if choice is None:
+            return
+        self._start_library_media_analyze(choice[0], overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-retry")
+    def handle_library_media_analyze_retry(self, event: Button.Pressed) -> None:
+        """Re-run only the items the last run failed on (AC#4).
+
+        Args:
+            event: The receipt row's "Retry failed" press.
+        """
+        event.stop()
+        failed = self._library_media_analyze_failed_ids
+        if not failed:
+            return
+        self._start_library_media_analyze(failed, overwrite=True)
+
+    @on(Button.Pressed, "#library-media-analyze-receipt-dismiss")
+    def handle_library_media_analyze_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the bulk-Analyze receipt (or its armed choice).
+
+        Args:
+            event: The receipt row's "Dismiss" press.
+        """
+        event.stop()
+        self._clear_library_media_analyze_receipt()
+        _sync_library_canvas(self, "media")
+
+    def _clear_library_media_analyze_receipt(self) -> None:
+        """Return every bulk-Analyze receipt field to its default."""
+        self._library_media_analyze_total = 0
+        self._library_media_analyze_done = 0
+        self._library_media_analyze_failed_ids = ()
+        self._library_media_analyze_choice = None
+
+    def _start_library_media_analyze(
+        self,
+        media_ids: tuple[str, ...],
+        *,
+        overwrite: bool,
+        on_item_done: Callable[[str, bool, str], None] | None = None,
+    ) -> None:
+        """Refuse, or claim the run and hand it to the one worker group.
+
+        Shared by the bulk gesture and the receipt's own Skip/Overwrite/
+        Retry actions, so all four obey the same one-run-at-a-time rule and
+        the same provider gate. Also the entry point for a run over an
+        ARBITRARY id set (task-28007 AC#1: an import run's analysis-skipped
+        rows) -- there is no second loop; every caller shares this one.
+
+        Args:
+            media_ids: Ids to analyze, already in browse order.
+            overwrite: Whether items that already carry an analysis are
+                included. True SKIPS the AC#3 partition entirely, so a
+                caller passing True owns that gate: only pass it for an id
+                set the user has already chosen (Overwrite), or one already
+                known to carry no analysis (Skip them, Retry failed).
+            on_item_done: Optional per-item hook, ``(media_id, ok, reason)``,
+                called after each item's outcome is counted in the loop
+                below. Lets a caller outside the Media canvas (the Import
+                queue) learn per-item outcomes without a second loop of its
+                own. NOT called for an id the AC#3 partition pass diverts
+                into the armed Skip/Overwrite choice -- that id ran through
+                neither branch, so there is no outcome to report yet. Its
+                presence also selects which surface ``on_unmount``'s
+                interrupted-run notice points back at (``self.
+                _library_media_analyze_origin``, fix round 1 I-3).
+        """
+        if self._library_media_analyze_running:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Analysis already running", severity="warning")
+            return
+        if not media_ids:
+            return
+        # Belt and braces behind the disabled bulk action, and a fresh read
+        # rather than the select-mode memo: a provider configured since
+        # entry must not be refused (mirrors the Reader's Generate guard).
+        resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
+        reason = analysis_unavailable_reason(resolution)
+        if reason:
+            self._notify_library_media_analysis_warning(reason)
+            return
+        self._library_media_analyze_reason_cache = None
+        self._clear_library_media_analyze_receipt()
+        if self._library_media_select_mode:
+            # task-31233's precedent, including its canvas sync: a bulk
+            # action that runs leaves select mode, and without the repaint
+            # the checkbox toolbar stays on screen over an already-cleared
+            # selection until the worker's first sync -- a whole partition
+            # pass (one DB read per selected id) later. A caller outside
+            # select mode (the Import queue's run) never enters it, so this
+            # block is a no-op there -- verified by test, not special-cased.
+            self._exit_library_media_select_mode(announce_discard=False)
+            _sync_library_canvas(self, "media")
+        self._library_media_analyze_running = True
+        # (fix round 1, I-3) The unmount notice needs to know where to send
+        # the user back to -- derived from ``on_item_done``'s presence, the
+        # same signal C-1's branch above already uses to distinguish the
+        # two origins.
+        self._library_media_analyze_origin = (
+            _ANALYZE_ORIGIN_IMPORT if on_item_done is not None else _ANALYZE_ORIGIN_MEDIA
+        )
+        self.run_worker(
+            self._analyze_library_media_selection(
+                media_ids,
+                resolution=resolution,
+                overwrite=overwrite,
+                on_item_done=on_item_done,
+            ),
+            group=_ANALYZE_SELECTED_WORKER_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _analyze_library_media_selection(
+        self,
+        media_ids: tuple[str, ...],
+        *,
+        resolution: Any,
+        overwrite: bool,
+        on_item_done: Callable[[str, bool, str], None] | None = None,
+    ) -> None:
+        """Analyze each id in turn, updating the receipt after every item.
+
+        One worker for the whole run (AC#4). A per-item failure -- a raise
+        OR a provider that returned nothing -- is counted and the run
+        continues; nothing aborts it. When ``overwrite`` is False and any
+        selected item already carries an analysis: a Select-mode caller
+        (``on_item_done is None``) gets NOTHING run -- the Skip/Overwrite
+        choice is armed in the receipt instead (AC#3). An Import-run caller
+        (``on_item_done`` given) has no such card to show, so it auto-skips
+        the already-analyzed ids instead and says so (fix round 1, C-1) --
+        see the docstring on the branch below.
+
+        Args:
+            media_ids: Ids to analyze, in browse order.
+            resolution: The ready resolution the gesture already checked.
+            overwrite: Whether analyzed items are included.
+            on_item_done: See ``_start_library_media_analyze``. Its mere
+                presence also selects the C-1 auto-skip behavior above.
+        """
+        try:
+            if not overwrite:
+                unanalyzed = await self._library_media_unanalyzed_ids(media_ids)
+                if len(unanalyzed) != len(media_ids):
+                    if on_item_done is None:
+                        self._library_media_analyze_choice = (media_ids, unanalyzed)
+                        return
+                    # (fix round 1, C-1) The Import queue has no
+                    # Skip/Overwrite card to arm -- doing so here left an
+                    # Import-started run with NOTHING visible: no
+                    # receipts, no notice, the button just re-enabled with
+                    # its count unchanged. Auto-skip the already-analyzed
+                    # ids and say so instead; if that leaves nothing to
+                    # run, say THAT and stop -- still no silent no-op.
+                    # (Qodo review round, PR #2400 #3) An id dropped here
+                    # never entered the loop below, so without an outcome
+                    # of its own it stayed counted by "Analyze N skipped"
+                    # forever -- every later press just re-discovered it
+                    # already analyzed and reported nothing left to run.
+                    # Record it as resolved through the SAME hook so it
+                    # drops out of the count exactly like a generated one.
+                    still_skipped = set(unanalyzed)
+                    if on_item_done is not None:
+                        for media_id in media_ids:
+                            if media_id not in still_skipped:
+                                on_item_done(
+                                    media_id, True, _ANALYZE_AUTO_SKIP_REASON
+                                )
+                    notify = getattr(self.app_instance, "notify", None)
+                    if not unanalyzed:
+                        if callable(notify):
+                            notify("Nothing left to analyze")
+                        return
+                    if callable(notify):
+                        already_analyzed = len(media_ids) - len(unanalyzed)
+                        notify(f"{already_analyzed} already analyzed · skipped")
+                media_ids = unanalyzed
+            self._library_media_analyze_total = len(media_ids)
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+            for media_id in media_ids:
+                exc_reason = ""
+                try:
+                    persisted = await self._analyze_one_library_media_item(
+                        media_id, resolution=resolution
+                    )
+                except Exception as exc:
+                    persisted = False
+                    # (fix round 1, I-1) A raised exception carries a real,
+                    # specific reason -- capture it rather than falling
+                    # through to the generic catch-all, so the receipt says
+                    # something an import row's own "analysis failed:
+                    # <reason>" line would.
+                    exc_reason = str(exc)
+                if persisted:
+                    self._library_media_analyze_done += 1
+                else:
+                    self._library_media_analyze_failed_ids += (media_id,)
+                if on_item_done is not None:
+                    on_item_done(
+                        media_id,
+                        persisted,
+                        (
+                            ""
+                            if persisted
+                            else (exc_reason or _ANALYZE_ITEM_FAILED_REASON)
+                        ),
+                    )
+                # Progress only: if the user has left the media canvas
+                # mid-run, a missing canvas must NOT escalate to a
+                # whole-screen recompose once per item on whatever screen
+                # they moved to. The settling sync below uses the SAME
+                # no-fallback rule (task-28007 Task 3, N2 -- this comment
+                # used to claim it "keeps the default", which the fix-round-1
+                # change to that sync's own ``allow_screen_fallback=False``
+                # contradicted).
+                _sync_library_canvas(self, "media", allow_screen_fallback=False)
+        finally:
+            self._library_media_analyze_running = False
+            # Same no-fallback rule as the progress syncs: this also runs
+            # on the cancellation path, i.e. while the screen is being
+            # unmounted, where a whole-screen recompose is both useless and
+            # unsafe. A canvas composed later reads these fields anyway.
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+            if on_item_done is not None:
+                # task-28007 AC#1/AC#2: an Import-run caller's LAST
+                # ``on_item_done`` fires from inside the loop above, before
+                # this ``finally`` clears the in-flight flag -- without
+                # this, the Import queue's own action would repaint as
+                # still-running one frame too early and stay disabled until
+                # some unrelated later tick. Guarded on ``on_item_done`` so
+                # the Media-canvas-only callers (Select mode) never pay for
+                # an Import-canvas sync that is a no-op for them anyway
+                # (``_update_library_ingest_dynamic_regions`` itself skips
+                # work off the Import canvas). ``allow_screen_fallback=False``
+                # (fix round 1, I-2): this also runs on the cancellation
+                # path, same as the ``_sync_library_canvas`` call two lines
+                # up -- without it, an unmount landing here (canvas already
+                # torn down, ``_library_selected_row_id`` still pointing at
+                # Import) falls into a whole-screen recompose on a dying
+                # screen.
+                self._update_library_ingest_dynamic_regions(
+                    allow_screen_fallback=False
+                )
+
+    async def _analyze_one_library_media_item(
+        self, media_id: str, *, resolution: Any
+    ) -> bool:
+        """Load one item's content off the loop, then generate its analysis.
+
+        Args:
+            media_id: The canonical media id to analyze.
+            resolution: The ready resolution shared by the whole run.
+
+        Returns:
+            True when an analysis was produced and persisted.
+        """
+        detail = await self._fetch_library_media_analysis_detail(
+            media_id, include_content=True
+        )
+        content = str(detail.get("content") or "") if detail is not None else ""
+        if not content.strip():
+            return False
+        return await self._generate_library_media_analysis(
+            media_id, content=content, resolution=resolution, viewer_owned=False
+        )
+
+    async def _library_media_unanalyzed_ids(
+        self, media_ids: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The subset with no analysis on their newest version (AC#3).
+
+        Read WITHOUT content: only the newest ``DocumentVersions`` row's
+        analysis text decides this (``detail_analysis_text``, the same rule
+        the Reader's Analysis tab uses), and pulling every document's body
+        just to answer it would be the expensive way to ask. An unreadable
+        item counts as un-analyzed: the run attempts it and reports its
+        own failure rather than silently skipping it.
+
+        Args:
+            media_ids: The ids the gesture snapshotted.
+
+        Returns:
+            Those ids, in the same order, minus the already-analyzed ones.
+        """
+        unanalyzed: list[str] = []
+        for media_id in media_ids:
+            try:
+                detail = await self._fetch_library_media_analysis_detail(
+                    media_id, include_content=False
+                )
+            except Exception:
+                detail = None
+            if detail is None or not detail_analysis_text(detail):
+                unanalyzed.append(media_id)
+        return tuple(unanalyzed)
+
+    async def _fetch_library_media_analysis_detail(
+        self, media_id: str, *, include_content: bool
+    ) -> Mapping[str, Any] | None:
+        """Fetch one item's detail off the event loop for the bulk run.
+
+        Deliberately NOT ``_refresh_library_media_detail``: that one owns
+        the Reader's session state, and a bulk run must not move the
+        Reader's selection forty times.
+
+        Args:
+            media_id: The canonical media id.
+            include_content: Whether the document body is needed (the
+                analyzed/not-analyzed pass does not need it).
+
+        Returns:
+            The detail mapping, or None when the service is unavailable or
+            returned something else.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_media_item = getattr(service, "get_media_item", None)
+        if not callable(get_media_item):
+            return None
+        detail = await self._run_library_service_call(
+            get_media_item,
+            mode="local",
+            media_id=self._library_media_backing_id(media_id),
+            include_content=include_content,
+            include_versions=True,
+            isolate_in_worker=True,
+        )
+        return detail if isinstance(detail, Mapping) else None
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
@@ -43632,3 +42505,14 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # `LibraryRagSearchController`'s own generated shim loop (installed by
 # task 3) for where the SAME shape now lives permanently, one layer down,
 # exactly mirroring the collections precedent immediately above.
+
+# wave-4 task 3 (skills cleanup, skills series 3/3) deleted the generated
+# skills-state shim block that used to live here (wave-4 task 1): every
+# remaining screen-side `_library_skill_<field>`/`_library_skills_<field>`/
+# `_selected_skill_name` reference was retargeted to
+# `self._skills_state.<field>` and every test attribute path/dynamic-
+# dispatch string was retargeted to match, so nothing on `LibraryScreen`
+# needs the flat property names anymore -- see `LibrarySkillsController`'s
+# own generated shim loop (installed by task 2) for where the SAME shape
+# now lives permanently, one layer down, exactly mirroring the collections/
+# search+RAG precedents immediately above.

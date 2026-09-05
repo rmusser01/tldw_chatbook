@@ -32,6 +32,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureBudget,
     CaptureDetail,
@@ -1362,6 +1365,9 @@ class ConsoleProviderResolution:
     request_retries: int | None = None
     request_retry_delay: float | None = None
     resolved_destination: ConsoleResolvedDestination | None = None
+    endpoint_provenance: ConsoleEndpointProvenance = (
+        ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+    )
     thinking_stream_disposition: ReasoningDisposition = "ignored"
     thinking_round_trip_version: int | None = None
 
@@ -2981,6 +2987,10 @@ class ConsoleProviderGateway:
     ) -> ConsoleProviderResolution:
         """Resolve readiness and attach the credential-free destination."""
         resolution = await self._resolve_for_send_unclassified(selection)
+        resolution = replace(
+            resolution,
+            endpoint_provenance=selection.endpoint_provenance,
+        )
         return replace(
             resolution,
             resolved_destination=resolve_console_destination(resolution),
@@ -3003,6 +3013,19 @@ class ConsoleProviderGateway:
                 selection,
                 provider=selection.provider,
                 visible_copy="Select a provider and model before sending.",
+            )
+        if (
+            not selection.configured_endpoint_fallback_allowed
+            and not str(selection.base_url or "").strip()
+        ):
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "Provider blocked: this session's endpoint could not be "
+                    "restored safely. Reopen the chat or choose provider settings "
+                    "again before sending."
+                ),
             )
 
         identity = resolve_console_provider_identity(selection.provider)
@@ -3198,7 +3221,8 @@ class ConsoleProviderGateway:
             )
 
         if (
-            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            selection.configured_endpoint_fallback_allowed
+            and provider_uses_endpoint(identity.readiness_key, provider_settings)
             and endpoint_differs
         ):
             return self._blocked_resolution(
@@ -4652,6 +4676,12 @@ class ConsoleProviderGateway:
                     try:
                         budget = CaptureBudget()
                         capture_kwargs = dict(kwargs)
+                        endpoint_is_ephemeral = (
+                            resolution.endpoint_provenance
+                            == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+                        )
+                        if endpoint_is_ephemeral:
+                            capture_kwargs.pop("api_base_url", None)
                         semantic_messages = [
                             thaw_json(item)
                             for item in request.semantic.flattened_messages()
@@ -4695,10 +4725,18 @@ class ConsoleProviderGateway:
                             if resolution.api_key
                             else (),
                         )
+                        if endpoint_is_ephemeral:
+                            omitted = tuple(
+                                sorted(set(omitted).union({"api_base_url", "endpoint"}))
+                            )
                         signals.begin_exchange(
                             provider=str(resolution.provider or ""),
                             model=str(resolution.model or ""),
-                            endpoint=getattr(resolution, "base_url", None),
+                            endpoint=(
+                                None
+                                if endpoint_is_ephemeral
+                                else getattr(resolution, "base_url", None)
+                            ),
                             request=capture_request,
                             omitted_keys=omitted,
                             capture_budget=budget,
@@ -5109,6 +5147,10 @@ class ConsoleProviderGateway:
                 else None
             ),
             surface_boundary=surface_boundary,
+            omit_ephemeral_endpoint=(
+                resolution.endpoint_provenance
+                == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+            ),
         )
         if not bundle.available and trace_call_boundary is None:
             raise TraceProvenanceAlignmentError(
@@ -5306,6 +5348,8 @@ class ConsoleProviderGateway:
             "custom-openai-api-2",
             "mistral",
             "mistralai",
+            "vllm",
+            "local_vllm",
         }:
             kwargs["api_base_url"] = resolution.base_url or None
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:

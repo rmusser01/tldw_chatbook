@@ -76,7 +76,11 @@ from ...Chat.console_roleplay_identity import (
 )
 from ...Chat.console_rail_state import normalize_console_rail_layout_scope
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
-from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
+from ...Chat.console_provider_endpoints import (
+    URL_BASED_PROVIDER_KEYS,
+    generic_endpoint_differs,
+    unsaved_endpoint_copy,
+)
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -420,6 +424,10 @@ from ..Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from ...Constants import TAB_CHAT
+from ..Navigation.vllm_handoff import (
+    VllmDefaultIntent,
+    owner_has_current_intent,
+)
 
 if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
@@ -463,6 +471,29 @@ def reset_image_generation_runtime() -> None:
 
 class _AudioCppResultTransactionError(RuntimeError):
     """Bounded internal failure for one Settings result transaction."""
+
+
+@dataclass(frozen=True, slots=True)
+class _VllmDefaultPresentationSnapshot:
+    """Complete provider presentation restored after a late handoff failure."""
+
+    draft: SettingsDraft | None
+    provider_save_result: str
+    provider_test_result: str
+    provider_test_evidence_store: ProviderTestEvidenceStore
+    provider_draft_generation: int
+    provider_credential_revision: int
+    model_discovery_status: str
+    model_discovery_models: tuple[object, ...]
+    model_discovery_selected_model_ids: frozenset[str]
+    endpoint_suppress_queue: tuple[str, ...]
+    credential_env_var_suppress_queue: tuple[str, ...]
+    api_key_suppress_queue: tuple[str, ...]
+    context_window_suppress_queue: tuple[str, ...]
+    card_disabled: bool
+    inputs: tuple[tuple[str, str, str | None, bool], ...]
+    selects: tuple[tuple[str, object, bool], ...]
+    buttons: tuple[tuple[str, bool], ...]
 
 
 @dataclass(slots=True)
@@ -2539,6 +2570,7 @@ class SettingsScreen(BaseAppScreen):
             "settings_rag_backfill",
         }
     )
+    _VLLM_DEFAULT_RELEASE_RETRY_LIMIT = 3
 
     # task-15475: none of these three is `recompose=True` any more. Each used
     # to rebuild the WHOLE screen -- nav bar, footer, category rail, mode
@@ -2619,6 +2651,12 @@ class SettingsScreen(BaseAppScreen):
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
+        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
+        self._vllm_default_before_presentation: (
+            _VllmDefaultPresentationSnapshot | None
+        ) = None
+        self._vllm_default_recovery_card_disabled: bool | None = None
+        self._vllm_default_release_retry_scheduled = False
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
@@ -3569,6 +3607,7 @@ class SettingsScreen(BaseAppScreen):
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
+        self.call_after_refresh(self._consume_pending_vllm_default_intent)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
@@ -3578,6 +3617,7 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence any late Model Library review before this screen is replaced."""
 
+        self._rollback_vllm_default_intent()
         self._audio_cpp_result_cancellation.set()
         try:
             self._retry_audio_cpp_staged_request_cleanup()
@@ -11325,6 +11365,506 @@ class SettingsScreen(BaseAppScreen):
             self._settings_drafts.pop(category, None)
         self._update_provider_evidence_for_edit(key, value)
 
+    def _snapshot_vllm_default_presentation(
+        self,
+    ) -> _VllmDefaultPresentationSnapshot:
+        """Capture the full mounted provider presentation before staging."""
+
+        card = self.query_one("#settings-providers-models-card", Vertical)
+        inputs = tuple(
+            (
+                widget.id,
+                widget.value,
+                widget.placeholder,
+                widget.disabled,
+            )
+            for widget in card.query(Input)
+            if widget.id is not None
+        )
+        selects = tuple(
+            (widget.id, widget.value, widget.disabled)
+            for widget in card.query(Select)
+            if widget.id is not None
+        )
+        action_selectors = (
+            "#settings-save-category",
+            "#settings-revert-category",
+        )
+        buttons = [
+            (widget.id, widget.disabled)
+            for widget in card.query(Button)
+            if widget.id is not None
+        ]
+        for selector in action_selectors:
+            try:
+                widget = self.query_one(selector, Button)
+            except QueryError:
+                continue
+            if widget.id is not None:
+                buttons.append((widget.id, widget.disabled))
+        return _VllmDefaultPresentationSnapshot(
+            draft=copy.deepcopy(self._provider_draft()),
+            provider_save_result=self._provider_save_result,
+            provider_test_result=self._provider_test_result,
+            provider_test_evidence_store=copy.copy(
+                self._provider_test_evidence_store
+            ),
+            provider_draft_generation=self._provider_draft_generation,
+            provider_credential_revision=self._provider_credential_revision,
+            model_discovery_status=self._model_discovery_status,
+            model_discovery_models=tuple(self._model_discovery_models),
+            model_discovery_selected_model_ids=frozenset(
+                self._model_discovery_selected_model_ids
+            ),
+            endpoint_suppress_queue=tuple(self._provider_endpoint_suppress_queue),
+            credential_env_var_suppress_queue=tuple(
+                self._provider_credential_env_var_suppress_queue
+            ),
+            api_key_suppress_queue=tuple(self._provider_api_key_suppress_queue),
+            context_window_suppress_queue=tuple(
+                self._provider_context_window_suppress_queue
+            ),
+            card_disabled=card.disabled,
+            inputs=inputs,
+            selects=selects,
+            buttons=tuple(buttons),
+        )
+
+    def _set_vllm_default_compensation_fence(self, fenced: bool) -> None:
+        """Prevent provider edits while stage acknowledgment may compensate."""
+
+        try:
+            card = self.query_one("#settings-providers-models-card", Vertical)
+            card.disabled = (
+                True
+                if fenced
+                else bool(self._vllm_default_recovery_card_disabled)
+            )
+        except QueryError:
+            pass
+        for selector in (
+            "#settings-save-category",
+            "#settings-revert-category",
+        ):
+            try:
+                button = self.query_one(selector, Button)
+                if fenced:
+                    button.disabled = True
+            except QueryError:
+                pass
+        if not fenced:
+            self._update_guided_action_widgets()
+
+    def _vllm_default_recovery(self):
+        """Return app-owned failed-release state, if this app exposes the store."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return None
+        return store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+
+    def _sync_vllm_default_recovery_widgets(self) -> None:
+        """Expose surviving cleanup authority without leaking the handoff value."""
+
+        recovery = self._vllm_default_recovery()
+        fenced = self._vllm_default_claim is not None or recovery is not None
+        self._set_vllm_default_compensation_fence(fenced)
+        try:
+            status = self.query_one(
+                "#settings-vllm-handoff-recovery-status", Static
+            )
+            button = self.query_one("#settings-vllm-handoff-recovery", Button)
+        except QueryError:
+            return
+        status.display = recovery is not None
+        button.display = recovery is not None
+        if recovery is None:
+            return
+        status.update(
+            "Verified vLLM handoff cleanup needs attention. Retry cleanup to "
+            "unlock provider actions."
+            if recovery.automatic_retry_exhausted
+            else "Verified vLLM handoff cleanup is retrying; provider actions "
+            "remain locked."
+        )
+        button.disabled = False
+
+    def _restore_vllm_default_presentation(
+        self,
+        snapshot: _VllmDefaultPresentationSnapshot,
+    ) -> None:
+        """Rehydrate provider semantics, then restore exact captured controls."""
+
+        if snapshot.draft is None:
+            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+        else:
+            self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = copy.deepcopy(
+                snapshot.draft
+            )
+        self._provider_test_result = snapshot.provider_test_result
+        self._provider_test_evidence_store = copy.copy(
+            snapshot.provider_test_evidence_store
+        )
+        self._provider_draft_generation = snapshot.provider_draft_generation
+        self._provider_credential_revision = snapshot.provider_credential_revision
+        self._model_discovery_status = snapshot.model_discovery_status
+        self._model_discovery_models = tuple(snapshot.model_discovery_models)
+        self._model_discovery_selected_model_ids = set(
+            snapshot.model_discovery_selected_model_ids
+        )
+        self._provider_endpoint_suppress_queue[:] = snapshot.endpoint_suppress_queue
+        self._provider_credential_env_var_suppress_queue[:] = (
+            snapshot.credential_env_var_suppress_queue
+        )
+        self._provider_api_key_suppress_queue[:] = snapshot.api_key_suppress_queue
+        self._provider_context_window_suppress_queue[:] = (
+            snapshot.context_window_suppress_queue
+        )
+
+        values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        model = str(values.get("model") or "").strip()
+        self._sync_provider_manual_widget(provider)
+        self._sync_provider_credential_widget(provider)
+        self._sync_provider_model_profile_widgets(provider, model)
+
+        # Restore the authoritative controls before deriving any dynamic
+        # presentation from them.  The staging path mutates both draft state
+        # and widgets; deriving first would freeze the staged/configured
+        # endpoint into the Static inspector rows even after the Input itself
+        # was compensated.
+        for widget_id, value, placeholder, disabled in snapshot.inputs:
+            try:
+                widget = self.query_one(f"#{widget_id}", Input)
+            except QueryError:
+                continue
+            with widget.prevent(Input.Changed):
+                widget.value = value
+            widget.placeholder = placeholder
+            widget.disabled = disabled
+        for widget_id, value, disabled in snapshot.selects:
+            try:
+                widget = self.query_one(f"#{widget_id}", Select)
+            except QueryError:
+                continue
+            with widget.prevent(Select.Changed):
+                widget.value = value
+            widget.disabled = disabled
+
+        self._update_provider_dynamic_widgets()
+
+        self._provider_save_result = snapshot.provider_save_result
+        self._set_static_text(
+            "#settings-provider-save-result", snapshot.provider_save_result
+        )
+        self._update_provider_test_result()
+        self._refresh_model_discovery_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        for widget_id, disabled in snapshot.buttons:
+            try:
+                self.query_one(f"#{widget_id}", Button).disabled = disabled
+            except QueryError:
+                continue
+        try:
+            self.query_one(
+                "#settings-providers-models-card", Vertical
+            ).disabled = snapshot.card_disabled
+        except QueryError:
+            pass
+
+    def _vllm_default_actions_fenced(self) -> bool:
+        """Reject Settings mutations until the staged handoff is settled."""
+
+        if self._vllm_default_claim is None and self._vllm_default_recovery() is None:
+            return False
+        self.app.notify(
+            "Finishing verified vLLM handoff. Settings actions are temporarily "
+            "unavailable.",
+            severity="warning",
+        )
+        return True
+
+    def _consume_pending_vllm_default_intent(self) -> bool:
+        """Stage one current verified target in Providers without saving it."""
+
+        if self._vllm_default_claim is not None:
+            return False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        if store.release_recovery(HandoffChannel.VLLM_DEFAULT) is not None:
+            recovery_result = store.retry_release_recovery(
+                HandoffChannel.VLLM_DEFAULT,
+                automatic=True,
+            )
+            self._sync_vllm_default_recovery_widgets()
+            if recovery_result != "released":
+                if recovery_result == "pending":
+                    self._schedule_vllm_default_cleanup_retry()
+                return False
+        claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+        if claim is None:
+            return False
+        try:
+            intent = claim.value
+            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            if type(intent) is not VllmDefaultIntent:
+                raise TypeError("vLLM Settings handoff was not exact")
+            if not owner_has_current_intent(owner, intent):
+                raise ValueError("vLLM Settings handoff is stale")
+            if (
+                not self.is_mounted
+                or self._active_category_id()
+                is not SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                raise RuntimeError("Providers Settings is not mounted")
+            self._vllm_default_before_presentation = (
+                self._snapshot_vllm_default_presentation()
+            )
+            self._vllm_default_claim = cast(
+                HandoffClaim[VllmDefaultIntent], claim
+            )
+            self._vllm_default_release_retry_scheduled = False
+            self._set_vllm_default_compensation_fence(True)
+            self._stage_provider_value("provider", "vllm")
+            self._stage_provider_value("model", intent.model_id)
+            self._stage_provider_value("endpoint", intent.api_url)
+            self._sync_provider_manual_widget("vllm")
+            model_input = self.query_one("#settings-model-value", Input)
+            endpoint_input = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            )
+            with model_input.prevent(Input.Changed):
+                model_input.value = intent.model_id
+            with endpoint_input.prevent(Input.Changed):
+                endpoint_input.value = intent.api_url
+            endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
+            self._sync_provider_credential_widget("vllm")
+            self._sync_provider_model_profile_widgets("vllm", intent.model_id)
+            provider_settings = self._provider_config("vllm")
+            if generic_endpoint_differs(intent.api_url, provider_settings):
+                self._provider_save_result = unsaved_endpoint_copy(
+                    intent.api_url, provider_settings
+                )
+            else:
+                self._provider_save_result = (
+                    "Verified vLLM target staged. Review it, then choose Save "
+                    "to make it the default for new chats."
+                )
+            self._set_static_text(
+                "#settings-provider-save-result", self._provider_save_result
+            )
+            self._update_provider_dynamic_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+            self._set_vllm_default_compensation_fence(True)
+            scheduled = self.call_after_refresh(
+                self._acknowledge_vllm_default_intent,
+                claim,
+                intent,
+            )
+            if scheduled is False:
+                raise RuntimeError("vLLM Settings acknowledgment was not scheduled")
+            return True
+        except BaseException as error:
+            self._rollback_vllm_default_intent(claim=claim)
+            if isinstance(
+                error,
+                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
+            ):
+                raise
+            logger.warning(
+                "vLLM Settings handoff will retry "
+                "(channel=%s, revision=%s, exception_category=%s)",
+                claim.channel.value,
+                claim.revision,
+                type(error).__name__,
+            )
+            return False
+
+    def _acknowledge_vllm_default_intent(
+        self,
+        claim: HandoffClaim[VllmDefaultIntent],
+        intent: VllmDefaultIntent,
+    ) -> None:
+        """Acknowledge only after the staged draft and widgets reached a paint."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        draft = self._provider_draft()
+        try:
+            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            if (
+                type(store) is not PendingHandoffStore
+                or self._vllm_default_claim is not claim
+                or not self.is_mounted
+                or not owner_has_current_intent(owner, intent)
+                or draft is None
+                or draft.values.get("provider") != "vllm"
+                or draft.values.get("model") != intent.model_id
+                or draft.values.get("endpoint") != intent.api_url
+                or self.query_one("#settings-model-value", Input).value
+                != intent.model_id
+                or self.query_one("#settings-provider-endpoint-value", Input).value
+                != intent.api_url
+                or not store.acknowledge_current(claim)
+            ):
+                raise RuntimeError("vLLM Settings handoff changed before render")
+        except BaseException:
+            self._rollback_vllm_default_intent(claim=claim)
+            return
+        presentation = self._vllm_default_before_presentation
+        self._vllm_default_claim = None
+        self._vllm_default_before_presentation = None
+        self._vllm_default_recovery_card_disabled = None
+        self._vllm_default_release_retry_scheduled = False
+        if presentation is not None:
+            try:
+                self.query_one(
+                    "#settings-providers-models-card", Vertical
+                ).disabled = presentation.card_disabled
+            except QueryError:
+                pass
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    def _rollback_vllm_default_intent(
+        self,
+        *,
+        claim: HandoffClaim[VllmDefaultIntent] | None = None,
+    ) -> None:
+        """Restore the prefill draft and release only this exact claim."""
+
+        current_claim = self._vllm_default_claim or claim
+        if current_claim is None:
+            return
+        presentation = self._vllm_default_before_presentation
+        if presentation is not None:
+            if self.is_mounted:
+                self._restore_vllm_default_presentation(presentation)
+            elif presentation.draft is None:
+                self._settings_drafts.pop(
+                    SettingsCategoryId.PROVIDERS_MODELS, None
+                )
+            else:
+                self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = (
+                    copy.deepcopy(presentation.draft)
+                )
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        released = False
+        release_failure = "false"
+        if type(store) is PendingHandoffStore:
+            try:
+                released = store.release(current_claim) is True
+            except BaseException as release_error:
+                release_failure = "exception"
+                logger.warning(
+                    "vLLM Settings handoff release failed "
+                    "(revision=%s, exception_category=%s)",
+                    current_claim.revision,
+                    type(release_error).__name__,
+                )
+        if released:
+            self._vllm_default_claim = None
+            self._vllm_default_before_presentation = None
+            self._vllm_default_recovery_card_disabled = None
+            self._vllm_default_release_retry_scheduled = False
+            if self.is_mounted:
+                self._set_vllm_default_compensation_fence(False)
+                self._update_draft_status_widgets(
+                    SettingsCategoryId.PROVIDERS_MODELS
+                )
+            return
+
+        if type(store) is PendingHandoffStore:
+            try:
+                store.retain_release_recovery(
+                    current_claim,
+                    failed_attempts=1,
+                    automatic_retry_limit=self._VLLM_DEFAULT_RELEASE_RETRY_LIMIT,
+                    last_failure=release_failure,
+                )
+            except BaseException as retention_error:
+                logger.warning(
+                    "vLLM Settings handoff cleanup ownership could not transfer "
+                    "(revision=%s, exception_category=%s)",
+                    current_claim.revision,
+                    type(retention_error).__name__,
+                )
+                self._vllm_default_claim = current_claim
+                self._sync_vllm_default_recovery_widgets()
+                return
+        else:
+            self._sync_vllm_default_recovery_widgets()
+            return
+        self._vllm_default_recovery_card_disabled = (
+            presentation.card_disabled if presentation is not None else False
+        )
+        self._vllm_default_claim = None
+        self._vllm_default_before_presentation = None
+        self._sync_vllm_default_recovery_widgets()
+        self._schedule_vllm_default_cleanup_retry()
+
+    def _schedule_vllm_default_cleanup_retry(self) -> None:
+        """Schedule one bounded retry while keeping store ownership on failure."""
+
+        recovery = self._vllm_default_recovery()
+        if (
+            not self.is_mounted
+            or recovery is None
+            or recovery.automatic_retry_exhausted
+            or self._vllm_default_release_retry_scheduled
+        ):
+            return
+        self._vllm_default_release_retry_scheduled = True
+        try:
+            scheduled = self.call_after_refresh(self._retry_vllm_default_cleanup)
+            if scheduled is False:
+                self._vllm_default_release_retry_scheduled = False
+        except BaseException as schedule_error:
+            self._vllm_default_release_retry_scheduled = False
+            logger.warning(
+                "vLLM Settings handoff release retry could not be scheduled "
+                "(revision=%s, exception_category=%s)",
+                recovery.revision,
+                type(schedule_error).__name__,
+            )
+
+    def _retry_vllm_default_cleanup(self) -> None:
+        """Retry one retained exact release without exceeding auto-retry bounds."""
+
+        self._vllm_default_release_retry_scheduled = False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return
+        result = store.retry_release_recovery(
+            HandoffChannel.VLLM_DEFAULT,
+            automatic=True,
+        )
+        self._sync_vllm_default_recovery_widgets()
+        if result == "pending":
+            self._schedule_vllm_default_cleanup_retry()
+        elif result == "released" and self.is_mounted:
+            self._vllm_default_recovery_card_disabled = None
+            self._set_vllm_default_compensation_fence(False)
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    def recover_vllm_default_handoff(self) -> bool:
+        """Publicly retry a retained release after automatic cleanup is exhausted."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        result = store.retry_release_recovery(
+            HandoffChannel.VLLM_DEFAULT,
+            automatic=False,
+        )
+        self._sync_vllm_default_recovery_widgets()
+        if result != "released":
+            return False
+        self._vllm_default_recovery_card_disabled = None
+        self._set_vllm_default_compensation_fence(False)
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        return True
+
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
         store = getattr(self, "_provider_test_evidence_store", None)
         if not isinstance(store, ProviderTestEvidenceStore):
@@ -12903,6 +13443,8 @@ class SettingsScreen(BaseAppScreen):
         saved config are skipped (defense-in-depth no-op guard) so merely
         viewing the category never rewrites config.toml.
         """
+        if self._vllm_default_actions_fenced():
+            return
         try:
             auto_refresh_enabled = self.query_one(
                 "#settings-model-catalog-auto-refresh", Checkbox
@@ -14501,9 +15043,11 @@ class SettingsScreen(BaseAppScreen):
         yield Static(
             "Providers & Models", classes="destination-section settings-column-title"
         )
-        with Vertical(
+        provider_card = Vertical(
             id="settings-providers-models-card", classes="settings-focus-card"
-        ):
+        )
+        provider_card.disabled = self._vllm_default_recovery() is not None
+        with provider_card:
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -18942,15 +19486,46 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-save-category",
                 tooltip="Save changes for the selected Settings category.",
             )
-            save_button.disabled = not self._guided_actions_enabled(summary.category)
+            save_button.disabled = not self._guided_actions_enabled(
+                summary.category
+            ) or (
+                summary.category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._vllm_default_recovery() is not None
+            )
             yield save_button
             revert_button = Button(
                 self._guided_action_label("Revert (r)", dirty=dirty),
                 id="settings-revert-category",
                 tooltip="Discard unsaved changes for the selected Settings category.",
             )
-            revert_button.disabled = not self._guided_actions_enabled(summary.category)
+            revert_button.disabled = not self._guided_actions_enabled(
+                summary.category
+            ) or (
+                summary.category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._vllm_default_recovery() is not None
+            )
             yield revert_button
+            if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
+                recovery = self._vllm_default_recovery()
+                recovery_status = Static(
+                    "Verified vLLM handoff cleanup needs attention. Retry cleanup "
+                    "to unlock provider actions.",
+                    id="settings-vllm-handoff-recovery-status",
+                    classes="settings-status-row",
+                )
+                recovery_status.display = recovery is not None
+                yield recovery_status
+                recovery_button = Button(
+                    "Retry vLLM handoff cleanup",
+                    id="settings-vllm-handoff-recovery",
+                    variant="warning",
+                    tooltip=(
+                        "Retry the application-owned release without saving any "
+                        "provider settings."
+                    ),
+                )
+                recovery_button.display = recovery is not None
+                yield recovery_button
         elif summary.category is SettingsCategoryId.OVERVIEW:
             # task-1714 (critique r4 P1): this was a bare "Theme" noun-chip
             # whose verb lived in a mouse-only tooltip; the label now names
@@ -24764,6 +25339,24 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self.action_settings_test_category(allow_text_entry_focus=True)
 
+    @on(Button.Pressed, "#settings-vllm-handoff-recovery")
+    def handle_vllm_handoff_recovery(self, event: Button.Pressed) -> None:
+        """Expose an explicit retry after bounded automatic cleanup fails."""
+
+        event.stop()
+        if self.recover_vllm_default_handoff():
+            self.app.notify(
+                "Verified vLLM handoff cleanup completed. Provider actions are "
+                "available again.",
+                severity="information",
+            )
+        else:
+            self.app.notify(
+                "Verified vLLM handoff cleanup is still blocked. Retry again or "
+                "reopen Settings.",
+                severity="warning",
+            )
+
     @on(Button.Pressed, "#settings-briefing-schedules-toggle")
     def handle_briefing_schedules_toggle(self, event: Button.Pressed) -> None:
         """Persist and apply the canonical global Watchlists briefing gate."""
@@ -24836,16 +25429,22 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._discover_provider_models_worker()
 
     @on(Button.Pressed, "#settings-save-discovered-provider-models")
     def handle_save_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._save_selected_discovered_provider_models_worker()
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._vllm_default_actions_fenced():
+            return
         self._clear_discovered_provider_models_worker()
 
     @on(Checkbox.Changed)
@@ -25383,6 +25982,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_save_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
@@ -26237,6 +26838,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_revert_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
@@ -26441,6 +27044,8 @@ class SettingsScreen(BaseAppScreen):
     def action_settings_test_category(
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
+        if self._vllm_default_actions_fenced():
+            return
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:

@@ -261,6 +261,11 @@ class PersonaBuddyWorkbenchApp(PersonasTestApp):
     """Workbench harness using the real app-to-screen Buddy reconciliation."""
 
     reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _start_persona_buddy_overlay = TldwCli._start_persona_buddy_overlay
+    _schedule_persona_buddy_overlay = TldwCli._schedule_persona_buddy_overlay
+    _notify_persona_buddy_changed = TldwCli._notify_persona_buddy_changed
+    on_persona_buddy_changed = TldwCli.on_persona_buddy_changed
+    on_base_app_screen_contents_rebuilt = TldwCli.on_base_app_screen_contents_rebuilt
     _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
     is_persona_buddy_confirmed_unavailable = (
         TldwCli.is_persona_buddy_confirmed_unavailable
@@ -270,6 +275,11 @@ class PersonaBuddyWorkbenchApp(PersonasTestApp):
     def __init__(self, mock_app_instance) -> None:
         super().__init__(mock_app_instance)
         self._persona_buddy_unavailable_authority = None
+        self._persona_buddy_overlay = None
+        self._persona_buddy_overlay_started = False
+
+    def on_mount(self) -> None:
+        self._start_persona_buddy_overlay()
 
 
 def _row_text(item) -> str:
@@ -13514,7 +13524,7 @@ async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
         hook = Mock(wraps=stale.sync_persona_buddy_reconciled_state)
         stale.sync_persona_buddy_reconciled_state = hook
 
-        await stale.reconcile_persona_buddy_view()
+        await app.reconcile_persona_buddy_view()
 
         hook.assert_not_called()
 

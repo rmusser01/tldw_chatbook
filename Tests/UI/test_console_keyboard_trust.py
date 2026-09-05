@@ -64,7 +64,9 @@ def test_focus_bg_token_is_visibly_raised_not_surface():
     [
         ".console-rail-collapse-button:focus",
         ".console-switcher-result:focus",
-        ".console-workspace-conversation-row Button:focus",
+        # TASK-31429 (Qodo review): the row IS the Button, so the rule must
+        # target it directly -- the former descendant form never matched.
+        ".console-workspace-conversation-row:focus",
     ],
 )
 def test_console_focus_gaps_have_contract_style_rules(selector):

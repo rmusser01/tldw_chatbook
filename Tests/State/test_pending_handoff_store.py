@@ -22,11 +22,16 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
     HandoffClaim,
+    HandoffReleaseRecovery,
     HandoffValueError,
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnIntent,
+)
+from tldw_chatbook.UI.Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    VllmDefaultIntent,
 )
 from tldw_chatbook.UI.Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
@@ -90,6 +95,51 @@ def _claim_title(store: PendingHandoffStore, channel: HandoffChannel) -> str:
     title = claim.value.title
     assert store.acknowledge(claim) is True
     return title
+
+
+@pytest.mark.parametrize(
+    ("channel", "intent_type"),
+    (
+        (HandoffChannel.VLLM_CONSOLE, VllmConsoleIntent),
+        (HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent),
+    ),
+)
+def test_vllm_channels_reject_mutable_model_text_during_stage_and_claim(
+    channel,
+    intent_type,
+) -> None:
+    """Detached reconstruction must reject subclass state at both boundaries."""
+
+    class MutableModelId(str):
+        def __new__(cls, value: str):
+            instance = super().__new__(cls, value)
+            instance.extras = []
+            return instance
+
+    forged = object.__new__(intent_type)
+    object.__setattr__(
+        forged,
+        "api_url",
+        "http://127.0.0.1:8000/v1/chat/completions",
+    )
+    object.__setattr__(forged, "model_id", MutableModelId("chatbook-vllm"))
+    object.__setattr__(forged, "generation", 7)
+
+    with pytest.raises(HandoffValueError):
+        PendingHandoffStore().stage(channel, forged)
+
+    store = PendingHandoffStore()
+    revision = store.stage(
+        channel,
+        intent_type(
+            api_url="http://127.0.0.1:8000/v1/chat/completions",
+            model_id="chatbook-vllm",
+            generation=7,
+        ),
+    )
+    store._slots[channel].pending = (revision, forged)
+    with pytest.raises(HandoffValueError):
+        store.claim(channel)
 
 
 def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:
@@ -1370,3 +1420,117 @@ def test_first_chat_claim_is_current_only_until_replaced() -> None:
     next_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
     assert next_claim is not None
     assert next_claim.value == replacement
+
+
+def test_failed_release_recovery_survives_consumer_and_requeues_exact_claim(
+    monkeypatch,
+) -> None:
+    """The app-owned store, not a screen, retains failed cleanup authority."""
+
+    store = PendingHandoffStore()
+    intent = VllmDefaultIntent(
+        api_url="http://127.0.0.1:8123/v1/chat/completions",
+        model_id="recovery-model",
+        generation=7,
+    )
+    store.stage(HandoffChannel.VLLM_DEFAULT, intent)
+    claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+    assert claim is not None
+    real_release = store.release
+    monkeypatch.setattr(store, "release", lambda _claim: False)
+
+    recovery = store.retain_release_recovery(
+        claim,
+        failed_attempts=1,
+        automatic_retry_limit=3,
+    )
+
+    assert recovery == HandoffReleaseRecovery(
+        channel=HandoffChannel.VLLM_DEFAULT,
+        revision=claim.revision,
+        failed_attempts=1,
+        automatic_retry_limit=3,
+        last_failure="false",
+    )
+    assert (
+        store.retry_release_recovery(
+            HandoffChannel.VLLM_DEFAULT,
+            automatic=True,
+        )
+        == "pending"
+    )
+    assert store.release_recovery(HandoffChannel.VLLM_DEFAULT) == replace(
+        recovery,
+        failed_attempts=2,
+    )
+
+    monkeypatch.setattr(store, "release", real_release)
+    assert (
+        store.retry_release_recovery(
+            HandoffChannel.VLLM_DEFAULT,
+            automatic=True,
+        )
+        == "released"
+    )
+    assert store.release_recovery(HandoffChannel.VLLM_DEFAULT) is None
+    replay = store.claim(HandoffChannel.VLLM_DEFAULT)
+    assert replay is not None
+    assert replay.revision == claim.revision
+    assert replay.value == intent
+
+
+def test_release_recovery_bounds_automatic_attempts_but_public_retry_survives(
+    monkeypatch,
+) -> None:
+    store = PendingHandoffStore()
+    store.stage(
+        HandoffChannel.VLLM_CONSOLE,
+        VllmConsoleIntent(
+            api_url="http://127.0.0.1:8124/v1/chat/completions",
+            model_id="console-recovery-model",
+            generation=8,
+        ),
+    )
+    claim = store.claim(HandoffChannel.VLLM_CONSOLE)
+    assert claim is not None
+    real_release = store.release
+
+    def raise_release(_claim):
+        raise RuntimeError("controlled release failure")
+
+    monkeypatch.setattr(store, "release", raise_release)
+    store.retain_release_recovery(
+        claim,
+        failed_attempts=1,
+        automatic_retry_limit=2,
+        last_failure="exception",
+    )
+
+    assert (
+        store.retry_release_recovery(
+            HandoffChannel.VLLM_CONSOLE,
+            automatic=True,
+        )
+        == "exhausted"
+    )
+    exhausted = store.release_recovery(HandoffChannel.VLLM_CONSOLE)
+    assert exhausted is not None
+    assert exhausted.failed_attempts == 2
+    assert exhausted.automatic_retry_exhausted is True
+    assert (
+        store.retry_release_recovery(
+            HandoffChannel.VLLM_CONSOLE,
+            automatic=True,
+        )
+        == "exhausted"
+    )
+
+    monkeypatch.setattr(store, "release", real_release)
+    assert (
+        store.retry_release_recovery(
+            HandoffChannel.VLLM_CONSOLE,
+            automatic=False,
+        )
+        == "released"
+    )
+    assert store.has_pending(HandoffChannel.VLLM_CONSOLE)

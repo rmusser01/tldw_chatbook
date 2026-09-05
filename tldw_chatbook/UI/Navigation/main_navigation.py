@@ -1,12 +1,13 @@
 """Main navigation bar for screen-based navigation."""
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.events import DescendantFocus
 from textual.geometry import Region
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
@@ -64,6 +65,32 @@ def nav_button_label(destination_id: str, label: str) -> str:
     if shortcut.startswith("ctrl+"):
         return f"{NAV_HOTKEY_GLYPH}{shortcut.removeprefix('ctrl+')} {label}"
     return f"{shortcut.upper()} {label}"
+
+
+#: task-31385: where the app remembers how many Console interrupt rounds
+#: are pending, so a navigation bar composed AFTER a round armed (every
+#: screen composes its own bar) still shows the badge on mount.
+CONSOLE_ATTENTION_ATTR = "_console_pending_interrupts"
+#: The pending-interrupt badge on the Console nav button; the same glyph
+#: the session tabs use for "needs approval".
+CONSOLE_ATTENTION_GLYPH = "◆"
+
+
+def set_console_attention(app: Any, pending: int) -> None:
+    """UI THREAD: remember ``pending`` on the app and repaint every mounted bar.
+
+    Args:
+        app: The running app (a test double is fine; it only needs to
+            accept the attribute).
+        pending: How many Console interrupt rounds are registered now.
+    """
+    setattr(app, CONSOLE_ATTENTION_ATTR, int(pending))
+    stack = getattr(app, "screen_stack", None)
+    if not isinstance(stack, (list, tuple)):
+        return
+    for screen in stack:
+        for bar in screen.query(MainNavigationBar):
+            bar.apply_console_attention()
 
 
 class NavigateToScreen(Message):
@@ -404,8 +431,21 @@ class MainNavigationBar(Container):
         overflow_hint.display = False
         yield overflow_hint
 
+    def apply_console_attention(self) -> None:
+        """task-31385: badge the Console button while interrupt rounds are pending."""
+        try:
+            button = self.query_one("#nav-console", Button)
+        except NoMatches:
+            return
+        base = nav_button_label("console", get_shell_destination("console").label)
+        pending = int(getattr(self.app, CONSOLE_ATTENTION_ATTR, 0) or 0)
+        label = f"{base} {CONSOLE_ATTENTION_GLYPH}" if pending else base
+        if str(button.label) != label:
+            button.label = label
+
     def on_mount(self) -> None:
         """Scroll the initially active destination's button into view."""
+        self.apply_console_attention()
         # Order matters: settle the overflow indicators (which change the
         # strip's width) before aligning the active button.
         self.call_after_refresh(self._update_overflow_hints)

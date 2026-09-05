@@ -37,7 +37,9 @@ Narrow
 Media has three stable roles:
 
 - **Library** — the normal Library navigation rail.
-- **Items** — a local-only list with **Filter media**, type selection,
+- **Items** — a local-only list with a filter over title, content and
+  keyword (its box is narrow, so it reads "Title/keyword…" and its tooltip
+  spells out "Filter by title, content or keyword"), type selection,
   paging, bulk actions, and balanced two-line rows.
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
@@ -75,6 +77,32 @@ list-and-preview layout.
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
   labels back in place.
+
+**Media's "Analyze"** (Media only) generates an analysis for every checked
+item in one run, in list order, on its own row under Clear/Export/Review:
+
+- Pressing it leaves select mode and reports progress **in the list**:
+  "Analyzing 3 of 40 · 2 failed" while it runs, then "✓ analyzed · 38 of 40
+  · 2 failed" when it settles ("✗ analyzed · 0 of 3 · 3 failed" if nothing
+  succeeded). **Retry failed** re-runs only the items that failed;
+  **Dismiss** clears the receipt. A clean run says just "✓ analyzed · 40 of
+  40" with no failure count and no Retry.
+- **Items that already have an analysis are never overwritten silently.**
+  If any checked item has one, the first press runs nothing and offers
+  "N of M already analyzed" with **Skip them** (analyze only the rest) and
+  **Overwrite** (analyze everything, replacing what is there) — no
+  Dismiss on this row; "Skip them" already is the change-nothing outcome
+  and retires the card.
+- One run at a time: a second press while one is in flight says "Analysis
+  already running" rather than starting a second.
+- With no analysis provider configured the action reads **"○ Analyze"** and
+  its tooltip carries the same reason the Reader's Generate gives.
+- The run belongs to the Library screen: leaving Library stops it, and a
+  notice says where it got to ("Analysis stopped at 3 of 40 · reopen Select
+  ▸ Analyze to continue; finished items are skipped"). Items already
+  analyzed are skipped by a fresh run, so continuing is just re-selecting
+  them and pressing Analyze again.
+
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
@@ -100,10 +128,19 @@ another delete. The viewer's single-item "Delete" leaves the same receipt
 and bulk delete share one undo story. "Undo" restores every item the
 receipt names (or just the ones still outstanding, if a prior undo
 partially failed); "Dismiss" clears the receipt without restoring anything.
-"Undo" is the at-point convenience; the durable way back is the **Trash
-view** the receipt points at (see "Media Trash" below), which lists every
-deleted item — including ones from earlier sessions — and restores them
-per item. (Re-importing the same file from
+Focus moves straight to "Undo" the moment the receipt appears, so pressing
+**Enter** undoes immediately — the confirmation's "You can undo right
+away" is literally true at that instant. "Undo" stays live even if the
+list behind the receipt goes stale in the meantime (a later page change,
+say): it restores exactly the ids the receipt already names, not whatever
+the list happens to show now, so a stale page can never be the reason
+Undo is unavailable. If a restore itself fails, the receipt becomes
+"✗ undo failed · n of m · \<reason\>" and "Undo" becomes "Retry undo",
+retrying only the items still outstanding; a later full success clears
+the receipt as normal. "Undo" is the at-point convenience; the durable way
+back is the **Trash view** the receipt points at (see "Media Trash"
+below), which lists every deleted item — including ones from earlier
+sessions — and restores them per item. (Re-importing the same file from
 [Import & export](import-and-export.md) also still restores a trashed
 match instead of refusing.)
 
@@ -127,27 +164,53 @@ a status line says "showing X of N" honestly. Entering Trash clears any
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-There is no permanent-delete or empty-trash action here yet — restoring is
-the only operation, and nothing is ever removed from the Trash except by
-restoring it.
+A selected row offers two actions and no others: **"Restore"**, and
+**"Delete permanently"**, which arms an inline "Cancel | Delete
+permanently" confirmation and, once confirmed, removes that one item for
+good — there is no undo and no receipt afterwards. There is no
+empty-trash or bulk permanent delete; each item is deleted on its own.
+Whichever Trash action you take, "‹ Media" returns you to a
+current list: the app refreshes the page it fenced for its own write, so it
+never asks you to press "Retry" for a change you just made here.
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
+and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
+235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
+2" range, no stale banner and no "Retry").*
 
 ### Media list
 
 | Control | What it does |
 |---|---|
-| "Filter media" / "Clear filter" | Searches the complete local Media source before paging; it is separate from Find in item. Clearing restores the unfiltered selection when it is still available. |
+| "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
+| "Retry" | Repeats a failed page request. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
 
 Empty states: with nothing imported, "No media in your Library yet. Import
-something to see it here."; with a filter that matches nothing, "No media
-of type 'pdf'."
+something to see it here."; with a type that matches nothing, "No media
+of type 'pdf'."; with a filter query that matches nothing, "No media matched
+“day2” in titles, content or keywords." beside a live "Clear filter".
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
+articles tagged `day2` — a keyword in no title and no body — filtered live in
+tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
+\"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
+
+*Verified against fix/media-wave5-e @ d5355a37ca — 2026-09-05
+(task-31220 final review, doc-only round: corrected the "Retry" row above —
+rows open read-only under a stale page, only Select/Export/Delete/sort/Select
+all stay gated with a reason — and added the failed-undo receipt
+("✗ undo failed · n of m · \<reason\>" / "Retry undo"), the
+"Couldn't retry · \<reason\>" copy a failed page-request Retry now shows,
+and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
+above. Confirmed against the product code and its tests, not re-verified
+live for this doc-only pass.)*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."
@@ -161,9 +224,18 @@ Reader stays mounted beside Items and keeps one mode visible at a time:
 while you move through items. Missing analysis or highlights produces an
 item-specific empty state; it does not silently switch modes.
 
+Its header is deliberately short: **‹ Back**, the title, the action row, and
+the mode row — five rows above the reading surface, border included. A byline
+row appears only when the item actually has an author or a URL, and an
+identity line ("Server item · not in local Media list") only for a server
+item a local Media list cannot show. The mode row is the only label for the
+open mode; no section header repeats it. Body text wraps at a reading measure
+of about 90 columns however wide the terminal is, while the box around it
+still spans the pane.
+
 - **Read** — the complete stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item whose content has a
-  real heading, table, or fenced code block), a "Rendered (selected) |
+  markdown-flavored media (a `.md`/Obsidian-style item, or a video/audio
+  transcript, whose content has a real heading, table, or fenced code block), a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -175,21 +247,24 @@ item-specific empty state; it does not silently switch modes.
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
   and wraps at either end — in both views. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
-  no on-screen mark. While a search is active, the search box, match
-  count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
-  they stay visible while you step through matches — even in a small
-  terminal, and no matter how far you scroll. Clearing the query
-  (submit an empty box) unpins them back into the Read section. Eligible local
-  PNG, JPEG, and WebP files can also show an inline image above the complete
-  text. **Hide preview** / **Show preview** affects only that item for this
-  session. An unavailable or failed preview reports the problem and leaves
+  no on-screen mark. The search bar stays exactly where Find opened it,
+  directly under the Read/Analysis/Highlights/Info row: submitting a query
+  only reveals the match count and "◀ Prev" / "Next ▶" beneath the box, and
+  clearing the query (submit an empty box) hides them again. Nothing above
+  the bar moves. Eligible local PNG, JPEG, and WebP files can also show an
+  inline image above the complete text. **Hide preview** / **Show preview**
+  affects only that item for this session. An unavailable or failed preview reports the problem and leaves
   every character of stored text readable; GIF, PDF, audio, video, remote URL,
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
-  This section only edits text — it never calls a model; analysis is
-  produced at import time (the "Analyze after import" option) or written by
-  hand here.
+  Analysis is produced at import time (the "Analyze after import" option),
+  written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
+  once one exists) calls the configured analysis provider without leaving
+  the reading flow. With no provider configured it reads **"○ Generate"**
+  and its tooltip names the reason (the same wording the Select-mode bulk
+  **Analyze** tooltip and the Import "Analyze N skipped" gate use), so the
+  gap is visible before you click rather than after.
 - **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
@@ -250,6 +325,15 @@ them one by one, with your place and progress saved between visits.
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31276: Find opened, "item"
+submitted, "Next ▶" stepped and Escape closed, live in tmux 235x52 and 100x30 — the bar
+holds its row under the mode toolbar through every step and the pane join stays clean.)*
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31277: a local audio item with
+no author or URL and a `## `-sectioned video transcript, both opened live in tmux 235x52
+— chrome above the first content line went from 9 rows to 5, prose wraps at ~88 cells
+instead of ~136, and the transcript renders its headings instead of literal `##`.)*
+
 *Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
 three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier
 task-31233/34/36/38 create-from-selection → every-entry resume → dismiss-undo pass still holds).*
@@ -305,12 +389,11 @@ setting**; it supplies one bundle of **staged context** for the next send.
 ### Open a media item and search inside it
 1. Click a row; it loads into Reader without replacing Items.
 2. Press **Find**, type into "Search content…", and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and
-   the whole search bar pins to the top of the viewer for as long as the
-   search is active.
-3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized
-   and the pinned bar keeps the count and both controls in view while you
-   navigate.
+   "Match 1 of N matches", the matches are highlighted in the content, and the
+   count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
+   itself does not move, and neither does the header above it.
+3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
+   the bar keeps the count and both controls in view while you navigate.
 
 ### Highlight a passage
 1. In Reader, choose **Highlights** and expand "Add highlight".
@@ -547,3 +630,23 @@ in the import pipeline; details and verification pointers are on the
 database pages, pinned pager at 100x30 and 170x48, bounded complete facet
 chooser with an unambiguous "All types" choice, retained stale recovery,
 selection clearing, and metadata-only diagnostics).*
+
+*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4: the
+Select-mode **Analyze** bulk action, its in-list receipt with Retry failed /
+Dismiss, the "N of M already analysed" Skip/Overwrite choice, the disabled
+"○ Analyze" reason, and the stop-notice when a run's screen goes away.
+Verified live at 235x52 with no provider configured, and in real-screen
+tests for the receipt copy and the run itself.)*
+
+*Verified against fix/media-wave4-d @ 759947bb1d — 2026-09-04 (final fix
+round, task-28007: the Skip/Overwrite choice row no longer offers Dismiss
+at the 235x52 reference width — it clipped to "Dism" against the Items
+pane's 36-cell floor — and "Skip them" already is the change-nothing
+outcome; the choice is now also retired on every browse-scope change
+(filter/query, page, type) and on leaving select mode, not just left to
+outlive them. Copy unified on en-US "analyzed"/"analyze" throughout,
+including the receipt string above. Added the Analysis tab's
+**Generate**/**Regenerate** control to this page's Analysis-tab
+description (AC#5) — it was previously undocumented. Verified in
+real-screen tests for the choice row's painted text and its scope-change
+invalidation.)*

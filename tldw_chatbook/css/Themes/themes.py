@@ -53,7 +53,77 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
                 # For example, Color.parse("red") or continue
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
-    return Theme(**theme_args)
+    return ensure_readable_text_hues(Theme(**theme_args))
+
+
+#: Generated text tints the Console rail paints ordinary text with
+#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
+_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+_AA_RATIO = 4.5
+
+
+def _relative_luminance(color: Color) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.r)
+        + 0.7152 * channel(color.g)
+        + 0.0722 * channel(color.b)
+    )
+
+
+def _contrast_ratio(a: Color, b: Color) -> float:
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    lo, hi = min(la, lb), max(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure_readable_text_hues(theme: Theme) -> Theme:
+    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+
+    Textual derives both as a 66% tint of the theme's contrast text toward
+    the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
+    pastel a user saves from Settings ▸ Theme) that lands below 4.5:1 on the
+    theme's own surfaces. Where it does, blend further toward the text pole
+    (white on dark surfaces, black on light) until both ``surface`` and
+    ``panel`` clear AA. These are GENERATED names no tcss defines, so the
+    ``variables`` entry is honoured (mechanism note atop this module); an
+    explicit per-theme entry is left alone. Themes whose colours cannot be
+    resolved (ANSI palettes) are returned untouched.
+
+    Args:
+        theme: The theme to adjust; mutated and returned for chaining.
+
+    Returns:
+        The same theme, with readable entries added to ``variables`` as needed.
+    """
+    try:
+        generated = theme.to_color_system().generate()
+        surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
+    except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
+        return theme
+    if any(surface.a < 1 for surface in surfaces):
+        return theme
+    dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
+    pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
+    variables = dict(theme.variables or {})
+    for token in _READABLE_TEXT_HUES:
+        if token in variables:
+            continue
+        color = Color.parse(generated[token])
+        if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
+            continue
+        for step in range(1, 21):
+            candidate = color.blend(pole, step / 20)
+            if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
+                variables[token] = candidate.hex
+                break
+        else:
+            variables[token] = pole.hex
+    theme.variables = variables
+    return theme
 
 
 def load_user_themes(themes_dir: str | Path) -> list[Theme]:
@@ -1853,6 +1923,12 @@ ALL_THEMES = [
     sakura_viewing_picnic_theme,
     eighties_anime_ova_sunset_theme,
 ]
+
+# TASK-31429: the shipped catalog gets the same readability pin user themes
+# receive via create_theme_from_dict (gated by test_theme_contrast.py).
+for _shipped_theme in ALL_THEMES:
+    ensure_readable_text_hues(_shipped_theme)
+del _shipped_theme
 
 # Example of a theme with the 'variables' attribute as shown in Textual docs:
 # MY_THEMES["arctic_example"] = Theme(

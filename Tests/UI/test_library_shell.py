@@ -521,9 +521,16 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         rows = list(self.media_items)
         query = str(kwargs.get("query") or "").casefold()
         if query:
-            rows = [
-                row for row in rows if query in str(row.get("title") or "").casefold()
-            ]
+            # Mirrors LIBRARY_BROWSE_SEARCH_FIELDS in
+            # tldw_chatbook/Media/media_reading_scope_service.py (task-31274):
+            # the real browse filter matches title, content AND keywords, so a
+            # title-only fake would hide a keyword miss instead of catching it.
+            def _matches(row):
+                haystacks = [str(row.get("title") or ""), str(row.get("content") or "")]
+                haystacks.extend(str(word) for word in row.get("keywords") or ())
+                return any(query in text.casefold() for text in haystacks)
+
+            rows = [row for row in rows if _matches(row)]
         media_types = kwargs.get("media_types")
         if isinstance(media_types, list):
             rows = [row for row in rows if row.get("type") in media_types]
@@ -10530,7 +10537,14 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
                 lambda *a, **k: ready,
             )
             mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the action is composed disabled while no
+            # provider resolves, so the patched-ready resolution has to
+            # reach the viewer before the press can land.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is False
+            generate.press()
 
             service = app.media_reading_scope_service
             for _ in range(200):
@@ -10598,7 +10612,18 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
                 "chat_api_call",
                 lambda **k: dispatched.append(k) or "should not run",
             )
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the refusal is now stated at the control
+            # BEFORE the click -- a disabled Button swallows press() -- so
+            # the handler's surviving post-click guard is exercised directly.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is True
+            assert str(generate.label) == "○ Generate"
+            assert str(generate.tooltip) == "No analysis provider is configured."
+            screen.handle_library_media_analysis_generate(
+                SimpleNamespace(stop=lambda: None)
+            )
             await pilot.pause()
             await pilot.pause()
 
@@ -11593,14 +11618,17 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
-    """Catch the active-search dock stealing layout with no search active.
+async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_active():
+    """The search chrome appears on submit without relocating the bar.
 
-    task-15774's docked find bar must be scoped to an ACTIVE search: with no
-    query submitted, the search box stays in its normal flow position inside
-    the Content section (below the Back control), no status/Prev/Next chrome
-    exists, and clearing an active query returns to exactly that state.
-    Spot-checked at 120x40 per the task's larger-size non-regression note.
+    task-15774 docked an ACTIVE search to the top of the viewer; task-31276
+    (critique #4 P2) retired that dock, because Enter then teleported the
+    bar the user was typing into out from under the mode row and pushed the
+    Reader header down six rows. The contract this now pins: submitting a
+    query only reveals the status/Prev/Next chrome -- the bar's own ``y``
+    is unchanged, it stays below the Back control, and clearing the query
+    hides the chrome again without moving anything. Spot-checked at 120x40
+    per task-15774's larger-size non-regression note.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
@@ -11624,19 +11652,22 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         assert "◀ Prev" not in painted_inactive
         assert "Next ▶" not in painted_inactive
 
-        # Active: the controls dock above the scrolled stack; exactly one
-        # search box is painted (docking must not duplicate chrome).
+        # Active: the chrome appears in place -- the bar keeps the exact ``y``
+        # it had when Find opened it and stays below Back; exactly one search
+        # box is painted (task-31276).
+        inactive_y = controls.region.y
         await _submit_content_search_query(screen, pilot, "budget")
         await pilot.pause()
         controls_active = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        assert controls_active.region.y <= back_button.region.y
+        assert controls_active.region.y == inactive_y
+        assert back_button.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
         assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
 
-        # Cleared: the dock releases and the flow order returns.
+        # Cleared: the chrome hides again and nothing has moved.
         search_input = screen.query_one("#library-media-content-search", Input)
         search_input.value = ""
         search_input.focus()
@@ -11648,13 +11679,12 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         painted_cleared = "\n".join(_painted_rows(screen))
         assert "◀ Prev" not in painted_cleared
         assert "Next ▶" not in painted_cleared
-        assert (
-            back_button.region.y
-            < screen.query_one(
-                "#library-media-content-search-controls",
-                LibraryMediaContentSearchControls,
-            ).region.y
+        cleared = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
         )
+        assert back_button.region.y < cleared.region.y
+        assert cleared.region.y == inactive_y
 
 
 @pytest.mark.asyncio
@@ -12598,21 +12628,34 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         for selector in (
             "#library-media-export",
             "#library-media-select-toggle",
-            "#library-media-row-0",
             "#library-media-open-viewer",
-            "#library-media-bulk-delete-undo",
         ):
             action = screen.query_one(selector, Button)
             assert action.disabled, selector
             assert str(action.label).startswith("○"), selector
             assert str(action.tooltip) == stale_reason, selector
 
+        # task-31220: rows are NOT in that list any more. Opening a row is a
+        # READ, and gating it behind the very staleness the open is how you
+        # recover from is what wedged Media in critique #5. Rows now carry
+        # only the mutation gate (a write actually in flight).
+        assert not screen.query_one("#library-media-row-0", Button).disabled
+        # task-31220: nor is the receipt's Undo. It restores exactly the ids
+        # the receipt names, so it is the receipt's own recovery -- a stale
+        # PAGE cannot invalidate it, and disabling it beside a "✓ deleted"
+        # receipt broke the confirmation's "You can undo right away" promise
+        # at the one moment it mattered (critique #5).
+        undo = screen.query_one("#library-media-bulk-delete-undo", Button)
+        assert not undo.disabled
+        assert str(undo.label) == "Undo"
+
         screen._sync_library_media_browse_state(None)
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-media-row-0", Button).disabled,
+            lambda: screen.query_one("#library-media-export", Button).disabled,
             message="Stale action gate did not survive canvas recomposition.",
         )
+        assert not screen.query_one("#library-media-row-0", Button).disabled
 
         screen._library_media_select_mode = True
         screen._library_media_row_selection.toggle("local:media:45")
@@ -12628,12 +12671,15 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
             "#library-media-select-clear",
             "#library-media-export-selected",
             "#library-media-delete-selected",
-            "#library-media-row-0",
         ):
             action = screen.query_one(selector, Button)
             assert action.disabled, selector
             assert str(action.label).startswith("○"), selector
             assert str(action.tooltip) == stale_reason, selector
+        # task-31220: a select-mode row press only ticks its own checkbox, and
+        # every action that could CONSUME that selection is disabled just
+        # above -- so the toggle is inert and does not need the stale gate.
+        assert not screen.query_one("#library-media-row-0", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -12757,10 +12803,13 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             assert service.search_calls[-1]["offset"] == 20
             assert controller.type_options == ("video",)
             if refresh_fails:
-                assert controller.stale_copy == (
-                    "Media changed; retry to load a current page."
-                )
-                assert screen.query_one("#library-media-row-0", Button).disabled
+                # task-31220: the post-mutation refresh failed, and the copy
+                # says so instead of repainting the unchanged "Media changed"
+                # line that made recovery read as inert. Rows stay openable.
+                assert controller.stale_copy == "Couldn't retry · RuntimeError"
+                assert not screen.query_one(
+                    "#library-media-row-0", Button
+                ).disabled
                 assert not screen.query_one(
                     "#library-media-type-filter", Button
                 ).disabled
@@ -25816,8 +25865,8 @@ def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     restored.restore_state(state)
 
     assert restored._library_skills_browse_controller.scope == scope
-    assert restored._library_skills_filter == "review"
-    assert restored._library_skills_sort == "status"
+    assert restored._skills_state.filter == "review"
+    assert restored._skills_state.sort == "status"
 
 
 @pytest.mark.parametrize(

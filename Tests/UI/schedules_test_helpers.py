@@ -353,3 +353,41 @@ def rendered_row_cells(table, row_index: int = 0) -> list[str]:
     whenever the point of the test is that content renders literally.
     """
     return [str(cell) for cell in table._get_row_renderables(row_index).cells]
+
+
+# --- settling the workbench --------------------------------------------------
+
+
+async def settle_schedules_workbench(pilot, workbench=None) -> None:
+    """Drain the workbench's background work, debounce timer included.
+
+    ``pilot.app.workers.wait_for_complete()`` does NOT cover a pending
+    ``set_timer`` callback, and `SchedulesWorkbench.on_mount` arms one: the
+    catch-up results pull (`_schedule_catch_up_results_pull`, 0.3 s). Its
+    worker ends in `_request_tasks_refresh`, which re-feeds the detail
+    pane -- so a test that has painted or pushed a detail pane can have it
+    cleared out from under an assertion by a reload landing after the test
+    believed the screen was settled.
+
+    redesign PR-4 task 5 hit this in `test_runs_on_dropdown_refusal_
+    renders_inline_with_health_reason` and fixed it inline; task 6's
+    pushed-pane tests are the second occurrence, which is where a shared
+    helper earns its keep (task-5 review's own ruling). Only the
+    results-pull timer is stopped -- the queue filter's debounce is
+    deliberately driven by the tests that use it.
+
+    Args:
+        pilot: The running `Pilot`.
+        workbench: The workbench screen; defaults to the app's current
+            screen.
+    """
+    app = pilot.app
+    target = workbench if workbench is not None else app.screen
+    await app.workers.wait_for_complete()
+    timer = getattr(target, "_results_pull_debounce_timer", None)
+    if timer is not None:
+        timer.stop()
+        target._results_pull_debounce_timer = None
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()

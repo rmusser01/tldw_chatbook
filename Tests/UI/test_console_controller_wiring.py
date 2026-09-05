@@ -45,6 +45,9 @@ from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+    ConsoleDraftSpendRefresh,
+)
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
@@ -99,6 +102,7 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_prompt_queue", ConsolePromptQueueUIController),
     ("_review_selection", ConsoleReviewSelectionController),
     ("_send_price", ConsoleSendPriceController),
+    ("_console_draft_spend_refresh", ConsoleDraftSpendRefresh),
 ]
 
 #: Every controller takes `chat_store_accessor=lambda: self._ensure_console_
@@ -402,6 +406,20 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> 
         projection,
         "session-1",
     )
+
+
+def test_draft_spend_refresh_is_wired_with_late_bound_screen_edges() -> None:
+    screen = _unmounted_console()
+    controller = screen._console_draft_spend_refresh
+    settings_calls: list[str] = []
+    cost_calls: list[str] = []
+    screen._sync_console_settings_summary = lambda: settings_calls.append("settings")
+    screen._sync_console_cost_chip = lambda: cost_calls.append("cost")
+
+    controller.refresh()
+
+    assert settings_calls == ["settings"]
+    assert cost_calls == ["cost"]
 
 
 def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> None:

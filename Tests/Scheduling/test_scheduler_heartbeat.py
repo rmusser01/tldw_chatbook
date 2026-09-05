@@ -153,3 +153,128 @@ def test_liveness_summary_distinguishes_all_three_states():
     assert "boom" in stale, "the last error is surfaced, not only logged (AC#3)"
     # empty-queue live state must read differently from a stall
     assert stale != live
+
+
+# --- TASK-31507 (Qodo #2399): the offload semantics themselves ---------------
+#
+# The outcome tests above prove WHAT gets persisted; these pin WHERE the file
+# I/O runs (off the event-loop thread), the fail-safe when the offload path
+# itself breaks, and the shutdown-cancellation ordering guarantee.
+
+import threading  # noqa: E402 -- this file groups imports with its sections
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_write_runs_off_the_event_loop(tmp_path, monkeypatch):
+    """The heartbeat's blocking file I/O must not run on the loop thread."""
+    from tldw_chatbook.Scheduling import scheduler_heartbeat
+
+    write_thread_ids = []
+    real_write = scheduler_heartbeat.write_heartbeat
+
+    def recording_write(path, hb):
+        write_thread_ids.append(threading.get_ident())
+        real_write(path, hb)
+
+    monkeypatch.setattr(scheduler_heartbeat, "write_heartbeat", recording_write)
+    loop = _make_loop(tmp_path)
+    await loop.tick()
+    assert write_thread_ids, "tick() must still write a heartbeat"
+    assert write_thread_ids[0] != threading.get_ident(), (
+        "the heartbeat write ran ON the event-loop thread -- the entire "
+        "point of the TASK-31507 offload"
+    )
+
+
+@pytest.mark.asyncio
+async def test_emergency_stop_read_runs_off_the_event_loop(
+    tmp_path, monkeypatch
+):
+    """The stop-state read is blocking file I/O too; same rule."""
+    from tldw_chatbook import emergency_stop
+
+    read_thread_ids = []
+
+    def recording_read(path):
+        read_thread_ids.append(threading.get_ident())
+        return False
+
+    monkeypatch.setattr(emergency_stop, "is_emergency_stopped", recording_read)
+    loop = _make_loop(tmp_path)
+    loop._emergency_stop_path = tmp_path / "stop.json"
+    await loop.tick()
+    assert read_thread_ids, "tick() must still consult the emergency stop"
+    assert read_thread_ids[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_emergency_stop_offload_failure_holds_dispatch(
+    tmp_path, monkeypatch
+):
+    """A broken stop read holds work (doubt = stopped, 26004 AC#4)."""
+    from tldw_chatbook import emergency_stop
+
+    def broken_read(path):
+        raise OSError("stop state unreadable")
+
+    monkeypatch.setattr(emergency_stop, "is_emergency_stopped", broken_read)
+    loop = _make_loop(tmp_path)
+    loop._emergency_stop_path = tmp_path / "stop.json"
+    pops = []
+    loop.queue.pop_due = lambda now: pops.append(now) or []
+    await loop.tick()
+    assert not pops, (
+        "the offload path failed and dispatch proceeded anyway -- the "
+        "fail-safe must read a broken stop state as STOPPED"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tick_still_completes_the_started_heartbeat_write(
+    tmp_path, monkeypatch
+):
+    """Shutdown cancellation must not outrun an in-flight heartbeat write.
+
+    Qodo #2399 finding 2: the write thread cannot be cancelled, so a tick
+    cancelled mid-write has to WAIT for it -- otherwise the scheduler
+    reports stopped while the old worker later mutates heartbeat state.
+    The write is gated so the cancellation provably arrives while the
+    offload is in flight; without the shield-then-wait fix, the cancelled
+    task finishes while the gate is still closed and the completion assert
+    below goes red.
+    """
+    from tldw_chatbook.Scheduling import scheduler_heartbeat
+
+    write_started = threading.Event()
+    release_write = threading.Event()
+    write_completed = threading.Event()
+
+    def gated_write(path, hb):
+        write_started.set()
+        assert release_write.wait(timeout=10), "test gate never released"
+        write_completed.set()
+
+    monkeypatch.setattr(scheduler_heartbeat, "write_heartbeat", gated_write)
+    loop = _make_loop(tmp_path)
+    task = asyncio.ensure_future(loop.tick())
+    assert await asyncio.to_thread(write_started.wait, 10), (
+        "heartbeat write never started"
+    )
+    task.cancel()
+    # The discriminating window: while the write is still GATED, a correctly
+    # shielded tick cannot finish -- it is waiting on the write. (The first
+    # version of this test released the gate before awaiting the task; the
+    # near-instant write then completed before the assert either way, and
+    # the un-shielded mutation passed. Order is the assertion here.)
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if task.done():
+            break
+    assert not task.done(), (
+        "tick() finished (cancelled) while the heartbeat write was still "
+        "gated -- the write may now land after the scheduler stopped"
+    )
+    release_write.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert write_completed.is_set()

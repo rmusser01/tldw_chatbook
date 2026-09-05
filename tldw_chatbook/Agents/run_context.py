@@ -72,13 +72,53 @@ from dataclasses import dataclass
 from typing import Iterator, Literal
 
 
+#: task-31382: a sub-agent display label is cut here so a card title or a
+#: marker header stays one line. Shared by the label's one producer
+#: (``subagent_display_label``) and both of its renderers.
+SUBAGENT_LABEL_MAX_CHARS = 40
+
+
+def clean_subagent_label(text: str | None) -> str:
+    """Return ``text`` as one bounded, single-line, terminal-safe label.
+
+    Newlines and control characters become spaces, runs of whitespace
+    collapse, and anything past ``SUBAGENT_LABEL_MAX_CHARS`` is cut with an
+    ellipsis. The empty string means "no label".
+
+    Args:
+        text: The raw label, or None.
+
+    Returns:
+        The cleaned label, possibly empty.
+    """
+    flattened = "".join(
+        char if char.isprintable() else " " for char in str(text or "")
+    )
+    cleaned = " ".join(flattened.split())
+    if len(cleaned) > SUBAGENT_LABEL_MAX_CHARS:
+        return cleaned[: SUBAGENT_LABEL_MAX_CHARS - 1].rstrip() + "…"
+    return cleaned
+
+
 @dataclass(frozen=True, slots=True)
 class CurrentRunActor:
-    """Attribution for the primary or subagent invoking a provider tool."""
+    """Attribution for the primary or subagent invoking a provider tool.
+
+    Args:
+        kind: Whether the actor is the primary run or a spawned sub-agent.
+        run_id: The acting run's id.
+        parent_run_id: The spawning run's id for a sub-agent, else None.
+        label: task-31382: a display label for a sub-agent (the named
+            agent's name, else a short form of its task) so surfaces that
+            attribute a run's work to the user -- the ask_user card and
+            marker first -- can name WHICH child. None for the primary and
+            for callers that never set it.
+    """
 
     kind: Literal["primary", "subagent"]
     run_id: str
     parent_run_id: str | None
+    label: str | None = None
 
 
 _CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(

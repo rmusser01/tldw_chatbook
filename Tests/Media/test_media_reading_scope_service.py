@@ -2895,7 +2895,13 @@ async def test_scope_service_library_media_summary_preserves_envelope_and_five_k
             "summary query",
             20,
             40,
-            {"media_ids_filter": [41], "library_summary": True},
+            {
+                "media_ids_filter": [41],
+                "library_summary": True,
+                # task-31274: a queried browse names the searched fields, so
+                # the list and "Review these" cannot search different ones.
+                "fields": ["title", "content", "keywords"],
+            },
         )
     ]
     assert result == {
@@ -6843,3 +6849,141 @@ def test_media_scope_service_routes_sync_mirror_report_to_sync_scope():
             "remote_records": [{"id": "remote-media-1"}],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_matches_keywords_not_only_titles():
+    """The Library browse filter finds a keyword that is in no title or body.
+
+    task-31274: typing a tag the user filed items under returned zero rows
+    because the browse filter searched title/content only. Seeded against a
+    real MediaDatabase so the FTS/keyword join is exercised, not a fake.
+    """
+    db = Database(db_path=":memory:", client_id="library-keyword-filter")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening remarks session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Closing remarks",
+            content="Transcript of the closing remarks session.",
+            media_type="article",
+            keywords=["day3"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["total"] == 1
+        # The frozen five-key summary shape is unchanged by the keyword leg.
+        assert set(payload["items"][0]) == {
+            "id",
+            "backing_media_id",
+            "title",
+            "media_type",
+            "updated_at",
+        }
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_still_matches_titles_and_content():
+    """The keyword leg is additive: title and content matches still land."""
+    db = Database(db_path=":memory:", client_id="library-keyword-filter-additive")
+    try:
+        title_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Roadmap review",
+            content="Nothing notable.",
+            media_type="article",
+            keywords=[],
+        )
+        content_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Untagged note",
+            content="A body mentioning roadmap once.",
+            media_type="article",
+            keywords=[],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Unrelated",
+            content="Nothing to see.",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert {item["backing_media_id"] for item in payload["items"]} == {
+            title_id,
+            content_id,
+        }
+        assert payload["total"] == 2
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_keyword_leg_respects_type_facet():
+    """A keyword hit outside the active type facet stays filtered out."""
+    db = Database(db_path=":memory:", client_id="library-keyword-filter-facet")
+    try:
+        article_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="First body.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Session two",
+            content="Second body.",
+            media_type="video",
+            keywords=["day2"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            media_types=["article"],
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [article_id]
+        assert payload["total"] == 1
+    finally:
+        db.close_connection()

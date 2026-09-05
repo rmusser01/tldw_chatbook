@@ -17,16 +17,19 @@ from textual.widgets import (
     Input,
     Select,
     Static,
-    TabbedContent,
 )
 from textual.widgets._collapsible import CollapsibleTitle
 
+from textual import on
+
 from tldw_chatbook.Scheduling.events import (
+    DefinitionRunNowRequested,
     DeleteTaskRequested,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
+    ViewDefinitionAuditRequested,
 )
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
@@ -43,6 +46,7 @@ from tldw_chatbook.Scheduling.services import (
     scheduling_service as scheduling_service_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
+from tldw_chatbook.UI.Screens.scheduling.results_tab import ResultsHostScreen, ResultsTab
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
@@ -50,6 +54,9 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskInspector,
     _STATUS_BADGE_CLASSES,
     _humanize_cron,
+)
+from tldw_chatbook.UI.Screens.scheduling.workbench_host_screen import (
+    WorkbenchHostScreen,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
@@ -62,6 +69,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
     rendered_row_cells,
+    settle_schedules_workbench,
 )
 
 
@@ -922,6 +930,90 @@ def _editable_definition(**overrides) -> dict:
     return base
 
 
+class _CapturingDefinitionDetailApp(ConsolidatedCSSApp):
+    """`_BareDefinitionDetailApp`'s twin with its own message capture
+    (redesign PR-4, task 3): a plain bare harness cannot observe a
+    posted `Message` bubbling past it -- an `@on` handler on the App
+    itself records what `DefinitionDetail` posts, no workbench needed."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.run_now_events: list = []
+        self.audit_events: list = []
+
+    def compose(self):
+        yield DefinitionDetail()
+
+    @on(DefinitionRunNowRequested)
+    def _capture_run_now(self, event: DefinitionRunNowRequested) -> None:
+        self.run_now_events.append(event.definition)
+
+    @on(ViewDefinitionAuditRequested)
+    def _capture_audit(self, event: ViewDefinitionAuditRequested) -> None:
+        self.audit_events.append(event.definition)
+
+
+@pytest.mark.asyncio
+async def test_run_now_button_posts_definition_run_now_requested():
+    """redesign PR-4, task 3, ruling 2: the header `Run now` button
+    (the retired Automations-tab `r` key's live replacement) posts
+    `DefinitionRunNowRequested` carrying the painted definition -- never
+    gated on the lifecycle lock or family note, same as the tab's own
+    `r` key never was."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        run_now = detail.query_one("#scheduling-automation-run-now", Button)
+        assert run_now.disabled is False
+        detail.on_button_pressed(Button.Pressed(run_now))
+        await pilot.pause()
+
+        assert pilot.app.run_now_events == [definition]
+
+
+@pytest.mark.asyncio
+async def test_run_now_button_is_a_no_op_with_nothing_painted():
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail._request_run_now()
+        await pilot.pause()
+        assert pilot.app.run_now_events == []
+
+
+@pytest.mark.asyncio
+async def test_last_run_row_activation_posts_view_definition_audit_requested():
+    """redesign PR-4, task 3 (audit-view relocation): the `Last run` row
+    -- whose own copy already says "...see Run history" for a
+    server-owned definition -- is a live activation now, posting
+    `ViewDefinitionAuditRequested` rather than opening an editor.
+    Unconditionally activatable regardless of family/lifecycle lock,
+    same as `Unread results` (task 2's own precedent): viewing history
+    is not an edit."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        # A non-`recurring_question` row -- editors are gated for this
+        # family, but the audit activation must still fire.
+        definition = _editable_definition(family="agent_task")
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        row = detail._last_run_row
+        assert row.affordance is True
+        assert row.can_focus is True
+        row.post_message(DetailValueRow.Activated(row))
+        await pilot.pause()
+
+        assert pilot.app.audit_events == [definition]
+        # Never opened an in-place editor for this row.
+        assert not row.query(Input)
+        assert not row.query(Select)
+
+
 @pytest.mark.asyncio
 async def test_definition_details_rows_are_always_editable_regardless_of_schedule_kind():
     """Model/Generation/Finding policy/Sources/Notifications don't depend
@@ -1341,14 +1433,23 @@ async def test_pause_resume_button_disabled_and_reason_shown_when_locked():
 
 
 @pytest.mark.asyncio
-async def test_committing_generation_edit_persists_and_repaints_automations_pane(
+async def test_committing_generation_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
 ):
     """Commit persists via `save_definition`; success repaints the
-    Automations-tab pane from a fresh read AND arms the unified Queue
-    list's own (lazy, tab-activation-gated) refresh -- the same
-    `_definitions_stale` seam every other definition mutation in this
-    file uses (run-now, transfer begin/cancel)."""
+    definition pane from a fresh read AND refreshes the unified list --
+    the same `_definitions_stale` seam every other definition mutation in
+    this file uses (run-now, transfer begin/cancel).
+
+    redesign PR-4 task 5: the refresh used to be LAZY (marked stale, then
+    picked up whenever the user next arrived on the Queue tab) because
+    the eager half went to the Automations tab's own list. That tab is
+    retired and the unified list is the only definitions surface, so the
+    mutation refreshes it directly and the flag it sets is consumed in
+    the same beat -- which is what the last assertion now reads. The
+    set-site itself is unchanged (brief: "the staleness machine keeps
+    every set-site"), so a concurrent reminder-only reload still upgrades
+    itself."""
     db, service = _real_scheduling_service(tmp_path)
     try:
         definition_id = db.create_automation_definition(
@@ -1375,12 +1476,12 @@ async def test_committing_generation_edit_persists_and_repaints_automations_pane
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             assert table.row_count == 1
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
@@ -1388,7 +1489,7 @@ async def test_committing_generation_edit_persists_and_repaints_automations_pane
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._generation_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1412,8 +1513,8 @@ async def test_committing_generation_edit_persists_and_repaints_automations_pane
                 generation_static.render_line(0).text.strip()
                 == "Always generate a draft"
             )
-            # The unified Queue list's own next (lazy) refresh is armed.
-            assert workbench._definitions_stale is True
+            # The unified list's own refresh ran and consumed the flag.
+            assert workbench._definitions_stale is False
     finally:
         db.close()
 
@@ -1447,18 +1548,19 @@ async def test_committing_repeat_edit_resends_whole_schedule_preserving_timezone
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._repeat_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1502,18 +1604,19 @@ async def test_committing_timezone_edit_preserves_cron(tmp_path):
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._timezone_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1532,7 +1635,7 @@ async def test_committing_timezone_edit_preserves_cron(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_committing_model_edit_persists_and_repaints_automations_pane(
+async def test_committing_model_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
 ):
     """Model row commit persists `input.provider`/`model` and repaints the
@@ -1561,19 +1664,19 @@ async def test_committing_model_edit_persists_and_repaints_automations_pane(
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._model_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1598,7 +1701,7 @@ async def test_committing_model_edit_persists_and_repaints_automations_pane(
 
 
 @pytest.mark.asyncio
-async def test_committing_finding_policy_edit_persists_and_repaints_automations_pane(
+async def test_committing_finding_policy_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
 ):
     """Finding-policy row commit writes `config.finding_policy.preset`
@@ -1628,19 +1731,19 @@ async def test_committing_finding_policy_edit_persists_and_repaints_automations_
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._finding_policy_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1669,7 +1772,7 @@ async def test_committing_finding_policy_edit_persists_and_repaints_automations_
 
 
 @pytest.mark.asyncio
-async def test_committing_sources_edit_persists_and_repaints_automations_pane(
+async def test_committing_sources_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
 ):
     """Sources editor Apply persists the explicit `{"mode": "sources", ...}`
@@ -1697,19 +1800,19 @@ async def test_committing_sources_edit_persists_and_repaints_automations_pane(
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._sources_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1747,7 +1850,7 @@ async def test_committing_sources_edit_persists_and_repaints_automations_pane(
 
 
 @pytest.mark.asyncio
-async def test_committing_notifications_edit_persists_and_repaints_automations_pane(
+async def test_committing_notifications_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
 ):
     """Notifications row commit writes the boolean on/off shape for BOTH
@@ -1776,19 +1879,19 @@ async def test_committing_notifications_edit_persists_and_repaints_automations_p
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._notifications_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1813,7 +1916,7 @@ async def test_committing_notifications_edit_persists_and_repaints_automations_p
 
 
 @pytest.mark.asyncio
-async def test_committing_at_edit_persists_and_repaints_automations_pane(tmp_path):
+async def test_committing_at_edit_persists_and_repaints_the_definition_pane(tmp_path):
     """At row commit persists `run_at` on a one-time definition and
     repaints the pane (task-4 review Finding 2)."""
     db, service = _real_scheduling_service(tmp_path)
@@ -1835,19 +1938,19 @@ async def test_committing_at_edit_persists_and_repaints_automations_pane(tmp_pat
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._at_row
             row.post_message(DetailValueRow.Activated(row))
@@ -1908,19 +2011,19 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._at_row
             assert row.affordance is True, "a weekly schedule has a time target"
@@ -1955,15 +2058,12 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
                 == "Weekly on Wednesday at 07:30 UTC"
             )
 
-            # SECOND surface: `_definition_at_label` also feeds the Queue
-            # tab's unified-row subtitle (`build_unified_rows`'s
+            # SECOND surface: `_definition_at_label` also feeds the
+            # unified-row subtitle (`build_unified_rows`'s
             # `schedule_summary` -> `_row_subtitle`). Painted, so the
             # shared-helper change is verified where it actually lands
-            # rather than assumed.
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-queue-tab"
-            )
-            await pilot.pause()
+            # rather than assumed. (redesign PR-4 task 5: no tab flip back
+            # -- the row and the pane are on the same surface now.)
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             queue_table = workbench.query_one("#scheduling-task-table", DataTable)
@@ -2001,19 +2101,19 @@ async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             assert detail._at_row.affordance is False
             assert detail._at_row.can_focus is False
@@ -2057,19 +2157,19 @@ async def test_two_fields_of_one_definition_both_land_without_a_lost_update(tmp_
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             definition = dict(detail._definition)
 
@@ -2127,19 +2227,19 @@ async def test_model_only_target_round_trips_through_an_unchanged_submit(tmp_pat
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             # The row still READS as a bare model -- the display label is
             # unchanged, only the editor's seed is the parse's inverse.
@@ -2190,19 +2290,19 @@ async def test_non_recurring_question_definition_exposes_no_editors(tmp_path):
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             assert detail._definition["family"] == "agent_task"
             assert [row.row_key for row in detail._editable_rows() if row.affordance] == []
@@ -2278,18 +2378,19 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             model_static = detail.query_one(
                 "#scheduling-automation-detail-model", Static
@@ -2377,12 +2478,15 @@ async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             detail = pilot.app.screen.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             detail.set_definition(server_item)
             await pilot.pause()
@@ -2439,18 +2543,19 @@ async def test_lifecycle_toggle_pauses_a_local_automation_and_the_button_flips(
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             button = detail.query_one("#scheduling-automation-pause-resume", Button)
             assert button.label.plain == "Pause"
@@ -2502,12 +2607,15 @@ async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_p
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             detail = pilot.app.screen.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             detail.set_definition(server_item)
             await pilot.pause()
@@ -2684,7 +2792,8 @@ async def test_empty_queue_shows_friendly_empty_state():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "No scheduled tasks yet" in empty_state.visual.plain
-        assert "Press c" in empty_state.visual.plain
+        # redesign PR-4 task 4: create rebound from c to n (spec §12).
+        assert "Press n" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -2698,7 +2807,8 @@ async def test_no_task_selected_shows_friendly_copy():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "Select a task" in empty_state.visual.plain
-        assert "press c" in empty_state.visual.plain
+        # redesign PR-4 task 4: create rebound from c to n (spec §12).
+        assert "press n" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -3093,8 +3203,12 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
             await service.mutation_refresh_started.wait()
 
             # Resolving a conflict is a user action whose production handler
-            # requests a grouped task-list refresh.
-            workbench._on_conflict_resolved(
+            # requests a grouped task-list refresh. Fix wave F3: POSTED, not
+            # called -- a direct `_on_conflict_resolved(...)` call is what let
+            # the DISPATCH itself break unnoticed when task 5 moved the
+            # `ConflictsTab` onto a pushed screen (the live-path pin now lives
+            # in `test_schedules_responsive_floor.py`).
+            workbench.post_message(
                 ConflictsTab.ConflictResolved("conflict-1", "local")
             )
             await service.user_refresh_started.wait()
@@ -3715,6 +3829,69 @@ class _RailTestApp(ConsolidatedCSSApp):
         self.scheduling_service = service
 
 
+# --- redesign PR-4, task 5: the retirement -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_workbench_composes_one_surface_with_no_tab_chrome():
+    """The retirement's headline claim, asserted on the real widget tree.
+
+    The Automations/Conflicts/Results `TabPane`s and the `TabbedContent`
+    that held them are gone -- and with only the Queue pane left there
+    was no reason to keep the container either, so the queue's three
+    panes now hang directly off `#schedules-shell`. That structural
+    simplification is the point of the task, so it is pinned rather than
+    inferred from the absence of failures: a future edit re-wrapping the
+    content in tab chrome would put every one of the retired surfaces'
+    problems back.
+
+    Painted, not merely present (`region.width`): a container mounted
+    inside a dead `TabPane` would still answer `query_one` while
+    rendering at a zero region -- the exact false pass
+    `test_schedules_automations_tab.py`'s own detail assertions had to be
+    taught about.
+    """
+    from textual.widgets import TabbedContent, TabPane
+
+    app = _RailTestApp(_RailService())
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        assert list(workbench.query(TabbedContent)) == []
+        assert list(workbench.query(TabPane)) == []
+
+        shell = workbench.query_one("#schedules-shell")
+        row = workbench.query_one("#scheduling-workbench")
+        assert row.parent is shell, (
+            "the queue row hangs directly off the shell, not off tab chrome"
+        )
+        for pane_id in (
+            "scheduling-list-pane",
+            "scheduling-detail-pane",
+            "scheduling-inspector-pane",
+        ):
+            pane = workbench.query_one(f"#{pane_id}")
+            assert pane.region.width > 0, pane_id
+
+        # The retired surfaces' own mounted widgets are gone with them --
+        # both views exist only as fresh instances inside a pushed screen.
+        assert list(workbench.query(ConflictsTab)) == []
+        assert list(workbench.query(ResultsTab)) == []
+        # ...and only ONE DefinitionDetail is left (the Automations tab's
+        # sibling instance retired with its pane).
+        assert [d.id for d in workbench.query(DefinitionDetail)] == [
+            "scheduling-queue-definition-detail"
+        ]
+
+        # The badges that reach the pushed views are on the surface.
+        assert workbench.query_one("#scheduling-conflicts-badge", Button).region.width
+        assert workbench.query_one("#scheduling-results-badge", Button).region.width
+
+
 @pytest.mark.asyncio
 async def test_mark_all_read_hidden_when_nothing_unread():
     app = _RailTestApp(_RailService(unread=False))
@@ -3745,12 +3922,19 @@ async def test_mark_all_read_visible_when_a_definition_has_unread_results():
 
 
 @pytest.mark.asyncio
-async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
-    """redesign PR-2, Task 3, plan ruling 4: the status strip's conflicts
-    badge mirrors `_refresh_conflicts_tab`'s own existing count (no new
-    query) and switches to the Conflicts tab on click -- no overlay."""
+async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
+    """redesign PR-4, Task 1: the status strip's conflicts badge mirrors
+    `_refresh_conflicts_tab`'s own existing count (no new query) and
+    pushes a fresh `ConflictsTab` overlay via `WorkbenchHostScreen` on
+    click -- the tab-flip this replaced could not survive the tab bar,
+    which Task 5 has now retired. With no tab bar there is nothing left
+    to assert a non-flip against; what remains is the claim that always
+    mattered: the badge pushes a screen carrying PAINTED conflict rows,
+    and Esc returns to the same workbench instance."""
     app = _RailTestApp(
-        _RailService(conflicts=[{"id": "c1"}, {"id": "c2"}])
+        _RailService(
+            conflicts=[{"id": "c1", "local_state": {"title": "Digest"}}]
+        )
     )
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -3758,16 +3942,31 @@ async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
         workbench = pilot.app.screen
 
         badge = workbench.query_one("#scheduling-conflicts-badge", Button)
-        assert str(badge.label) == "Conflicts (2)"
+        assert str(badge.label) == "Conflicts (1)"
         assert "scheduled task" in str(badge.tooltip).lower()
-
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        assert tabs.active != "scheduling-conflicts-tab"
 
         badge.press()
         await pilot.pause()
 
-        assert tabs.active == "scheduling-conflicts-tab"
+        # A fresh screen is pushed on top of the workbench.
+        assert pilot.app.screen is not workbench
+        assert isinstance(pilot.app.screen, WorkbenchHostScreen)
+
+        overlay_tab = pilot.app.screen.query_one(
+            "#scheduling-conflicts-overlay", ConflictsTab
+        )
+        overlay_table = overlay_tab.query_one(
+            "#scheduling-conflicts-table", DataTable
+        )
+        # Painted, not stored: what the table would actually render for
+        # row 0 (schedules_test_helpers.rendered_row_cells).
+        assert rendered_row_cells(overlay_table, 0)[0] == "Digest"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Esc pops back to the same underlying workbench instance.
+        assert pilot.app.screen is workbench
 
 
 @pytest.mark.asyncio
@@ -3779,6 +3978,198 @@ async def test_conflicts_badge_defaults_to_no_count():
 
         badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
         assert str(badge.label) == "Conflicts"
+
+
+@pytest.mark.asyncio
+async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
+    """redesign PR-4, task 2: the rail's `Results (N)` affordance mirrors
+    `_refresh_results_badge`'s own existing unread count (no new query,
+    the status strip's Conflicts badge's own idiom) and pushes a fresh
+    `ResultsHostScreen` overlay. redesign PR-4 task 5 retired the Results
+    tab, so this button (and a definition pane's unread row) is the only
+    route to the view -- and with no tab bar there is nothing left to
+    assert a non-flip against."""
+    app = _RailTestApp(_RailService(unread=True))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        badge = workbench.query_one("#scheduling-results-badge", Button)
+        assert str(badge.label) == "Results (1)"
+
+        badge.press()
+        await pilot.pause()
+
+        # A fresh screen is pushed on top of the workbench.
+        assert pilot.app.screen is not workbench
+        assert isinstance(pilot.app.screen, ResultsHostScreen)
+
+        overlay_tab = pilot.app.screen.query_one(ResultsTab)
+        overlay_table = overlay_tab.query_one("#scheduling-results-table", DataTable)
+        assert overlay_table.row_count == 1
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Esc pops back to the same underlying workbench instance.
+        assert pilot.app.screen is workbench
+
+
+@pytest.mark.asyncio
+async def test_results_badge_defaults_to_no_count():
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-results-badge", Button)
+        assert str(badge.label) == "Results"
+
+
+@pytest.mark.asyncio
+async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
+    tmp_path,
+):
+    """redesign PR-4, task 2: the definition pane's `Unread results` row
+    is the live replacement for the retired "See Results tab" pointer
+    (survey :734-736) -- activating it pushes a `ResultsHostScreen`
+    scoped to ONLY that definition's results, and `a` inside it only
+    marks THIS definition's unread results read (a sibling definition's
+    unread result must survive). Popping (Esc) re-syncs the rail badge
+    from the DB (`dismissed`)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        target_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        other_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Other automation",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "Other?"},
+        )
+        target_result_id = db.create_automation_result(
+            owner_id="local",
+            definition_id=target_id,
+            run_id="run-1",
+            kind="finding",
+            title="Digest finding",
+            summary="s",
+            dedupe_key="d1",
+            answer="a",
+            source_refs=[],
+            review_state="unread",
+        )
+        db.create_automation_result(
+            owner_id="local",
+            definition_id=other_id,
+            run_id="run-1",
+            kind="finding",
+            title="Other finding",
+            summary="s",
+            dedupe_key="d2",
+            answer="a",
+            source_refs=[],
+            review_state="unread",
+        )
+
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            definition = db.get_automation_definition(target_id)
+            detail.set_definition(definition, unread_count=1)
+            await pilot.pause()
+
+            row = detail._unread_row
+            assert row.affordance is True
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ResultsHostScreen)
+            overlay_tab = pilot.app.screen.query_one(ResultsTab)
+            overlay_table = overlay_tab.query_one("#scheduling-results-table", DataTable)
+            assert overlay_table.row_count == 1
+            assert rendered_row_cells(overlay_table, 0)[1] == "Digest finding"
+
+            await pilot.press("a")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_result(target_result_id)["review_state"] == "read"
+            other_result = db.list_automation_results(
+                owner_id=None, definition_id=other_id
+            )[0]
+            assert other_result["review_state"] == "unread"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert pilot.app.screen is workbench
+            # `dismissed` re-synced the rail badge from the DB: the
+            # target definition's unread result is now read, but the
+            # other definition's is still unread -> total unread == 1.
+            badge = workbench.query_one("#scheduling-results-badge", Button)
+            assert str(badge.label) == "Results (1)"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
+    tmp_path,
+):
+    """redesign PR-4, task 2: the definition-filtered heading is rendered
+    through the same `Static.update(str)` -> `Content.from_markup` parser
+    the detail pane's own `escape_markup` guards against (results_tab.py's
+    docstring) -- a bracket-bearing definition name must render
+    literally, not get eaten as a markup tag."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Digest [urgent]",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+
+            definition = db.get_automation_definition(definition_id)
+            workbench._push_results_overlay(definition=definition)
+            await pilot.pause()
+
+            overlay_tab = pilot.app.screen.query_one(ResultsTab)
+            heading = str(
+                overlay_tab.query_one("#scheduling-results-heading").render()
+            ).strip()
+            assert "Digest [urgent]" in heading
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -4151,8 +4542,8 @@ async def test_definition_runs_on_activation_on_failed_row_shows_stored_transfer
 @pytest.mark.asyncio
 async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_path):
     """A refused target renders via `row.show_error` (this row's OWN
-    surface, never the Automations tab's shared inline notice) -- health-
-    quoting preserved verbatim (spec §6.4/§7), and nothing is written.
+    surface, never a pane-level shared notice) -- health-quoting
+    preserved verbatim (spec §6.4/§7), and nothing is written.
 
     `transfer_refusal`'s FIRST gate ("No server connection is
     configured.") applies to EVERY direction, not only `to_server` --
@@ -4179,17 +4570,34 @@ async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_pa
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
 
+            # redesign PR-4 task 5: this dict is painted onto the pane by
+            # HAND, and that pane is now the same instance the QUEUE's own
+            # loader repaints. This fixture's queue is empty (a
+            # `server_id`-carrying row belongs to the server half, which
+            # `_FakeConnectedServerClient` cannot list), so any background
+            # reload lands `set_definition(None)` on the pane -- clearing
+            # the hand-painted definition and closing the open editor
+            # mid-test. The mount-time catch-up results pull is exactly
+            # such a reload (a 0.3s debounce timer, so `wait_for_complete`
+            # does not cover it). The retired Automations-tab
+            # `DefinitionDetail` sat outside that loader's reach, which is
+            # why none of this was needed before. redesign PR-4 task 6 hit
+            # the same race with its pushed panes, which is where the
+            # inline fix this test used to carry graduated into the shared
+            # `settle_schedules_workbench` helper.
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
             # A server-fetch-shaped dict (Task 4's own documented trap,
             # its report's "trap hit while writing the lifecycle/offline
             # tests": `id` IS the server's own id) -- painted directly
-            # onto the Automations-tab `DefinitionDetail` instance rather
-            # than driving a real server-list fetch (out of this test's
-            # scope), matching what `_selected_automation()` would hand
-            # this pane for a pure server row.
+            # onto the `DefinitionDetail` instance rather than driving a
+            # real server-list fetch (out of this test's scope), matching
+            # what a pure server row hands this pane.
             server_item = dict(db.get_automation_definition(definition_id) or {})
             server_item["id"] = "srv-1"
             detail = pilot.app.screen.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             detail.set_definition(
                 server_item, runs_on_options=[("This device", "local")]
@@ -4458,14 +4866,20 @@ async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
-    """Coexistence (task-5 brief, pinned): the PR-5 buttons stay
-    untouched until PR-4 -- both surfaces read/write the SAME underlying
-    transfer state and stay in sync with each other, side by side."""
+async def test_legacy_transfer_buttons_are_retired(tmp_path):
+    """redesign PR-4 task 4 (ruling 2): supersedes `test_runs_on_dropdown_
+    and_legacy_transfer_buttons_coexist` -- the PR-3 task 5 "coexistence
+    pinned" window (task-5 brief) is over, and the legacy Move/Retry/
+    Cancel buttons this test used to exercise ALONGSIDE the dropdown are
+    deleted. Begin/cancel via the dropdown itself stays pinned by `test_
+    runs_on_dropdown_confirm_begins_to_server_transfer`/`test_runs_on_
+    cancel_button_cancels_the_dormant_copy_using_its_own_id` (this file);
+    this only pins that the retired ids are actually gone and the
+    dropdown's own affordance is unaffected."""
     app = WorkbenchTestApp()
     db, service = _connected_service(tmp_path, app)
     try:
-        task_id = db.create_reminder_task(
+        db.create_reminder_task(
             owner_id="local",
             title="Nightly check",
             schedule_kind="one_time",
@@ -4479,44 +4893,15 @@ async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
             await pilot.pause()
 
             detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-
-            # Legacy surface: begin via the EXISTING button, untouched.
-            legacy_to_server = pilot.app.screen.query_one(
-                "#scheduling-transfer-to-server", Button
-            )
-            assert not legacy_to_server.disabled
-            legacy_to_server.press()
-            await pilot.pause()
-            assert isinstance(pilot.app.screen, ConfirmationDialog)
-            pilot.app.screen.dismiss(True)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
-            # BOTH surfaces now reflect the in-flight state.
-            legacy_cancel = pilot.app.screen.query_one(
-                "#scheduling-cancel-transfer", Button
-            )
-            assert not legacy_cancel.disabled
-            assert detail._runs_on_cancel_button.display is True
-            # Affordance stays ON (fix round 1 finding 2) -- activation
-            # would show the lock reason instead of opening a dropdown.
-            assert detail._runs_on_row.affordance is True
-
-            # NEW surface: cancel via the row's own affordance.
-            detail._runs_on_cancel_button.press()
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert db.get_reminder_task(task_id)["transfer_state"] is None
-            # The LEGACY button reflects the SAME underlying state,
-            # refreshed via the SAME `_request_tasks_refresh` seam.
-            legacy_cancel_after = pilot.app.screen.query_one(
-                "#scheduling-cancel-transfer", Button
-            )
-            assert legacy_cancel_after.disabled
+            for legacy_id in (
+                "scheduling-transfer-to-server",
+                "scheduling-transfer-to-local",
+                "scheduling-retry-transfer",
+                "scheduling-cancel-transfer",
+            ):
+                assert not detail.query(f"#{legacy_id}")
+            # The Runs-on row's own affordance is the one transfer
+            # surface now, unaffected by the legacy buttons' removal.
             assert detail._runs_on_row.affordance is True
     finally:
         db.close()
@@ -4546,7 +4931,9 @@ async def test_definition_owner_action_marks_stale_before_resolving(
 ):
     """Fix round 1 finding 1, pinned via ORDERING, not a post-hoc flag
     read: a real mounted workbench has its own background refreshes
-    (mount-time, `TabActivated` on the initial tab) that legitimately
+    (mount-time `load_tasks`, the catch-up results pull, `on_screen_
+    resume`'s `_consume_definitions_stale` -- redesign PR-4 task 5 retired
+    the `TabActivated` refresh this used to name) that legitimately
     consume/clear `_definitions_stale` too, so asserting the flag's
     value some time AFTER the action is racy against those -- this pins
     the actual claim instead: `self._definitions_stale` is ALREADY
@@ -4595,7 +4982,7 @@ async def test_definition_owner_action_marks_stale_before_resolving(
                 "config": {"scope": {"mode": "all_searchable_library"}},
             }
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._runs_on_row
 
@@ -4646,11 +5033,12 @@ async def test_definition_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_pat
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             assert table.row_count == 1
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
@@ -4658,7 +5046,7 @@ async def test_definition_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_pat
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._runs_on_row
             row.post_message(DetailValueRow.Activated(row))
@@ -4701,10 +5089,20 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with
         async with app.run_test(size=(220, 60)) as pilot:
             await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
             await pilot.pause()
+            # Fix wave F4: this body was repointed onto the LIVE
+            # `#scheduling-queue-definition-detail` pane in task 5, which
+            # the workbench's own mount-time `load_tasks` repaints -- with
+            # an empty queue that means `set_definition(None)`, wiping the
+            # definition set below (and its editable rows) before the test
+            # activates the Runs-on row. The final review measured this
+            # body at 7 failed / 3 passed over 10 solo runs without this
+            # line (10 passed at BASE, where it still pointed at the
+            # retired pane); 10/10 green with it.
+            await settle_schedules_workbench(pilot, pilot.app.screen)
 
             mirror = db.get_automation_definition(mirror_id)
             detail = pilot.app.screen.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             detail.set_definition(mirror, runs_on_options=[("This device", "local")])
             await pilot.pause()
@@ -4760,11 +5158,12 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_server_transfer(tmp
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             assert table.row_count == 1
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
@@ -4772,7 +5171,7 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_server_transfer(tmp
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             row = detail._runs_on_row
             row.post_message(DetailValueRow.Activated(row))
@@ -4828,22 +5227,24 @@ async def test_definition_runs_on_cancel_button_cancels_the_dormant_copy_using_i
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
-            # `_load_local_automations` only ever shows a `server_id`-less
-            # row (survey §3): the copy, not the mirror -- the mirror is
-            # the SERVER fetch half's row, and this harness's fake server
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
+            # The local half only ever shows a `server_id`-less row
+            # (survey §3): the copy, not the mirror -- the mirror is the
+            # SERVER fetch half's row, and this harness's fake server
             # client has no `list_automation_definitions` (out of this
             # test's scope; the mirror-side assertion below reads the DB
             # directly instead of depending on the table showing it).
             assert table.row_count == 1
             copy_index = next(
                 index
-                for index, definition in enumerate(workbench._automations)
-                if str(definition.get("id")) == copy_id
+                for index, unified_row in enumerate(workbench._visible_rows)
+                if unified_row.kind == "definition"
+                and str(unified_row.source_row.get("id")) == copy_id
             )
             table.cursor_coordinate = (copy_index, 0)
             await pilot.pause()
@@ -4851,7 +5252,7 @@ async def test_definition_runs_on_cancel_button_cancels_the_dormant_copy_using_i
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             assert detail._runs_on_cancel_button.display is True
             detail._runs_on_cancel_button.press()
@@ -4892,11 +5293,12 @@ async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_pa
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             assert table.row_count == 1
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
@@ -4904,7 +5306,7 @@ async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_pa
             await pilot.pause()
 
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
             assert detail._runs_on_retry_button.display is True
             detail._runs_on_retry_button.press()
@@ -4923,19 +5325,32 @@ async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexist(
-    tmp_path,
-):
-    """Definition-pane twin of the reminder-side coexistence test -- the
-    Automations tab has no per-row transfer BUTTONS (spec §6, PR-5 task
-    7's own design: `m`/`M`/`y`/`k` keybindings instead), so "coexistence"
-    here means the keybinding-driven legacy flow
-    (`action_move_automation_to_server`/`_cancel_automation_transfer`)
-    and the NEW Runs-on row read/write the SAME underlying state."""
+async def test_automations_tab_transfer_keybindings_are_retired(tmp_path):
+    """redesign PR-4 task 4 (ruling 2): supersedes `test_definition_runs_
+    on_dropdown_and_automations_tab_keybindings_coexist` -- the
+    Automations-tab-only `m`/`M`/`y`/`k` keybindings and their `action_
+    move_automation_to_local`/`_to_server`/`action_retry_automation_
+    transfer`/`action_cancel_automation_transfer`/`_begin_automation_
+    transfer`/`_cancel_automation_transfer` flow are genuinely gone --
+    the Runs-on dropdown (already exercised end-to-end by `test_
+    definition_runs_on_dropdown_confirm_begins_to_server_transfer`/`test_
+    definition_runs_on_cancel_button_cancels_the_dormant_copy_using_its_
+    own_id` above, including on this SAME Automations-tab `DefinitionDetail`
+    instance) is the one transfer surface now."""
+    for legacy_action in (
+        "action_move_automation_to_local",
+        "action_move_automation_to_server",
+        "action_retry_automation_transfer",
+        "action_cancel_automation_transfer",
+    ):
+        assert not hasattr(SchedulesWorkbench, legacy_action)
+    bound_keys = {binding.key for binding in SchedulesWorkbench.BINDINGS}
+    assert bound_keys.isdisjoint({"M", "y", "k"})
+
     app = WorkbenchTestApp()
     db, service = _connected_service(tmp_path, app)
     try:
-        definition_id = db.create_automation_definition(
+        db.create_automation_definition(
             "local",
             "recurring_question",
             "Nightly digest automation",
@@ -4950,54 +5365,24 @@ async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexi
             await pilot.pause()
 
             workbench = pilot.app.screen
-            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-                "scheduling-automations-tab"
-            )
-            await pilot.pause()
-            table = workbench.query_one("#scheduling-automations-table", DataTable)
-            assert table.row_count == 1
+            # redesign PR-4 task 5: the Automations tab this used to
+            # activate first is retired -- the definition row is
+            # selected in the unified queue table instead, and the
+            # pane under test is the queue's own `DefinitionDetail`
+            # (the sibling instance that always shared this code).
+            table = workbench.query_one("#scheduling-task-table", DataTable)
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-            # Legacy surface: begin via the EXISTING keybinding, untouched.
-            workbench.action_move_automation_to_server()
-            await pilot.pause()
-            assert isinstance(pilot.app.screen, ConfirmationDialog)
-            pilot.app.screen.dismiss(True)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert (
-                db.get_automation_definition(definition_id)["transfer_state"]
-                == "to_server_pending"
-            )
-            # NEW surface reflects the state the LEGACY keybinding wrote.
+            # The Runs-on dropdown still activates fine on the
+            # Automations tab's own DefinitionDetail instance -- the
+            # retired keybindings' removal did not touch it.
             detail = workbench.query_one(
-                "#scheduling-automation-detail", DefinitionDetail
+                "#scheduling-queue-definition-detail", DefinitionDetail
             )
-            assert detail._runs_on_cancel_button.display is True
             assert detail._runs_on_row.affordance is True
-
-            # NEW surface: cancel via the row's own affordance.
-            detail._runs_on_cancel_button.press()
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            fresh_row = db.get_automation_definition(definition_id)
-            assert fresh_row["transfer_state"] is None
-            # The LEGACY surface's own refusal check (`cancel_refusal`,
-            # what `_cancel_automation_transfer`'s keybinding path itself
-            # calls) sees the SAME state -- no drift between the two
-            # surfaces. Read directly rather than firing a second
-            # keybinding action: that action's own success/refusal notice
-            # is transient and gets overwritten by the very refresh it
-            # triggers (`_show_automations_inline_reason`'s own documented
-            # behavior), racy to assert on here.
-            assert service.cancel_refusal(fresh_row) is not None
     finally:
         db.close()
 
@@ -5205,9 +5590,12 @@ async def test_queue_definition_pane_repaints_after_a_successful_in_pane_edit(tm
         async with app.run_test(size=(220, 60)) as pilot:
             workbench = SchedulesWorkbench(app_instance=pilot.app)
             await pilot.app.push_screen(workbench)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
+            # Fix wave F4: `settle_schedules_workbench` (not a bare
+            # pause + wait) -- the mount-time catch-up results pull is a
+            # `set_timer` callback `wait_for_complete` does not cover, and
+            # its `_request_tasks_refresh` wipes a hand-set definition off
+            # the live `#scheduling-queue-definition-detail` pane.
+            await settle_schedules_workbench(pilot, workbench)
 
             queue_detail = pilot.app.screen.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail

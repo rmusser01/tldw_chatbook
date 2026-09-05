@@ -82,6 +82,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     fold_greeting_into_system_prompt,
     is_default_console_session_title,
 )
+from tldw_chatbook.Chat.console_endpoint_provenance import (
+    ConsoleEndpointProvenance,
+)
 from tldw_chatbook.Chat.citation_repair import (
     REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,
     CitationRepairContract,
@@ -237,12 +240,10 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     PIIRedactionSpan,
     CredentialSanitizer,
 )
-from tldw_chatbook.Chat.console_visual_transcript import (
-    count_semantic_images,
-    plan_visual_compaction,
-    render_visual_transcript,
-    resolve_effective_compaction_representation,
-)
+# `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
+# inside `_apply_conversation_memory_preflight`, its only user, so it stays
+# off the UI-ready module census (ADR-097): task-31384 spends that slot on
+# `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
@@ -345,6 +346,33 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     build_builtin_gate,
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+#: task-31385: environment override for ``[console] interrupt_bell``
+#: (environment -> config.toml -> default, like every other setting).
+INTERRUPT_BELL_ENV_VAR = "TLDW_CONSOLE_INTERRUPT_BELL"
+
+
+def _bool_or_none(value: object) -> bool | None:
+    """Coerce a setting to bool with ``load_settings``' rules, or None when unset.
+
+    An unset source (None or an empty string) yields None so the next
+    source decides; any other value is read with the app-wide rule
+    (``coerce_bool_setting``: the usual truthy spellings are True and
+    everything else is False), so a present override always decides.
+
+    Args:
+        value: The raw environment or config value.
+
+    Returns:
+        The parsed bool, or None when ``value`` is None or empty.
+    """
+    if value is None or value == "":
+        return None
+    parsed = coerce_bool_setting(value, True)
+    return None if parsed is None else bool(parsed)
+
+# task-31384: `Chat.console_interrupt_rounds` is imported lazily (constructor
+# and shims) so the host module stays off the UI-ready census (ADR-097);
+# this module is boot-resident, the controller instance is not.
 
 # task-24458: same deferral as the raw-shell/virtual-CLI providers below --
 # `LocalToolProvider` is the third entry point into the workspace
@@ -2869,6 +2897,36 @@ def _lease_captured_tool_profile(method: Callable[..., Any]):
     return wrapped
 
 
+
+def _stamp_approval_round_closed(state: dict[str, Any]) -> None:
+    """Revocation stamp for an approval round: deny every undecided key."""
+    decisions = state.get("decisions")
+    if isinstance(decisions, dict):
+        for name in state.get("names") or ():
+            decisions[name] = "deny"
+
+
+def _stamp_skill_script_round_closed(state: dict[str, Any]) -> None:
+    """Revocation stamp for a skill-script round: allow/remember both off."""
+    decision = state.get("decision")
+    if isinstance(decision, dict):
+        decision["allow"] = False
+        decision["remember"] = False
+
+
+def _stamp_question_round_closed(state: dict[str, Any]) -> None:
+    """Revocation stamp for a question round: the revoked flag says it all."""
+
+
+#: task-31384: the kinds a cancelled/abandoned run's sweep fails closed, with
+#: each kind's closed-decision stamp. Skill-install and worktree-merge are
+#: primary-agent-only and never swept.
+_REVOCATION_STAMPS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "approval": _stamp_approval_round_closed,
+    "skill_script": _stamp_skill_script_round_closed,
+    "question": _stamp_question_round_closed,
+}
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -3181,7 +3239,19 @@ class ConsoleChatController:
         #: are written only from the main thread (`_set_run_state`,
         #: `mark_session_visited`), never from a worker thread, so they
         #: carry no cross-thread hazard this lock needs to close.
-        self._approval_state_lock = threading.Lock()
+        #: task-31384: ONE host owns every blocking interrupt round's registry,
+        #: retained-payload map, and lock. The historical per-kind attribute
+        #: names below are ALIASES to the host's objects -- eleven test files
+        #: and `ChatScreen._current_park_round_ids` read them -- never
+        #: reassigned after this constructor. The lock is non-reentrant and
+        #: shared: nesting any two of the five lock names self-deadlocks.
+        from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+
+        self._interrupt_host = InterruptRoundHost(self)
+        # ADR-090: every path that pushes an approval head (teardown
+        # promotion, revocation, activation, attach) fires the summary.
+        self._interrupt_host.after_remount["approval"] = self._maybe_fire_permission_summary
+        self._approval_state_lock = self._interrupt_host.lock
         self._watchlists_receipt_lock = threading.Lock()
         self._followed_watchlists_operation_ids: tuple[str, ...] = ()
         # Revision tokens fence destructive lifecycle confirmations without
@@ -3578,7 +3648,7 @@ class ConsoleChatController:
         #: ``resolve_pending_approval``, which resolves ONLY the round
         #: whose id was stamped onto the card the user actually decided --
         #: never "whichever session happens to be active right now".
-        self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        self._pending_approval_rounds = self._interrupt_host.registries["approval"]
         self._raw_shell_providers: weakref.WeakSet[RawShellToolProvider] = (
             weakref.WeakSet()
         )
@@ -3587,7 +3657,7 @@ class ConsoleChatController:
         #: mounted card from this map's FIFO head for the session, so a
         #: second same-session round no longer evicts an older sibling's
         #: card. Every payload carries its own `round_id` and `session_id`.
-        self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
+        self._parked_approval_payloads = self._interrupt_host.payloads["approval"]
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
         #: (`ConsoleSkillController._set_console_pending_skill_install`). Invoked through
@@ -3605,12 +3675,12 @@ class ConsoleChatController:
         #: session could ever have a live install confirm, but parking makes
         #: two DIFFERENT background sessions' install confirms genuinely
         #: concurrent.
-        self._pending_skill_install_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_skill_install_lock = threading.Lock()
+        self._pending_skill_install_rounds = self._interrupt_host.registries["skill_install"]
+        self._pending_skill_install_lock = self._interrupt_host.lock
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
+        self._parked_skill_install_payloads = self._interrupt_host.payloads["skill_install"]
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
         #: Invoked through self.app.call_from_thread from
@@ -3633,12 +3703,12 @@ class ConsoleChatController:
         #: task-581: rounds keyed by request_id, not a single slot. Two rounds
         #: armed at once previously clobbered each other's event/decision and
         #: both worker threads then blocked to their full deadline.
-        self._pending_skill_script_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_skill_script_lock = threading.Lock()
+        self._pending_skill_script_rounds = self._interrupt_host.registries["skill_script"]
+        self._pending_skill_script_lock = self._interrupt_host.lock
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
+        self._parked_skill_script_payloads = self._interrupt_host.payloads["skill_script"]
         #: TASK-28238 phase 2 Task 6: UI-thread callback that pushes/clears
         #: the pending agent-worktree merge/discard confirm payload.
         #: Mirrors set_pending_skill_install (single-key {"allow": bool}
@@ -3651,18 +3721,18 @@ class ConsoleChatController:
         #: Per-round release Event + shared decision box + owning session
         #: id, keyed by request id -- same per-round design as
         #: `_pending_skill_install_rounds`.
-        self._pending_worktree_merge_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_worktree_merge_lock = threading.Lock()
+        self._pending_worktree_merge_rounds = self._interrupt_host.registries["worktree_merge"]
+        self._pending_worktree_merge_lock = self._interrupt_host.lock
         #: Retained payload per ROUND, keyed by `request_id` -- same FIFO-
         #: head-remount contract as `_parked_skill_install_payloads`.
-        self._parked_worktree_merge_payloads: dict[str, dict[str, Any]] = {}
+        self._parked_worktree_merge_payloads = self._interrupt_host.payloads["worktree_merge"]
         #: PRD Feature A: the ask_user question round -- same shape as the
         #: skill-script confirm (round-keyed registry + retained payloads).
         self.set_pending_question: Callable[[dict | None], None] | None = None
         self.ask_user_timeout_seconds: Callable[[], float] | None = None
-        self._pending_question_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_question_lock = threading.Lock()
-        self._parked_question_payloads: dict[str, dict[str, Any]] = {}
+        self._pending_question_rounds = self._interrupt_host.registries["question"]
+        self._pending_question_lock = self._interrupt_host.lock
+        self._parked_question_payloads = self._interrupt_host.payloads["question"]
         #: A9: consecutive `busy` results per run id; reset on any real round.
         self._question_bounces: dict[str, int] = {}
 
@@ -5979,10 +6049,18 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=committing,
-                provider_messages=continuation.provider_messages,
+                provider_messages=self._provider_messages_with_prefill(
+                    continuation.provider_messages,
+                    continuation.prefill,
+                ),
                 trace_source_messages=continuation.trace_source_messages,
                 echoed_user_id=continuation.echoed_user_id,
                 committed_user_id=continuation.commit.user_message_id,
+                route=(
+                    ConsoleRequestRoute.DIRECT_PREFILL
+                    if continuation.prefill
+                    else ConsoleRequestRoute.FRESH
+                ),
             )
         except Exception:
             return self._handle_durable_trace_provenance_failure(continuation)
@@ -8187,13 +8265,11 @@ class ConsoleChatController:
                 session.id,
                 origin,
                 frozen_capture_enabled=(
-                    preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                    capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
-                frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=preparation.pii_ruleset_revision_id,
-                frozen_next_trace_privacy_revision=(
-                    preparation.next_trace_privacy_revision
-                ),
+                frozen_pii_redaction_enabled=pii_redaction_enabled,
+                frozen_pii_ruleset_revision_id=pii_ruleset_revision_id,
+                frozen_next_trace_privacy_revision=next_trace_privacy_revision,
             )
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
@@ -8281,6 +8357,11 @@ class ConsoleChatController:
                     else None
                 ),
             )
+            if (
+                not stream_result.accepted
+                and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            ):
+                self._mark_transient_echo_blocked(echoed_user.id)
             result = replace(
                 stream_result,
                 session_id=session.id,
@@ -8507,6 +8588,7 @@ class ConsoleChatController:
         trace_source_messages: tuple[dict[str, Any], ...],
         echoed_user_id: str,
         committed_user_id: str,
+        route: ConsoleRequestRoute,
     ) -> PreparedConsoleRequest | None:
         """Freeze one Capture-On request from the admitted durable inputs."""
 
@@ -8628,13 +8710,30 @@ class ConsoleChatController:
         return build_console_request_for_preparation(
             preparation,
             visible_messages,
-            route=ConsoleRequestRoute.FRESH,
+            route=route,
             message_provenance=descriptors,
             memory_provenance=(),
             mandatory_provenance=(),
             tool_provenance=(),
             capture_policy=policy,
         )
+
+    @staticmethod
+    def _provider_messages_with_prefill(
+        provider_messages: list[dict[str, Any]],
+        prefill: str | None,
+    ) -> list[dict[str, Any]]:
+        """Return the final direct-provider vector including response prefill."""
+
+        if not prefill:
+            return provider_messages
+        return [
+            *provider_messages,
+            {
+                "role": ConsoleMessageRole.ASSISTANT.value,
+                "content": prefill,
+            },
+        ]
 
     def _handle_durable_trace_provenance_failure(
         self,
@@ -8926,10 +9025,18 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=preparation,
-                provider_messages=provider_messages,
+                provider_messages=self._provider_messages_with_prefill(
+                    provider_messages,
+                    prefill,
+                ),
                 trace_source_messages=trace_source_messages,
                 echoed_user_id=echoed_user.id,
                 committed_user_id=commit.user_message_id,
+                route=(
+                    ConsoleRequestRoute.DIRECT_PREFILL
+                    if prefill
+                    else ConsoleRequestRoute.FRESH
+                ),
             )
         except Exception:
             return self._handle_durable_trace_provenance_failure(continuation)
@@ -10198,10 +10305,9 @@ class ConsoleChatController:
         # brand-new session can never itself have a parked confirm, so this
         # always resolves to clearing whatever the session being left behind
         # had shown (mirrors the approval re-derive immediately above).
-        self._remount_parked_skill_install(session.id)
-        self._remount_parked_skill_script(session.id)
-        self._remount_parked_worktree_merge(session.id)
-        self._remount_parked_question(session.id)
+        # task-31384: the four confirm/question kinds re-derive in one host
+        # call; the approvals block above keeps its summary hook.
+        self._remount_session_kinds(session.id)
         self._remount_task_panel(session.id)
         return session
 
@@ -10585,10 +10691,9 @@ class ConsoleChatController:
         # `_deny_pending_skill_install_on_context_change()`/`_deny_pending_
         # skill_script_on_context_change()` calls that used to run here
         # unconditionally on every switch.
-        self._remount_parked_skill_install(session_id)
-        self._remount_parked_skill_script(session_id)
-        self._remount_parked_worktree_merge(session_id)
-        self._remount_parked_question(session_id)
+        # task-31384: the four confirm/question kinds re-derive in one host
+        # call; the approvals block above keeps its summary hook.
+        self._remount_session_kinds(session_id)
         self._remount_task_panel(session_id)
         return session
 
@@ -10761,10 +10866,9 @@ class ConsoleChatController:
             # closing the ACTIVE session auto-activates a neighbor, which is
             # now the VIEWED session exactly as if `switch_session` had
             # navigated to it.
-            self._remount_parked_skill_install(new_active_id)
-            self._remount_parked_skill_script(new_active_id)
-            self._remount_parked_worktree_merge(new_active_id)
-            self._remount_parked_question(new_active_id)
+            # task-31384: the four confirm/question kinds re-derive in one host
+            # call; the approvals block above keeps its summary hook.
+            self._remount_session_kinds(new_active_id)
         # Unconditional: closing the LAST session leaves no neighbour to
         # activate (`new_active_id` is None) and the screen's follow-up sync
         # creates the blank replacement straight through the store, so this
@@ -11233,100 +11337,38 @@ class ConsoleChatController:
         if not unique_keys:
             return {}
         if self.app is None:
-            # ADR-067: with no app bridge nothing can ever surface or
-            # resolve this round, and the no-deadline default means the
-            # loop below would never end -- fail closed on the spot,
-            # mirroring both skill confirms' own no-app guards. (A wired
-            # app with a missing card seam is NOT this case: the round
-            # stays resolvable via `resolve_pending_approval`/cancel, and
-            # `_marshal_pending_approval` already no-ops its missing seam.)
             return {key: "deny" for key in unique_keys}
-
         event = threading.Event()
         decisions: dict[str, str] = {}
-        # Fix round 1 (review CRITICAL finding): keyed by a freshly minted
-        # ROUND id, not by session id (or the active session) -- a session-
-        # keyed slot is ambiguous the moment either (a) the ACTIVE session
-        # changes between this round starting and the user's decision
-        # arriving (`ApprovalDecided` travels as an async Textual message,
-        # so a `switch_session` can land in that gap), or (b) a second
-        # round starts for the SAME session before a first round's stale
-        # decision message is delivered -- either way a session-keyed slot
-        # would let a stale/misdirected decision resolve the WRONG round.
-        # `round_id` is stamped into `payload` below, round-trips through
-        # `ChatApprovalCard.set_batch` -> `ApprovalDecided` ->
-        # `resolve_pending_approval`, and is the ONLY thing that round is
-        # ever resolved by -- mirrors `_pending_skill_script_rounds`'
-        # identical `request_id`-keyed defense.
         round_id = str(uuid4())
         owning_session_id = (
             session_id
             if session_id is not None
             else (self.store.active_session_id or "")
         )
-        # PR3a-1 Task 6b (audit F4): the cancel signal THIS round answers
-        # to, resolved once, HERE, and passed to every poll below. See
-        # `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
-        # task-15860: the visit's teardown Event, captured at ARM time for
-        # the same reason the run's cancel event is -- see
-        # `_bind_visit_cancel_signal`.
         visit_cancel_event = self._bind_visit_cancel_signal()
-        # PR2a Task 7: which RUN armed this round. Read from the
-        # `run_context` ContextVar, which `AgentService` binds around both
-        # arming paths -- the per-turn review hook (`build_tool_review_
-        # hook`/`build_mcp_review_hook`/`build_local_review_hook`, which
-        # call straight through to this method on their own run's thread)
-        # and each tool invocation (the single-call fallback approval
-        # `MCPToolProvider.invoke` raises through `approval_callback`,
-        # which has no run_id parameter to thread at all). A session id
-        # cannot substitute: every child of a fleet turn shares the
-        # parent's session, so only the run id can tell a cancelled
-        # child's card apart from its live sibling's. `""` (no run bound
-        # -- e.g. the MCP workbench's Test Tool) is never revocable, which
-        # is correct: no run owns it.
         owning_run_id = current_run_id()
         round_state: dict[str, Any] = {
             "event": event,
             "decisions": decisions,
             "session_id": owning_session_id,
             "run_id": owning_run_id,
-            # The verdict keys this round must answer for -- what `revoke_
-            # approval_rounds_for_run` fills with "deny".
             "names": tuple(unique_keys),
-            # Provider-homogeneous rows retained for narrowly scoped
-            # authority revocation without disturbing sibling rounds.
             "calls": tuple(pending),
-            # Flipped by revocation. Re-read after the wait below so a
-            # decision that lands in `decisions` AFTER the revoke (the
-            # `ApprovalDecided` message is async, and `resolve_pending_
-            # approval` snapshots the box before writing to it) can never
-            # turn a revoked round back into an approval.
             "revoked": False,
-            # ADR-090: advisory summary for this round (payload-carried so
-            # remounts re-render it) and the fire-once guard for the
-            # external summarizer (no-call outcomes also consume it).
             "summary": None,
             "summary_fired": False,
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
         }
-        # F2b fix (Qodo wave): guard the round registration -- the UI
-        # thread's `resolve_pending_approval` (TASK-913: fails closed by
-        # round_id now, no more active-session scan) and the
-        # `fleet_summary_counts` sync tick can read/iterate this map
-        # concurrently with this worker thread's own writes.
+        # Registered before the timeout config read so sweeps and
+        # `pending_*` readers see the round across that (lock-taking) call;
+        # `run_round` re-registers the same object, harmlessly.
         with self._approval_state_lock:
             self._pending_approval_rounds[round_id] = round_state
-
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
-        # ADR-067: <= 0 arms NO deadline -- the round waits for a decision
-        # or this run's cancellation, however long the human takes (the
-        # card renders no countdown copy for 0; see
-        # `format_approval_deadline`).
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        # Qodo PR #1836 finding 1: the absolute deadline, so a mount
-        # that happens AFTER arm (promotion, switch-back, attach) can
-        # show the remaining window instead of the arm-time total --
-        # see `_head_round_payload`'s snapshot.
         payload = _build_approval_payload(
             round_id,
             owning_session_id,
@@ -11335,164 +11377,62 @@ class ConsoleChatController:
             timeout_seconds,
             deadline,
         )
-        # Task 9: park rather than mount when this round's session is a
-        # DIFFERENT, background session -- `session_id is None` (a legacy
-        # caller with no session context) always mounts, matching every
-        # pre-Task-9 call site.
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # Register THIS round's own id directly here (worker thread,
-            # plain-dict/set mutation -- same no-marshal convention as
-            # `_active_cancel_events` elsewhere in this class) so it is
-            # authoritative regardless of whether a UI bridge happens to be
-            # wired. TASK-1050 (Defect A): round-keyed, not a plain
-            # boolean -- a sibling round from this bridge or either of the
-            # other two (skill-install/skill-script confirms) for the SAME
-            # session stays independently tracked, so THIS round's own
-            # teardown can never clear a badge a sibling still needs.
-            # `park_pending_approval`/`ChatScreen._park_console_approval`
-            # only falls back to the deprecated boolean shim when NO round
-            # is registered yet (`has_pending_approval_round`), so it never
-            # double-counts against this call.
-            self.add_pending_round(session_id, round_id)
-            # Fix wave (CRITICAL 1, final review): retain THIS round's
-            # payload for EVERY session-attributed round -- mounted or
-            # parked -- not just a parked one. `switch_session` re-derives
-            # the card EXCLUSIVELY from `_parked_approval_payloads` (never
-            # from whatever the card happened to already be showing), so a
-            # round that mounted immediately (session_id was the active
-            # session at round-start) was previously unrecoverable the
-            # moment the user switched away and back: the lookup found
-            # nothing, mounted `None`, and the round silently hung with a
-            # stale NEEDS_APPROVAL badge and no card until its 120s
-            # timeout. The `finally` below already pops this key
-            # unconditionally (whenever `session_id is not None`,
-            # regardless of `is_parked`) -- storing it unconditionally
-            # here too makes retention symmetric with that cleanup, per
-            # spec §5 ("card state survives tab switches") for every round,
-            # not only parked ones.
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card, and evicting it
-            # is exactly the task-15661 defect this replaced.
-            is_head = self._park_round_payload(
-                self._parked_approval_payloads, round_id, payload
-            )
+        approved_values = {"approve_once", "approve_session", "always_allow"}
 
-        finishing_calls: list[dict[str, Any]] = []
-        try:
-            if self._approval_view_is_detached():
-                # task-15860 Task 5: no Console view exists, so BOTH the
-                # mount seam and the park seam are `None` and neither
-                # branch below would surface anything at all. Announce
-                # app-wide instead -- the toast renders on whatever screen
-                # the user is actually on, which is the only seam that can
-                # reach them here.
-                self._announce_detached_approval(owning_session_id)
-            elif is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                # ADR-090: deliver the payload WITHOUT the summary fire hook
-                # here -- the human-input wait mark below must be entered
-                # with dev's original marshal→mark spacing, or the hook's
-                # config read widens the window in which an armed round is
-                # not yet marked as waiting (regression caught by
-                # test_request_mcp_approvals_marks_human_input_wait_while_round_armed).
-                self._marshal_pending_approval(payload, fire_summary=False)
-            # ADR-067: mark this run as waiting on a human decision for the
-            # duration of the wait, so a per-call wrapper hosting this round
-            # (the invoke-path fallback approval) pauses its deadline -- an
-            # indefinite wait must not trip `max_tool_call_seconds`.
-            with use_human_input_wait(owning_run_id):
-                # ADR-090: fire the advisory summarizer now, INSIDE the
-                # wait mark -- the payload is already mounted and the mark
-                # is already process state, so the hook's config read
-                # cannot delay either.
-                self._maybe_fire_permission_summary(payload)
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        # Finding I3: a stop/unmount that resolves THIS round
-                        # denies every still-undecided call, but
-                        # `run_agent_loop`'s own `should_cancel()` check fires
-                        # for every call in this turn's batch BEFORE any of
-                        # them reaches `invoke()` -- so the "deny" verdict
-                        # stamped below is never consumed there and would
-                        # otherwise leave no audit record at all (contrast
-                        # with the timeout branch, whose calls DO still reach
-                        # `invoke()`'s own gate and get logged there, since a
-                        # timeout is not itself a cancellation). Log directly
-                        # here, best-effort, for exactly the names this branch
-                        # is about to fail closed.
-                        cancelled_keys = [
-                            key for key in unique_keys if key not in decisions
-                        ]
-                        for key in unique_keys:
-                            decisions.setdefault(key, "deny")
-                        self._record_cancelled_approval_decisions(
-                            cancelled_keys,
-                            call_by_key,
-                        )
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        for key in unique_keys:
-                            decisions.setdefault(key, "timeout")
-                        break
-            # PR2a Task 7: a revoked round answers "deny" for every name,
-            # unconditionally -- it does not consult `decisions` at all.
-            # The run this round belongs to has been cancelled or
-            # abandoned, and `resolve_pending_approval` can still write
-            # into the shared `decisions` box after revocation (it
-            # snapshots the box under the lock, then updates it outside),
-            # so honouring that box here would let a click delivered
-            # microseconds after the cancellation execute the tool for
-            # real. `revoke_approval_rounds_for_run` already filled every
-            # name with "deny"; this is the guard that makes it stick.
-            with self._approval_state_lock:
-                was_revoked = bool(round_state.get("revoked"))
-            if was_revoked:
-                # Same audit gap Finding I3 documents for the cancellation
-                # branch above: the child's loop is being torn down, so
-                # these calls never reach `invoke()`'s own gate and would
-                # otherwise leave no record of having been denied.
+        def _on_cancelled() -> None:
+            cancelled_keys = [key for key in unique_keys if key not in decisions]
+            for key in unique_keys:
+                decisions.setdefault(key, "deny")
+            self._record_cancelled_approval_decisions(cancelled_keys, call_by_key)
+
+        def _on_timeout() -> None:
+            for key in unique_keys:
+                decisions.setdefault(key, "timeout")
+
+        # Filled by `_on_outcome` BEFORE the host pops the registry, so a
+        # `resolve_pending_approval` landing after the snapshot is ignored
+        # (TASK-913) and the audit rows for a revoked round precede its
+        # card being cleared, as before the host.
+        result: dict[str, dict[str, str]] = {}
+
+        def _on_outcome(outcome: str) -> None:
+            if outcome == "revoked":
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
-                return {key: "deny" for key in unique_keys}
-            # Any name the resolution path above didn't already cover (e.g.
-            # a partial/empty decisions dict handed to `resolve_pending_
-            # approval`) fails closed to "deny" rather than silently
-            # dropping the call from the returned mapping.
+                result["map"] = {key: "deny" for key in unique_keys}
+                return
             for key in unique_keys:
                 decisions.setdefault(key, "deny")
-            # Finding F4: build the snapshot by keyed lookup over the
-            # (locally-owned, never-mutated) `unique_keys` list rather
-            # than `dict(decisions)` -- the latter iterates `decisions`
-            # itself, which `resolve_pending_approval` can concurrently
-            # `.update()` from the UI thread; a same-size update can't
-            # change dict length, so this is unreachable today, but a
-            # keyed `.get()` per name can never raise "dictionary changed
-            # size during iteration" regardless. The `setdefault` pass
-            # above already guarantees every name resolves, so `.get`'s
-            # own "deny" fallback here is a belt-and-suspenders no-op, not
-            # a second source of truth.
-            decision_snapshot = {key: decisions.get(key, "deny") for key in unique_keys}
-            approved_values = {"approve_once", "approve_session", "always_allow"}
+            result["map"] = {key: decisions.get(key, "deny") for key in unique_keys}
+
+        def _announce_if_detached() -> bool:
+            # Sampled after the park, at the same moment the pre-host body
+            # did, so an attach landing meanwhile mounts the card instead.
+            if not self._approval_view_is_detached():
+                return False
+            self._announce_detached_approval(owning_session_id)
+            return True
+
+        def _on_teardown() -> bool:
+            # Runs inside the host's teardown, BEFORE the payload is
+            # unparked: a definitive-after-start batch that was approved
+            # keeps its card mounted in the "finishing" phase, which means
+            # returning True to retain it. Only a wait that completed
+            # (decided/timeout/cancelled) can do so; an exception mid-wait
+            # leaves no snapshot and unparks, as before the host.
+            snapshot = result.get("map")
+            if snapshot is None or round_state.get("revoked"):
+                return False
             finishing_calls = [
                 call_payload
                 for call_payload in payload["calls"]
                 if call_payload.get("execution_policy")
                 == ToolExecutionPolicy.DEFINITIVE_AFTER_START.value
-                and decision_snapshot.get(
+                and snapshot.get(
                     str(
                         call_payload.get("call_id")
                         or call_payload.get("llm_name")
@@ -11501,71 +11441,40 @@ class ConsoleChatController:
                 )
                 in approved_values
             ]
-            return decision_snapshot
-        finally:
-            # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
-            # approval`'s round_id lookup and the `fleet_summary_counts`
-            # sync tick can each observe this map from the UI thread while
-            # this worker thread tears the round down.
+            if not finishing_calls or session_id is None:
+                return False
             with self._approval_state_lock:
-                self._pending_approval_rounds.pop(round_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key -- and takes the accepted
-            # last-armed-wins limitation (task-15661) with it.
-            if finishing_calls and session_id is not None:
-                # The decision round is over, but the approved definitive
-                # mutation is not.  Retain the SAME keyed payload as a
-                # non-interactive finishing surface until AgentService
-                # reports the real provider terminal.
-                with self._approval_state_lock:
-                    retained = self._parked_approval_payloads.get(round_id)
-                    if retained is not None:
-                        retained["phase"] = "finishing"
-                        retained["calls"] = finishing_calls
-                        retained["timeout_seconds"] = 0.0
-                        retained["deadline_monotonic"] = None
-            else:
-                self._unpark_round_payload(self._parked_approval_payloads, round_id)
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, round_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This
-            # subsumes `_clear_pending_approval_if_round_is_current`'s
-            # two-part TOCTOU guard: clearing was order-dependent, so the
-            # decision could go stale between a worker-thread snapshot and
-            # the UI thread running it; a head re-derive is a pure
-            # function of current state. The race-proofing principle is
-            # unchanged -- `_remount_head` still computes the answer
-            # INSIDE the callable that runs on the UI thread, never from a
-            # snapshot taken here.
-            # `owning_session_id`, not `session_id`: a legacy no-session
-            # caller retains no payload, so its head resolves to `None` and
-            # the card clears exactly as the pre-PR0 unconditional clear
-            # did -- unless a real session-attributed sibling is armed for
-            # the session it mounted over, in which case that sibling's
-            # card is (correctly) what stays up.
-            try:
-                # Qodo PR #1836 finding 2: a legacy no-session round's card
-                # mounted unconditionally and may sit over ANY session by
-                # now -- pass None so `_remount_head` re-derives for the
-                # session active when the callback runs, not the arm-time
-                # snapshot (whose mismatch would strand the card).
-                self._remount_head(
-                    self._parked_approval_payloads,
-                    self.set_pending_approval,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval remount during teardown"
-                )
+                retained = self._parked_approval_payloads.get(round_id)
+                if retained is not None:
+                    retained["phase"] = "finishing"
+                    retained["calls"] = finishing_calls
+                    retained["timeout_seconds"] = 0.0
+                    retained["deadline_monotonic"] = None
+            return True
+
+        # task-31384: one host lifecycle; the approvals-only legs ride the
+        # hooks -- the detached-view announce (task-15860) instead of a
+        # mount, the advisory permission summary fired INSIDE the human-wait
+        # mark, decision stamping on cancel/timeout, and finishing-phase
+        # retention at teardown.
+        outcome = self._interrupt_host.run_round(
+            "approval",
+            round_id,
+            payload,
+            round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            announce_detached=_announce_if_detached,
+            human_wait_run_id=owning_run_id,
+            on_cancelled=_on_cancelled,
+            on_timeout=_on_timeout,
+            before_wait=lambda: self._maybe_fire_permission_summary(payload),
+            on_teardown=_on_teardown,
+            on_outcome=_on_outcome,
+        )
+        return result.get("map") or {key: "deny" for key in unique_keys}
 
     def _record_cancelled_approval_decisions(
         self,
@@ -11770,84 +11679,52 @@ class ConsoleChatController:
     # last-armed-wins semantics let a second same-session round overwrite
     # the first's payload and strand it until timeout (task-15661).
 
+    # -- task-31384: the six PR0 payload helpers over the host's payload layer --
+    # Kept by NAME and by store-based SIGNATURE: eleven test files and
+    # `ChatScreen._current_park_round_ids` call them with the aliased
+    # per-kind dicts (and a few with dicts of their own), so they stay
+    # store-agnostic and lock under `_approval_state_lock` -- the host's one
+    # lock -- exactly as the pre-host copies did.
     @staticmethod
     def _head_round_payload_locked(
         store: dict[str, dict[str, Any]], session_id: str | None
     ) -> dict[str, Any] | None:
         """The session's oldest-armed payload. Caller holds the lock."""
-        for payload in store.values():
-            if payload.get("session_id") == session_id:
-                return payload
-        return None
+        from tldw_chatbook.Chat.console_interrupt_rounds import head_payload_locked
+
+        return head_payload_locked(store, session_id)
 
     def _park_round_payload(
         self, store: dict[str, dict[str, Any]], round_id: str, payload: dict[str, Any]
     ) -> bool:
-        """Retain ``payload``; return whether it is now its session's head.
+        """Retain ``payload``; return whether it is now its session's head."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import park_round_payload
 
-        A round that is NOT the head must not mount -- an older sibling is
-        still holding the card.
-        """
-        session_id = payload.get("session_id")
-        with self._approval_state_lock:
-            store[round_id] = payload
-            head = self._head_round_payload_locked(store, session_id)
-        return head is payload
+        return park_round_payload(self._approval_state_lock, store, round_id, payload)
 
     def _head_round_payload(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> dict[str, Any] | None:
-        """The payload whose card ``session_id`` should currently show.
+        """The payload whose card ``session_id`` should currently show (remaining-time snapshot)."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import head_round_payload
 
-        Qodo PR #1836 finding 1: a round's auto-deny deadline starts at ARM
-        time, but a queued round can mount much later (promotion at the
-        head's resolve, a switch back to a parked session, a headless
-        attach). Handing the card the arm-time ``timeout_seconds`` then
-        overstates the decision window -- "Auto-denies in 2:00" on a card
-        whose worker denies in seconds. When the payload carries its
-        ``deadline_monotonic``, return a shallow SNAPSHOT whose
-        ``timeout_seconds`` is the remaining time at this call; the
-        retained payload is never mutated, so every later re-derive
-        computes its own fresh snapshot. A payload without a deadline
-        (ADR-067 arms none for ``timeout <= 0`` script confirms) passes
-        through untouched. ``_park_round_payload``'s ``head is payload``
-        identity check goes through ``_head_round_payload_locked`` and is
-        unaffected.
-        """
-        with self._approval_state_lock:
-            payload = self._head_round_payload_locked(store, session_id)
-        if payload is None:
-            return None
-        deadline = payload.get("deadline_monotonic")
-        if not deadline:
-            return payload
-        snapshot = dict(payload)
-        snapshot["timeout_seconds"] = max(0.0, deadline - time.monotonic())
-        return snapshot
+        return head_round_payload(self._approval_state_lock, store, session_id)
 
     def _session_round_payloads(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> list[dict[str, Any]]:
-        """Every payload ``store`` retains for ``session_id``, arm order first.
+        """Every payload ``store`` retains for ``session_id``, arm order first."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import session_round_payloads
 
-        Key-shape agnostic on purpose: it matches on the payload's own
-        ``session_id``, so it reads a PR0 round-keyed map and a not-yet-
-        migrated session-keyed one identically (`ChatScreen._current_park_
-        round_ids` scans all three bridges' maps through it).
-        """
-        with self._approval_state_lock:
-            return [
-                payload
-                for payload in store.values()
-                if payload.get("session_id") == session_id
-            ]
+        return session_round_payloads(self._approval_state_lock, store, session_id)
 
     def _unpark_round_payload(
         self, store: dict[str, dict[str, Any]], round_id: str
     ) -> None:
-        """Drop one round's retained payload. Idempotent."""
-        with self._approval_state_lock:
-            store.pop(round_id, None)
+        """Drop ``round_id``'s retained payload, if any."""
+        from tldw_chatbook.Chat.console_interrupt_rounds import unpark_round_payload
+
+        unpark_round_payload(self._approval_state_lock, store, round_id)
 
     def _remount_head(
         self,
@@ -11855,29 +11732,19 @@ class ConsoleChatController:
         setter: Callable[[dict[str, Any] | None], None] | None,
         session_id: str | None,
     ) -> None:
-        """WORKER THREAD: enqueue a head re-derive onto the UI thread.
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
 
-        Replaces the pre-PR0 two-part TOCTOU guard. That guard existed
-        because CLEARING the card was order-dependent -- whether to clear
-        depended on which sibling resolved first, and a worker-thread
-        snapshot of that answer could be stale by the time the UI thread
-        ran it. Re-deriving the head is order-INDEPENDENT: it is a pure
-        function of current state. The race-proofing principle is
-        unchanged -- the decision still runs inside the callable on the UI
-        thread, never from a snapshot -- but the decision itself is now one
-        lookup instead of an identity check plus a sibling check.
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
 
-        ``session_id=None`` means "the session being VIEWED when the
-        callback runs" (Qodo PR #1836 finding 2): a legacy no-session round
-        mounts unconditionally, so its card can be sitting over ANY session
-        by teardown time, and re-deriving for the arm-time snapshot id
-        no-ops on a mismatch -- stranding the card where the deleted
-        pre-PR0 guard cleared it unconditionally. Resolving the active
-        session inside ``_apply`` clears the stale legacy card AND restores
-        that session's own real head if it has one -- strictly better than
-        the old unconditional clear, which could wipe a real sibling's
-        card. Session-attributed rounds keep the exact-match guard so a
-        background teardown can never touch the viewed session's card.
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
         """
         if self.app is None or setter is None:
             return
@@ -11890,16 +11757,24 @@ class ConsoleChatController:
                 return
             payload = self._head_round_payload(store, target)
             setter(payload)
-            # ADR-090: this is the promotion mount (a head resolving or a
-            # run revoking hands the card to the queued sibling) and it
-            # bypasses `_marshal_pending_approval`, so the summary trigger
-            # is armed here too. No-op for non-MCP stores sharing this
-            # helper (skill bridges): their rounds are unknown to
-            # `_pending_approval_rounds`, and fire-once guards repeats.
             if isinstance(payload, dict):
                 self._maybe_fire_permission_summary(payload)
 
         self.app.call_from_thread(_apply)
+
+    def _remount_session_kinds(self, session_id: str) -> None:
+        """Re-derive every non-approval kind's head card for ``session_id``.
+
+        The one call the three session-activation sites (new, switch,
+        close) share; the kinds come from the host module's
+        ``SESSION_REMOUNT_KINDS`` and approvals stay on the sites' own block.
+
+        Args:
+            session_id: The session being activated.
+        """
+        from tldw_chatbook.Chat.console_interrupt_rounds import SESSION_REMOUNT_KINDS
+
+        self._interrupt_host.remount_for_session(session_id, kinds=SESSION_REMOUNT_KINDS)
 
     def remount_pending_approval_for_active_session(self) -> bool:
         """Mount the ACTIVE session's still-armed approval round, if any.
@@ -11955,6 +11830,73 @@ class ConsoleChatController:
         still surface nothing while claiming a view.
         """
         return self.set_pending_approval is None and self.park_pending_approval is None
+
+    def on_pending_rounds_changed(self, total: int, kind: str, raised: bool) -> None:
+        """task-31385: attention when a round blocks on the user off-screen.
+
+        WORKER THREAD; the host calls this after every round arms (mounted
+        or parked) and after every teardown. Two effects, both on the UI
+        thread: the Console entry in the app navigation carries a
+        pending-interrupt badge while ``total`` is non-zero, and a round
+        that ARMS while no Console view is attached -- the user is on
+        another screen, or Console has not been opened this launch --
+        rings the terminal bell once. The bell is governed by
+        ``[console] interrupt_bell`` (default on) and never fires in a
+        headless app, so tests and embedded runs emit no control bytes.
+        Visibility is read from the view seams (``_approval_view_is_
+        detached``): ``detach_view`` clears every slot together, so the
+        approval pair stands for all five kinds.
+
+        Args:
+            total: Rounds of every kind registered after this change.
+            kind: The round kind that changed (unused; kept for callers
+                that want to specialise).
+            raised: True for an arm, False for a teardown.
+        """
+        app = self.app
+        if app is None:
+            return
+        ring = (
+            raised
+            and total > 0
+            and self._interrupt_bell_enabled()
+            and self._approval_view_is_detached()
+            and not bool(getattr(app, "is_headless", False))
+        )
+        host = getattr(self, "_interrupt_host", None)
+
+        def _apply() -> None:
+            from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+
+            # Re-read the total on the UI thread: two workers' updates may
+            # be marshalled out of order, and the badge must show the
+            # host's current truth, not whichever dispatch ran last.
+            current = host.pending_total() if host is not None else total
+            set_console_attention(app, current)
+            bell = getattr(app, "bell", None) if ring else None
+            if callable(bell):
+                bell()
+
+        marshal = getattr(app, "call_from_thread", None)
+        if not callable(marshal):
+            return
+        try:
+            marshal(_apply)
+        except Exception:  # noqa: BLE001 -- attention is best-effort, never the round
+            logger.opt(exception=True).debug("Console attention marshal failed")
+
+    def _interrupt_bell_enabled(self) -> bool:
+        """Resolve ``[console] interrupt_bell``: environment, then config, then on.
+
+        Returns:
+            False only when ``TLDW_CONSOLE_INTERRUPT_BELL`` (a non-empty
+            value) or the config key coerces to False.
+        """
+        env_value = _bool_or_none(os.environ.get(INTERRUPT_BELL_ENV_VAR, "").strip())
+        if env_value is not None:
+            return env_value
+        config_value = _bool_or_none(get_cli_setting("console", "interrupt_bell", None))
+        return True if config_value is None else config_value
 
     def _announce_detached_approval(self, session_id: str) -> None:
         """Raise the app-wide toast for a round armed with no Console view.
@@ -13130,48 +13072,20 @@ class ConsoleChatController:
         """
         if not run_id:
             return 0
-        revoked = self._revoke_tool_approval_rounds(run_id)
-        script_revoked = self._revoke_skill_script_rounds(run_id)
-        question_revoked = self._revoke_question_rounds(run_id)
-        for round_id, session_id in revoked:
-            if session_id is not None:
-                self.discard_pending_round(session_id, round_id)
-            try:
-                # PR0: re-derive from the session's remaining FIFO head --
-                # revoking one round of several must promote the next, not
-                # blank the session's card.
-                self._remount_head(
-                    self._parked_approval_payloads,
-                    self.set_pending_approval,
-                    session_id,
-                )
-            except Exception:  # noqa: BLE001 -- a UI remount must never
-                # break the cancellation path that called us.
-                logger.debug("Failed to marshal approval remount during revocation")
-        for request_id, session_id in script_revoked:
-            if session_id is not None:
-                self.discard_pending_round(session_id, request_id)
-            try:
-                # PR0: re-derive from the session's remaining FIFO head --
-                # revoking one round of several must promote the next, not
-                # blank the session's card.
-                self._remount_head(
-                    self._parked_skill_script_payloads,
-                    self.set_pending_skill_script,
-                    session_id,
-                )
-            except Exception:  # noqa: BLE001 -- as above.
-                logger.debug("Failed to clear skill-script confirm during revocation")
-        for request_id, session_id in question_revoked:
-            if session_id is not None:
-                self.discard_pending_round(session_id, request_id)
-            with contextlib.suppress(Exception):
-                self._remount_head(
-                    self._parked_question_payloads,
-                    self.set_pending_question,
-                    session_id,
-                )
-        total = len(revoked) + len(script_revoked) + len(question_revoked)
+        # task-31384: one host sweep, parameterised by each kind's stamp;
+        # the badge discard and the FIFO-head re-derive per affected
+        # session stay here, exactly as the per-kind sweeps did them.
+        swept = self._interrupt_host.revoke_for_run(run_id, _REVOCATION_STAMPS)
+        with self._pending_question_lock:
+            self._question_bounces.pop(run_id, None)
+        total = 0
+        for kind, rounds in swept.items():
+            for round_id, session_id in rounds:
+                total += 1
+                if session_id is not None:
+                    self.discard_pending_round(session_id, round_id)
+                with contextlib.suppress(Exception):
+                    self._interrupt_host.remount_head(kind, session_id)
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
@@ -13236,37 +13150,9 @@ class ConsoleChatController:
             caller's badge/card teardown (which must run outside the lock
             held here).
         """
-        revoked: list[tuple[str, str | None]] = []
-        with self._approval_state_lock:
-            for round_id, state in list(self._pending_approval_rounds.items()):
-                if state.get("run_id") != run_id:
-                    continue
-                state["revoked"] = True
-                # Defense in depth only: the post-wait `revoked` guard in
-                # `request_mcp_approvals` is the actual mechanism (it
-                # ignores this box entirely). Filling it keeps the box
-                # honest for anything that reads it directly.
-                decisions = state.get("decisions")
-                if isinstance(decisions, dict):
-                    for name in state.get("names") or ():
-                        decisions[name] = "deny"
-                self._pending_approval_rounds.pop(round_id, None)
-                session_id = state.get("session_id") or None
-                revoked.append((round_id, session_id))
-                event = state.get("event")
-                if event is not None:
-                    # Last, and only once the round is unreachable: the
-                    # thread this releases returns the moment it wakes.
-                    event.set()
-        # PR0: mirrors `request_mcp_approvals`' `finally` exactly -- each
-        # round drops exactly its OWN retained payload, so a still-armed
-        # sibling keeps its own copy. The pre-PR0 "is this the last armed
-        # round for the session" test existed only because the slot was
-        # shared. Runs outside the critical section above because
-        # `_unpark_round_payload` takes the (non-reentrant) same lock.
-        for round_id_to_drop, _session_id in revoked:
-            self._unpark_round_payload(self._parked_approval_payloads, round_id_to_drop)
-        return revoked
+        return self._interrupt_host.revoke_for_run(
+            run_id, {"approval": _REVOCATION_STAMPS["approval"]}
+        )["approval"]
 
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's ``run_skill_script`` confirms closed.
@@ -13281,37 +13167,9 @@ class ConsoleChatController:
         Returns:
             ``(request_id, session_id)`` for each revoked confirm.
         """
-        revoked: list[tuple[str, str | None]] = []
-        with self._pending_skill_script_lock:
-            for request_id, state in list(self._pending_skill_script_rounds.items()):
-                if state.get("run_id") != run_id:
-                    continue
-                state["revoked"] = True
-                # Defense in depth -- the post-wait `revoked` guard in
-                # `request_skill_script_confirm` is what actually denies.
-                decision = state.get("decision")
-                if isinstance(decision, dict):
-                    decision["allow"] = False
-                    decision["remember"] = False
-                self._pending_skill_script_rounds.pop(request_id, None)
-                session_id = state.get("session_id") or None
-                revoked.append((request_id, session_id))
-                event = state.get("event")
-                if event is not None:
-                    event.set()
-        # PR0: mirrors `request_skill_script_confirm`'s `finally` exactly --
-        # each round drops exactly its OWN retained payload, so a
-        # still-armed sibling keeps its own copy. The pre-PR0 "is this the
-        # last armed round for the session" test existed only because the
-        # slot was shared. Runs outside the critical section above because
-        # `_unpark_round_payload` takes the (non-reentrant) same lock.
-        for round_id_to_drop, _session_id in revoked:
-            self._unpark_round_payload(
-                self._parked_skill_script_payloads, round_id_to_drop
-            )
-        return revoked
-
-    # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
+        return self._interrupt_host.revoke_for_run(
+            run_id, {"skill_script": _REVOCATION_STAMPS["skill_script"]}
+        )["skill_script"]
 
     def request_skill_install_confirm(
         self, url: str, *, session_id: str | None = None
@@ -13355,12 +13213,8 @@ class ConsoleChatController:
             True only on an explicit Allow; every other path (deny, cancel,
             stop, timeout, or no wired UI) returns False.
         """
-        # No UI bridge wired means the marshal below is a no-op and nothing
-        # can ever set the Event -- fail closed immediately instead of
-        # blocking for the full timeout with no way to be resolved.
         if self.app is None or self.set_pending_skill_install is None:
             return False
-
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
@@ -13369,129 +13223,50 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
-        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
-        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
-        # task-15860: the visit's teardown Event, captured at ARM time for
-        # the same reason the run's cancel event is -- see
-        # `_bind_visit_cancel_signal`.
         visit_cancel_event = self._bind_visit_cancel_signal()
-        # ADR-067: same run stamp as `request_mcp_approvals` -- keys the
-        # human-input wait mark below (the install confirm is primary-agent
-        # only and in-loop, so no wrapper hosts it today, but the mark
-        # keeps every human wait on one contract).
         owning_run_id = current_run_id()
+        install_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
+        }
         with self._pending_skill_install_lock:
-            self._pending_skill_install_rounds[request_id] = {
-                "event": event,
-                "decision": decision,
-                "session_id": owning_session_id,
-            }
-
+            self._pending_skill_install_rounds[request_id] = install_round_state
         timeout_seconds = (
             self.skill_install_confirm_timeout_seconds()
             if self.skill_install_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
-        # for a decision or the owning run's cancellation.
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         payload = {
             "url": url,
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
-            # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
-            # remaining-time snapshot. None when ADR-067 armed no deadline.
             "deadline_monotonic": deadline,
         }
-        # TASK-910: park rather than mount when this round's session is a
-        # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
-        # identical `is_parked` gate. `session_id is None` (a legacy caller
-        # with no session context) always mounts.
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
-            # `request_mcp_approvals`' identical `add_pending_round` call
-            # for the full rationale (a sibling round from this bridge or
-            # either of the other two must not have its badge stolen by
-            # THIS round's own teardown).
-            self.add_pending_round(session_id, request_id)
-            # Retain THIS round's payload for EVERY session-attributed
-            # round -- mounted or parked -- not just a parked one, mirroring
-            # `request_mcp_approvals`' identical retention (Fix wave,
-            # CRITICAL 1): a round that mounted immediately must still be
-            # recoverable after a switch-away-and-back.
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card.
-            is_head = self._park_round_payload(
-                self._parked_skill_install_payloads, request_id, payload
-            )
-        try:
-            if is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_skill_install(payload)
-            # ADR-067: mark the owning run as waiting on a human decision
-            # (see `request_mcp_approvals`' identical wrap for the why).
-            with use_human_input_wait(owning_run_id):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-            return bool(decision.get("allow", False))
-        finally:
-            with self._pending_skill_install_lock:
-                self._pending_skill_install_rounds.pop(request_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key.
-            self._unpark_round_payload(self._parked_skill_install_payloads, request_id)
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, request_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This
-            # subsumes `_clear_pending_skill_install_if_round_is_current`'s
-            # two-part TOCTOU guard -- see `request_mcp_approvals`'
-            # identical `_remount_head` teardown call for the full race
-            # analysis.
-            # `owning_session_id`, not `session_id`: a legacy no-session
-            # caller retains no payload, so its head resolves to `None` and
-            # the card clears exactly as the pre-PR0 unconditional clear
-            # did -- `_remount_head` no-ops on a `None` session_id, which
-            # would otherwise leave a legacy caller's card stuck on screen
-            # (caught live by `test_console_skill_install_confirm.py::
-            # test_confirm_round_trip_allow`).
-            try:
-                # Qodo PR #1836 finding 2 -- see the approvals teardown's
-                # identical legacy-round note.
-                self._remount_head(
-                    self._parked_skill_install_payloads,
-                    self.set_pending_skill_install,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal skill-install remount during teardown"
-                )
+        # task-31384: register/badge/park-or-mount/poll/teardown is the
+        # host's one lifecycle. Install is primary-agent-only and never
+        # swept, so the revoked flag is not consulted.
+        self._interrupt_host.run_round(
+            "skill_install",
+            request_id,
+            payload,
+            install_round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=owning_run_id,
+            check_revoked=False,
+        )
+        return bool(decision.get("allow", False))
 
     def _remount_parked_skill_install(self, session_id: str) -> None:
         """Re-derive the mounted skill-install confirm card for ``session_id``.
@@ -13612,7 +13387,6 @@ class ConsoleChatController:
         """
         if self.app is None or self.set_pending_skill_script is None:
             return {"allow": False, "remember": False}
-
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
@@ -13621,138 +13395,52 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
-        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
-        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
-        # task-15860: the visit's teardown Event, captured at ARM time for
-        # the same reason the run's cancel event is -- see
-        # `_bind_visit_cancel_signal`.
         visit_cancel_event = self._bind_visit_cancel_signal()
-        # PR2a Task 7 (review M1): same run-ownership stamp
-        # `request_mcp_approvals` carries, and for a WIDER hazard --
-        # `run_skill_script` is all-agents scope (no agent_kind gate in
-        # `AgentService._run_one`) and runtime schemas are not filtered by
-        # `config.allowed_tools`, so a fleet child is offered it
-        # unconditionally; the bridge closure then runs the script as the
-        # very next statement after this confirm returns Allow, with no
-        # cancellation checkpoint in between. `current_run_id()` is bound
-        # for the whole loop by `AgentService` (this tool is dispatched
-        # IN-LOOP, not through `invoke_tool`'s per-call thread).
+        owning_run_id = current_run_id()
         script_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
-            "run_id": current_run_id(),
-            # Re-read after the wait: a late Allow must not stick. See
-            # `revoke_approval_rounds_for_run`.
+            "run_id": owning_run_id,
             "revoked": False,
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
         }
         with self._pending_skill_script_lock:
             self._pending_skill_script_rounds[request_id] = script_round_state
-
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
             if self.skill_script_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
-        # for a decision or the owning run's cancellation.
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
         card_payload["session_id"] = owning_session_id
-        # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
-        # remaining-time snapshot. None when ADR-067 armed no deadline.
         card_payload["deadline_monotonic"] = deadline
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
-            # `request_mcp_approvals`' identical `add_pending_round` call
-            # for the full rationale.
-            self.add_pending_round(session_id, request_id)
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card.
-            is_head = self._park_round_payload(
-                self._parked_skill_script_payloads, request_id, card_payload
-            )
-        try:
-            if is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_skill_script(card_payload)
-            # ADR-067: mark the owning run as waiting on a human decision
-            # (see `request_mcp_approvals`' identical wrap for the why).
-            with use_human_input_wait(str(script_round_state.get("run_id") or "")):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-            # PR2a Task 7 (review M1): a revoked round denies
-            # unconditionally, without consulting `decision` at all --
-            # `resolve_pending_skill_script` writes into that shared box
-            # after snapshotting the round, so an Allow delivered just
-            # after the child was cancelled could otherwise reach the
-            # `asyncio.run(scope.run_skill_script(...))` call the bridge
-            # makes on the very next line. Mirrors `request_mcp_
-            # approvals`' identical post-wait guard.
-            with self._pending_skill_script_lock:
-                was_revoked = bool(script_round_state.get("revoked"))
-            if was_revoked:
-                return {"allow": False, "remember": False}
-            return {
-                "allow": bool(decision.get("allow", False)),
-                "remember": bool(decision.get("remember", False)),
-            }
-        finally:
-            with self._pending_skill_script_lock:
-                self._pending_skill_script_rounds.pop(request_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key.
-            self._unpark_round_payload(self._parked_skill_script_payloads, request_id)
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, request_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This subsumes
-            # the pre-PR0 `_clear_pending_skill_script_if_round_is_current`
-            # guard's two-part TOCTOU check -- see `request_mcp_approvals`'
-            # identical `_remount_head` teardown call for the full race
-            # analysis.
-            # Qodo PR #1836 finding 2: a legacy no-session round passes
-            # None, so `_remount_head` re-derives for the session active
-            # WHEN THE CALLBACK RUNS -- the arm-time `owning_session_id`
-            # snapshot could mismatch after a switch and strand the
-            # unconditionally-mounted legacy card. Session-attributed
-            # rounds keep the exact-match owning id.
-            try:
-                self._remount_head(
-                    self._parked_skill_script_payloads,
-                    self.set_pending_skill_script,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal skill-script remount during teardown"
-                )
+        # task-31384: one host lifecycle; a swept (revoked) round fails closed.
+        outcome = self._interrupt_host.run_round(
+            "skill_script",
+            request_id,
+            card_payload,
+            script_round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=owning_run_id,
+        )
+        if outcome == "revoked":
+            return {"allow": False, "remember": False}
+        return {
+            "allow": bool(decision.get("allow", False)),
+            "remember": bool(decision.get("remember", False)),
+        }
 
     def _remount_parked_skill_script(self, session_id: str) -> None:
         """Re-derive the mounted skill-script confirm card for ``session_id``.
@@ -13968,7 +13656,8 @@ class ConsoleChatController:
         # The live check and the registration share ONE critical section
         # (Qodo #2379): two sibling workers asking at once must not both
         # see "no live round" and both arm -- exactly one arms, the other
-        # gets `busy`.
+        # gets `busy`. The host re-registers the same state object at
+        # run_round entry, which is idempotent.
         with self._pending_question_lock:
             live = any(
                 state.get("session_id") == owning_session_id
@@ -13987,15 +13676,18 @@ class ConsoleChatController:
             if bounces >= MAX_CONSECUTIVE_BUSY:
                 raise AskUserBusyRefusal(ASK_USER_REFUSAL_COPY)
             return busy_result()
-        round_cancel_event = self._bind_round_cancel_signal(session_id)
-        visit_cancel_event = self._bind_visit_cancel_signal()
+        round_state["cancel_event"] = self._bind_round_cancel_signal(session_id)
+        round_state["visit_event"] = self._bind_visit_cancel_signal()
         timeout_seconds = self._resolve_ask_user_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         actor = current_run_actor()
         asked_by = "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+        # task-31382: name WHICH sub-agent is asking when the run carries a label.
+        asker_label = actor.label if asked_by == "sub-agent" and actor is not None else None
         card_payload: dict[str, Any] = {
             "questions": [dict(question) for question in questions],
             "asked_by": asked_by,
+            "asker_label": asker_label,
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
@@ -14004,58 +13696,45 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        is_head = True
-        if session_id is not None:
-            self.add_pending_round(session_id, request_id)
-            is_head = self._park_round_payload(
-                self._parked_question_payloads, request_id, card_payload
-            )
-        try:
-            if is_parked:
-                if self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_question(card_payload)
-            outcome = "answered"
-            with use_human_input_wait(owning_run_id):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        outcome = "cancelled"
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        outcome = "timeout"
-                        break
-            if round_state["revoked"]:
-                outcome = "cancelled"
-            if outcome == "answered":
+        # task-31384: one host lifecycle; the outcome maps onto PRD A6.
+        results: list[dict[str, Any]] = []
+
+        def _on_outcome(outcome: str) -> None:
+            # Runs before the host's teardown so the transcript marker
+            # precedes the card clear and badge discard, as before.
+            if outcome == "decided":
                 answers = decision.get("answers")
-                result = answered_result(answers if answers else empty_answers(questions))
+                result = answered_result(
+                    answers if answers else empty_answers(questions)
+                )
             else:
-                result = unanswered_result(outcome)
+                result = unanswered_result(
+                    "timeout" if outcome == "timeout" else "cancelled"
+                )
+            results.append(result)
             bridge = self._agent_bridge
             if bridge is not None:
                 with contextlib.suppress(Exception):
                     bridge.append_question_marker(
                         owning_session_id,
-                        format_question_marker(asked_by, questions, result),
+                        format_question_marker(
+                            asked_by, questions, result, asker_label=asker_label
+                        ),
                     )
-            return result
-        finally:
-            with self._pending_question_lock:
-                self._pending_question_rounds.pop(request_id, None)
-            self._unpark_round_payload(self._parked_question_payloads, request_id)
-            if session_id is not None:
-                self.discard_pending_round(session_id, request_id)
-            with contextlib.suppress(Exception):
-                self._remount_head(
-                    self._parked_question_payloads,
-                    self.set_pending_question,
-                    owning_session_id if session_id is not None else None,
-                )
+
+        self._interrupt_host.run_round(
+            "question",
+            request_id,
+            card_payload,
+            round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=owning_run_id,
+            on_outcome=_on_outcome,
+        )
+        return results[0] if results else unanswered_result("cancelled")
 
     def resolve_pending_question(
         self, answers: list[dict[str, Any]], request_id: str | None = None
@@ -14135,19 +13814,9 @@ class ConsoleChatController:
         Returns:
             ``(request_id, session_id)`` per revoked round.
         """
-        revoked: list[tuple[str, str | None]] = []
-        with self._pending_question_lock:
-            self._question_bounces.pop(run_id, None)
-            for request_id, state in list(self._pending_question_rounds.items()):
-                if state.get("run_id") != run_id:
-                    continue
-                state["revoked"] = True
-                self._pending_question_rounds.pop(request_id, None)
-                revoked.append((request_id, state.get("session_id") or None))
-                event = state.get("event")
-                if event is not None:
-                    event.set()
-        return revoked
+        return self._interrupt_host.revoke_for_run(
+            run_id, {"question": _REVOCATION_STAMPS["question"]}
+        )["question"]
 
     def request_worktree_merge_confirm(
         self, payload: dict[str, Any], *, session_id: str | None = None
@@ -14197,7 +13866,6 @@ class ConsoleChatController:
         """
         if self.app is None or self.set_pending_worktree_merge is None:
             return {"allow": False}
-
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
@@ -14209,20 +13877,20 @@ class ConsoleChatController:
         round_cancel_event = self._bind_round_cancel_signal(session_id)
         visit_cancel_event = self._bind_visit_cancel_signal()
         owning_run_id = current_run_id()
+        merge_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
+        }
         with self._pending_worktree_merge_lock:
-            self._pending_worktree_merge_rounds[request_id] = {
-                "event": event,
-                "decision": decision,
-                "session_id": owning_session_id,
-            }
-
+            self._pending_worktree_merge_rounds[request_id] = merge_round_state
         timeout_seconds = (
             self.worktree_merge_confirm_timeout_seconds()
             if self.worktree_merge_confirm_timeout_seconds is not None
             else _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
-        # for a decision or the owning run's cancellation.
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
@@ -14232,65 +13900,24 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        is_head = True
-        if session_id is not None:
-            self.add_pending_round(session_id, request_id)
-            is_head = self._park_round_payload(
-                self._parked_worktree_merge_payloads, request_id, card_payload
-            )
-        try:
-            if is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_worktree_merge(card_payload)
-            # ADR-067: mark the owning run as waiting on a human decision.
-            resolved_via_event = False
-            with use_human_input_wait(owning_run_id):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-                else:
-                    resolved_via_event = True
-            # Qodo PR #2355 finding 5: a cancel/deadline BREAK must fail
-            # closed WITHOUT consulting `decision` at all --
-            # `resolve_pending_worktree_merge` can still write into that
-            # shared box after this loop has already given up on the
-            # session, and reading it unconditionally could honor an
-            # Allow click that lands microseconds too late. Mirrors
-            # `request_skill_script_confirm`'s identical post-wait guard,
-            # minus its external-revoker `was_revoked` machinery -- no
-            # external revoker exists for this primary-only round (same
-            # as `request_skill_install_confirm`'s rationale: no
-            # sub-agent can ever arm one of these).
-            if not resolved_via_event:
-                return {"allow": False}
-            return {"allow": bool(decision.get("allow", False))}
-        finally:
-            with self._pending_worktree_merge_lock:
-                self._pending_worktree_merge_rounds.pop(request_id, None)
-            self._unpark_round_payload(self._parked_worktree_merge_payloads, request_id)
-            if session_id is not None:
-                self.discard_pending_round(session_id, request_id)
-            try:
-                self._remount_head(
-                    self._parked_worktree_merge_payloads,
-                    self.set_pending_worktree_merge,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors.
-                # No new logger call here (production-diagnostic-inventory
-                # guard, TASK-28238 phase 2 Task 6) -- a remount hiccup
-                # during teardown must not mask the confirm decision this
-                # method is about to return, and this mirrors the sibling
-                # confirms' identical intent without adding a new call site.
-                pass
+        # task-31384: one host lifecycle. Only an explicit decision allows;
+        # cancel, stop, and timeout all fail closed. Primary-agent-only, so
+        # never swept: the revoked flag is not consulted.
+        outcome = self._interrupt_host.run_round(
+            "worktree_merge",
+            request_id,
+            card_payload,
+            merge_round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=owning_run_id,
+            check_revoked=False,
+        )
+        if outcome != "decided":
+            return {"allow": False}
+        return {"allow": bool(decision.get("allow", False))}
 
     def _remount_parked_worktree_merge(self, session_id: str) -> None:
         """Re-derive the mounted worktree-merge confirm card for
@@ -14396,6 +14023,39 @@ class ConsoleChatController:
         if redirect is None:
             return "no active run to redirect — plain messages queue for the next turn"
         return redirect(text)
+
+    def abandon_active_tool_call(self) -> str | None:
+        """task-31386: abandon the active run's in-flight tool call; keep the turn.
+
+        UI THREAD. Resolves the viewed session's durable conversation to its
+        newest unanchored primary run (the run in flight, the same lookup
+        the stop path uses) and asks ``agent_service`` to abandon that run's
+        current tool call. The call's ``_call_with_timeout`` wrapper honours
+        the request on its next poll slice and returns the existing
+        "tool call cancelled" result; the run's own cancel probe stays
+        False, so the loop hands that result to the model and continues.
+
+        Returns:
+            The abandoned tool's name, or None when no tool call is in
+            flight for the viewed session (nothing is queued).
+        """
+        session_id = self.store.active_session_id or ""
+        conversation_id = ""
+        for session in self.store.sessions():
+            if session.id == session_id:
+                conversation_id = str(getattr(session, "persisted_conversation_id", "") or "")
+                break
+        if not conversation_id:
+            return None
+        find_run = getattr(self._agent_bridge, "live_primary_run_id", None)
+        run_id = find_run(conversation_id) if callable(find_run) else None
+        if not run_id:
+            run_id = self._latest_unanchored_primary_run_id(conversation_id)
+        if not run_id:
+            return None
+        from tldw_chatbook.Agents.agent_service import request_tool_call_abandon
+
+        return request_tool_call_abandon(run_id)
 
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
@@ -17190,7 +16850,8 @@ class ConsoleChatController:
         self, session_id: str
     ) -> ConsoleProviderSelection:
         """Resolve provider inputs from the owning session, never the viewed tab."""
-        settings = self.store.session_settings(session_id)
+        settings = self.store.effective_session_settings(session_id)
+        endpoint_policy = self.store.session_ephemeral_endpoint_policy(session_id)
         workspace_id = self.store.session_workspace_id(session_id)
         current_workspace = self.store.workspace_context
         workspace_context = (
@@ -17211,6 +16872,16 @@ class ConsoleChatController:
             app_config=app_config,
             workspace_context=workspace_context,
         )
+        if (
+            endpoint_policy is not None
+            and endpoint_policy.provider == settings.provider
+            and endpoint_policy.model == settings.model
+        ):
+            selection = replace(
+                selection,
+                configured_endpoint_fallback_allowed=False,
+                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
+            )
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
@@ -17243,7 +16914,7 @@ class ConsoleChatController:
             session_id=session_id,
             provider_selection=selection,
             scratch_space=self._scratch_spaces.snapshot(session_id),
-            session_settings=self.store.session_settings(session_id),
+            session_settings=self.store.effective_session_settings(session_id),
             workspace_roots=(),
             capabilities={
                 "vision": bool(model)
@@ -17365,6 +17036,7 @@ class ConsoleChatController:
                 endpoint=(
                     str(selection.base_url) if selection.base_url is not None else None
                 ),
+                endpoint_provenance=selection.endpoint_provenance,
             ),
             attempt_id=str(uuid4()),
         )
@@ -19679,6 +19351,13 @@ class ConsoleChatController:
         thinking_policy: ThinkingHistoryPolicy = "auto",
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call."""
+        from tldw_chatbook.Chat.console_visual_transcript import (
+            count_semantic_images,
+            plan_visual_compaction,
+            render_visual_transcript,
+            resolve_effective_compaction_representation,
+        )
+
 
         def blocked(visible_copy: str) -> ConsoleSubmitResult:
             if manual_action:
@@ -20571,6 +20250,7 @@ class ConsoleChatController:
                 generation_token=generation_token,
                 before_provider_dispatch=before_provider_dispatch,
                 capture_mode_override=capture_mode_override,
+                trace_request=trace_request,
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
@@ -21142,6 +20822,7 @@ class ConsoleChatController:
         generation_token: int | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        trace_request: PreparedConsoleRequest | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -21156,14 +20837,10 @@ class ConsoleChatController:
         except KeyError:
             return self._session_closed_result()
         one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
-        if prefill:
-            provider_messages = [
-                *provider_messages,
-                {
-                    "role": ConsoleMessageRole.ASSISTANT.value,
-                    "content": prefill,
-                },
-            ]
+        provider_messages = self._provider_messages_with_prefill(
+            provider_messages,
+            prefill,
+        )
         dispatch_request: Any = provider_messages
         capture_mode = capture_mode_override or ConsoleTraceCaptureMode.CAPTURE_OFF
         if capture_mode_override is None and preparation_id is not None:
@@ -21172,8 +20849,10 @@ class ConsoleChatController:
                 capture_mode = preparation.capture_mode
         prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
         if callable(prepare_request):
-            preparation_input: Any = provider_messages
-            if (
+            preparation_input: Any = (
+                trace_request if trace_request is not None else provider_messages
+            )
+            if trace_request is None and (
                 preparation_id is not None
                 and preparation is not None
                 and not continuation_sidecar
@@ -21928,6 +21607,16 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    def _refuse_project_instruction_setup(
+        self, session_id: str, assistant_message_id: str, visible_copy: str
+    ) -> ConsoleSubmitResult:
+        """Release setup recovery using the existing disable decision contract."""
+        try:
+            self.store.mark_message_failed(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result(session_id=session_id)
+        return self._block(session_id, visible_copy)
+
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
@@ -22034,7 +21723,9 @@ class ConsoleChatController:
                 else:
                     callback = self._select_project_instruction_binding
                     if callback is None:
-                        return ConsoleSubmitResult(False, False, str(exc))
+                        return self._refuse_project_instruction_setup(
+                            session_id, assistant_message_id, str(exc)
+                        )
                     action, binding_id = await callback(session_id, options, str(exc))
                     action, project_selection = (
                         commit_project_instruction_setup_decision(
@@ -22049,14 +21740,16 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
-                        try:
-                            self.store.mark_message_failed(assistant_message_id)
-                        except KeyError:
-                            return self._session_closed_result(session_id=session_id)
-                        return self._block(session_id, "project_instructions_disabled")
+                        return self._refuse_project_instruction_setup(
+                            session_id,
+                            assistant_message_id,
+                            "project_instructions_disabled",
+                        )
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
-                        return ConsoleSubmitResult(False, False, str(exc))
+                        return self._refuse_project_instruction_setup(
+                            session_id, assistant_message_id, str(exc)
+                        )
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:

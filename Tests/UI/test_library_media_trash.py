@@ -1539,7 +1539,11 @@ async def test_media_trash_compact_status_folds_after_two_readable_rows():
         assert fold.region.height == 1
         assert fold.region.y == status.region.bottom
         assert fold.tooltip == f"{long_copy.rstrip('.')} · Retry"
-        assert trash_list.region.height >= 4
+        # task-28015: the row list is auto-height under a measured cap, so
+        # this retained-nothing error posture takes no space at all instead
+        # of holding a blank band above the pager.
+        assert not screen.query(".library-media-trash-row")
+        assert trash_list.region.height == 0
         assert items.region.contains_region(pager.region)
         assert items.region.contains_region(actions.region)
         painted = _compositor_text(host.export_screenshot(simplify=True))
@@ -1768,8 +1772,15 @@ async def test_media_trash_confirmation_focus_cancel_escape_and_explicit_commit(
 
 
 @pytest.mark.asyncio
-async def test_media_trash_restore_preserves_normal_page_and_marks_only_it_stale():
-    """A ranked normal-Media page is retained byte-for-byte after Restore."""
+async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
+    """task-31275: Restore refreshes the page it fenced, from the service.
+
+    The original contract here (task-4025) was that the ranked normal-Media
+    page is never re-ranked by a guessed insertion -- it was implemented by
+    marking the page stale and making the user press Retry. Critique #4
+    caught the cost: the app demanded a manual Retry for a change it made
+    itself. Ranking is still never forged -- the page is re-read through the
+    service, exactly like every other committed Media mutation."""
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_shell import (
         LibraryHarness,
@@ -1845,16 +1856,21 @@ async def test_media_trash_restore_preserves_normal_page_and_marks_only_it_stale
             message="Authoritative post-Restore Trash page never applied.",
         )
 
-        assert normal.applied_result is retained_applied
-        assert normal.retained_items is retained_items
+        await _wait_for_condition(
+            pilot,
+            lambda: normal.freshness == "fresh" and not normal.loading,
+            message="Normal Media page never refreshed itself after Restore.",
+        )
+        # Re-read through the service, never re-ranked in place.
+        assert normal.applied_result is not retained_applied
+        assert normal.retained_items is not retained_items
+        assert normal.retained_items == retained_items
         assert normal.requested_scope == retained_requested_scope
+        # A refresh the user never asked for must not move their selection.
         assert screen._selected_media_id == retained_selected_id
-        assert normal.freshness == "stale"
-        assert normal.pager.title_count is None
-        assert normal.pager.retry_visible is True
-        # The successful Trash read owns only Trash and cannot clear Media stale.
+        assert normal.pager.title_count is not None
+        assert normal.pager.retry_visible is False
         assert trash.state.freshness == "fresh"
-        assert normal.freshness == "stale"
 
 
 @pytest.mark.asyncio
@@ -2373,9 +2389,17 @@ async def test_media_trash_restore_bounds_request_and_retained_summary():
             },
         )
         assert "private-" not in repr(restored_summaries)
-        assert normal.applied_result is retained_normal_result
-        assert normal.retained_items is retained_normal_items
-        assert normal.freshness == "stale"
+        # task-31275: the fenced page refreshes ITSELF after the app's own
+        # restore -- but only through the service, so nothing unbounded from
+        # the restore response can reach the retained page either.
+        await _wait_for_condition(
+            pilot,
+            lambda: normal.freshness == "fresh" and not normal.loading,
+            message="Normal Media page never refreshed itself after Restore.",
+        )
+        assert normal.applied_result is not retained_normal_result
+        assert normal.retained_items is not retained_normal_items
+        assert "private-" not in repr(normal.retained_items)
 
 
 @pytest.mark.asyncio
@@ -2491,7 +2515,8 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 <= filters.region.y
                 <= status.region.y
                 <= trash_list.region.y
-                < pager.region.y
+                <= trash_list.region.bottom
+                <= pager.region.y
                 < action_region.region.y
             ), (
                 f"{posture}: heading={heading.region!r}, "
@@ -2505,7 +2530,13 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 f"{screen.query_one('#library-media-trash-canvas').region!r}"
             )
             assert status.region.height <= 3
-            assert trash_list.region.height >= (4 if size == (80, 24) else 1)
+            row_count = len(screen.query(".library-media-trash-row"))
+            if row_count:
+                assert trash_list.region.height >= (4 if size == (80, 24) else 1)
+            else:
+                # task-28015: auto height -- a posture with no retained rows
+                # holds no blank band.
+                assert trash_list.region.height == 0
             previous = screen.query_one("#library-media-trash-previous", Button)
             next_button = screen.query_one("#library-media-trash-next", Button)
             checked_controls = [
@@ -2574,8 +2605,14 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                     f"actions={action_region.region!r}, "
                     f"delete={delete.region!r}, label={str(delete.label)!r}"
                 )
-            assert trash_list.styles.height.is_fraction
+            # task-28015: auto height under a measured cap replaced the 1fr
+            # that docked Restore ~36 rows below a one-item page; the cap is
+            # what keeps a full page's pager and actions on the terminal.
+            assert trash_list.styles.height.is_auto
             assert trash_list.styles.min_height.value == 0
+            if row_count:
+                assert trash_list.styles.max_height is not None
+                assert trash_list.region.height <= trash_list.styles.max_height.value
             if posture == "initial-error":
                 assert (
                     screen.query_one("#library-media-trash-title", Static).renderable
@@ -3068,7 +3105,6 @@ def _bind_trash_mutation_seams(fake):
     fake._library_media_browse_controller = SimpleNamespace(
         mutation_refresh_scope=scope,
         begin_mutation=lambda: events.append(("begin",)) or scope,
-        mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
         reconcile_committed_mutation=lambda **kwargs: events.append(
             ("reconcile", kwargs)
         ),
@@ -3086,6 +3122,11 @@ def _bind_trash_mutation_seams(fake):
     fake._sync_library_media_viewer_mutation_gate = lambda: None
     fake._begin_library_media_mutation = types.MethodType(
         LibraryScreen._begin_library_media_mutation, fake
+    )
+    # task-31220: the one seam every mutation handler claims the shared
+    # write interlock through.
+    fake._claim_library_media_mutation = types.MethodType(
+        LibraryScreen._claim_library_media_mutation, fake
     )
     fake._library_media_backing_id = types.MethodType(
         LibraryScreen._library_media_backing_id, fake
@@ -3474,8 +3515,15 @@ def test_trash_restore_noop_when_trash_empty():
     assert fake._library_media_bulk_delete_in_flight is False
 
 
-def test_media_trash_completion_flags_preserve_normal_media_presentation():
-    """Trash-only completion never reorders or refreshes the retained Media page."""
+def test_media_trash_completion_refreshes_the_page_it_fenced():
+    """task-31275: a committed Trash write completes like every other one.
+
+    Both Trash mutators used to release the interlock without refreshing
+    (Restore additionally marked the page stale), so returning to Media
+    demanded a manual Retry for a change the app had just made. They now
+    take the ONE completion path -- reconcile the committed change, then
+    re-request page and facets -- without disturbing the retained page's
+    presentation (selection, focus intent, scroll)."""
     restore = _trash_view_fake(
         records=({"id": "5", "title": "A", "type": "pdf"},),
         total=1,
@@ -3489,12 +3537,18 @@ def test_media_trash_completion_flags_preserve_normal_media_presentation():
         restore._library_media_focus_identity,
         restore._library_media_scroll_offset,
     )
+    restored_summary = {
+        "id": "local:media:5",
+        "backing_media_id": 5,
+        "title": "A",
+        "media_type": "pdf",
+        "updated_at": None,
+    }
 
     LibraryScreen._complete_library_media_mutation(
         restore,
         committed=True,
-        refresh_normal_media=False,
-        stale_normal_media=True,
+        upsert_items=(restored_summary,),
     )
 
     assert (
@@ -3503,29 +3557,29 @@ def test_media_trash_completion_flags_preserve_normal_media_presentation():
         restore._library_media_scroll_offset,
     ) == retained_presentation
     assert restore._library_media_bulk_delete_in_flight is False
-    assert ("mark-stale",) in restore._mutation_events
-    assert not any(
-        event[0] in {"reconcile", "request", "facets"}
-        for event in restore._mutation_events
-    )
+    assert not any(event[0] == "mark-stale" for event in restore._mutation_events)
+    assert (
+        "reconcile",
+        {"remove_ids": (), "upsert_items": (restored_summary,)},
+    ) in restore._mutation_events
+    assert [event[0] for event in restore._mutation_events].count("request") == 1
+    assert any(event[0] == "facets" for event in restore._mutation_events)
 
     permanent = _trash_view_fake(
         records=({"id": "5", "title": "A", "type": "pdf"},),
         total=1,
         in_flight=True,
     )
-    LibraryScreen._complete_library_media_mutation(
-        permanent,
-        committed=True,
-        refresh_normal_media=False,
-        stale_normal_media=False,
-    )
+    LibraryScreen._complete_library_media_mutation(permanent, committed=True)
 
     assert permanent._library_media_bulk_delete_in_flight is False
-    assert not any(
-        event[0] in {"mark-stale", "reconcile", "request", "facets"}
-        for event in permanent._mutation_events
-    )
+    assert not any(event[0] == "mark-stale" for event in permanent._mutation_events)
+    assert (
+        "reconcile",
+        {"remove_ids": (), "upsert_items": ()},
+    ) in permanent._mutation_events
+    assert [event[0] for event in permanent._mutation_events].count("request") == 1
+    assert any(event[0] == "facets" for event in permanent._mutation_events)
 
 
 def test_media_trash_delete_opener_is_consumed_and_only_opens_confirmation():
@@ -3637,7 +3691,6 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(page=2),
-            mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
             reconcile_committed_mutation=lambda **kwargs: events.append(
                 ("reconcile", kwargs)
             ),
@@ -3667,10 +3720,12 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         (claim, "Deleted 'Duplicate visible title' permanently."),
     ) in events
     assert ("trash-request", {"focus_identity": "#library-media-trash-row-3"}) in events
-    assert not any(
-        event[0] in {"mark-stale", "reconcile", "media-request", "facets"}
-        for event in events
-    )
+    # task-31275: the fence this write raised over the normal Media page is
+    # lifted by the ONE completion path, not left for a manual Retry.
+    assert not any(event[0] == "mark-stale" for event in events)
+    assert ("reconcile", {"remove_ids": (), "upsert_items": ()}) in events
+    assert any(event[0] == "media-request" for event in events)
+    assert any(event[0] == "facets" for event in events)
     assert fake._library_media_bulk_delete_in_flight is False
 
 
@@ -3734,7 +3789,6 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(),
-            mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
             reconcile_committed_mutation=lambda **kwargs: events.append(
                 ("reconcile", kwargs)
             ),
@@ -3769,6 +3823,126 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         for event in events
     )
     assert fake._library_media_bulk_delete_in_flight is False
+
+
+async def _trash_screen_over_a_real_controller(
+    *, begin_raises=None, worker_raises=None
+):
+    """A Trash screen fake whose controller is REAL and whose claim seam refuses.
+
+    ``claim_mutation`` advances the controller generation and publishes
+    ``mutation_pending=True`` BEFORE the shared claim seam fences and
+    schedules, so a fence/scheduling failure is only observable against the
+    real reducer -- ``mutation_pending`` is what disables every Trash control
+    and blocks every subsequent refresh.
+    """
+    item = _canonical_trash_items(1)[0]
+
+    class ControllerScreen:
+        def __init__(self):
+            self.pending = []
+
+        def run_worker(self, work, **_kwargs):
+            self.pending.append(work)
+            return work
+
+    class ListService:
+        async def list_library_media_trash(self, **_kwargs):
+            return {
+                "items": [item],
+                "total": 1,
+                "limit": 20,
+                "offset": 0,
+                "types": [str(item["media_type"])],
+            }
+
+    async def call_service(fn, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await fn(**kwargs)
+
+    controller_screen = ControllerScreen()
+    controller = LibraryMediaTrashBrowseController(
+        screen=controller_screen,
+        run_service_call=lambda: call_service,
+        media_service=lambda: ListService(),
+        sync_view=lambda: lambda _focus: None,
+        request_is_active=lambda: True,
+    )
+    controller.request(MediaTrashScope(), origin="entry", focus_identity=None)
+    await controller_screen.pending.pop()
+
+    def _refuse_worker(work, **_kwargs):
+        if worker_raises is not None:
+            raise worker_raises
+        pytest.fail("no worker may start on a refused claim")
+
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_trash_browse_controller=controller,
+        _library_media_trash_focus_identity="#library-media-trash-row-0",
+        _library_notes_focus_intent_generation=0,
+        is_mounted=False,
+        refresh=lambda **_kwargs: None,
+        call_after_refresh=lambda fn, *_args: None,
+        run_worker=_refuse_worker,
+        _focus_library_media_trash_entry=lambda: None,
+    )
+    _bind_trash_mutation_seams(fake)
+    # The real worker bodies: the seam is handed the production coroutine
+    # (and must close it), never a stand-in that would not warn if leaked.
+    fake._permanently_delete_library_media_from_trash = types.MethodType(
+        LibraryScreen._permanently_delete_library_media_from_trash, fake
+    )
+    fake._restore_library_media_from_trash = types.MethodType(
+        LibraryScreen._restore_library_media_from_trash, fake
+    )
+    if begin_raises is not None:
+        def _begin():
+            raise begin_raises
+
+        fake._begin_library_media_mutation = _begin
+    return fake
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("delete", "restore"))
+@pytest.mark.parametrize("failure_kind", ("fence", "schedule"))
+async def test_trash_claim_is_rolled_back_when_the_mutation_never_reaches_a_worker(
+    action, failure_kind
+):
+    """Qodo #3: the Trash claim outlives a refused shared claim.
+
+    Both Trash handlers claim the controller (generation advanced,
+    ``mutation_pending=True``) before ``_claim_library_media_mutation``
+    fences and schedules. Its failure path released only the shared screen
+    interlock, so a fence/scheduling error left Trash pending forever --
+    every control disabled and every refresh request dropped, for the rest
+    of the session.
+    """
+    boom = RuntimeError("fence/scheduling refused")
+    fake = await _trash_screen_over_a_real_controller(
+        begin_raises=boom if failure_kind == "fence" else None,
+        worker_raises=boom if failure_kind == "schedule" else None,
+    )
+    controller = fake._library_media_trash_browse_controller
+    event = SimpleNamespace(stop=lambda: None)
+    if action == "delete":
+        assert controller.open_delete_confirmation() is not None
+        handler = LibraryScreen.handle_library_media_trash_delete_confirm
+    else:
+        handler = LibraryScreen.handle_library_media_trash_restore
+
+    with pytest.raises(RuntimeError, match="refused"):
+        handler(fake, event)
+
+    assert controller.state.mutation_pending is False
+    assert fake._library_media_bulk_delete_in_flight is False
+    # The row survives an attempt that never touched the database, and the
+    # surface says so rather than sitting silently disabled.
+    assert controller.state.retained_items == (_canonical_trash_items(1)[0],)
+    assert controller.state.error_copy != ""
+    # A rolled-back claim is a fresh claim opportunity, not a dead surface.
+    assert controller.claim_mutation() is not None
 
 
 def test_escape_gate_only_passes_in_trash_view():
@@ -3924,10 +4098,26 @@ async def test_restore_via_real_db_moves_item_back_and_updates_counts(tmp_path):
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._library_media_bulk_delete_in_flight is False
     assert fake._mutation_events[0] == ("begin",)
-    assert ("mark-stale",) in fake._mutation_events
-    assert not any(event[0] == "reconcile" for event in fake._mutation_events)
-    assert not any(event[0] == "request" for event in fake._mutation_events)
-    assert not any(event[0] == "facets" for event in fake._mutation_events)
+    # task-31275: the app's own restore reconciles the page it fenced and
+    # re-reads it, instead of leaving a Retry the user has to press.
+    assert not any(event[0] == "mark-stale" for event in fake._mutation_events)
+    assert (
+        "reconcile",
+        {
+            "remove_ids": (),
+            "upsert_items": (
+                {
+                    "id": f"local:media:{trashed_id}",
+                    "backing_media_id": trashed_id,
+                    "title": "Trashed Doc",
+                    "media_type": "document",
+                    "updated_at": None,
+                },
+            ),
+        },
+    ) in fake._mutation_events
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
 
     db.close_connection()
 
@@ -4112,3 +4302,320 @@ async def test_trashed_item_excluded_from_search_until_restored(tmp_path):
     assert hit_ids == {active_id, trashed_id}
 
     db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-31275: the app's OWN Trash mutations refresh the list they fenced.
+# The honest-stale gate exists for changes the app did not make; a Restore or
+# a permanent delete it performed itself must never demand a manual Retry.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
+    """Restore in Trash, press "‹ Media": the list is current, with no Retry."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="task-31275")
+    for title in ("Kept one", "Kept two", "Trashed three"):
+        db.add_media_with_keywords(
+            title=title, content=title, media_type="article", keywords=[]
+        )
+    trashed_id, _, _ = db.add_media_with_keywords(
+        title="Restored item", content="restored body", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(trashed_id) is True
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=[])
+    app.media_reading_scope_service = MediaReadingScopeService(
+        LocalMediaReadingService(db), None
+    )
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            normal = screen._library_media_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: normal.applied_result is not None,
+                message="Normal Media page never applied.",
+            )
+            assert len(normal.retained_items) == 3
+
+            await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+            screen.query_one("#library-media-trash-open", Button).press()
+            trash = screen._library_media_trash_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: trash.state.applied_result is not None,
+                message="Initial Trash page never applied.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-media-trash-restore")
+            screen.query_one("#library-media-trash-restore", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    trash.state.applied_result is not None
+                    and trash.state.applied_result.total == 0
+                ),
+                message="Post-Restore Trash page never applied.",
+            )
+
+            await _wait_for_selector(screen, pilot, "#library-media-trash-back")
+            screen.query_one("#library-media-trash-back", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_media_view == "list"
+                    and not normal.loading
+                    and bool(screen.query("#library-media-canvas"))
+                ),
+                message="Media list never returned from Trash.",
+            )
+            await _wait_for_selector(screen, pilot, "#library-media-row-0")
+            await pilot.pause()
+
+            assert normal.freshness == "fresh"
+            assert len(normal.retained_items) == 4
+            assert {str(item["title"]) for item in normal.retained_items} == {
+                "Kept one",
+                "Kept two",
+                "Trashed three",
+                "Restored item",
+            }
+            assert not screen.query("#library-media-retry")
+            painted = _compositor_text(host.export_screenshot(simplify=True))
+            assert "Media changed" not in painted
+            assert "Page boundary is unknown" not in painted
+            assert "Restored item" in painted
+    finally:
+        db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-28015 (critique #4): with one trashed item the 1fr list held ~36 blank
+# rows between the row and its Restore action, and the heading clipped the
+# item count to "Local Trash · 1 i" at the Items pane's real width.
+# ---------------------------------------------------------------------------
+
+
+def _one_trash_item():
+    return [
+        {
+            "id": "local:media:1",
+            "backing_media_id": 1,
+            "title": "Trashed item 01",
+            "media_type": "document",
+            "trash_date": "2026-08-10T12:00:00+00:00",
+        }
+    ]
+
+
+async def _open_trash_production(host, pilot, items):
+    """Drive the real screen (production stylesheet) into Trash over `items`."""
+    from Tests.UI.test_library_shell import (
+        _active_library_screen,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    feed = _MountedTrashFeed(list(items))
+    feed.install(host.app_instance.media_reading_scope_service)
+    screen.query_one("#library-row-browse-media", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+    screen.query_one("#library-media-trash-open", Button).press()
+    controller = screen._library_media_trash_browse_controller
+    await _wait_for_condition(
+        pilot,
+        lambda: controller.state.applied_result is not None,
+        message="Trash page never applied.",
+    )
+    await _wait_for_selector(screen, pilot, f"#library-media-trash-row-{len(items) - 1}")
+    await pilot.pause()
+    await pilot.pause()
+    return screen
+
+
+def _trash_production_host():
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryProductionCSSHarness,
+        _seed_conversations,
+        _two_media_items,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_trash_actions_sit_under_the_last_row():
+    """Restore renders beside the item, not ~36 rows below it (task-28015).
+
+    The pinned vertical grammar is list -> pager -> actions (see
+    ``test_media_trash_geometry_four_sizes_paints_all_fixed_controls``), and
+    the pager is two rows, so "directly below the last row" means each block
+    abuts the one above it: the pager within a row-margin of the last row and
+    the actions immediately under the pager.
+    """
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        row = screen.query_one("#library-media-trash-row-0", Button)
+        trash_list = screen.query_one("#library-media-trash-list")
+        pager = screen.query_one("#library-media-trash-pager")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert trash_list.region.bottom <= row.region.bottom + 2, (
+            f"list={trash_list.region!r}, row={row.region!r}"
+        )
+        assert pager.region.y <= row.region.bottom + 2, (
+            f"pager={pager.region!r}, row={row.region!r}"
+        )
+        assert actions.region.y <= pager.region.bottom, (
+            f"actions={actions.region!r}, pager={pager.region!r}"
+        )
+        # The whole gap the critique measured (~36 blank rows) is gone.
+        assert actions.region.y - row.region.bottom <= 4, (
+            f"actions={actions.region!r}, row={row.region!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_trash_header_paints_in_full():
+    """The heading paints its whole label at the Items pane width (task-28015)."""
+    from Tests.UI.test_library_media_render_fixes import _painted
+
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        heading = screen.query_one("#library-media-trash-heading")
+        painted = _painted(host, heading.region)
+        assert "Local Trash · 1 item" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_trash_status_fold_recaps_the_list_so_actions_stay_inside():
+    """A status fold appearing re-measures the cap (task-28015 review).
+
+    The fold row is composed hidden and flips to shown one refresh later, so
+    a cap measured before the flip is one row too generous -- with a full
+    page (the cap binding) that pushed the actions toolbar past the canvas's
+    ``overflow: hidden`` bottom and clipped Restore away entirely.
+    """
+    from Tests.UI.test_library_shell import _wait_for_condition, _wait_for_selector
+
+    long_copy = (
+        "Could not load this Trash page. The local source stayed available "
+        "but its full recovery detail does not fit in the compact status area."
+    )
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _forty_trash_items())
+        controller = screen._library_media_trash_browse_controller
+        scope = controller.state.requested_scope
+        controller.state = fail_media_trash_request(
+            begin_media_trash_request(controller.state, scope, origin="next"),
+            scope,
+            copy=long_copy,
+        )
+        screen._sync_library_media_trash_state(None)
+        await _wait_for_selector(screen, pilot, "#library-media-trash-status-fold")
+        # Query fresh every poll: the sync recomposes the canvas, so a
+        # captured child reference goes stale mid-wait.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-trash-status-fold").display,
+            message="Long status never folded.",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        fold = screen.query_one("#library-media-trash-status-fold", Static)
+        canvas = screen.query_one("#library-media-trash-canvas")
+        trash_list = screen.query_one("#library-media-trash-list")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert len(screen.query(".library-media-trash-row")) == 20
+        assert trash_list.max_scroll_y > 0  # the cap is binding
+        assert actions.region.bottom <= canvas.region.bottom, (
+            f"actions={actions.region!r}, canvas={canvas.region!r}, "
+            f"list={trash_list.region!r}, fold={fold.region!r}"
+        )
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "Restore" in painted
+
+
+@pytest.mark.asyncio
+async def test_trash_list_cap_follows_a_resize():
+    """Shrinking the terminal re-measures the cap and keeps Restore inside."""
+    from Tests.UI.test_library_shell import _wait_for_condition
+
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _forty_trash_items())
+        trash_list = screen.query_one("#library-media-trash-list")
+        wide_cap = trash_list.styles.max_height.value
+
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        if not screen._library_media_reader_layout.items_open:
+            grip = screen.query_one("#library-media-items-grip", Button)
+            grip.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_reader_layout.items_open,
+                message="Items pane never reopened after the resize.",
+            )
+        trash_list = screen.query_one("#library-media-trash-list")
+        await _wait_for_condition(
+            pilot,
+            lambda: trash_list.styles.max_height.value < wide_cap,
+            message="The list cap never shrank with the terminal.",
+        )
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-media-trash-canvas")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert actions.region.bottom <= canvas.region.bottom, (
+            f"actions={actions.region!r}, canvas={canvas.region!r}"
+        )
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "Restore" in painted
+
+
+@pytest.mark.asyncio
+async def test_tab_reaches_restore_from_a_trash_row():
+    """AC#2: a keyboard path leads from a trash row to Restore."""
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        screen.query_one("#library-media-trash-row-0", Button).focus()
+        await pilot.pause()
+        seen = []
+        for _ in range(6):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = host.focused
+            seen.append(getattr(focused, "id", None))
+            assert not isinstance(focused, Input), seen
+            if seen[-1] == "library-media-trash-restore":
+                break
+        assert seen[-1] == "library-media-trash-restore", seen

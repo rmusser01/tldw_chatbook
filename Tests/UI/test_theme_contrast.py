@@ -46,6 +46,10 @@ def test_core_variables_do_not_freeze_readable_tokens_to_literals():
         "ds-status-error-readable",
         "ds-text-placeholder",
         "ds-text-disabled-readable",
+        # TASK-31429: Console rail grammar (active = primary hue, value =
+        # accent hue) must follow the theme the same way.
+        "ds-active-fg",
+        "ds-value-fg",
     ):
         match = re.search(rf"^\${re.escape(token)}:\s*([^;]+);", text, re.M)
         assert match, f"{token} not defined in _variables.tcss"
@@ -80,16 +84,43 @@ def test_resolved_readable_tokens_clear_aa_on_every_theme(theme: Theme) -> None:
     """The values `$text-error` / `$text-muted` resolve to at runtime (theme
     variables dict over Textual's generated set) must clear AA on the theme's
     own surfaces — these feed the ds readable tokens since task-31264;
-    task-31283 extended the gate from the Orb 12 to every registered theme."""
+    task-31283 extended the gate from the Orb 12 to every registered theme.
+    TASK-31429 adds `text-primary` / `text-accent`: the Console rail paints
+    the active workspace/conversation and every label's value with them."""
     resolved = _resolved_variables(theme)
     surfaces = [Color.parse(resolved[k]) for k in ("surface", "panel")]
-    for token in ("text-error", "text-muted"):
+    for token in ("text-error", "text-muted", "text-primary", "text-accent"):
         for surface in surfaces:
             blended = _resolve_color(resolved[token], surface)
             ratio = _ratio(blended.hex, surface.hex)
             assert ratio >= AA, (
                 f"{theme.name}: resolved {token} {blended.hex} is {ratio:.2f}:1 "
                 f"against {surface.hex} (needs {AA}:1)"
+            )
+
+
+def test_user_saved_theme_gets_readable_text_hues(tmp_path) -> None:
+    """TASK-31429: a theme saved from Settings ▸ Theme with a mid-tone
+    primary/accent on a light canvas (pastel_dreams' palette) must still
+    resolve readable `text-primary` / `text-accent` — the readability fix has
+    to live on the load path, not only in the shipped catalog."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    (tmp_path / "pastel.toml").write_text(
+        '[theme]\nname = "pastel_probe"\ndark = false\n'
+        '[colors]\nprimary = "#F4C2C2"\naccent = "#B3D9E6"\n'
+        'background = "#FFF8F8"\nsurface = "#FFFFFF"\npanel = "#FBEFEF"\n'
+        'foreground = "#4A4A4A"\n',
+        encoding="utf-8",
+    )
+    (theme,) = load_user_themes(tmp_path)
+    resolved = _resolved_variables(theme)
+    for token in ("text-primary", "text-accent"):
+        for key in ("surface", "panel"):
+            surface = Color.parse(resolved[key])
+            blended = _resolve_color(resolved[token], surface)
+            assert _ratio(blended.hex, surface.hex) >= AA, (
+                f"user theme {token} {blended.hex} on {surface.hex}"
             )
 
 

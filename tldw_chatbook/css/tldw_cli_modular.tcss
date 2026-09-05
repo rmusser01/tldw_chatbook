@@ -103,6 +103,14 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+/* TASK-31429: Console context-rail colour grammar. Primary hue = what you
+   are in (active workspace, active/selected conversation); accent hue = a
+   value beside a muted label. Both are references to Textual's generated
+   per-theme text tints, so every theme -- built-in, Orb, or user-saved --
+   recolors the rail; themes.py pins the two generated names to AA-readable
+   values where Textual's 66% tint falls short (see ensure_readable_text_hues). */
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
 
 /* Console transcript speaker accents. Textual exposes whether the active
    theme is dark or light as an App class; the two assistant tones keep the
@@ -2987,25 +2995,16 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
     display: none;
 }
 
-/* task-15774: while a search is ACTIVE, the whole search-controls block
-   (box + match count + Prev/Next) docks to the top of the scrolling viewer
-   -- the find-bar convention, and the same pinned-edge chrome idiom as
-   #library-ingest-commit-bar's dock: bottom. In flow, the stack above the
-   controls (Back, title, metadata, section header) exceeds an 80x24
-   viewport, so the match count and Prev/Next sat below the fold exactly
-   while the user was operating them. Dock-on-active keeps them painted at
-   every size and scroll position; an inactive search keeps the in-flow
-   layout, so no space is stolen when nobody is searching. The raised
-   background + bottom rule stop scrolled content bleeding through the
-   pinned bar; the collapsed child margins keep the bar to 6 rows of a
-   24-row terminal instead of 8. */
-#library-media-content-search-controls.-library-media-search-active {
-    dock: top;
-    width: 100%;
-    background: $ds-surface-raised;
-    border-bottom: solid $ds-grid-line;
-}
-
+/* task-31276 (critique #4 P2) retires task-15774's dock-on-active. That
+   rule moved the whole controls block to the top of the viewer the moment
+   a query was submitted, so Enter teleported the bar out from under the
+   mode row and shoved the Reader header (identity line, Back, title) down
+   six rows -- the bar the user was typing into jumped away from the caret.
+   Its premise is gone too: task-31237 made the viewer itself stop
+   scrolling (the content box owns the overflow), so the chrome above the
+   bar no longer scrolls out from under it and nothing bleeds through.
+   The class stays: it still collapses the active bar's child margins,
+   keeping it to 6 rows of a 24-row terminal instead of 8. */
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search,
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search-status {
     margin: 0;
@@ -9910,181 +9909,6 @@ Button:disabled {
 }
 
 /* ===== MODULE: features/_evals.tcss ===== */
-/* ========================================
- * FEATURE: Evals
- * ========================================
- * Three-pane workbench: library rail, detail pane, readiness inspector.
- * Shared design-system classes -- .ds-panel, .destination-workbench,
- * .destination-workbench-pane, .ds-inspector, .density-compact/comfortable
- * -- are already defined in components/_agentic_terminal.tcss and
- * layout/_panes.tcss; this file only adds Evals-specific rail/pane rules.
- * ======================================== */
-
-#evals-shell {
-    height: 100%;
-    min-height: 0;
-}
-
-/* I4: panes never scrolled. Vertical's own DEFAULT_CSS is
-   `overflow: hidden hidden`, so content taller than a pane's bounded
-   height (post-C1, a real bounded height rather than a fixed 11-row
-   collapse) was simply clipped with no way to reach the hidden rows --
-   in an editor whose entire job is reviewing a list (snippets, targets,
-   run history). Scrolled at the narrowest level that isolates a LIST BODY
-   from a sibling control that must stay reachable without scrolling past
-   it (`#evals-import-snippets`, `#evals-primary-action`); the two
-   detail-content widgets with no separate list body to isolate
-   (`ClassicTaskDetail`, `EvalsInspector` -- the latter's readiness list
-   and estimate share one flow) scroll as a whole instead. */
-#evals-library-pane {
-    overflow-y: auto;
-}
-
-#evals-snippet-table {
-    overflow-y: auto;
-}
-
-#evals-bench-target-table {
-    /* `height: auto` (task-1611 T2 fix round 1), overriding Vertical's
-       own DEFAULT_CSS `height: 1fr` -- lets the table size to its FULL
-       natural row count (every staged target, not a squeezed fraction of
-       one). See `#evals-bench-editor`'s own comment (below the "Task 5"
-       banner further down this file) for where the resulting overflow
-       actually gets absorbed now -- NOT here, and (task-1611 whole-branch
-       review fix round) no longer at `#evals-bench-targets-body` either;
-       see that selector's own comment for why the one-level-down
-       scrollable body this comment used to describe was replaced by ONE
-       scroll level higher up. */
-    height: auto;
-}
-
-/* Task 6 (task-1482): `#evals-bench-targets-section` wraps the heading and
-   the row table / Add picker / "+ New target" mini-form together (see
-   bench_editor.py's own `_build_targets_section` docstring for why the
-   latter three are all children of ONE shared `#evals-bench-targets-body`
-   `Vertical`, not siblings of the heading directly).
-
-   `height: auto` (task-1611 whole-branch review fix round) -- this
-   section and its body used to be the ONE place in this whole editor
-   that scrolled its own overflow locally (`1fr` + `overflow-y: auto`,
-   the "shrinking, scrolling `1fr` child" pattern this comment used to
-   describe at length, added in task-1611 T2 fix round 1 after `min-
-   height` alone made a 4+-target bench WORSE -- see git history / the
-   task-1611 report for that full story if it matters again). Whole-
-   branch review then found a SEPARATE, worse failure this local scroll
-   could not fix at all: a tall `#evals-bench-form-error` callout (this
-   task's own reworded mode-revalidation copy, wrapping to 5+ lines at a
-   realistic 160x45/120x40 terminal) lives ABOVE this section entirely,
-   and no scrolling existed ANYWHERE in `BenchEditor` to reach past it --
-   `#evals-bench-editor` itself was still plain `Vertical` `overflow:
-   hidden hidden`. The two remedies that same error text NAMES (this
-   section's own offending row `Remove` button, and the create-target
-   mini-form) got pushed off the bottom of the SCREEN, unreachable by any
-   means but flipping the mode back or resizing the terminal.
-
-   Rather than layer a THIRD scroll level on top of the pre-existing one
-   here, `#evals-bench-editor` (below) became the SOLE scrollable region
-   for the whole form, and this section (and its body) gave up their own
-   independent `1fr`/`overflow-y: auto` for plain `auto` -- letting their
-   true content height propagate up to the one place that now actually
-   absorbs it. Confirmed live this was the right call, not merely the
-   simpler one: an EARLIER attempt kept BOTH this section's own scroll
-   AND made `#evals-bench-editor` scrollable, and the two DISAGREED --
-   `BenchEditor.virtual_size` was computed from this section's own
-   COLLAPSED `1fr` box height, not its true (possibly much taller)
-   content, so scrolling the outer editor to ITS OWN `max_scroll_y` still
-   left the create-target button several rows below the visible screen
-   (`Screen.get_widget_at` found nothing there at all -- off the edge of
-   the TERMINAL, not merely clipped). See `#evals-bench-editor`'s own
-   comment for the single-scroll-level fix that actually holds, verified
-   at both 160x45/120x40 (the tall-callout case) and 4/8 targets (the
-   fix-round-1 case this replaces). */
-#evals-bench-targets-section {
-    height: auto;
-}
-
-#evals-bench-targets-body {
-    height: auto;
-}
-
-#evals-inspector-bench,
-#evals-classic-detail {
-    overflow-y: auto;
-}
-
-/* TASK-1476 whole-branch review, clipping blocker: `EvalsInspector`
- * extends `Vertical`, and Textual's `Vertical`/`Container` DEFAULT_CSS is
- * `height: 1fr` -- not `auto`. `#evals-inspector-bench` sits inside
- * `#evals-inspector-pane` (`_lab.tcss`: `height: auto`, itself inside
- * `#lab-inspector`, a `VerticalScroll`), so an UNSTYLED `1fr` child there
- * has no real denominator to resolve against during the parent's `auto`
- * measurement pass -- confirmed live (``run_test(size=(235, 52))``): with
- * a bench selected, `EvalsInspector` claimed a ~43-row region regardless
- * of its own (much shorter) actual content, pushing its sibling
- * `#evals-primary-action` button to a row `#lab-inspector`'s own
- * `virtual_size` never grew to cover -- the button painted nowhere, not
- * even reachable by scrolling to the pane's max_scroll_y. Exactly the
- * off-by-one/starved-sibling family `_lab.tcss` (see its own comment
- * above `#lab-rail #evals-library-pane, #lab-inspector
- * #evals-inspector-pane { height: auto; }`) already fixed one level up,
- * for the PANE itself -- `EvalsInspector`, the pane's own child, needed
- * the identical fix. `overflow-y: auto` above is KEPT (not removed) even
- * though it becomes a no-op once this box always sizes to its own
- * content -- `#evals-library-pane` carries the same now-redundant pairing
- * after its own `_lab.tcss` fix, and this matches that established
- * precedent rather than diverging from it.
- *
- * `#evals-classic-detail` (`ClassicTaskDetail`, also an unstyled
- * `Vertical`) does NOT share this bug -- verified live, not assumed: its
- * parent chain is `#evals-detail-pane` (`_lab.tcss`: `height: 100%`, a
- * REAL bounded size, never `auto`) inside `#lab-body` (a plain `Vertical`,
- * not a `VerticalScroll`), so its own `1fr` resolves against a
- * well-defined remainder with no ambiguous `auto` pass involved -- and it
- * has no trailing sibling below it to displace (`_compose_detail_pane`'s
- * classic branch yields nothing after it), unlike `EvalsInspector`, whose
- * badge/callout/button siblings are exactly what this bug pushed off
- * screen. Left unchanged. */
-#evals-inspector-bench {
-    height: auto;
-}
-
-.evals-rail-section-header {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-}
-
-.evals-rail-section-label {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    text-style: bold;
-    color: $ds-text-primary;
-}
-
-.evals-rail-section-toggle {
-    width: 3;
-    min-width: 3;
-    max-width: 3;
-    height: 1;
-    min-height: 1;
-    padding: 0;
-    border: none;
-}
-
-.evals-rail-section-body {
-    height: auto;
-}
-
-.evals-rail-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    border: none;
-    text-align: left;
-    content-align: left middle;
-}
 
 /* Explicit, not relying on the generic `.evals-rail-row { border: none }`
    above to win by cascade order against `.is-active { border: round
@@ -10101,781 +9925,8 @@ Button:disabled {
     text-style: bold;
 }
 
-.evals-rail-empty-copy {
-    color: $ds-text-muted;
-    padding: 0 1;
-}
-
-/* TASK-1076: the fully-first-run "Start here" callout above the sample
-   bench button -- bold and full-text-primary against the muted
-   .evals-rail-empty-copy used everywhere else in this rail, so the
-   recommended first step reads as visually distinct, not just differently
-   worded. Never a colour-only cue (the "Start here" text itself carries
-   the meaning). */
-.evals-rail-first-run-hint {
-    color: $ds-text-primary;
-    text-style: bold;
-    padding: 0 1;
-}
-
-/* Task 6 (empty states, sample bench, export). "No providers configured"
-   replaces the BENCHES SECTION BODY only (see library_rail.py's
-   _no_providers_message) -- deliberately not the whole rail: Datasets and
-   Runs never needed a provider, and classic tasks stay reachable without
-   one. These two ids only ever render together, in place of that one
-   section's bench list. */
-#evals-rail-no-providers {
-    padding: 1 1 0 1;
-}
-
-#evals-rail-no-providers-detail {
-    padding: 0 1 1 1;
-}
-
-#evals-rail-open-settings,
-#evals-create-sample-bench {
-    margin: 0 1 1 1;
-    width: auto;
-}
-
-/* Dataset authoring and import, side by side -- two compact buttons in one
-   row at the top of the Datasets section body (TASK-1478: rendered
-   unconditionally, not only above the section's empty-copy line -- see
-   library_rail.py's `_dataset_actions`). Class name kept from the earlier
-   empty-only version; only the Python call site changed. */
-.evals-rail-empty-actions {
-    height: auto;
-    padding: 0 1;
-}
-
-.evals-rail-empty-actions > Button {
-    margin: 0 1 0 0;
-}
-
-/* Task 4 (task-1482): "+ New bench"'s zero-dataset hint. Same visual
-   treatment as `.evals-rail-empty-copy` (muted, one line) but a DEDICATED
-   class -- see library_rail.py's `_new_bench_actions` for why it must not
-   share that class: `test_first_run_marks_the_sample_bench_as_the_
-   recommended_first_step` scopes a query on `.evals-rail-empty-copy`
-   within the Benches section specifically to confirm "No benches yet."
-   was replaced by the "Start here" hint, not supplemented, and this hint
-   (a different message, answering a different question) must not read as
-   a second copy of that wording to a class-scoped query. */
-.evals-rail-new-bench-hint {
-    color: $ds-text-muted;
-    padding: 0 1;
-}
-
-/* I3: the labelled subgroup separating classic (non-word-bench) tasks from
-   word benches under the Benches section -- see library_rail.py's
-   CLASSIC_SUBGROUP_LABEL. Inert (a Static, never a Button); styled like
-   the empty-copy line above it, never like a selectable row. */
-.evals-rail-classic-separator {
-    color: $ds-text-muted;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-}
-
-.evals-pane-title {
-    height: 1;
-    min-height: 1;
-    text-style: bold;
-    color: $ds-text-primary;
-}
-
-.evals-pane-heading {
-    text-style: bold;
-    color: $ds-text-primary;
-}
-
-#evals-primary-action {
-    margin: 1 0 0 0;
-    width: 100%;
-}
-
-/* task-1482 Task 7 fix round 1: `#evals-duplicate-bench`/`#evals-delete-
-   bench` carried no width rule of their own, so Textual's `Button`
-   DEFAULT_CSS (`min-width: 16`, otherwise auto-width to its label) was
-   the only thing sizing them -- a visibly narrow, off-brand island
-   directly beneath the full-width `#evals-primary-action` button above.
-   Matches that sibling's own treatment (`width: 100%` plus the same
-   top margin, spacing each from the widget above it) rather than
-   inventing a second convention for this pane, which has its own
-   documented history of geometry defects (see this file's
-   `#evals-inspector-bench` comment above). */
-#evals-duplicate-bench,
-#evals-delete-bench {
-    margin: 1 0 0 0;
-    width: 100%;
-}
-
-/* Task 4 (bench editor + readiness inspector). Status colour lives here,
-   in app-tier CSS, never in bench_editor.py/inspector.py's own widget
-   CSS -- `.ds-status-badge { color: $ds-text-primary }`
-   (components/_agentic_terminal.tcss) outranks any widget DEFAULT_CSS
-   regardless of specificity, so a per-status colour has to win the same
-   way: an app-tier rule combining `.ds-status-badge` with one of these
-   modifier classes. Tests assert the label text, never these colours --
-   see Tests/UI/test_evals_bench_editor.py. */
-.evals-status-ready {
-    color: $ds-status-ready;
-}
-
-.evals-status-unavailable {
-    color: $ds-status-warning;
-}
-
-.evals-status-blocked {
-    color: $ds-status-blocked;
-}
-
-.evals-status-unchecked {
-    color: $ds-text-muted;
-}
-
-/* task-1691 Task 2: the captured-continuation sub-line directly under a
-   target's readiness badge (inspector.py's `_continuation_static`) -- a
-   short, informational sample, never a status of its own, so it is muted
-   rather than reusing `.ds-status-badge`'s bold/background treatment
-   (which the design contract above reserves for readiness colour only).
-   Plain "muted supporting text" is the same treatment `.evals-rail-empty-
-   copy`/`.evals-snippet-meta` already use elsewhere in this file, so
-   setting `color` directly here (unlike `.ds-status-badge`) does not
-   conflict with that contract. The trailing margin separates it from the
-   NEXT target's own badge row, mirroring `#evals-inspector-bench .ds-
-   recovery-callout`'s identical spacing just below. */
-.evals-target-continuation {
-    height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
-    color: $ds-text-muted;
-}
-
-.evals-bench-target-row {
-    height: auto;
-    padding: 0 1;
-}
-
-/* Task 6 (task-1482): targets become editable. Each row's status Static
-   grows to fill the row, with its own per-row Remove button beside it;
-   the Add picker (Select + Add button) or the zero-models create-target
-   button follows the row table. */
-.evals-bench-target-row-wrap {
-    height: auto;
-    align: left middle;
-}
-
-.evals-bench-target-row-wrap > .evals-bench-target-row {
-    width: 1fr;
-}
-
-.evals-bench-target-remove {
-    /* Textual's own `Button` DEFAULT_CSS floors every button at
-       `min-width: 16` -- fine for Save/Revert/Add, which have real
-       vertical room, but a per-row Remove button sits beside a `1fr`
-       label inside a narrow detail pane; at the harness's own DEFAULT
-       (80x24, unsized) test width, 16 columns left the label under 3
-       columns of its own `1fr` share and its `Static` came back with a
-       `region.height` of `0` -- confirmed live, not merely reasoned
-       about, via `test_bench_with_duplicate_target_id_composes_without_
-       raising`. "Remove" is 6 cells; 10 gives it a little breathing room
-       without the stock floor eating most of the row.
-    */
-    width: 10;
-    min-width: 10;
-    margin: 0 0 0 1;
-}
-
-#evals-bench-add-target-row {
-    /* No top margin (unlike most section-trailing controls in this file)
-       -- see the `.evals-bench-target-remove` comment above and the
-       Task 6 comment further up: this section's total footprint is
-       already the tightest margin in the whole form at a realistic
-       viewport, and every extra row here is one `#evals-detail-pane`
-       might not have left.
-
-       `height: 1`, not `auto` (task-1611 T2 fix): with `auto`, this
-       Horizontal measured a full 2 rows even though every child inside
-       it (the compact `Select`, the `Add` `Button`) renders at height 1
-       -- confirmed live by walking every descendant's own `region` (the
-       closed `SelectOverlay`'s own intrinsic height apparently still
-       counted toward the parent `Horizontal`'s `auto` measurement pass
-       despite rendering at a literal `Region(0, 0, 0, 0)`). That phantom
-       row was invisible before task-1611 T2 -- the zero-models "Create
-       target" button that used to sit here was small enough to still
-       fit below it -- but became the exact one row of slack task-1611
-       T2's own "+ New target" mini-form needed and did not have,
-       pushing `#evals-bench-create-target` a row too far down: in-bounds
-       on paper but painted underneath this app's own screen-wide footer
-       bar (confirmed via `Screen.get_widget_at`, not merely inferred
-       from the region numbers) once a real target row was ALSO present
-       (`test_every_pane_descendant_stays_within_its_pane`, using
-       `seeded_bench`, a one-target bench). */
-    height: 1;
-    align: left middle;
-}
-
-#evals-bench-add-target-row > Select {
-    width: 1fr;
-}
-
-#evals-bench-add-target-row > Button {
-    width: auto;
-    margin: 0 0 0 1;
-}
-
-#evals-bench-create-target {
-    width: auto;
-}
-
-/* Task-1611 T2: the "+ New target" mini-form -- ALWAYS rendered now
-   (unlike the Add picker above, which still disappears with zero
-   `llama_cpp` rows), so it sits directly below whichever of those two
-   states is showing, as the LAST child of `#evals-bench-targets-body`
-   (fix round 1 -- see that selector's own comment for why it, the row
-   table, and the Add picker share ONE scrollable body instead of each
-   being an independent fixed sibling). `height: auto` (not `1fr`).
-
-   Name, the steering `Input`, and the `Button` ALL share ONE row --
-   neither `Input` carries a separate label `Static` (their descriptive
-   text is a `placeholder` instead) and both are `compact` (border-less, 1
-   row instead of the top-level fields' bordered 3). See `bench_editor.
-   py`'s own `_build_create_target_control` docstring for the two SEPARATE
-   live failures ("`Widget.region` beyond the screen's own bottom edge" /
-   "in-bounds but painted under this app's own footer bar, confirmed via
-   `Screen.get_widget_at`") that drove this specific, maximally-compact
-   shape -- this targets section has a small, FIXED budget inside
-   `#evals-detail-pane` at a realistic viewport, and the Add picker row
-   that appears the moment a first target exists shrinks it further
-   still. */
-#evals-bench-create-target-form {
-    height: auto;
-    align: left middle;
-}
-
-#evals-bench-create-target-form > Input {
-    width: 1fr;
-    margin-right: 1;
-}
-
-#evals-bench-create-target-form > #evals-bench-create-target {
-    width: auto;
-}
-
-.evals-classic-run-row {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-}
-
 #evals-inspector-bench .ds-recovery-callout {
     margin: 0 0 1 0;
-}
-
-/* Whole-branch review, task-1611 fix round (final): `BenchEditor` itself
-   (`#evals-bench-editor`) is now vertically scrollable -- the ONE and
-   ONLY scroll level in this whole widget now (see `#evals-bench-targets-
-   section`'s own comment for why its ONE-level-down scroll, added just
-   one fix round earlier, was removed rather than kept alongside this
-   one). Unstyled before this fix, it inherited `Vertical`'s own
-   `overflow: hidden hidden` DEFAULT_CSS -- content taller than its
-   `1fr`-computed box (see `#evals-detail-pane`'s own `height: 100%` in
-   `_lab.tcss`, which is what gives this widget a REAL bounded height to
-   overflow at all) was simply clipped, with no way to reach it: confirmed
-   live that a `#evals-bench-form-error` callout tall enough to need it
-   (this task's own reworded mode-revalidation copy, 5+ wrapped lines at
-   a realistic 160x45/120x40 terminal) pushed BOTH remedies the error
-   text itself names -- the offending target row's own `Remove` button
-   AND the "+ New target" mini-form -- off the bottom of the SCREEN
-   entirely, with `editor.scroll_to()` moving nothing (`allow_vertical_
-   scroll` was `False`). The user was told to do two things they could
-   neither see nor reach; only flipping the mode `Select` back or
-   resizing the terminal escaped. Pre-existing (the Top-K error callout
-   already did this at 160x45, unrelated to this task -- confirmed live
-   that at 120x40 even the plain, no-error form already needed scrolling
-   just to reach `#evals-bench-save` at all), but this task's own copy --
-   which explicitly instructs "remove it" / "create a new target", both
-   now-hidden controls -- walks a user straight into it, so it is fixed
-   here rather than left as a known gap.
-
-   Tried FIRST, and rejected on live evidence, not merely reasoned about:
-   keeping `#evals-bench-targets-section`'s own local `1fr` +
-   `overflow-y: auto` scroll (task-1611 T2 fix round 1's fix for the
-   4+-target case) AND adding this outer scroll on top of it. The two
-   disagreed: `BenchEditor.virtual_size` is computed from each child's own
-   COMPUTED box, and that section's box stayed its old, small `1fr` share
-   regardless of how tall its OWN (separately scrolling) content actually
-   was -- so scrolling THIS outer container to its own `max_scroll_y`
-   still left the create-target button several rows below the visible
-   terminal (`Screen.get_widget_at` found NOTHING there, not merely a
-   clipped widget -- off the edge of the screen the harness itself was
-   sized to). Removing that inner scroll (`#evals-bench-targets-section`/
-   `#evals-bench-targets-body` are now plain `height: auto`, letting their
-   TRUE content height propagate all the way up) so this ONE outer scroll
-   is the sole place anything gets absorbed fixed it -- confirmed live at
-   both 160x45 and 120x40 for the tall-callout case this fix targets, AND
-   at 4/8 targets (fix round 1's own case) with no separate mechanism
-   needed for it anymore: the row table, listed first inside the targets
-   body, simply contributes more to THIS container's virtual height, and
-   scrolling reaches it exactly the same way it reaches the "+ New
-   target" mini-form below it.
-
-   `overflow-y: auto` here is a near-NO-OP in the steady (no tall
-   callout, few targets) state -- confirmed live: this widget's virtual
-   content height sits at or just under its box height in that case, so
-   `max_scroll_y` stays `0` and nothing scrolls that didn't already fit.
-   A `min-height`-only alternative was NOT tried here: this pane's own
-   history (see `#evals-bench-targets-section`'s comment) already proved
-   that lever wrong twice for a materially similar "content taller than
-   its `1fr` box" shape, and there is no fixed floor to reserve for an
-   error callout whose height is itself variable, unbounded prose. */
-#evals-bench-editor {
-    overflow-y: auto;
-}
-
-/* Task 5 (task-1482): the bench editor's own form fields (name,
-   description, prompt mode, top-K, probes). Field WIDTHS follow
-   #evals-grid-controls > Select's own precedent just above -- Input
-   already defaults to width:100% (textual/widgets/_input.py), but Select
-   does not carry an equivalent override in its own DEFAULT_CSS, so left
-   unstyled here it would size to its current option's label rather than
-   filling the row the way every Input beside it does. Labels reuse the
-   app-wide `.form-label` (components/_forms.tcss); this class only trims
-   its default bottom margin, which reads as too much air between a
-   one-line label and the field directly under it in this narrow pane. */
-.evals-bench-field-label {
-    text-style: bold;
-    color: $ds-text-primary;
-    margin-bottom: 0;
-}
-
-#evals-bench-prompt-mode {
-    width: 1fr;
-    margin-bottom: 1;
-}
-
-#evals-bench-name,
-#evals-bench-description,
-#evals-bench-top-k {
-    margin-bottom: 1;
-}
-
-/* Bounded, not the widget's own default `1fr` (textual/widgets/_text_area.
-   py) -- an unbounded probes editor would compete with #evals-bench-
-   target-table below for the pane's remaining height every time, on top
-   of whatever #evals-bench-probes-preview already claims above it.
-   Mirrors mcp_profile_form.py's identical #mcp-form-args/#mcp-form-env
-   fix for the same "TextArea defaults to 1fr" trap. */
-#evals-bench-probes {
-    height: 6;
-    min-height: 4;
-    margin-bottom: 1;
-}
-
-/* The read-only ␣-marker preview of the CURRENTLY SAVED probes (see
-   bench_editor.py's compose() -- it renders `config.probes`, never the
-   TextArea's live, unsaved content). Bounded and independently scrollable
-   so a bench with many probes cannot itself push the Save/Revert buttons
-   off screen; #evals-bench-probes right below already answers "what can
-   I type", so this list does not also need to grow without limit. */
-#evals-bench-probes-preview {
-    height: auto;
-    max-height: 6;
-    overflow-y: auto;
-    margin-bottom: 1;
-}
-
-.evals-bench-probe-preview-row {
-    height: auto;
-}
-
-#evals-bench-probes-preview-empty {
-    color: $ds-text-muted;
-    margin-bottom: 1;
-}
-
-/* task-1710 T2: the per-cell continuation opt-in.
-
-   `_conversations.tcss` carries a bare, unscoped `Checkbox { width:
-   100%; height: 2; }` type selector that reaches every `Checkbox` app-
-   wide (the SAME rule `_agentic_terminal.tcss`'s own `.settings-imagegen-
-   backend-row Checkbox` comment already documents overriding, for the
-   identical reason) -- confirmed live that it still won over this
-   widget's own `compact=True` (`bench_editor.py`'s `Checkbox(...)` call),
-   which only drops the `ToggleButton` border/padding, not that global
-   `height: 2`. An ID selector beats that bare type selector on
-   specificity alone, so this rule reclaims the natural 1-row height
-   `compact=True` was meant to buy -- real budget this pane's targets
-   section, below, does not have to spare (see `_build_create_target_
-   control`'s own "maximally-compact shape" paragraph): a 2-row checkbox
-   here, confirmed live, pushed the targets section's Add/Create controls
-   off the bottom of a 160x45 terminal. */
-#evals-bench-capture-continuations {
-    width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 1;
-}
-
-/* CRITICAL, found by live verification against a real llama.cpp: the rule
-   above alone made the checkbox unreachable through the UI -- the opt-in
-   this whole task exists to add could never actually be turned on.
-
-   Two SEPARATE focus-only decorations, neither controlled by the rule
-   above, were fighting this widget's fixed `height: 1`:
-
-   1. `Checkbox`'s OWN `compact=True` DEFAULT_CSS re-adds a border on
-      focus (`&.-textual-compact { border: none !important; &:focus {
-      border: tall $border; ...} }`) -- confirmed live (`checkbox.region`
-      before/after `.focus()`) that this genuinely GREW the widget's
-      painted region to 2 rows despite `height: 1` above (a fixed
-      `height` does not stop Textual growing the box to fit a border
-      added by a LATER-applied `:focus` rule). `border: none` here,
-      scoped to `:focus`, reclaims the fixed 1-row box.
-   2. Independently, `core/_reset.tcss`'s global `*:focus { outline:
-      solid $ds-focus-accent; }` fallback -- ALREADY documented there as
-      painting "OVER the widget's outermost rendered lines" for exactly
-      this failure mode (see that file's own `DataTable`/TASK-1034
-      cross-reference) -- was what erased the label/state glyph entirely
-      while focused: confirmed live by reading the compositor's own
-      painted strip at the checkbox's row, before and after this fix
-      (`▐X▌ Capture a continuation...` vs. blank). `outline: none` here
-      restores it; the widget's OWN compact `:focus` rule already
-      recolours the label (bold underline, tinted background -- also
-      confirmed live in the compositor's per-segment `Style`), so a real,
-      content-safe focus cue survives losing the outline, matching this
-      reset rule's own documented "prefer content-safe recolouring"
-      guidance rather than leaving focus with no cue at all.
-
-   Both were purely VISUAL bugs on their own, but together they broke
-   REAL keyboard/mouse interaction, not just appearance: fix #1's height
-   growth shifted every sibling below the checkbox down by one row WHILE
-   it held focus; clicking `#evals-bench-save` immediately afterward
-   computes a single fixed screen offset for its whole Down/Up/Click
-   sequence (`Pilot._post_mouse_events`, and identically for a real
-   terminal's own mouse driver) -- if the checkbox's OWN blur (triggered
-   by that same click moving focus away from it) shrinks it back to 1 row
-   BETWEEN that sequence's events, the Save button has already shifted up
-   from under the click's fixed offset by the time the terminal `Click`
-   event needed to fire `Button.Pressed` arrives, so `_on_save_pressed`
-   never runs at all -- confirmed live (a temporary print inside that
-   handler) that it was NEVER CALLED after a checkbox click, not merely
-   called with a stale value. `capture_continuations` read back through
-   `load_bench` was `False` after every attempt for exactly this reason:
-   Save itself was silently swallowed, regardless of whether the
-   checkbox's own `.value` was already `True`. Fixing the height growth
-   (mutation #1 above) removes the reflow that swallows the NEXT click
-   entirely, independent of the outline fix. */
-#evals-bench-capture-continuations:focus {
-    border: none;
-    outline: none;
-}
-
-#evals-bench-form-error {
-    margin-bottom: 1;
-}
-
-#evals-bench-form-actions {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#evals-bench-form-actions Button {
-    margin: 0 1 0 0;
-}
-
-/* Task 5 (snippet editor + import). The whitespace marker itself is a
-   Rich inline style embedded directly in each row's Text content (see
-   snippet_editor.py's WHITESPACE_MARKER_GLYPH/_WHITESPACE_MARKER_STYLE) --
-   not a CSS class -- because a Rich Text object passed as a Static's
-   content cannot reference Textual's $ds-* design tokens. This block only
-   lays the table out; it never colours the marker or the status text
-   (never colour, per the design contract -- tests assert the rendered
-   text, in Tests/UI/test_evals_snippet_editor.py). */
-.evals-snippet-table-header {
-    text-style: bold;
-    color: $ds-text-primary;
-    padding: 0 1;
-}
-
-.evals-snippet-row {
-    height: auto;
-    padding: 0 1;
-}
-
-.evals-snippet-index {
-    width: 4;
-    color: $ds-text-muted;
-}
-
-.evals-snippet-text {
-    width: 1fr;
-}
-
-.evals-snippet-meta {
-    width: auto;
-    color: $ds-text-muted;
-}
-
-#evals-snippet-editor-summary {
-    color: $ds-text-muted;
-}
-
-#evals-snippet-warnings-summary {
-    margin: 1 0 0 0;
-}
-
-#evals-import-snippets {
-    margin: 1 0 0 0;
-}
-
-/* Task 1 (results grid + lenses). The grid fills its detail pane; the
-   DataTable does its own row virtualization/scrolling once given a real
-   height via `1fr`, so -- unlike #evals-snippet-table/#evals-bench-target-
-   table above, which are plain Static lists with no scrolling of their
-   own -- the wrapping #evals-results-grid does not need `overflow-y: auto`
-   itself. */
-#evals-results-grid {
-    /* `1fr`, not `100%` -- which is what the comment above always claimed.
-       `100%` is the full parent height regardless of siblings, so with the
-       meta row above it the grid ran exactly one line past the bottom of
-       the detail pane. The pane's old `border: solid` happened to absorb
-       that overflow; removing the border when Evals moved onto the Lab
-       frame exposed it. `1fr` takes what is left after siblings, which is
-       what "fills its detail pane" means. */
-    height: 1fr;
-    min-height: 0;
-}
-
-#evals-grid-meta,
-#evals-grid-state {
-    height: 1;
-    min-height: 1;
-    color: $ds-text-muted;
-}
-
-/* TASK-1036: the run view's degenerate-canary callout -- same
-   .ds-recovery-callout base styling (border/background/padding, from
-   components/_agentic_terminal.tcss) as #evals-inspector-bench's own
-   callout above, plus the identical trailing margin so it reads as the
-   same design element on both views, per the design contract's "bench
-   view and run view agree on how prominently it is presented". */
-#evals-grid-canary-callout {
-    margin: 0 0 1 0;
-}
-
-/* TASK-1477: the run-level failure callout -- same treatment as the
-   canary callout directly above (shared .ds-recovery-callout base, same
-   trailing margin so the two stack consistently when both are present). */
-#evals-grid-failure-callout {
-    margin: 0 0 1 0;
-}
-
-#evals-grid-controls {
-    height: auto;
-    margin: 0 0 1 0;
-}
-
-#evals-grid-controls > Select {
-    width: 1fr;
-}
-
-#evals-grid-table {
-    height: 1fr;
-    min-height: 0;
-}
-
-/* TASK-1034 lived here: the global `*:focus { outline: solid
-   $ds-focus-accent; }` fallback (core/_reset.tcss) paints its outline OVER
-   the widget's outermost rendered lines, and a `DataTable`'s first line is
-   its column header -- so a focused results grid lost its header, and the
-   "[warned]" canary marker riding inside it, entirely. That was fixed here
-   with an id-scoped `outline: none` plus a header recolour.
-
-   TASK-1160 found the same rule silently eating clicks on the bottom row
-   of every focused table in the app and moved BOTH halves of that fix --
-   the suppressed outline and the header recolour -- to a bare
-   `DataTable:focus` type selector in components/_lists.tcss, which this
-   table now inherits unchanged. The id-scoped rules were removed rather
-   than left in place, so there is one mechanism, not two.
-   Tests/UI/test_evals_results_grid.py::
-   test_focused_results_grid_keeps_its_header_and_the_warned_marker still
-   guards the header against a real compositor render. */
-
-/* Focused-cell detail can run to many lines (a full top-K plus a probe
-   table) -- scrolled at this level per the I4 convention above, mirroring
-   #evals-inspector-bench/#evals-classic-detail (no separate list-body vs.
-   sibling-control split needed here).
-
-   task-1710 T2: `height: auto` added -- `EvalsCellInspector` is an
-   unstyled `Vertical` (Textual DEFAULT_CSS: `height: 1fr`), mounted as a
-   direct child of `#evals-inspector-pane` alongside a trailing
-   `#evals-primary-action` sibling, EXACTLY the shape
-   `#evals-inspector-bench`'s own `height: auto` comment (above in this
-   file) documents as the clipping bug: an unstyled `1fr` child has no
-   real denominator during the parent's `auto` measurement pass, so it
-   claims far more height than its own content needs and pushes a
-   trailing sibling off `#lab-inspector`'s own scrollable viewport.
-   Confirmed live (`run_test(size=(235, 52))`, one target/one snippet
-   focused cell): before this fix, `#evals-cell-inspector` claimed a
-   36-row region for ~9 rows of actual content, and
-   `#evals-primary-action` sat one row outside `#lab-inspector`'s visible
-   region (`max_scroll_y == 1`, button unreachable even scrolled to it).
-   Pre-existing -- not introduced by this task's own continuation row --
-   but in the identical risk class this task's brief flags, and touched
-   here rather than left for the row this task adds to inherit silently.
-   `overflow-y: auto` above is KEPT for the same reason
-   `#evals-inspector-bench`'s own comment keeps it: a no-op once this box
-   sizes to its own content, matching that established precedent. */
-#evals-cell-inspector {
-    overflow-y: auto;
-    height: auto;
-}
-
-/* Task 3 (task-1691 phase 2): the character card picker (`card_picker.py`).
-   `.evals-card-picker` -- not a bare `CardPicker` type selector; no editor
-   widget in this whole file uses one -- so this reaches the widget however
-   Task 4's bench editor mounts it (its own `id=` is caller-supplied, not
-   fixed, per `card_picker.py`'s own module docstring).
-
-   `height: auto`, overriding `Vertical`'s own DEFAULT_CSS `height: 1fr`:
-   the picker must size to its OWN content (the search box's one row plus
-   the row list's bounded `max-height` below), not claim an arbitrary `1fr`
-   share of whatever eventually hosts it -- same convention as
-   `#evals-bench-targets-section`'s own `height: auto` above, and for the
-   same reason: a sibling control below it (Task 4's Add/Cancel) must get
-   whatever room it needs, not be squeezed by this widget silently growing
-   to fill unclaimed space it does not actually use. */
-.evals-card-picker {
-    height: auto;
-}
-
-/* The row list itself. Bounded AND independently scrollable -- up to 500
-   cards (`evals_state.py`'s own `_LIST_LIMIT`, the read this widget's rows
-   are built from) must remain individually reachable by scrolling, never
-   silently clipped: `Vertical`'s DEFAULT_CSS is `overflow: hidden hidden`,
-   which would otherwise make every row past whatever fits the bounded box
-   permanently unreachable by any means (not merely off-screen -- there
-   would be no scrollbar and no scroll action to reach it), the same
-   "vanished, not merely clipped" failure `#evals-bench-probes-preview`
-   above already guards its own list against. `max-height: 10` mirrors that
-   rule's own `max-height: 6` (scaled up: a card list is the picker's
-   entire reason to exist, so it gets more of the picker's own budget than
-   a read-only probe preview gets of the bench editor's). */
-#evals-card-picker-rows {
-    height: auto;
-    max-height: 10;
-    overflow-y: auto;
-}
-
-.evals-card-row {
-    width: 100%;
-}
-
-/* Task 4 (task-1691 phase 2): the character bench editor
-   (character_bench_editor.py). Mirrors #evals-bench-editor's own
-   single-scroll-level contract above: this widget is the SOLE selection-
-   kind-specific child of #evals-detail-pane (a real bounded `height: 100%`
-   from _lab.tcss, not an ambiguous `auto` ancestor -- see
-   #evals-inspector-bench's own long comment above for the parent-chain
-   distinction that DOES need `height: auto`, which does not apply here),
-   with nothing after it to starve -- so plain `overflow-y: auto` on
-   Vertical's own default `1fr` height is enough, the same pairing
-   #evals-bench-editor itself uses. Confirmed live via
-   test_evals_character_bench_editor.py's own
-   test_save_stays_hit_testable_at_realistic_sizes, at both 160x45 and
-   235x52, and via test_a_card_past_the_row_cap_is_reachable_inside_the_
-   editors_own_scroll for the CardPicker nested-scroll case specifically
-   (Task 3's own `#evals-card-picker-rows` bounded `max-height: 10` list,
-   mounted one level down inside this widget's own scroll -- proven not to
-   strand a row past the fold, not merely assumed to compose cleanly). */
-#evals-character-bench-editor {
-    overflow-y: auto;
-}
-
-.evals-cb-field-label {
-    text-style: bold;
-    color: $ds-text-primary;
-    margin-bottom: 0;
-}
-
-#evals-cb-name,
-#evals-cb-description,
-#evals-cb-samples,
-#evals-cb-seed,
-#evals-cb-temperature,
-#evals-cb-max-tokens {
-    margin-bottom: 1;
-}
-
-#evals-cb-probe-set {
-    margin-bottom: 1;
-}
-
-/* The read-only ␣/⏎-marker probe listing -- one line per probe (see
-   character_bench_editor.py's `_probe_preview_text`). Bounded and
-   independently scrollable, mirroring `#evals-bench-probes-preview`'s own
-   precedent for the identical reason: a probe set with many probes must
-   not itself push the card picker/targets/sampler fields and Save/Revert
-   further than a scroll of `#evals-character-bench-editor` itself can
-   reach. */
-#evals-cb-probes {
-    height: auto;
-    max-height: 6;
-    overflow-y: auto;
-    margin-bottom: 1;
-}
-
-.evals-cb-target-row {
-    width: 100%;
-}
-
-#evals-cb-targets-empty {
-    color: $ds-text-muted;
-    margin-bottom: 1;
-}
-
-#evals-cb-form-error {
-    margin-bottom: 1;
-}
-
-#evals-cb-form-actions {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#evals-cb-form-actions Button {
-    margin: 0 1 0 0;
-}
-
-/* Whole-branch review Important 2 (task-1691 phase 2 fix round):
-   `ProbeSetDetail` (character_bench_editor.py) -- a bare probe-set
-   dataset selected directly from the rail. Same parent-chain shape as
-   `#evals-classic-detail` (see that selector's own long comment above):
-   the sole selection-kind-specific child of `#evals-detail-pane` (a real
-   bounded `height: 100%`, never an ambiguous `auto` ancestor), with
-   nothing after it to starve -- so this does not share `EvalsInspector`'s
-   bug either, but the rule is kept for the same established precedent
-   that comment already documents. */
-#evals-probeset-detail {
-    overflow-y: auto;
-}
-
-#evals-probeset-detail-count {
-    margin-bottom: 1;
-}
-
-/* Mirrors `#evals-cb-probes` exactly -- the identical bounded,
-   independently-scrollable ␣/⏎-marker listing, built by the same shared
-   `_probe_listing_widget` helper, just under a different id so both
-   widgets can exist in the same screen across a selection change without
-   colliding. */
-#evals-probeset-detail-probes {
-    height: auto;
-    max-height: 6;
-    overflow-y: auto;
-    margin-bottom: 1;
 }
 
 /* ===== MODULE: features/_metrics.tcss ===== */
@@ -13659,329 +12710,63 @@ Button.error:hover {
 }
 
 /* ===== MODULE: features/_scheduling.tcss ===== */
-/* ========================================
- * FEATURES: Scheduling
- * ========================================
- * Scheduling workbench specific styles
- * ======================================== */
-
-/* The liveness Static + bottom status strip are auto-height siblings of
- * the TabbedContent; without an explicit 1fr the auto-height TabbedContent
- * measures its fr children against the whole content area and overflows
- * past the footer. */
-#schedules-shell {
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-tabs {
-    height: 1fr;
-}
-
-/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
- * across every tab (not Queue-specific), hosting the existing
- * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
- * that switches to the Conflicts tab. SyncStatusWidget takes the
- * remaining width so the badge sits flush right; `align` centers the
- * badge (height:1, from .scheduling-queue-chip) against the taller
- * padded SyncStatusWidget row. */
-#scheduling-status-strip {
-    height: auto;
-    border-top: solid $ds-grid-line;
-    align: left middle;
-}
-
-#scheduling-status-strip > SyncStatusWidget {
-    width: 1fr;
-}
-
-SchedulesWorkbench TabbedContent,
-SchedulesWorkbench TabbedContent ContentSwitcher,
-SchedulesWorkbench TabbedContent TabPane {
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-workbench {
-    layout: horizontal;
-    height: 1fr;
-    min-height: 10;
-    padding: 1;
-    margin: 0;
-    overflow: hidden;
-    border: solid $ds-grid-line;
-}
-
-/* Intentional ~30/45/25 width split for the scheduling workbench design plan,
- * expressed with fr units so the three panes share leftover space with the
- * fixed-width vertical dividers. This avoids percentage-based overflow/wrapping
- * and differs from workflows/acp which use a 25/50/25 fr ratio. */
-#scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
-#scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
-#scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
-
-/* The queue table must fill its pane, or empty queues collapse to a single
- * clipped row at short heights (80x24). */
-#scheduling-task-table {
-    height: 1fr;
-}
-
-/* Automations tab (ADR-077): definitions list on the left, the selected
- * definition's durable run history on the right -- the same list|detail
- * idiom as the Queue tab's three panes. */
-#scheduling-automations-split {
-    layout: horizontal;
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-automations-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-#scheduling-automation-history-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
- * the definitions detail widget (DefinitionDetail), the same list|detail|
- * inspector idiom as the Queue tab's three panes above.
- *
- * min-width 22, not 30 (final review F5): the three panes' min-widths must
- * SUM to no more than the narrowest width at which all three are still
- * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
- * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
- * Textual's fr layout then gave EVERY pane the full container width,
- * laying the detail and history panes out entirely off-screen; the split
- * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
- * 82 fits 84 with slack. This floor only ever binds inside that band -- at
- * any wider width the 1fr share is larger anyway. */
-#scheduling-automations-detail-pane {
-    width: 1fr;
-    min-width: 22;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-#scheduling-automation-detail-empty-state {
-    color: $text-muted;
-    text-align: center;
-    padding: 3 1;
-}
-
-/* The two detail panes' body cards: the definitions pane's question and
- * (final review F10) the reminder pane's body text, same card. */
-#scheduling-automation-detail-question,
-#scheduling-task-detail-body-card {
-    height: auto;
-    padding: 1;
-    margin-bottom: 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $text;
-}
-
-#scheduling-automations-table {
-    height: 1fr;
-}
-
-#scheduling-automation-history-table {
-    height: 1fr;
-}
-
-#scheduling-automations-notice,
-#scheduling-automation-history-notice {
-    color: $text-muted;
-}
-
-#scheduling-queue-filter {
-    height: 1;
-    border: none;
-    padding: 0 1;
-    margin: 0 0 1 0;
-    background: $surface-darken-1;
-}
-
-/* redesign PR-2, Task 2: the chip row (spec S3) -- compact single-row
- * buttons, same height:1/border:none idiom the filter Input above uses,
- * so the row costs one line rather than a full 3-row Button box. */
-#scheduling-queue-chips {
-    height: 1;
-    margin: 0 0 1 0;
-}
-
-#scheduling-queue-chips .scheduling-queue-chip {
-    height: 1;
-    border: none;
-    min-width: 8;
-    margin-right: 1;
-    background: $surface-darken-1;
-}
 
 /* Compact mode: the filter's margin row goes to the table (80x24 has
- * exactly one spare row; without this the queue shows only the filter).
- * The chip row is hidden outright at this width rather than squeezed
- * further -- it is a filter convenience, not a required affordance, and
- * the narrow-width floor already prioritizes the table + detail pane. */
+ * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
 }
 
+/* The four chips collapse into the cycling control rather than the whole
+ * row disappearing (ruling 6) -- one row either way, and a mouse user
+ * keeps a filter affordance at the floor. The row's own bottom margin
+ * goes to the table for the same reason the filter's does. */
 #scheduling-workbench.compact #scheduling-queue-chips {
+    margin: 0;
+}
+
+#scheduling-workbench.compact #scheduling-queue-chips .scheduling-queue-chip {
     display: none;
 }
 
-SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
-    padding: 0;
+#scheduling-workbench.compact #scheduling-chip-cycle {
+    display: block;
 }
 
-SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 24;
-    min-width: 20;
-}
-
-SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
+/* With both side panes hidden the rail is the only thing on screen, so it
+ * takes the whole width -- it used to keep the 24-column width the
+ * three-pane compact split gives it, wrapping the queue into a gutter
+ * while 54 columns sat empty -- and drops its own frame: the workbench's
+ * border is already the visible edge, and 4 rows of pane chrome is a
+ * sixth of an 80x24 terminal. */
+#scheduling-workbench.compact #scheduling-list-pane {
     width: 1fr;
-    min-width: 32;
-}
-
-SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
-    width: 20;
-    min-width: 16;
-}
-
-/* Pane headers */
-#scheduling-list-title,
-#scheduling-task-detail-header,
-#scheduling-task-inspector-header,
-#scheduling-automation-detail-header {
-    text-style: bold;
-    color: $text;
-    padding: 0 0 0 0;
-    border-bottom: solid $ds-grid-line;
-    margin-bottom: 1;
-}
-
-#scheduling-list-header {
-    height: auto;
-}
-
-#scheduling-list-header #scheduling-list-title {
-    width: 1fr;
-}
-
-#scheduling-new-task {
-    width: auto;
-    min-width: 9;
-}
-
-/* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
- * default (see SchedulesWorkbench.on_mount / _update_mark_all_read_
- * visibility), same height:auto row as Create above it. */
-#scheduling-mark-all-read {
-    width: auto;
-    min-width: 9;
-    margin-left: 1;
-}
-
-/* Automations tab header (task-5): same title+button row shape as the
- * Queue pane's #scheduling-list-header above. */
-#scheduling-automations-header {
-    height: auto;
-}
-
-#scheduling-automations-header #scheduling-automations-title {
-    width: 1fr;
-}
-
-#scheduling-new-automation {
-    width: auto;
-    min-width: 9;
-}
-
-/* Empty state */
-#scheduling-task-detail-empty-state {
-    color: $text-muted;
-    text-align: center;
-    padding: 3 1;
-}
-
-/* Lifecycle action row */
-#scheduling-task-detail-lifecycle {
-    height: auto;
-    padding: 1 0;
-    margin-top: 1;
-}
-
-#scheduling-task-detail-lifecycle Button {
-    margin: 0 1 0 0;
-}
-
-/* Transfer action row (schedules-handoff spec §6, PR-5 task 7) */
-#scheduling-task-detail-transfer {
-    height: auto;
-    padding: 0 0 1 0;
-}
-
-#scheduling-task-detail-transfer Button {
-    margin: 0 1 0 0;
-}
-
-/* Follow-in-Console prominence */
-#schedules-follow-in-console {
-    margin-top: 1;
-    width: 100%;
-    text-style: bold;
-}
-
-#scheduling-task-detail .follow-why {
-    color: $text-muted;
-    height: auto;
+    min-width: 0;
+    border: none;
     padding: 0 1;
 }
 
-/* schedules-redesign PR-3, Task 4: the definitions pane's header
- * Pause/Resume row -- same one-Button lifecycle-row shape as
- * `#scheduling-task-detail-lifecycle` above. `DefinitionDetail` mounts
- * under two different ids (Automations tab + Queue tab sibling), so both
- * selectors share this declaration rather than one id-scoped rule. */
-#scheduling-automation-detail-lifecycle {
+/* Both live instances of the pane: the docked one and, at narrow widths,
+ * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
+ * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which
+ * would be an ancestor-scoped bare-type rule (PR-3's fastpath ratchet). */
+#scheduling-task-detail .follow-why,
+#scheduling-task-detail-overlay .follow-why {
+    color: $text-muted;
     height: auto;
-    padding: 0 0 1 0;
+    padding: 0 1;
 }
 
 #scheduling-automation-detail-lifecycle .detail-lifecycle-button {
     margin: 0 1 0 0;
 }
 
-#scheduling-automation-detail .follow-why,
-#scheduling-queue-definition-detail .follow-why {
+/* Same pair as the reminder pane's rule above: docked + pushed instance. */
+#scheduling-queue-definition-detail .follow-why,
+#scheduling-definition-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
     padding: 0 1;
-}
-
-/* Status badge base (detail pane) */
-#scheduling-task-status-badge {
-    width: auto;
-    height: 1;
-    padding: 0 1;
-    text-style: bold;
-    color: $text;
-    border: none;
-    text-align: center;
 }
 
 #scheduling-task-status-badge.waiting {
@@ -14012,36 +12797,6 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     color: $text-muted;
 }
 
-/* Inspector metadata */
-#scheduling-inspector-metadata {
-    height: auto;
-    padding-bottom: 1;
-}
-
-#scheduling-inspector-metadata Horizontal {
-    height: auto;
-    width: 100%;
-    padding: 0;
-    margin: 0;
-}
-
-.scheduling-inspector-label {
-    color: $text-muted;
-    padding: 0 1 0 0;
-    width: 10;
-}
-
-.scheduling-inspector-value {
-    color: $text;
-    width: 1fr;
-    height: auto;
-}
-
-#scheduling-conflict-card {
-    height: auto;
-    margin-top: 1;
-}
-
 #scheduling-conflict-card.conflict {
     border: solid $error;
     padding: 1;
@@ -14055,20 +12810,25 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     display: none;
 }
 
-#scheduling-pane-notice {
-    color: $text-muted;
-    text-style: italic;
-    height: auto;
-    padding: 0;
+/* Compact mode (see SchedulesWorkbench.on_resize): the screen header
+ * already names the pane, so the in-pane TITLE yields its row -- but the
+ * header's buttons do not. redesign PR-4, task 6 (ruling 6: "the rail
+ * degrades readably at 80"): `Create ▾`, `Mark all read` and `Results`
+ * are the only routes to those operations that need no selected row, and
+ * what made the row unaffordable at the floor was the 3-row bordered
+ * Button box, not the buttons. They flatten to one row instead
+ * (height:1/border:none -- the same idiom the chip row and the Runs-on
+ * mini-bar already use), and the header goes from 3 rows to 1. */
+#scheduling-workbench.compact #scheduling-list-title {
+    display: none;
 }
 
-/* Compact mode (see SchedulesWorkbench.on_resize): the Queue tab label
- * already names the pane; the in-pane title/New-button row goes to the
- * table (80x24 has exactly one spare row -- the New button stays reachable
- * via the `c` key, which the footer advertises). Hiding the header hides
- * the title Static nested inside it too. */
-#scheduling-workbench.compact #scheduling-list-header {
-    display: none;
+#scheduling-workbench.compact #scheduling-new-task,
+#scheduling-workbench.compact #scheduling-mark-all-read,
+#scheduling-workbench.compact #scheduling-results-badge {
+    height: 1;
+    border: none;
+    background: $surface-darken-1;
 }
 
 /* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
@@ -14169,6 +12929,20 @@ DetailValueRow .detail-value-row-error {
 DetailGroup {
     background: $ds-surface-panel;
     border-top: hkey $ds-grid-line;
+}
+
+/* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
+ * push pattern, spec §11) hands the factory-built widget this class so it
+ * fills the space between the screen's `Header`/`Footer` regardless of
+ * whether the hosted widget sizes itself (`ConflictsTab` already does,
+ * via its own `BUNDLED_CSS` -- this covers the panes that don't, e.g.
+ * `TaskDetail`/`DefinitionDetail`, once later tasks push those). Bare
+ * class selector, carried only by whatever `WorkbenchHostScreen.compose`
+ * tags with it -- not ancestor-scoped, so it never counts against the
+ * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
+ * rule_count_is_a_ratchet`). */
+.workbench-host-body {
+    height: 1fr;
 }
 
 /* ===== MODULE: features/_code_repo.tcss ===== */
@@ -17897,6 +16671,184 @@ InstalledView Button:disabled {
     text-style: none;
     color: $text;
     background: $surface-darken-1;
+}
+
+/* --- vLLM Operate workbench -------------------------------------------
+ *
+ * The three classes are computed from VllmSetupView's allocated width,
+ * after Lab rails have taken their share. They deliberately do not key off
+ * the terminal width: an open Inspector changes the space this form owns.
+ */
+VllmSetupView {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+}
+
+VllmSetupView #vllm-readiness-state {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    border-left: thick $accent;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+VllmSetupView #vllm-readiness-checklist {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+VllmSetupView #vllm-readiness-checklist > Label {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+}
+
+VllmSetupView .vllm-picker-row {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+}
+
+VllmSetupView .vllm-picker-row > Input.vllm-picker-input {
+    width: 1fr;
+    min-width: 0;
+}
+
+VllmSetupView .vllm-picker-row > Button.vllm-picker-button {
+    width: auto;
+    min-width: 10;
+    margin-left: 1;
+}
+
+VllmSetupView > .section-title,
+VllmSetupView > .section_label,
+VllmSetupView > .description {
+    height: auto;
+    margin: 0;
+}
+
+VllmSetupView #vllm-next-action,
+VllmSetupView .vllm-mode-actions,
+VllmSetupView .vllm-profile-actions,
+VllmSetupView .vllm-source-actions,
+VllmSetupView .vllm-console-actions {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+VllmSetupView #vllm-fold-cue {
+    display: none;
+    width: 100%;
+    height: 1;
+    color: $ds-text-muted;
+    text-style: dim;
+}
+
+VllmSetupView #vllm-local-setup,
+VllmSetupView #vllm-existing-setup,
+VllmSetupView #vllm-current-server,
+VllmSetupView #vllm-next-restart,
+VllmSetupView Input.vllm-control,
+VllmSetupView Select.vllm-control,
+VllmSetupView TextArea.vllm-control,
+VllmSetupView Collapsible.vllm-control {
+    width: 100%;
+    min-width: 0;
+}
+
+VllmSetupView Button.vllm-focus-target:focus,
+VllmSetupView CollapsibleTitle.vllm-focus-target:focus,
+VllmSetupView Input.vllm-focus-target:focus,
+VllmSetupView Select.vllm-focus-target:focus,
+VllmSetupView TextArea.vllm-focus-target:focus {
+    outline: heavy $ds-focus-accent;
+}
+
+/* Focus changes ink and outline only. Geometry stays stable while users
+ * traverse the complete, provider-contained Tab loop. */
+VllmSetupView Button.vllm-button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+VllmSetupView.vllm-wide .vllm-mode-actions > Button.vllm-action-button,
+VllmSetupView.vllm-wide .vllm-profile-actions > Button.vllm-action-button,
+VllmSetupView.vllm-wide .vllm-source-actions > Button.vllm-action-button,
+VllmSetupView.vllm-wide #vllm-next-action > Button.vllm-action-button,
+VllmSetupView.vllm-medium #vllm-next-action > Button.vllm-action-button {
+    width: 1fr;
+    min-width: 0;
+}
+
+VllmSetupView.vllm-wide .vllm-mode-actions,
+VllmSetupView.vllm-wide .vllm-profile-actions,
+VllmSetupView.vllm-wide .vllm-source-actions,
+VllmSetupView.vllm-wide #vllm-next-action,
+VllmSetupView.vllm-wide .vllm-console-actions,
+VllmSetupView.vllm-medium #vllm-next-action {
+    height: 3;
+}
+
+/* Medium and compact re-compose complete controls into rows. This uses
+ * vertical flow instead of clipping or hiding core actions. */
+VllmSetupView.vllm-medium .vllm-mode-actions,
+VllmSetupView.vllm-medium .vllm-profile-actions,
+VllmSetupView.vllm-medium .vllm-source-actions,
+VllmSetupView.vllm-compact .vllm-mode-actions,
+VllmSetupView.vllm-compact .vllm-profile-actions,
+VllmSetupView.vllm-compact .vllm-source-actions,
+VllmSetupView.vllm-compact .vllm-picker-row,
+VllmSetupView.vllm-compact #vllm-next-action {
+    layout: vertical;
+}
+
+VllmSetupView.vllm-medium .vllm-mode-actions > Button.vllm-action-button,
+VllmSetupView.vllm-medium .vllm-profile-actions > Button.vllm-action-button,
+VllmSetupView.vllm-medium .vllm-source-actions > Button.vllm-action-button,
+VllmSetupView.vllm-compact .vllm-mode-actions > Button.vllm-action-button,
+VllmSetupView.vllm-compact .vllm-profile-actions > Button.vllm-action-button,
+VllmSetupView.vllm-compact .vllm-source-actions > Button.vllm-action-button,
+VllmSetupView.vllm-compact .vllm-picker-row > Button.vllm-picker-button,
+VllmSetupView.vllm-compact #vllm-next-action > Button.vllm-action-button,
+VllmSetupView.vllm-compact #vllm-browse-local-model-directory-button.vllm-picker-button,
+VllmSetupView.vllm-compact .vllm-console-actions > Button.vllm-action-button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+VllmSetupView.vllm-compact .vllm-picker-row {
+    height: auto;
+}
+
+VllmSetupView.vllm-compact .vllm-picker-row > Input.vllm-picker-input {
+    width: 100%;
+}
+
+VllmSetupView.vllm-compact > .section-title {
+    margin-top: 0;
+}
+
+VllmSetupView.vllm-compact > .description {
+    display: none;
+}
+
+/* The selected mode is already stated by the two complete action rows.
+ * Dropping only the duplicate summary keeps the next three-row control from
+ * straddling the 80x24 viewport edge. */
+VllmSetupView.vllm-compact.vllm-two-actions #vllm-mode-summary {
+    display: none;
 }
 
 /* ===== MODULE: features/_research_workspace.tcss ===== */

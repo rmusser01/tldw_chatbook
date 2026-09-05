@@ -12,7 +12,7 @@ from textual.app import App
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -20,9 +20,13 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
 )
@@ -38,6 +42,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
+)
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
@@ -155,6 +163,7 @@ async def test_console_rail_summary_uses_canonical_provider_and_honest_empty_cop
         identity_row="Assistant: General",
         readiness=readiness,
     )
+
     class _HonestCopyApp(ConsolidatedCSSApp):
         def compose(self):
             yield ConsoleSettingsSummary(state)
@@ -908,11 +917,15 @@ _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 def _test_popover(
     settings: ConsoleSessionSettings,
     providers_models,
+    *,
+    overrides: ConsoleContextPolicyOverrides | None = None,
+    global_overrides: ConsoleContextPolicyOverrides | None = None,
+    context_state: ConsoleContextControlState | None = None,
 ) -> ConsoleModelPopover:
     origin = ConsoleSettingsOrigin("popover-session", None, 0)
     draft = ConsoleSettingsDraftState(
         settings=settings,
-        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        context_policy_overrides=overrides or ConsoleContextPolicyOverrides(),
         field_drafts=tuple(
             ConsoleSettingsFieldDraft(
                 name=name,
@@ -960,6 +973,15 @@ def _test_popover(
         },
         initial_draft=draft,
         providers_models=providers_models,
+        context_state=context_state
+        or build_console_context_control_state(
+            settings=settings,
+            estimate=ConsoleSettingsContextEstimate(
+                used_tokens=None, token_limit=None, label="unavailable"
+            ),
+            overrides=draft.context_policy_overrides,
+            global_overrides=global_overrides,
+        ),
         scope_copy="Applies to this conversation",
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=rebase,
@@ -971,9 +993,16 @@ def _test_popover(
 
 
 class _PopoverApp(ConsolidatedCSSApp):
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        overrides: ConsoleContextPolicyOverrides | None = None,
+        global_overrides: ConsoleContextPolicyOverrides | None = None,
+    ):
         super().__init__()
         self.result = "unset"
+        self.overrides = overrides
+        self.global_overrides = global_overrides
 
     async def on_mount(self) -> None:
         settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -982,7 +1011,12 @@ class _PopoverApp(ConsolidatedCSSApp):
             self.result = result
 
         await self.push_screen(
-            _test_popover(settings, _POPOVER_PROVIDERS),
+            _test_popover(
+                settings,
+                _POPOVER_PROVIDERS,
+                overrides=self.overrides,
+                global_overrides=self.global_overrides,
+            ),
             callback=_capture,
         )
 
@@ -1007,6 +1041,41 @@ async def test_popover_apply_returns_replaced_settings():
         assert committed.provider == "llama_cpp"
         # ConsoleSessionSettings defaults streaming True; one toggle flips it.
         assert committed.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_popover_untouched_automatic_compaction_stays_inherited():
+    app = _PopoverApp(
+        global_overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.AUTOMATIC
+        )
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.live_commit.context_policy_overrides.compaction_mode is None
+
+
+@pytest.mark.asyncio
+async def test_popover_off_then_automatic_compaction_is_explicit():
+    app = _PopoverApp(
+        overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        )
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        select = app.screen.query_one("#console-popover-compaction-mode", Select)
+        select.value = ContextCompactionMode.AUTOMATIC.value
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert (
+        app.result.live_commit.context_policy_overrides.compaction_mode
+        is ContextCompactionMode.AUTOMATIC
+    )
 
 
 @pytest.mark.asyncio

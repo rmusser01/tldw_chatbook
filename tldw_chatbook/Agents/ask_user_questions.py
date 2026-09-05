@@ -113,6 +113,54 @@ ASK_USER_PARAMETERS = {
 }
 
 
+#: task-31420: env override for the registry prompt `agents.ask_user_tool_description`
+#: (env -> config -> catalog default, the repo's precedence rule).
+ASK_USER_DESCRIPTION_ENV_VAR = "TLDW_INTERNAL_PROMPT_AGENTS_ASK_USER_TOOL_DESCRIPTION"
+MAX_TOOL_DESCRIPTION_CHARS = 4000
+
+
+class ToolDescriptionText(BaseModel):
+    """A configurable tool description: non-blank, bounded, control-free text."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    text: str = Field(min_length=1, max_length=MAX_TOOL_DESCRIPTION_CHARS)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _clean(cls, value: object) -> str:
+        return _clean_text(value, required=True)
+
+
+def resolve_tool_description(*candidates: object) -> str:
+    """Pick the first candidate that validates as a tool description.
+
+    task-31420: the ask_user description is user-configurable. Each
+    candidate (environment value, registry value, shipped constant) is run
+    through ``ToolDescriptionText``; the first that validates wins, so an
+    empty, blank, over-long, or non-text override is skipped rather than
+    shipped to the model.
+
+    Args:
+        *candidates: Values in precedence order; ``None`` entries are skipped.
+
+    Returns:
+        The validated text of the first acceptable candidate.
+
+    Raises:
+        AskUserValidationError: No candidate validated -- unreachable while
+            the shipped constant is the last candidate.
+    """
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            return ToolDescriptionText(text=candidate).text
+        except ValidationError:
+            continue
+    raise AskUserValidationError("no usable tool description")
+
+
 class AskUserValidationError(ValueError):
     """A rejected ``ask_user`` payload; the message names the field and the rule."""
 

@@ -83,6 +83,20 @@ carried a bad number.
   Historical refs remain useful collision-discovery inputs, but they are immutable
   snapshots—not a uniqueness invariant a feature PR can retroactively repair.
 
+- **2026-09-04, Console rail colour grammar (TASK-31429, formerly 31420).** A
+  one-command sweep, `git log --all --diff-filter=A --name-only -- backlog/`,
+  reported max **31419** and "0 files named task-31420" — and was wrong on the
+  second count within the hour: PR #2383 had landed a *different* `task-31420`
+  on dev as a **merge commit**, and `git log` without `-m` lists no file adds
+  for merge commits, so the sweep could see every branch commit that was still
+  around but not a squash/merge-only add. The collision surfaced only because
+  another session's memory note named the id. Fix was the older-keeps-id rule
+  (theirs: created 19:28; mine: 22:30 → mine renumbered to 31429 with
+  provenance). **Sweep with `git ls-tree -r --name-only <ref> backlog/` per
+  ref (the loop above) or add `-m` to any `git log --all` shortcut**, and
+  re-run the sweep right before pushing — the id was free at filing and taken
+  at PR time.
+
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:
@@ -761,3 +775,69 @@ filename is referenced by PR bodies, close-out commits, doc links and other task
 `dependencies:`, so a silent rename is a broken-link generator. **After any `backlog task
 edit`, check `git status` for an `R` and `git mv` the file back** if the rename was not the
 point of the edit.
+
+---
+
+## The sweep-at-commit-time discipline paid twice across one programme arc (schedules handoff + redesign, 2026-08-31 → 2026-09-04)
+
+The two entries above — *"Task IDs collide constantly"* and *"ADR numbers collide across
+concurrent branches"* — were both exercised inside a single eleven-PR arc. Neither cost
+anything, because both were re-checked at commit time rather than at plan time. Recording
+that here because a rule that only ever fires as a near-miss looks like ceremony until
+someone writes down what it caught.
+
+**The ADR half.** Redesign PR-3 drafted its inspector-editing ADR as **115**, and its own
+intermediate commit still carries that number in its subject line (`docs(scheduling):
+ADR-115 + 099 amendment + editing docs`). By the time PR-3 merged, `2516735cfd`
+(personas demand-mounted center views, PR #2364, 2026-09-03) had already landed **115** on
+dev from an unrelated branch. The merge-time re-check caught it and the ADR shipped as
+`backlog/decisions/116-schedules-inspector-editing.md` — file, `# ADR-116` header, README
+row, the 099 amendment's cross-reference, and PR-4's later edits all consistent. Exactly
+the dynamic the ADR entry describes: the drafted number was correct when drafted and stale
+four days later, and only the re-check at merge time knew that.
+
+**The task-ID half, observed first-hand at close-out (2026-09-04).** Filing this arc's
+follow-up tasks, the sweep across 117 remote refs plus 60 worktrees put the true maximum at
+**31392**. The CLI probe — the "create one throwaway task first and read the id" habit from
+the entry above — offered **31384**, which is *below* that and was already held on a remote
+branch. One probe, deleted immediately, converted a certain collision into a non-event; the
+seven tasks were filed at 31413-31419 instead.
+
+Note the difference in signature from the 2026-08-31 hermes case above, and use it to tell
+the two failures apart:
+
+| CLI offer vs swept max | what it means |
+|---|---|
+| offer **below** swept max | normal — the CLI sees only the local checkout; leapfrog past the swept max |
+| offer **above** swept max | **your sweep is broken** — an impossible answer; fix the sweep before filing anything |
+
+**What to do.** Nothing new — run both existing checks at *commit/merge* time, not at plan
+time. The point of this entry is only that across one arc, both fired, and each cost about
+a minute against a renumbering cleanup that has previously taken hours.
+
+## `dev` is strict + enforce-admins: a BEHIND PR cannot merge, `--admin` or not (media wave 4 PRs C/D, 2026-09-04)
+
+**The incident.** PR #2390 was green on every check on head `6856e48d66`, then dev took
+one unrelated commit. `gh pr merge --admin --merge` was refused twice with
+`Required status check "Derived artifacts reproduce from their sources" is expected` even
+though that check-run reported `completed/success` on the head. The branch protection on
+`dev` has `strict: true` (branch must be up to date) and `enforce_admins: true`, so the
+required check is re-evaluated against the moved base and the admin bypass does not exist.
+I had ruled "no second update-branch" from a mis-remembered treadmill lesson and lost
+about 25 minutes proving the merge could not happen. PR #2400 then needed **four**
+update-branches in 70 minutes — dev moved every 20-40 minutes that evening, against a
+15-minute Fast Lane + Derived cycle — and one of those moves was my own docs-only PR
+#2401 landing first.
+
+**What to do.**
+- A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
+  the moment dev moves, then merge within the minute Derived reports success. The old
+  "never update-branch every round" note means *do not update while checks or Qodo are
+  still mid-run on the current head*; it never meant skip an update after dev moved.
+- Before each update, run `comm -12` over the two `git diff --name-only <merge-base>..`
+  lists. The one overlap that keeps recurring is the generated CSS bundle
+  (`tldw_chatbook/css/tldw_cli_modular.tcss`, PR #2389 vs #2390): fast-forward the
+  worktree to the merged head and run `python -m tldw_chatbook.css.build_css` +
+  `python tldw_chatbook/css/check_bundle_sync.py` before Derived gets there.
+- When one session holds a code PR and a docs PR, merge the **code PR first** — landing
+  the docs PR moves dev and puts the code PR straight back on the treadmill.

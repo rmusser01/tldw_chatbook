@@ -57,8 +57,17 @@ tool finished and the model is composing the next round, and `Generating…`
 is the wait for the model's first response of the turn. The elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
-completed `Tool` rows below instead. A sub-agent's work never appears here;
-it belongs to the **Agents** section of the Inspect rail (**Alt+I**).
+completed `Tool` rows below instead. During a fleet turn, while the primary
+waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
+(the count of running sub-agents and their longest-running tool) instead of
+`Thinking…`; the running sub-agent list itself lives in the **Agents**
+section of the Inspect rail (**Alt+I**), and each child's full step list
+stays in the left rail's Agent drill-down. Once a tool call has run for
+five seconds the line grows a `✕ abandon call` link: clicking it abandons
+that one call (the model sees it fail as "tool call cancelled") and the
+turn continues, unlike **Stop**, which ends the run. A tool that must
+finish once started (a Watchlists mutation, for example) cannot be
+abandoned and shows no link.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
@@ -374,6 +383,13 @@ marker stays the durable pointer to what finished.
   they never resolve themselves.
 - A background run that ends also toasts once: "Agent in <tab> (<workspace>)
   finished." (or "failed.").
+- A round that blocks on you — an approval, a skill or worktree confirm, or
+  a question — while you are on **another screen** (Library, Settings, …) or
+  Console has not been opened this launch rings the terminal bell once, and
+  the **Console** entry in the top navigation carries a `◆` badge until the
+  round resolves. `[console] interrupt_bell = false` (or the
+  `TLDW_CONSOLE_INTERRUPT_BELL` environment variable) silences the bell; the
+  badge stays. A round raised while Console is in front rings nothing.
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
 - Open session tabs show `Qn`, and open conversation rows show `Queue n`,

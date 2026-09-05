@@ -127,3 +127,33 @@ responsive floor later decides to hide the detail pane.
   definition_lifecycle`, the PR-5 transfer facade); the only DB change is
   the two-layer guard's extra `SELECT`/parameter, not a new column or
   table.
+
+## Amendment (2026-09-04) — PR-4 chose the pushed pane, not the modal
+
+Two lines above are now stale and are superseded by redesign PR-4 (plan
+`.superpowers/sdd/plan-2026-09-04-schedules-redesign-pr4/`, ruling 6):
+
+- Decision 1's "A width at which the detail pane is hidden altogether is
+  PR-4's responsive floor to define, **and the modal is the fallback
+  there when it does**", and
+- the Context section's "Enter on a list row still opens the modal
+  unchanged, at every width — including any width at which PR-4's
+  responsive floor later decides to hide the detail pane."
+
+PR-4 defined that width (84 columns) and chose the **pushed detail pane**
+as the fallback, not the modal: below the threshold `Enter` pushes the
+SAME pane widget class as a fresh instance inside a full-screen
+`WorkbenchHostScreen`, fed by the same service-backed loads the docked
+pane gets, with `Esc` to return. `m` (move owner) routes the same way
+(final review F1). "Edit in full…" still opens `ReminderForm` from inside
+the pushed pane, so ADR-099's modal remains reachable at every width and
+its width-cliff argument is untouched — what changed is only which
+surface stands in for the *hidden inspector*, and the pushed pane keeps
+in-place row editing working at 80×24 rather than dropping back to a
+whole-form modal for a single field.
+
+The Consequences bullet about "the owner row's dropdown and the legacy
+Move/Retry/Cancel buttons are two live surfaces" is also closed: PR-4
+task 4 deleted the legacy buttons and `_begin_transfer`/`_cancel_
+transfer`, leaving the Runs-on row's dropdown as the one transfer
+surface (PR-4 plan ruling 2).
