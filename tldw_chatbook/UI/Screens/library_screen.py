@@ -170,6 +170,7 @@ from ...Library.library_media_viewer_state import (
     detail_analysis_text,
 )
 from ...Library.library_media_state import (
+    _retry_failure_reason,
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
     MEDIA_SORT_CHOICES,
@@ -488,7 +489,6 @@ from ..Library_Modules import (
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
-    _retry_failure_reason,
 )
 from ..Library_Modules.library_media_trash_browse_controller import (
     LibraryMediaTrashBrowseController,

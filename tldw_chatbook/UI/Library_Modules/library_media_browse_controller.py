@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import re
-import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Mapping
 
 from loguru import logger
 
 from ...Library.library_media_state import (
+    LIBRARY_MEDIA_SERVICE_ERROR as _SERVICE_ERROR,
     MediaBrowseResult,
     MediaBrowseScope,
+    _redact_paths as _redact_paths,
+    _retry_failure_reason,
     build_media_browse_result,
+    build_media_load_failure_copy,
+    build_media_retry_failure_copy,
     validate_media_browse_items,
 )
 from ...Library.library_pager_state import (
@@ -28,7 +31,6 @@ from ..destination_recovery import (
 
 _PAGE_WORKER_GROUP = "library-media-browse"
 _FACET_WORKER_GROUP = "library-media-types"
-_SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
 _SERVICE_WHAT = "Couldn't load media"
 _FACET_ERROR = "Couldn't load media types. Retry."
 _FACET_WHAT = "Couldn't load media types"
@@ -39,84 +41,6 @@ _RETRY_ID = "library-media-retry"
 _FAILURE_SELECTOR = "#library-media-load-failure"
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
 _MUTATION_COPY = "Media changed; retry to load a current page."
-# Final review I-2: not "Retry failed · " -- the Analyze receipt on this
-# same canvas (library_media_canvas.py) already has a Button labelled
-# exactly "Retry failed", and the two can be on screen together. Matches
-# the module's own "Couldn't load ..." vocabulary instead.
-_RETRY_FAILED_PREFIX = "Couldn't retry · "
-# Review I-2: no number. This request path is a bare ``asyncio.to_thread``
-# with no ``wait_for`` and no deadline, so any bound quoted here would be
-# invented. (The 5 s figure belongs to the screen-level source snapshot,
-# a different path.)
-_TIMEOUT_REASON = "timed out"
-# Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
-# (kept, unlike other exceptions -- see below), but that text can embed a
-# database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
-# (``~/a``), Windows drive (``C:\a``), and ``file:`` URI tokens so the shared
-# mapper can redact them before any of it reaches a screen.
-#
-# Re-review round 2: a real path segment can contain a space (macOS
-# "Application Support", Windows "Program Files"), so a segment is
-# "word( word)*" -- but only a segment immediately followed by another
-# ``/``/``\`` may absorb extra space-joined words (the trailing mandatory
-# separator in ``_SEGMENT`` is what lets ordinary backtracking find the
-# right boundary instead of running to end-of-string). The path's FINAL
-# segment never merges -- nothing bounds how far that would run -- so it
-# stops at the first space, which is exactly where a real path ends and
-# trailing prose ("... is missing") begins.
-# ponytail: a final segment that itself contains a space with nothing
-# after it (no closing quote/separator) still under-redacts -- there's no
-# way to bound that merge without a real tokenizer. Not hit by any known
-# OSError/sqlite3 message shape; revisit if one shows up.
-_SEGMENT = r"[^\s/\\'\"]*(?:[ ][^\s/\\'\"]+)*[/\\]"
-_PATH_TOKEN_PATTERN = re.compile(
-    r"""(?P<prefix>^|[\s'"])
-    (?:file:|[A-Za-z]:\\|~/|/)
-    (?:%s)*
-    [^\s/\\'"]+
-    """
-    % _SEGMENT,
-    re.VERBOSE,
-)
-
-
-def _redact_paths(text: str) -> str:
-    """Replace filesystem/database path tokens in ``text`` with ``<path>``.
-
-    Args:
-        text: Raw exception text that may embed a local path.
-
-    Returns:
-        ``text`` with every path-like token (see ``_PATH_TOKEN_PATTERN``)
-        replaced by the literal ``<path>``; text with no such token is
-        returned unchanged.
-    """
-    return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
-
-
-def _retry_failure_reason(exc: BaseException) -> str:
-    """Name a failed refresh in the reader's terms, never as a bare class.
-
-    Args:
-        exc: The exception the failed page request raised.
-
-    Returns:
-        A short human-readable reason for the failure, with any filesystem
-        or database path redacted to ``<path>``.
-    """
-    # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
-    # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
-    if isinstance(exc, TimeoutError):
-        return _TIMEOUT_REASON
-    if isinstance(exc, (OSError, sqlite3.OperationalError)):
-        # ``strerror`` (when set) is the human message without the
-        # "[Errno N] " wrapper ``str()`` adds. Redact BEFORE truncating --
-        # cutting a path in half at the 80-char bound would still leak its
-        # unredacted prefix.
-        raw = getattr(exc, "strerror", None) or str(exc)
-        message = " ".join(_redact_paths(raw).split())[:80]
-        return message or type(exc).__name__
-    return type(exc).__name__
 
 
 def _load_failure(
@@ -239,9 +163,6 @@ class LibraryMediaBrowseController:
             stale_copy=self.stale_copy,
         )
 
-    def _sync(self, focus_identity: str | None) -> None:
-        self._sync_view()(focus_identity)
-
     def begin(self, scope: MediaBrowseScope) -> int:
         if not isinstance(scope, MediaBrowseScope):
             raise TypeError("scope must be a MediaBrowseScope.")
@@ -259,7 +180,7 @@ class LibraryMediaBrowseController:
         generation = self.begin(scope)
         if not self._request_is_active():
             return None
-        self._sync(focus_identity)
+        self._sync_view()(focus_identity)
         return self._run_worker(
             self._load(scope, generation=generation, focus_identity=focus_identity),
             exclusive=True,
@@ -346,12 +267,12 @@ class LibraryMediaBrowseController:
                             "the list changed while loading",
                             timed_out=False,
                         )
-                    self._sync(focus_identity)
+                    self._sync_view()(focus_identity)
                     return
                 clamped = True
                 fetched_scope = scope.with_page(result.last_page)
                 self.inflight_scope = fetched_scope
-                self._sync(focus_identity)
+                self._sync_view()(focus_identity)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -373,8 +294,8 @@ class LibraryMediaBrowseController:
                 # ``_MUTATION_COPY``/``_SHRINK_COPY`` still describe why the
                 # page went stale; this describes why recovering from it
                 # just failed. ``_apply`` clears it on the next success.
-                self.stale_copy = _RETRY_FAILED_PREFIX + _retry_failure_reason(exc)
-            self._sync(focus_identity)
+                self.stale_copy = build_media_retry_failure_copy(exc)
+            self._sync_view()(focus_identity)
 
     def _apply(
         self,
@@ -394,7 +315,7 @@ class LibraryMediaBrowseController:
         self.page_failure = None
         self.stale_copy = ""
         self.stale_reason = ""
-        self._sync(focus_identity)
+        self._sync_view()(focus_identity)
         return True
 
     def _failure_copy(self, failed_scope: MediaBrowseScope) -> tuple[str, str]:
@@ -408,15 +329,16 @@ class LibraryMediaBrowseController:
             the two can never describe different failures.
         """
         applied = self.applied_scope
+        copy = build_media_load_failure_copy(applied, failed_scope)
         if applied is None:
-            return _SERVICE_ERROR, _SERVICE_WHAT
+            return copy, _SERVICE_WHAT
         if failed_scope.same_except_page(applied):
             return (
-                f"Couldn't load page {failed_scope.page}.",
+                copy,
                 f"Couldn't load page {failed_scope.page}",
             )
         return (
-            "Filter wasn't applied; showing previous results.",
+            copy,
             "Filter wasn't applied",
         )
 
@@ -502,7 +424,7 @@ class LibraryMediaBrowseController:
         self.facet_failure = None
         if not self._request_is_active():
             return None
-        self._sync(None)
+        self._sync_view()(None)
         return self._run_worker(
             self._load_facets(generation=generation, fingerprint=fingerprint),
             exclusive=True,
@@ -535,7 +457,7 @@ class LibraryMediaBrowseController:
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
             self.facet_failure = _raised_failure(_FACET_WHAT, exc)
-            self._sync(None)
+            self._sync_view()(None)
             return
         if (
             generation != self._facet_generation
@@ -547,7 +469,7 @@ class LibraryMediaBrowseController:
         self.facet_loading = False
         self.facet_error_copy = ""
         self.facet_failure = None
-        self._sync(None)
+        self._sync_view()(None)
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:
         self._facet_generation += 1
