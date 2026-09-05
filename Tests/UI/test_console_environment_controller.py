@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot, EnvSourceAvailability, GitEnvState, PrEnvState, TasksEnvState,
 )
 from tldw_chatbook.UI.Console_Modules.environment import ConsoleEnvironmentController
+from tldw_chatbook.Workspaces.environment_status import BacklogTaskScanner
 
 
 class Fixture:
@@ -35,7 +36,7 @@ class Fixture:
         monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
         monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
         monkeypatch.setattr(
-            env_mod.BacklogTaskScanner, "scan",
+            BacklogTaskScanner, "scan",
             lambda scanner, ws, branch: TasksEnvState(
                 availability=EnvSourceAvailability.NOT_APPLICABLE),
         )
@@ -232,7 +233,7 @@ class DeferredFixture:
         monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
         monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
         monkeypatch.setattr(
-            env_mod.BacklogTaskScanner, "scan",
+            BacklogTaskScanner, "scan",
             lambda scanner, ws, branch: TasksEnvState(
                 availability=EnvSourceAvailability.NOT_APPLICABLE),
         )

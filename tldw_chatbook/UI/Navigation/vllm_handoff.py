@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 import unicodedata
 
 from ...Chat.provider_endpoint_contract import resolve_provider_endpoint
-from ..LLM_Management.vllm_setup import (
-    VllmConnectionTarget,
-    VllmReadinessState,
-)
+
+if TYPE_CHECKING:
+    from ..LLM_Management.vllm_setup import VllmConnectionTarget
 
 
 _WINDOWS_ROOT = re.compile(r"^[A-Za-z]:[/\\]")
@@ -55,6 +54,8 @@ def _validate_intent_fields(
 def _intent_fields_from_target(
     target: VllmConnectionTarget,
 ) -> tuple[str, str, int]:
+    from ..LLM_Management.vllm_setup import VllmConnectionTarget
+
     if type(target) is not VllmConnectionTarget:
         raise TypeError("vLLM handoff requires an exact connection target")
     if target.provider_key != "vllm":
@@ -106,6 +107,8 @@ def owner_has_current_intent(
     intent: VllmHandoffIntent,
 ) -> bool:
     """Return whether ``intent`` still names the owner's exact ready target."""
+
+    from ..LLM_Management.vllm_setup import VllmConnectionTarget, VllmReadinessState
 
     snapshot_method = getattr(owner, "snapshot", None)
     if not callable(snapshot_method):

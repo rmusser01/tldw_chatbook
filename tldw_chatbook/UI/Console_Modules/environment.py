@@ -62,26 +62,42 @@ tests could not exercise since jobs ran synchronously at dispatch time):
   branch's PR and checks as if they were the new branch's. (task-13
   addition C.)
 
-The gatherers (``gather_git_env``, ``gather_pr_env``, ``BacklogTaskScanner``)
-are imported as module attributes -- not called through an indirection
-layer -- so tests can monkeypatch them directly on this module.
+The gatherer wrappers retain module-level test seams while loading their
+I/O implementation only when the panel requests work (ADR-097).
 """
 from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot,
     EnvSourceAvailability,
+    GitEnvState,
+    PrEnvState,
 )
-from tldw_chatbook.Workspaces.environment_status import (
-    BacklogTaskScanner,
-    gather_git_env,
-    gather_pr_env,
-)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Workspaces.environment_status import BacklogTaskScanner
+
+
+def gather_git_env(root: Path, *, previous: GitEnvState | None = None) -> GitEnvState:
+    """Load the git gatherer when a local refresh is requested."""
+    from tldw_chatbook.Workspaces.environment_status import gather_git_env as gather
+
+    return gather(root, previous=previous)
+
+
+def gather_pr_env(
+    root: Path, branch: str | None, *, previous: PrEnvState | None = None
+) -> PrEnvState:
+    """Load the network gatherer when a PR refresh is requested."""
+    from tldw_chatbook.Workspaces.environment_status import gather_pr_env as gather
+
+    return gather(root, branch, previous=previous)
+
 
 _LOCAL_TIER = "local"
 _NET_TIER = "net"
@@ -114,7 +130,7 @@ class ConsoleEnvironmentController:
         self._now = now or (lambda: datetime.now(timezone.utc))
 
         self.snapshot = EnvironmentSnapshot()
-        self._scanner = BacklogTaskScanner()
+        self._scanner: BacklogTaskScanner | None = None
         # (root, branch, fetched_at) for the last DISPATCHED net fetch.
         self._net_fetched_at: tuple[str, str | None, datetime] | None = None
         self._failures: dict[str, int] = {_LOCAL_TIER: 0, _NET_TIER: 0}
@@ -201,12 +217,19 @@ class ConsoleEnvironmentController:
         return self._dispatch_tokens[tier]
 
     def _dispatch_local(self, scope_root: str) -> None:
+        # Construct once on the UI owner, before dispatching any worker. This
+        # preserves the scanner's cache across refreshes without boot I/O imports.
+        if self._scanner is None:
+            from tldw_chatbook.Workspaces.environment_status import BacklogTaskScanner
+
+            self._scanner = BacklogTaskScanner()
+        scanner = self._scanner
         previous_git = self.snapshot.git
         token = self._next_token(_LOCAL_TIER)
 
         def job() -> None:
             git_result = gather_git_env(Path(scope_root), previous=previous_git)
-            tasks_result = self._scanner.scan(Path(scope_root), git_result.branch)
+            tasks_result = scanner.scan(Path(scope_root), git_result.branch)
             self._marshal_to_ui(
                 self._land, scope_root, _LOCAL_TIER, (git_result, tasks_result), token
             )
