@@ -1,9 +1,10 @@
 """Opt-in: compiles and runs the real macOS tap helper. Never in CI.
 
-Run: pytest Tests/Audio/test_audiotap_helper_macos.py -m real_audio_device -p no:cacheprovider
+Run: TLDW_RUN_AUDIOTAP_HELPER_TEST=1 pytest Tests/Audio/test_audiotap_helper_macos.py -p no:cacheprovider
 """
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import sys
@@ -16,7 +17,10 @@ from tldw_chatbook.Audio import system_audio_tap as sat
 pytestmark = [pytest.mark.real_audio_device, pytest.mark.integration]
 
 
-@pytest.mark.skipif(sys.platform != "darwin" or shutil.which("swiftc") is None, reason="macOS + swiftc only")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("swiftc") is None or os.environ.get("TLDW_RUN_AUDIOTAP_HELPER_TEST") != "1",
+    reason="opt-in: set TLDW_RUN_AUDIOTAP_HELPER_TEST=1 on a Mac with the System Audio Recording grant",
+)
 def test_helper_compiles_and_emits_frames(tmp_path):
     assert sat.macos_version_ok(platform.mac_ver()[0])
     helper = sat.ensure_helper(tmp_path, executable=str(tmp_path / "nowhere"))
