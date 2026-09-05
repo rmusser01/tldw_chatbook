@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Written design for review; implementation not started.
+Status: Reviewed design; approved review amendments integrated. Implementation not started.
 
 Task: [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
@@ -73,6 +73,8 @@ Persist `llamacpp_snapshots.enabled = false` and
 durable settings. Launcher controls edit the same values through that owner,
 without introducing a second config writer or adding to legacy settings panes.
 Explain that reducing the count applies after the next completed save.
+Beside Save, show "Keeps the newest 10 across all models", substituting the
+effective keep count. Keep this text visible in the narrow layout too.
 
 Storage uses the effective profile directory returned by `config.get_user_data_dir()`
 under `llamacpp_snapshots/`. The normal panel shows "Stored on this device" and
@@ -140,6 +142,15 @@ launches remain valid ordinary launches but disable snapshot management with
 specific configuration guidance. This deliberately bounds the first client;
 it does not silently strip advanced arguments.
 
+The dedicated management HTTP client uses `trust_env=False`, no proxy, and
+`follow_redirects=False`; redirects are errors, never destinations to follow.
+Validate the endpoint as loopback and connect to a frozen numeric loopback
+address. If the launcher uses `localhost`, resolve it during admission, reject
+non-loopback results, and capture the selected loopback address in the descriptor
+instead of resolving again for each request. Apply this policy to readiness and
+all management calls; do not change proxy behavior for other provider clients.
+Credentials are sent only to this admitted endpoint.
+
 When snapshots are enabled, conflicting `--slot-save-path`, `--slots`, or
 `--no-slots` arguments cause actionable preflight failure. Resolve duplicate
 host/port arguments, relevant aliases, and environment defaults before freezing
@@ -152,8 +163,10 @@ Use a private directory unique to this launch as `--slot-save-path` and enable
 require the claimed child still alive and successful health, properties, and slot
 checks consistent with the descriptor. Refuse a pre-existing listener on the
 selected port; a failed child must not adopt that listener as its own server.
-Apply short bounded readiness probes off the UI event loop. Do not enable or
-probe by performing a save or restore automatically.
+Apply short bounded readiness probes off the UI event loop. Each readiness or
+slot-observation HTTP request has a five-second overall deadline. This is not
+the Save/Restore deadline (see section 7). Do not enable or probe by performing
+a save or restore automatically.
 
 ## 5. Snapshot storage and retention
 
@@ -192,11 +205,16 @@ toward retention and never become eligible for automatic deletion.
 ### Save transaction
 
 1. Reserve one service operation and unique private working target; record its
-   ownership before sending. Confirm the launch and selected slot are eligible.
+   ownership before sending. Confirm the launch and selected slot are eligible,
+   including complete required compatibility evidence. If evidence is missing,
+   reject Save before sending; do not create an unrestorable catalog entry.
 2. Submit once. On a valid successful response, verify returned slot/filename,
    token and byte counts, regular-file identity, and on-disk bytes. Zero-token
    saves are reported as empty and do not publish or prune.
-3. Flush the completed binary, compute its digest off-thread, and publish binary
+3. Revalidate the captured compatibility evidence and launch claim. If evidence
+   is no longer valid, do not publish or prune; report that the snapshot was not
+   retained and clean up its acknowledged working output. Otherwise flush the
+   completed binary, compute its SHA-256 digest off-thread, and publish binary
    and metadata under the catalog lock. Allocate publication order under that
    lock before writing metadata. The atomic metadata publication is the commit
    marker; only records with both validated members are restorable.
@@ -206,9 +224,10 @@ toward retention and never become eligible for automatic deletion.
    make the new record the oldest. Remove only verified owned binary/metadata
    pairs, recording partial cleanup failure separately from save success.
 
-A full disk, failed HTTP request, invalid response, hash/write failure, or
-interrupted publication preserves earlier completed snapshots and performs no
-retention. Metadata-first hiding/tombstoning during deletion prevents a removed
+A full disk, failed HTTP request, invalid response, hash/write failure, missing
+or invalidated compatibility evidence, or interrupted publication preserves
+earlier completed snapshots and performs no retention. Metadata-first hiding/
+tombstoning during deletion prevents a removed
 binary from remaining listed as restorable if the process crashes between steps.
 The store reconciles its own interrupted publication/deletion records on entry;
 it never promotes an unacknowledged binary merely because its size stopped changing.
@@ -217,6 +236,23 @@ Manual Delete is available independently of saving and affects one selected
 committed record. Reading/copying that record for restore coordinates with the
 catalog lock. A record deleted after a restore's private copy was made does not
 invalidate that already-admitted operation. Report the deletion accurately.
+
+### Working-file cleanup
+
+Clean up verified owned working files promptly after their last local handle
+closes and no server operation can still use them:
+
+- After a committed save, remove any remaining working copy, never the committed
+  binary. An atomic move may already have consumed the working file.
+- After acknowledged restore success or terminal failure, remove the staged copy.
+- After a pre-submission abort or preparation failure, remove partial staging.
+- After an acknowledged empty save or a post-response validation/publication
+  failure, remove uncommitted working output; preserve all prior snapshots.
+
+Cleanup failure is a separate warning, not a failed Save/Restore or permission
+to prune extra records. Report residual bytes separately and retry verified
+safe local cleanup on panel entry. Never use this cleanup path for an operation
+whose submission outcome is unknown; section 7 governs those files.
 
 ## 6. Compatibility and restore
 
@@ -232,7 +268,23 @@ disabled in v1; there is no force override. Unknown or dynamically changed
 adapter/projector configuration must not be classified as matching. The planner
 must enumerate supported state-affecting launch options from the chosen upstream
 baseline and explicitly reject unrepresentable configurations for restore.
-Save and inspection can still work when compatibility evidence is incomplete.
+Save is also disabled when required evidence for the current configuration is
+incomplete, with an actionable reason; catalog inspection and confirmed deletion
+remain available. Only a save carrying complete, revalidated compatibility
+evidence can be published and trigger retention. This does not require existing
+snapshots from other models to match the current server, and does not promise
+that future server builds will read today's snapshots.
+
+Before any Restore POST, verify the saved byte length and SHA-256 against the
+bytes staged for restore. Stream the checksum during the private copy to avoid
+another full source-file read; reject a short read/write, changed file identity,
+length mismatch, or checksum mismatch. Flush and close the staged file and verify
+its final regular-file identity and length before submission. On failure, make
+no Restore request, leave the destination slot untouched, preserve the source
+for inspection/deletion, and remove partial staging when safe. Recheck launch,
+compatibility, and destination eligibility after staging, which may take time.
+The checksum detects corruption; it is not authentication against another
+process able to rewrite both the private binary and its metadata.
 
 "Matching configuration" is a preflight result, not a portability or speed
 guarantee. The server remains the binary loader and final validator. Do not parse
@@ -249,18 +301,30 @@ server can still defer a request if a new generation starts after this check;
 the operation UI must allow a pending state and describe the cache at execution
 time, without promising an atomic idle-slot reservation.
 
+Save/Restore HTTP requests use explicit timeouts, not the HTTP client's defaults:
+five seconds for connection/pool acquisition, 30 seconds for writing the request,
+and ten minutes for response inactivity, with a ten-minute overall deadline
+starting at submission. File preparation has separate Copying/Verifying status
+and does not consume that HTTP deadline. While awaiting acknowledgement, show
+Saving/Restoring and elapsed time; a UI timer updates elapsed time without polling
+the server. Keep the UI navigable and do not invent a percentage for server work.
+These are named internal defaults, injectable in tests, not additional user
+settings. A slow response past five seconds is still pending, not a probe failure.
+
 On timeout/disconnect after submission, show **Outcome unknown** and do not retry,
 publish an unacknowledged save, prune, or claim cancellation. GET refresh can
 inform the display but token counts alone cannot prove a restore completed.
 Keep Save/Restore disabled for that generation until completion is established
 or its server is confirmed stopped. Catalog browsing and confirmed deletion
 remain available because submitted restores use separate working copies.
-Existing Stop remains an
-explicit way to end the generation; it does not claim to preserve its cache.
+Existing Stop remains an explicit way to end the generation; it does not claim
+to preserve its cache. A proven pre-submission connection/preparation failure
+does not enter Outcome unknown and releases the operation after safe cleanup.
 
-After confirmed stop, discard only that operation's verified owned working
-files. Following an app crash, old working areas whose server liveness cannot be
-established remain incomplete and excluded from retention; they never block new
+After confirmed stop and settlement of local file work, discard only that
+operation's verified owned working files. Following an app crash, old working
+areas whose server liveness cannot be established remain incomplete and excluded
+from retention; they never block new
 launches in distinct working areas. Show their disk usage separately and permit
 cleanup only after writer termination is established. Never infer termination
 from the age of a directory or a reused PID alone.
@@ -296,12 +360,25 @@ Required evidence includes:
    retention across models, count changes, invalid/foreign files, symlinks,
    two-process publication/deletion, full disk, interrupted writes, and failed
    cleanup. Verify that no earlier snapshot is pruned on unsuccessful save.
+   With keep count 1 and an existing usable snapshot, missing or invalidated
+   compatibility evidence must leave that snapshot intact without publication.
+   Repeated successful restores, terminal failures, preparation aborts, and
+   empty/rejected saves must not accumulate working copies; cleanup-failure
+   tests must expose residual bytes without touching retained snapshots.
 2. Recording HTTP tests for optional/missing slot fields, readiness/auth, args
    precedence, stale launch completion, busy races, timeout without retry, and
-   restore failure. Verify unsupported configurations have truthful controls.
+   restore failure. A truncated or same-length corrupted snapshot must produce
+   no Restore POST and leave the destination untouched. Verify that proxy
+   environment settings cannot reroute management traffic and redirects cannot
+   trigger a second request or forward credentials. Test IPv4/IPv6 loopback and
+   rejection of non-loopback hostname results. Use fake clocks to distinguish a
+   five-second probe deadline from a longer pending mutation and its ten-minute
+   deadline/unknown outcome. Verify unsupported configurations have truthful controls.
 3. Production-shaped Textual tests for keyboard Save/Restore/Delete, disabled
    reasons, preserved focus and selection, navigation away/back during operations,
-   and visible controls at 80x24 and a normal wide terminal. Use the real CSS stack.
+   elapsed-time updates, and visible controls at 80x24 and a normal wide terminal.
+   Verify the cross-model keep-count wording beside Save, including count changes.
+   Use the real CSS stack.
 4. Isolated opt-in real-server tests: text and image save, process restart, restore,
    then send the matching request without forcing `id_slot` and measure cached
    prefix reuse. A different image must not reuse its mismatched media prefix.
@@ -324,5 +401,12 @@ snapshot provenance. Additional concrete choices are opt-in activation, positive
 bounded retention, unknown-compatibility restore blocking, loopback HTTP management
 for v1, and per-launch working files for uncertain operations.
 
-These choices are written for review before implementation planning. No production
-code, snapshot files, or model executions were created as part of this design.
+The subsequent approved review amendments close five gaps: incomplete-evidence
+saves cannot publish or prune, restore staging verifies integrity before any
+server mutation, transport bypasses proxies and rejects redirects, completed
+working files have explicit cleanup rules, and operation deadlines are separate
+from short probes. The Save area also exposes the cross-model retention scope.
+These amendments are mirrored in ADR-119 and the task's acceptance criteria.
+
+No production code, snapshot files, or model executions were created as part of
+this design. Implementation planning is the next phase.
