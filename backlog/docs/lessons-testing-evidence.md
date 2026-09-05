@@ -11140,6 +11140,41 @@ budget collapse, not flake — reproduce by calling
 reserve before dismissing or "fixing" the test. Structural fix tracked in
 TASK-31212.
 
+Follow-up incident (TASK-31232, Canvas Task 7.4, 2026-09-04): an actual served
+Chatbook fixture used the unknown `canvas-live-model` and scripted an immediate
+`canvas_create`. The real first request instead disclosed `find_tools` /
+`load_tools`; the tool was refused before creation. Counting `stream_chat`
+native `tools=` entries as zero also misdiagnosed fenced-mode disclosure,
+which is rendered in the system prompt. Once the synthetic gateway honored
+discovery, the real Console finalized the assistant turn and rendered the
+first revision. Provider doubles must obey the effective disclosure protocol
+or declare a realistic fixture context window; diagnose with exact tool-name
+membership and bounded refusal codes, not raw prompt/source dumps or the
+native-tools keyword alone.
+
+The same fixture then appeared to hang on the second turn. Inspection showed
+its update states fell through to final assistant text without emitting a
+tool call; after correcting that, an unsupported `title` argument caused a
+real `invalid_arguments` refusal. Direct/progressive fixture-contract tests
+and the actual served Console create/update test then passed (3 tests). A
+provider call counter proves only a model request happened, not that tool
+dispatch or settlement started. Validate the synthetic response against the
+actual advertised schema and observe the next boundary before assigning a
+timeout to production locking or scheduling.
+
+## Native-realm security sentinels must not break the host being measured
+
+Incident (TASK-31232, Canvas Task 7.4, 2026-09-05): an enumerable property added
+to native `Object.prototype` by the browser security harness prevented the
+served terminal from connecting, before any generated Canvas script ran. The
+existing TLS flow without that probe still passed. A paired run changing only
+the sentinel to non-enumerable restored terminal and Canvas readiness. Define
+probe properties explicitly as non-enumerable, writable, and configurable:
+enumerability can perturb host iteration, while non-writable sentinels can mask
+the native overwrite the probe is meant to detect. Keep the sentinel's name
+identical to the attack target and diagnose pre-execution failures separately
+from containment failures.
+
 ## A painted Textual editor can still be outside its hit-testable layout
 
 Incident (TASK-31215, 2026-09-03): demand-mounted Personas editors initially

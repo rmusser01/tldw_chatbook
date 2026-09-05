@@ -565,6 +565,8 @@ quotas alone do not remove the scheduling requirement.
 - Modify: `Tests/Canvas/browser/test_canvas_zero_egress.py`
 - Create as needed: focused live-harness helpers/fixtures under `Tests/Canvas/browser/`
 - Modify as needed: `Tests/Chatbooks/test_chatbook_canvas_round_trip.py`
+- Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the reviewed Canvas schema 67 migration; preserve the genuine v64 upgrade fixture and compaction assertions)
+- Modify: `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Docs/Development/console-semantic-mutation-inventory.md` (synchronize exact census totals and owner documentation for the two already-classified Canvas routes; retain the bidirectional structural checks)
 - Modify: TASK-31232 with final evidence and notes
 - Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
 
