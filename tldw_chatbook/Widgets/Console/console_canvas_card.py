@@ -22,9 +22,7 @@ async def open_canvas_with_textual(gateway: Any, scope: Any, app: Any) -> Any:
 
     launch = await gateway.open_shell(scope, opener=app.open_url)
     if launch.opened is False:
-        app.notify(
-            f"Could not open a browser — {launch.browser_url}", severity="error"
-        )
+        app.notify(f"Could not open a browser — {launch.browser_url}", severity="error")
     return launch
 
 
@@ -85,7 +83,7 @@ class ConsoleCanvasOpenRecoveryCard(Vertical):
         padding: 0 1;
         margin: 0 0 1 0;
     }
-    ConsoleCanvasOpenRecoveryCard Input { width: 100%; height: 3; }
+    ConsoleCanvasOpenRecoveryCard Input.console-canvas-recovery-url { width: 100%; height: 3; }
     ConsoleCanvasOpenRecoveryCard .console-canvas-recovery-actions { height: 3; }
     """
 
@@ -94,10 +92,13 @@ class ConsoleCanvasOpenRecoveryCard(Vertical):
         self.browser_url = browser_url
 
     def compose(self) -> ComposeResult:
-        yield Static("Canvas could not open your system browser. Copy this URL or retry with a fresh link.")
+        yield Static(
+            "Canvas could not open your system browser. Copy this URL or retry with a fresh link."
+        )
         yield Input(
             self.browser_url,
             id="console-canvas-recovery-url",
+            classes="console-canvas-recovery-url",
             select_on_focus=True,
         )
         yield Horizontal(
@@ -147,7 +148,7 @@ class ConsoleCanvasCard(Vertical):
         align-vertical: middle;
     }
 
-    ConsoleCanvasCard .console-canvas-card-actions Button {
+    ConsoleCanvasCard .console-canvas-card-actions Button.console-canvas-card-action {
         min-width: 16;
         height: 3;
         margin-right: 1;
@@ -178,13 +179,18 @@ class ConsoleCanvasCard(Vertical):
         exact = Button(
             "Open revision",
             id=f"canvas-open-revision-{self._id_suffix}",
+            classes="console-canvas-card-action",
             disabled=not self.presentation.reopenable,
         )
         if not self.presentation.reopenable:
             exact.tooltip = "This exact Canvas revision is unavailable."
         yield Horizontal(
             exact,
-            Button("Follow latest", id=f"canvas-follow-latest-{self._id_suffix}"),
+            Button(
+                "Follow latest",
+                id=f"canvas-follow-latest-{self._id_suffix}",
+                classes="console-canvas-card-action",
+            ),
             classes="console-canvas-card-actions",
         )
 

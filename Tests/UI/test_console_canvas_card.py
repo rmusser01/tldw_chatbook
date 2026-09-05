@@ -2,6 +2,7 @@
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Widgets.Console.console_canvas_card import (
     ConsoleCanvasCard,
@@ -61,6 +62,34 @@ def test_canvas_card_messages_distinguish_exact_revision_from_following_head():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_canvas_control_styles_keep_geometry_with_targeted_subjects(size):
+    card = ConsoleCanvasCard(_card(), message_id="style", card_index=0)
+    recovery = ConsoleCanvasOpenRecoveryCard("http://127.0.0.1:43121/canvas/")
+
+    class _StyledCardApp(App[None]):
+        CSS = ConsoleCanvasCard.BUNDLED_CSS + ConsoleCanvasOpenRecoveryCard.BUNDLED_CSS
+
+        def compose(self) -> ComposeResult:
+            yield card
+            yield recovery
+
+    async with _StyledCardApp().run_test(size=size):
+        buttons = list(card.query(Button))
+        url = recovery.query_one("#console-canvas-recovery-url", Input)
+        assert len(buttons) == 2
+        for button in buttons:
+            assert button.styles.min_width.value == 16
+            assert button.styles.height.value == 3
+            assert button.styles.margin.right == 1
+        assert url.styles.width.value == 100
+        assert url.styles.height.value == 3
+        # Class-keyed subjects avoid billing every Button/Input in the app.
+        assert all(button.has_class("console-canvas-card-action") for button in buttons)
+        assert url.has_class("console-canvas-recovery-url")
+
+
+@pytest.mark.asyncio
 async def test_unavailable_canvas_card_disables_exact_reopen_but_keeps_head_route():
     widget = ConsoleCanvasCard(
         _card(reopenable=False), message_id="assistant-7", card_index=0
@@ -81,9 +110,7 @@ async def test_unavailable_canvas_card_disables_exact_reopen_but_keeps_head_rout
 
 @pytest.mark.asyncio
 async def test_browser_open_failure_card_keeps_copyable_url_and_retry_action():
-    card = ConsoleCanvasOpenRecoveryCard(
-        "http://127.0.0.1:43121/canvas/#boot=first"
-    )
+    card = ConsoleCanvasOpenRecoveryCard("http://127.0.0.1:43121/canvas/#boot=first")
     seen = []
 
     class _CardApp(App[None]):
