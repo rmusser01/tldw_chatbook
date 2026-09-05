@@ -653,9 +653,6 @@ def build_console_commands_controller(screen: Any) -> None:
         _console_composer_or_none=lambda *args, **kwargs: (
             screen._console_composer_or_none(*args, **kwargs)
         ),
-        _console_rewind_summary_disabled_reason=lambda *args, **kwargs: (
-            screen._console_rewind_summary_disabled_reason(*args, **kwargs)
-        ),
         _current_console_conversation_id=lambda *args, **kwargs: (
             screen._current_console_conversation_id(*args, **kwargs)
         ),
@@ -789,9 +786,6 @@ def build_console_settings_controllers(screen: Any) -> None:
         ),
         _console_settings_context_estimate_for_session=lambda *args, **kwargs: (
             screen._console_settings_context_estimate_for_session(*args, **kwargs)
-        ),
-        _console_settings_initial_draft=lambda *args, **kwargs: (
-            screen._console_settings_initial_draft(*args, **kwargs)
         ),
         _dispatch_console_settings_submission=lambda result: (
             screen._settings_durability._dispatch_console_settings_submission(result)

@@ -9,7 +9,10 @@ import inspect
 from typing import Optional
 from loguru import logger
 from textual.css.query import QueryError
-from ...Chat.console_context_compaction import EffectiveMemoryKind
+from ...Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    complete_durable_units,
+)
 from ...Chat.console_command_grammar import (
     FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
     FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
@@ -62,6 +65,7 @@ from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_command_suggestions import _COMMAND_DESCRIPTIONS
 
 if TYPE_CHECKING:
+    from ...Chat.console_chat_controller import ConsoleChatController
     from ...Widgets.Console.console_rewind_modal import (
         ConsoleRewindChoice,
         RewindPromptRow,
@@ -96,7 +100,6 @@ class ConsoleCommandsController:
         _console_command_skills: Callable[..., Any],
         _console_command_stream_video: Callable[..., Any],
         _console_composer_or_none: Callable[..., Any],
-        _console_rewind_summary_disabled_reason: Callable[..., Any],
         _current_console_conversation_id: Callable[..., Any],
         _default_session_settings: Callable[..., Any],
         _ensure_console_chat_controller: Callable[..., Any],
@@ -134,9 +137,6 @@ class ConsoleCommandsController:
         self._console_command_skills = _console_command_skills
         self._console_command_stream_video = _console_command_stream_video
         self._console_composer_or_none = _console_composer_or_none
-        self._console_rewind_summary_disabled_reason = (
-            _console_rewind_summary_disabled_reason
-        )
         self._current_console_conversation_id = _current_console_conversation_id
         self._default_session_settings = _default_session_settings
         self._ensure_console_chat_controller = _ensure_console_chat_controller
@@ -995,3 +995,32 @@ class ConsoleCommandsController:
         await self._append_native_console_system_message(
             format_permission_prompt_report(report)
         )
+
+    @staticmethod
+    def _console_rewind_summary_disabled_reason(
+        controller: ConsoleChatController,
+        session_id: str,
+    ) -> str:
+        """Return only synchronously known run/tip refusal guidance."""
+        if not controller.run_state_for(session_id).is_send_allowed:
+            return "A run is already running in this tab."
+        try:
+            path = controller.store.active_path_message_ids(session_id)
+            messages = {
+                message.id: message
+                for message in controller.store.messages_for_session(session_id)
+            }
+            tip = messages.get(path[-1]) if path else None
+        except KeyError:
+            tip = None
+        if tip is not None and (
+            tip.role is ConsoleMessageRole.USER
+            or (tip.role is ConsoleMessageRole.ASSISTANT and tip.status != "complete")
+        ):
+            return "Finish the current exchange before summarizing."
+        snapshots = controller._durable_context_snapshots(session_id)
+        if snapshots:
+            units = complete_durable_units(snapshots)
+            if not units or units[-1].boundary_message_id != snapshots[-1].message_id:
+                return "Finish the current exchange before summarizing."
+        return ""

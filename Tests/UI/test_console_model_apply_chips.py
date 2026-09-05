@@ -20,6 +20,9 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.UI.Console_Modules.settings_navigation import (
+    ConsoleSettingsNavigationController,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
@@ -113,7 +116,7 @@ async def test_popover_apply_refreshes_the_provider_chip():
             model="served-model",
             source="user",
         )
-        draft = chat_screen._console_settings_initial_draft(
+        draft = chat_screen._settings_navigation._console_settings_initial_draft(
             next_settings,
             store.session_context_policy_overrides(session_id),
             exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
@@ -282,7 +285,11 @@ async def test_model_apply_exact_origin_is_captured_before_catalog_await(
         _providers_models_for_console_settings=delayed_catalog,
         _provider_readiness_app_config=lambda: {},
         _console_context_control_state_for_session=context_state_for_session,
-        _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
+        _settings_navigation=SimpleNamespace(
+            _console_settings_initial_draft=(
+                ConsoleSettingsNavigationController._console_settings_initial_draft
+            ),
+        ),
         _settings_durability=SimpleNamespace(
             _console_default_readiness=lambda _provider, _model: (
                 ConsoleSettingsReadiness("Ready", "Ready.", True)

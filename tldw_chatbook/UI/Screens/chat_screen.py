@@ -147,9 +147,6 @@ from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
 )
-from ...Chat.console_context_compaction import (
-    complete_durable_units,
-)
 from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
 from ...Widgets.Console.console_canvas_card import (
     ConsoleCanvasCardOpenRequested,
@@ -162,9 +159,6 @@ from ...Chat.console_context_policy import (
 )
 from ...Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
-    ConsoleSettingsDraftState,
-    ConsoleSettingsFieldDraft,
-    ConsoleSettingsFieldProvenance,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
@@ -2404,32 +2398,6 @@ class ChatScreen(BaseAppScreen):
             self._retrieval._console_worldbook_detach_worker(), group="console-io"
         )
 
-    @staticmethod
-    def _console_settings_initial_draft(
-        settings: ConsoleSessionSettings,
-        context_policy: ConsoleContextPolicyOverrides,
-        *,
-        exposed_fields: frozenset[str],
-    ) -> ConsoleSettingsDraftState:
-        """Build one process-local transaction from an exact live snapshot."""
-
-        return ConsoleSettingsDraftState(
-            settings=settings,
-            context_policy_overrides=context_policy,
-            field_drafts=tuple(
-                ConsoleSettingsFieldDraft(
-                    name=name,
-                    effective_value=getattr(settings, name),
-                    profile_override=getattr(settings, name),
-                    provenance=ConsoleSettingsFieldProvenance.INHERITED,
-                    dirty=False,
-                )
-                for name in sorted(exposed_fields)
-            ),
-            model_drafts=(),
-            endpoint_draft=None,
-        )
-
     def _commit_console_settings_submission_live(
         self,
         submission: ConsoleSettingsSubmission,
@@ -3670,7 +3638,7 @@ class ChatScreen(BaseAppScreen):
             return
         context_policy = store.session_context_policy_overrides(session_id)
         session = store.switch_session(session_id)
-        initial_draft = self._console_settings_initial_draft(
+        initial_draft = self._settings_navigation._console_settings_initial_draft(
             settings,
             context_policy,
             exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
@@ -13355,35 +13323,6 @@ class ChatScreen(BaseAppScreen):
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
         return await self._commands._console_command_rewind(parse)
-
-    @staticmethod
-    def _console_rewind_summary_disabled_reason(
-        controller: ConsoleChatController,
-        session_id: str,
-    ) -> str:
-        """Return only synchronously known run/tip refusal guidance."""
-        if not controller.run_state_for(session_id).is_send_allowed:
-            return "A run is already running in this tab."
-        try:
-            path = controller.store.active_path_message_ids(session_id)
-            messages = {
-                message.id: message
-                for message in controller.store.messages_for_session(session_id)
-            }
-            tip = messages.get(path[-1]) if path else None
-        except KeyError:
-            tip = None
-        if tip is not None and (
-            tip.role is ConsoleMessageRole.USER
-            or (tip.role is ConsoleMessageRole.ASSISTANT and tip.status != "complete")
-        ):
-            return "Finish the current exchange before summarizing."
-        snapshots = controller._durable_context_snapshots(session_id)
-        if snapshots:
-            units = complete_durable_units(snapshots)
-            if not units or units[-1].boundary_message_id != snapshots[-1].message_id:
-                return "Finish the current exchange before summarizing."
-        return ""
 
     async def _apply_console_rewind_choice(
         self,

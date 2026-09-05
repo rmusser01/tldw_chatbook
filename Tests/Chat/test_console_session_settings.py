@@ -3085,7 +3085,6 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 _test_console_connection=lambda _request: None,
                 _test_console_generation=lambda _session_id, _request: None,
                 _active_console_settings_context_estimate=lambda: estimate,
-                _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
                 _console_settings_context_estimate_for_session=(
                     lambda *_args, **_kwargs: estimate
                 ),
