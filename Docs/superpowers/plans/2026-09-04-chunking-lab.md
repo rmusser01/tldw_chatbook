@@ -257,7 +257,9 @@ WHERE singleton = 1 AND epoch = ? AND generation = ?;
 - Create: `tldw_chatbook/Chunking/lab_recovery.py`.
 - Modify: `tldw_chatbook/DB/Chunking_Lab_DB.py`, `tldw_chatbook/Chunking/lab_autosave.py`.
 - Modify: `tldw_chatbook/Chunking/lab_state.py` (bounded content undo and pruning of unused active sample/result entries).
+- Modify: `tldw_chatbook/Chunking/lab_models.py` (`LabSession.content_revision: int = 0`, a persisted nonnegative content-mutation counter; older checkpoints default to zero). Optional per-session size-measurement metadata must remain non-serialized, rebuilt on untrusted ingress, and pruned to reachable payload identities.
 - Test: `Tests/Chunking/test_lab_recovery.py`, `Tests/DB/test_chunking_lab_db.py`, `Tests/Chunking/test_lab_state.py`.
+- Docs: append the evidenced edit/Undo/coalescing trap to `backlog/docs/lessons-testing-evidence.md`.
 
 **Interfaces**
 
@@ -265,8 +267,10 @@ WHERE singleton = 1 AND epoch = ? AND generation = ?;
 - Produces `export_recovery(session: LabSession) -> bytes`, `parse_recovery(payload: bytes) -> LabSession`, `RecoveryImportError`, and store `replace(imported: LabSession, displaced: LabSession, *, expected: CheckpointToken) -> tuple[LabSession, CheckpointToken]` plus `undo_restore(*, expected: CheckpointToken) -> tuple[LabSession, CheckpointToken]`.
 - Expose these transactions through `AutosaveWriter.async replace(imported: LabSession, displaced: LabSession) -> tuple[LabSession, CheckpointToken]` and `async undo_restore() -> tuple[LabSession, CheckpointToken]`; callers never write the store concurrently. Drain/invalidate queued old writes before replacement and adopt the new token only on success.
 - Replacement normalizes the target profile to the current store, assigns a new epoch, and preserves displaced **in-memory** content in the same transaction. Quiescing workers and old writer requests is the task-5 coordinator's prerequisite, not a UI-only convention.
+- Before a new authority epoch is assigned on replacement/Undo restore, materialize unfinished members as Interrupted under their captured epoch, then retire the active manifest (`batch=None`). Keep each existing result request's original epoch/batch ID and full snapshot unchanged. The displaced-original undo checkpoint remains exact; any rebased fallback copy uses the same terminalize-then-retire transition.
 - Envelope version 1 is UTF-8 JSON, max 256 MiB total; each raw draft max 2 MiB, each sample max 2 MiB, each result max 32 MiB, at most two candidates, depth 64, at most 16 referenced sample/result blobs combined. A bounded whole current checkpoint is max 8 MiB excluding blobs. Reject over-limit edits/imports explicitly without losing the previous value; no truncation. Apply these limits to exportable active state as well as imports; undo/previous checkpoints are not exported.
 - Keep one prior content-action undo in v1 (separate from one-level Undo restore); native editor undo is not reimplemented. Replace, rather than append indefinitely to, the application undo tuple on the next content mutation; view changes preserve it. Prune sample/result map entries unreachable from current/previous candidate results, active sample/batch, and available undo. Repeated editing/reruns must not retain an unbounded history or exhaust the active 16-blob allowance solely because unused results were left in a map. Preserve all still-inspectable and undo-needed content.
+- Increment `content_revision` on content transitions (including Undo, sample changes and run-state changes), but preserve it for view-only updates. Persist/export it so edit-then-undo before a coalesced save still expires Undo restore even when final content bytes equal the restored document. Overall revision continues to advance for all recovery-relevant changes.
 
 - [ ] Write the failing pure round-trip test, plus malformed/newer/digest-mismatch/oversized inputs and failed atomic replacement.
 

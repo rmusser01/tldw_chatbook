@@ -1,11 +1,11 @@
 ---
 id: TASK-31424
 title: Chunking Lab - recovery export restore and undo
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:12'
-updated_date: '2026-09-05 00:55'
+updated_date: '2026-09-05 01:31'
 labels:
   - chunking
   - chunking-lab
@@ -41,6 +41,7 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 - Added `lab_recovery.py` for versioned UTF-8 transfer, digest and structural validation, active reachability, and matching byte/depth/count admission. Raw authoring text remains opaque; captured recipe hashes use their original authored/effective documents and runtime identity. No source-path reads or executable preflight occur on recovery.
 - Added transactional replace/Undo restore to the existing private store and serialized autosave owner. A single commit preserves exact displaced in-memory content, a rebased previous fallback, and the new session. Failed publication rolls back new blobs/checkpoints and retains old retry authority. View-only saves retain the displaced checkpoint; content saves and Clear release it.
 - Replaced growing application undo history with one prior content action and pruned obsolete sample/result map entries. Per-session nonserialized size measurements reuse retained immutable payloads and drop dead cache entries. Persisted `content_revision` (default 0 for older checkpoints) expires restore undo even when an edit and Undo coalesce back to identical content.
@@ -48,3 +49,4 @@ ADR required: yes. ADR path: backlog/decisions/118-chunking-lab-local-execution-
 - ADR required: yes; direct implementation of accepted [ADR-118](../decisions/118-chunking-lab-local-execution-and-recovery.md), without a new decision or SQLite schema migration. Source files: recovery, state, models, autosave, and Chunking Lab DB; focused tests cover those interfaces.
 - Verification: 144 targeted recovery/state/DB/autosave/execution tests passed, with only existing Requests and vendored `datetime.utcnow` warnings. Ruff check and formatter check passed on all nine scoped Python files; `git diff --check` passed. Independent review remains pending, so status remains In Progress.
 - Review correction: centralized unfinished-member interruption in one recovery helper used by import, authority rebase, and DB load. A partial A/B regression covers all three boundaries, preserving completed output, captured provenance, and caller-specific manifest/authority semantics. The focused recovery/DB/autosave/state selection passed 117 tests with the existing Requests warning; independent re-review remains pending.
+<!-- SECTION:NOTES:END -->
