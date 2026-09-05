@@ -148,6 +148,6 @@ and no independently owned egress-server receipt. Runtime asset loading after
 that boundary is forbidden.
 
 Firefox and WebKit behavior is tested when their Playwright engines are already
-installed. Chromium is the mandatory release gate. Canvas remains unavailable
-to product tools and UI until the independent security review of this boundary
-is accepted.
+installed. Chromium is the mandatory release gate. The shipped Canvas V1
+product tools and UI use this reviewed boundary; there is no less-restricted
+fallback when the required runtime or containment checks are unavailable.

@@ -21,9 +21,11 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import AgentService, FirstRequestSchemaPlan
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+    CANVAS_RUNTIME_GUIDANCE,
     CANVAS_TOOL_NAMES,
     MAX_CANVAS_TOOL_RESULT_BYTES,
     CanvasToolProvider,
+    build_canvas_runtime_guidance,
 )
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
@@ -174,6 +176,36 @@ def _provider():
 def _invoke(provider: CanvasToolProvider, name: str, args: dict, *, call_id="call-1"):
     with use_run_id(SCOPE.run_id), use_tool_call_id(call_id):
         return provider.invoke(f"canvas:{name}", args)
+
+
+def test_runtime_guidance_names_only_disclosed_tools_and_keeps_mutation_apis() -> None:
+    provider, _coordinator, _authority = _provider()
+    schemas = {
+        name: provider.load_schema(f"canvas:{name}") for name in CANVAS_TOOL_NAMES
+    }
+
+    assert build_canvas_runtime_guidance(schemas.values()) == CANVAS_RUNTIME_GUIDANCE
+    create_only = build_canvas_runtime_guidance((schemas["canvas_create"],))
+    assert "canvas_create" in create_only
+    assert "V1 supports inline HTML/CSS and classic scripts" in create_only
+    assert "canvas_list" not in create_only
+    assert "canvas_read" not in create_only
+    assert "canvas_update" not in create_only
+    assert build_canvas_runtime_guidance(()) == ""
+
+
+def test_catalog_descriptions_explain_canvas_selection_and_replacement_contract() -> (
+    None
+):
+    provider, _coordinator, _authority = _provider()
+    descriptions = {
+        entry.name: entry.one_line_description for entry in provider.list_catalog()
+    }
+
+    assert "visual or interactive" in descriptions["canvas_create"]
+    assert "revision_id" in descriptions["canvas_read"]
+    assert "complete replacement" in descriptions["canvas_update"]
+    assert "conflict" in descriptions["canvas_update"]
 
 
 def test_lifecycle_coordinator_requires_the_exact_registration_authority() -> None:

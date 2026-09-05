@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import weakref
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Protocol, runtime_checkable
@@ -43,10 +44,44 @@ from .agent_models import (
 from .run_context import current_run_id, current_tool_call_id
 
 CANVAS_SOURCE = "canvas"
-CANVAS_TOOL_NAMES = frozenset(
-    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
+_CANVAS_TOOL_ORDER = (
+    "canvas_list",
+    "canvas_read",
+    "canvas_create",
+    "canvas_update",
 )
+CANVAS_TOOL_NAMES = frozenset(_CANVAS_TOOL_ORDER)
 CANVAS_MUTATION_TOOL_NAMES = frozenset({"canvas_create", "canvas_update"})
+_CANVAS_USE_GUIDANCE = (
+    "Canvas V1: use Canvas when a visual, interactive, or iteratively revised "
+    "single-page artifact materially helps."
+)
+_CANVAS_TOOL_GUIDANCE = {
+    "canvas_list": "Call canvas_list for reachable Canvases.",
+    "canvas_read": "Call canvas_read for complete selected HTML and revision_id.",
+    "canvas_create": (
+        "Call canvas_create with a title and one complete self-contained HTML document."
+    ),
+    "canvas_update": (
+        "Call canvas_update with canvas_id, the revision_id returned by a current "
+        "read as expected_parent_revision_id, and one complete replacement "
+        "document; reread after a conflict."
+    ),
+}
+_CANVAS_AUTHORING_GUIDANCE = (
+    "V1 supports inline HTML/CSS and classic scripts using the bounded DOM, "
+    "forms, events, styles, passive SVG, timers, JSON, console, "
+    "canvas.submit(JSON), and canvas.download(JSON) facades. It has no browser "
+    "network, storage, modules, filesystem, Chatbook API, or parent-DOM access. "
+    "Submit and download only request a later user-confirmed trusted host action."
+)
+CANVAS_RUNTIME_GUIDANCE = " ".join(
+    (
+        _CANVAS_USE_GUIDANCE,
+        *(_CANVAS_TOOL_GUIDANCE[name] for name in _CANVAS_TOOL_ORDER),
+        _CANVAS_AUTHORING_GUIDANCE,
+    )
+)
 _SAFE_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SAFE_ORIGIN_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
 _SAFE_LOCATION = re.compile(
@@ -124,7 +159,10 @@ _SCHEMAS: dict[str, ToolSchema] = {
     "canvas_list": ToolSchema(
         id="canvas:canvas_list",
         name="canvas_list",
-        description="List Canvases reachable on this conversation branch.",
+        description=(
+            "List named Canvases and selected revision IDs reachable on this "
+            "conversation branch."
+        ),
         parameters={
             "type": "object",
             "properties": {},
@@ -135,7 +173,10 @@ _SCHEMAS: dict[str, ToolSchema] = {
     "canvas_read": ToolSchema(
         id="canvas:canvas_read",
         name="canvas_read",
-        description="Read the complete selected reachable Canvas revision.",
+        description=(
+            "Read a reachable Canvas's complete selected HTML and revision_id "
+            "before updating it."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -152,7 +193,10 @@ _SCHEMAS: dict[str, ToolSchema] = {
     "canvas_create": ToolSchema(
         id="canvas:canvas_create",
         name="canvas_create",
-        description="Stage a new Canvas from one complete HTML document.",
+        description=(
+            "Create a named visual or interactive Canvas from one complete, "
+            "self-contained HTML document."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -174,7 +218,8 @@ _SCHEMAS: dict[str, ToolSchema] = {
         id="canvas:canvas_update",
         name="canvas_update",
         description=(
-            "Stage a full replacement document from the exact expected Canvas revision."
+            "Stage one complete replacement document from the exact expected "
+            "revision; a stale parent returns a conflict and must be reread."
         ),
         parameters={
             "type": "object",
@@ -218,6 +263,29 @@ class _ArgumentError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def build_canvas_runtime_guidance(schemas: Iterable[ToolSchema]) -> str:
+    """Describe only disclosed Canvas tools, adding V1 APIs for mutations."""
+
+    try:
+        names = {schema.name for schema in schemas}
+    except (AttributeError, TypeError):
+        return ""
+    disclosed = CANVAS_TOOL_NAMES & names
+    if not disclosed:
+        return ""
+    sections = [
+        _CANVAS_USE_GUIDANCE,
+        *(
+            _CANVAS_TOOL_GUIDANCE[name]
+            for name in _CANVAS_TOOL_ORDER
+            if name in disclosed
+        ),
+    ]
+    if disclosed & CANVAS_MUTATION_TOOL_NAMES:
+        sections.append(_CANVAS_AUTHORING_GUIDANCE)
+    return " ".join(sections)
 
 
 class CanvasToolProvider:
@@ -1006,9 +1074,11 @@ def _json(payload: object) -> str:
 __all__ = [
     "CANVAS_MUTATION_APPROVAL_CLASSIFICATION",
     "CANVAS_MUTATION_TOOL_NAMES",
+    "CANVAS_RUNTIME_GUIDANCE",
     "CANVAS_TOOL_NAMES",
     "CanvasApprovalClassification",
     "CanvasToolCoordinator",
     "CanvasToolProvider",
     "CanvasToolRegistrationAuthority",
+    "build_canvas_runtime_guidance",
 ]

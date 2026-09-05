@@ -812,8 +812,8 @@ and runtime-asset integrity metadata is regenerated and checked after changes.
 Canvas-bearing exports use Chatbook archive format 3.0. Archives without
 Canvas data may remain 2.0 so older Chatbook releases can consume them.
 
-Each conversation package includes inert Canvas manifests plus one `.html`
-file per revision. Manifests record stable IDs, parent graph, revisioned title,
+Each Canvas-bearing Chatbook archive includes inert Canvas manifests plus one
+`.html.txt` file per revision. Manifests record stable IDs, parent graph, revisioned title,
 origin message/turn, actor, sequence, digest, byte size, runtime profile, and
 deletion metadata. The root manifest identifies the Canvas extension/version
 and aggregate uncompressed size.
@@ -824,9 +824,10 @@ actual uncompressed size, duplicate identity, digest, UTF-8, graph cycle,
 foreign parent, and origin-message validation before any database mutation.
 It never renders or parses with a browser engine.
 
-- **Restore same identity:** identical digest is idempotent; a conflicting
-  identity/digest requires an explicit conflict outcome and cannot overwrite
-  silently.
+- **Restore same identity:** the importer revalidates the complete existing
+  message/Canvas graph and source under the write lock. Exact identity,
+  metadata, lineage, ordering, and source equality are idempotent; any conflict
+  fails atomically without overwrite. A matching digest alone is insufficient.
 - **Import as new:** remap conversation, message, Canvas, revision, parent,
   origin, and reopen-hint IDs together, preserving both message and Canvas
   graphs.

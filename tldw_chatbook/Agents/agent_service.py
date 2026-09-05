@@ -890,6 +890,11 @@ def _first_request_plan_fits(
             system_content = f"{system_content}\n\n{protocol}"
     if plan.log_active:
         system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+    from .canvas_tool_provider import build_canvas_runtime_guidance
+
+    canvas_guidance = build_canvas_runtime_guidance(schemas)
+    if canvas_guidance:
+        system_content = f"{system_content}\n\n{canvas_guidance}"
     system_content = _append_workspace_context_note(
         system_content, config.workspace_context_note
     )
@@ -2247,6 +2252,11 @@ class AgentService:
                 system_content = f"{system_content}\n\n{protocol_text}"
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+        from .canvas_tool_provider import build_canvas_runtime_guidance
+
+        canvas_guidance = build_canvas_runtime_guidance(schemas)
+        if canvas_guidance:
+            system_content = f"{system_content}\n\n{canvas_guidance}"
         from tldw_chatbook.Notes.agent_lessons import (
             build_agent_lessons_runtime_guidance,
         )
@@ -2639,6 +2649,11 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            from .canvas_tool_provider import build_canvas_runtime_guidance
+
+            canvas_guidance = build_canvas_runtime_guidance(schemas)
+            if canvas_guidance:
+                system_content = f"{system_content}\n\n{canvas_guidance}"
             from tldw_chatbook.Notes.agent_lessons import (
                 build_agent_lessons_runtime_guidance,
             )

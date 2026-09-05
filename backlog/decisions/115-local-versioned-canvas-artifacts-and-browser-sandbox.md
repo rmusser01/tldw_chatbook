@@ -614,6 +614,9 @@ authoritative dashboards.
 ## Links
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md)
+- [Canvas user workflow and recovery](../../Docs/User_Guide/console/canvas.md)
+- [Canvas V1 runtime compatibility and security boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md)
+- [Served-mode authentication and operations](../../tldw_chatbook/Web_Server/README.md)
 - [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
 - [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
 - [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)

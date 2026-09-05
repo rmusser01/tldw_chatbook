@@ -658,6 +658,19 @@ FIND_LOAD_DISCOVERY_HINT = (
     "use find_tools to search the catalog and load_tools to load their "
     "schemas before calling them."
 )
+CANVAS_DISCOVERY_HINT = (
+    "Canvas tools are available for visual, interactive, or iteratively revised "
+    "single-page artifacts; use find_tools, then load_tools before calling them."
+)
+
+
+def _append_canvas_discovery_hint(prompt: str, allowed_tools: Collection[str]) -> str:
+    """Advertise Canvas discovery only when this run offers all V1 tools."""
+    from tldw_chatbook.Agents.canvas_tool_provider import CANVAS_TOOL_NAMES
+
+    if not CANVAS_TOOL_NAMES.issubset(allowed_tools):
+        return prompt
+    return f"{prompt}\n\n{CANVAS_DISCOVERY_HINT}"
 
 
 def _combine_state_scopes(scopes: list) -> "Any | None":
@@ -4048,6 +4061,7 @@ def build_console_first_request_plan(
         session_system_prompt,
         offer_find_load=True,
     )
+    discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
     workspace_note = workspace_context_note(workspace_id)
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
@@ -4134,6 +4148,13 @@ def build_console_first_request_plan(
                 budget_system_prompt = (
                     f"{budget_system_prompt}\n\n{RUN_LOG_PROMPT_SECTION}"
                 )
+            from tldw_chatbook.Agents.canvas_tool_provider import (
+                build_canvas_runtime_guidance,
+            )
+
+            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas)
+            if canvas_guidance:
+                budget_system_prompt = f"{budget_system_prompt}\n\n{canvas_guidance}"
             if workspace_note:
                 budget_system_prompt = f"{budget_system_prompt}\n\n{workspace_note}"
             required_tokens = _count_model_messages(

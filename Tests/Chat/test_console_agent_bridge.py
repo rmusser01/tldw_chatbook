@@ -23,11 +23,13 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     CHANGE_KIND_SUBAGENT_POST_TURN,
     CHANGE_KIND_TURN,
     CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
+    CANVAS_DISCOVERY_HINT,
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     SubAgentSummary,
     _StreamingModelAdapter,
+    _append_canvas_discovery_hint,
     _append_to_last_user_message,
     _openai_usage_from_provider_call,
     compose_agent_system_prompt,
@@ -136,7 +138,10 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
-from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_TOOL_NAMES,
+    CanvasToolProvider,
+)
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
@@ -1129,6 +1134,18 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
     blank = compose_agent_system_prompt("", offer_find_load=True)
     assert blank.startswith(CONSOLE_AGENT_OPERATING_PROMPT)
     assert blank.endswith(FIND_LOAD_DISCOVERY_HINT)
+
+
+def test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list():
+    base = "system"
+
+    assert _append_canvas_discovery_hint(base, ()) == base
+    assert (
+        _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES - {"canvas_read"}) == base
+    )
+    complete = _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES)
+    assert complete.startswith(base)
+    assert complete.endswith(CANVAS_DISCOVERY_HINT)
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
