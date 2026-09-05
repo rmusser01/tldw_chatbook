@@ -215,10 +215,17 @@ fi
         if not source.exists():
             print("audiotap source missing; skipping helper")
             return
-        result = subprocess.run(
-            ["swiftc", "-O", "-o", str(target), str(source), "-framework", "CoreAudio", "-framework", "AVFoundation"],
-            cwd=self.project_root,
-        )
+        try:
+            result = subprocess.run(
+                ["swiftc", "-O", "-o", str(target), str(source), "-framework", "CoreAudio", "-framework", "AVFoundation"],
+                cwd=self.project_root,
+            )
+        except FileNotFoundError:
+            # No Swift toolchain on this build host. The runtime already
+            # treats a missing compiler as "no native route", so the bundle
+            # must still build rather than aborting the whole DMG.
+            print("swiftc not found; meetings fall back to a virtual device")
+            return
         print("audiotap helper built" if result.returncode == 0 else "audiotap helper build FAILED (meetings fall back to a virtual device)")
 
     def create_info_plist_additions(self):
