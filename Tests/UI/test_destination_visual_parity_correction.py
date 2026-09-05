@@ -2890,7 +2890,8 @@ async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle
     Textual actually computed, not a bare class-presence check.
     """
     app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    # Keep the real paged Reader service: navigation commits only after its
+    # first page mounts, which the legacy list-only fake cannot supply.
     service = app.watchlist_bundle_service
     watchlist = service.create("Morning AI Brief")
 
@@ -2921,13 +2922,12 @@ async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle
         )
         assert all_button.styles.color != watchlist_button.styles.color
 
-        # Click the watchlist node: the highlight must MOVE, not merely
-        # duplicate onto a second node. `active_scope` is `recompose=True`
-        # on `WatchlistTree` itself, so the click swaps in brand new button
-        # instances -- the `all_button`/`watchlist_button` references above
-        # are now stale and must be re-queried, not reused.
-        await pilot.click(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        # The real click requests a paged Reader scope change. Wait for that
+        # commit, then re-query whichever buttons the current rail owns.
+        assert await pilot.click(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        await host.workers.wait_for_complete()
         await pilot.pause()
+        assert screen.tree_scope == TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
 
         all_button = screen.query_one("#wl-tree-node-all", Button)
         watchlist_button = screen.query_one(
@@ -2954,7 +2954,7 @@ def _row_reverse_video(strips, region, needle: str) -> bool | None:
     for y in range(region.y, region.y + region.height):
         if not (0 <= y < len(strips)):
             continue
-        row_segments = strips[y]
+        row_segments = strips[y].crop(region.x, region.right)
         row_text = "".join(segment.text for segment in row_segments)
         if needle in row_text:
             return any(
@@ -2962,6 +2962,23 @@ def _row_reverse_video(strips, region, needle: str) -> bool | None:
                 for segment in row_segments
             )
     return None
+
+
+@pytest.mark.parametrize("inside_style, expected", [("reverse", True), ("", False)])
+def test_row_reverse_video_ignores_duplicate_label_outside_region(
+    inside_style, expected
+):
+    from rich.segment import Segment
+    from rich.style import Style
+    from textual.geometry import Region as ScreenRegion
+    from textual.strip import Strip
+
+    strips = [
+        Strip([Segment("     item", Style(reverse=not expected))]),
+        Strip([Segment("item ", Style.parse(inside_style)), Segment("item")]),
+    ]
+    assert _row_reverse_video(strips, ScreenRegion(0, 0, 5, 2), "item") is expected
+    assert _row_reverse_video(strips[:1], ScreenRegion(0, 0, 5, 1), "item") is None
 
 
 @pytest.mark.asyncio
@@ -3313,6 +3330,10 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
         await pilot.pause(0.2)
 
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert not pane.query("#sources-filter-editor")
+        assert await pilot.click("#sources-filter-toggle")
+        await _wait_for_selector(pane, pilot, "#sources-type-select")
+        await pilot.pause()
         for selector in (
             "#sources-search-input",
             "#sources-type-select",
@@ -3347,14 +3368,15 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
         # one-row strip still reports a region while painting only its
         # border. Every label has to actually reach the screen.
         strips = screen._compositor.render_strips()
-        strip_row = pane.query_one("#sources-search-input").region.y
-        painted = "".join(seg.text for seg in strips[strip_row])
-        for label in (
-            "Search sources...",  # the search Input's placeholder
-            "All statuses",  # the status Select's current value
-            "New source",  # TASK-2303: the create verb, in its shipped casing
-            "Filters",
+        # Filters are disclosed on their own row now, not in the search row.
+        for selector, label in (
+            ("#sources-search-input", "Search sources..."),
+            ("#sources-status-filter", "All statuses"),
+            ("#sources-new-button", "New source"),
+            ("#sources-filter-toggle", "Filters"),
         ):
+            strip_row = pane.query_one(selector).region.y
+            painted = "".join(seg.text for seg in strips[strip_row])
             assert label in painted, (
                 f"{label!r} never reaches the screen; the Sources toolbar is "
                 f"still unusable at {size}. Row {strip_row} paints: "
