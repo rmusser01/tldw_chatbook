@@ -88,14 +88,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_limits.py`
 - Modify: `pyproject.toml`
 
-- [ ] Add failing tests for UTF-8 byte counting, nested JSON depth, decoded `data:` asset sizes, aggregate asset sizes, DOM node counts, CSS rule counts, script bytes, and exact boundary acceptance/rejection.
-- [ ] Define immutable, slotted dataclasses for `CanvasCompatibilityIssue`, `RenderAsset`, `RenderNode`, `CanvasRenderPlan`, `CanvasBridgeRequest`, and `CanvasRuntimeFailure`. Use opaque strings for wire IDs and reject unknown fields while decoding browser messages.
-- [ ] Define `RuntimeProfile = Literal["canvas-v1"]` and a frozen `CanvasLimits` with these starting ceilings: 512 KiB HTML, 1 MiB per asset, 4 MiB aggregate assets, 5,000 nodes, 2,000 CSS rules, 256 KiB scripts, 32 MiB runtime memory, 512 KiB stack, 250 ms startup, 50 ms per event, 1,000 patches per event, 16 KiB submit payload, JSON depth 16, and 10 MiB download payload.
-- [ ] Centralize byte/depth/count validation in pure functions so compiler, tool provider, gateway, and archive paths cannot drift.
-- [ ] Add `html5lib>=1.1,<2` and `tinycss2>=1.4,<2` as core dependencies; Canvas is a default terminal feature, so its parser cannot live behind an unrelated extra.
-- [ ] Run `pytest Tests/Canvas/test_limits.py -q` and `python -m build --wheel` followed by wheel-content inspection for the new package.
-- [ ] Self-review malformed Unicode, integer overflow, duplicate identifiers, and all off-by-one boundaries.
-- [ ] Commit: `feat(canvas): define runtime contract and hard limits`
+- [x] Add failing tests for UTF-8 byte counting, nested JSON depth, decoded `data:` asset sizes, aggregate asset sizes, DOM node counts, CSS rule counts, script bytes, and exact boundary acceptance/rejection.
+- [x] Define immutable, slotted dataclasses for `CanvasCompatibilityIssue`, `RenderAsset`, `RenderNode`, `CanvasRenderPlan`, `CanvasBridgeRequest`, and `CanvasRuntimeFailure`. Use opaque strings for wire IDs and reject unknown fields while decoding browser messages.
+- [x] Define `RuntimeProfile = Literal["canvas-v1"]` and a frozen `CanvasLimits` with these starting ceilings: 512 KiB HTML, 1 MiB per asset, 4 MiB aggregate assets, 5,000 nodes, 2,000 CSS rules, 256 KiB scripts, 32 MiB runtime memory, 512 KiB stack, 250 ms startup, 50 ms per event, 1,000 patches per event, 16 KiB submit payload, JSON depth 16, and 10 MiB download payload.
+- [x] Centralize byte/depth/count validation in pure functions so compiler, tool provider, gateway, and archive paths cannot drift.
+- [x] Add `html5lib>=1.1,<2` and `tinycss2>=1.4,<2` as core dependencies; Canvas is a default terminal feature, so its parser cannot live behind an unrelated extra.
+- [x] Run `pytest Tests/Canvas/test_limits.py -q` and `python -m build --wheel` followed by wheel-content inspection for the new package.
+- [x] Self-review malformed Unicode, integer overflow, duplicate identifiers, and all off-by-one boundaries.
+- [x] Commit: `feat(canvas): define runtime contract and hard limits`
 
 ### Task 1.2: Compile HTML/CSS into a closed render plan
 
@@ -105,15 +105,15 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_compiler.py`
 - Create: `Tests/Canvas/fixtures/compiler/`
 
-- [ ] Write failing unit and Hypothesis tests for well-formed and malformed complete documents, inline styles, inline classic scripts, SVG, supported form controls, entity decoding, duplicate IDs, capped `data:` images, and stable SHA-256 output.
-- [ ] Write rejection tests for external URLs in every parsed URL-bearing HTML/SVG attribute, `srcset`, meta refresh, forms, CSS `url()`, `@import`, font sources, namespaces, event-handler attributes, module scripts, base URLs, navigation, embedded documents, and unsupported MIME types. Include whitespace, case, entity, escape, and computed-token variants.
-- [ ] Parse HTML with html5lib and CSS with tinycss2; do not use regex as the security parser. Normalize into immutable `RenderNode` and `RenderAsset` records with compiler-assigned IDs.
-- [ ] Emit only an allowlisted element/property/attribute/event vocabulary. Convert `data:` assets to separate render-plan entries and rewrite references to opaque asset IDs.
-- [ ] Preserve script source only as worker input. Strip all native event-handler attributes and represent script/event bindings through the virtual runtime protocol.
-- [ ] Return bounded, position-aware compatibility issues and fail the whole compile when any security-relevant construct is unsupported. Do not silently weaken or partially execute a document.
-- [ ] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_limits.py -q`.
-- [ ] Self-review every browser fetch/navigation surface against MDN/HTML and CSS parser semantics, then add a regression fixture for each discovered gap.
-- [ ] Commit: `feat(canvas): compile documents into closed render plans`
+- [x] Write failing unit and Hypothesis tests for well-formed and malformed complete documents, inline styles, inline classic scripts, SVG, supported form controls, entity decoding, duplicate IDs, capped `data:` images, and stable SHA-256 output.
+- [x] Write rejection tests for external URLs in every parsed URL-bearing HTML/SVG attribute, `srcset`, meta refresh, forms, CSS `url()`, `@import`, font sources, namespaces, event-handler attributes, module scripts, base URLs, navigation, embedded documents, and unsupported MIME types. Include whitespace, case, entity, escape, and computed-token variants.
+- [x] Parse HTML with html5lib and CSS with tinycss2; do not use regex as the security parser. Normalize into immutable `RenderNode` and `RenderAsset` records with compiler-assigned IDs.
+- [x] Emit only an allowlisted element/property/attribute/event vocabulary. Convert `data:` assets to separate render-plan entries and rewrite references to opaque asset IDs.
+- [x] Preserve script source only as worker input. Strip all native event-handler attributes and represent script/event bindings through the virtual runtime protocol.
+- [x] Return bounded, position-aware compatibility issues and fail the whole compile when any security-relevant construct is unsupported. Do not silently weaken or partially execute a document.
+- [x] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_limits.py -q`.
+- [x] Self-review every browser fetch/navigation surface against MDN/HTML and CSS parser semantics, then add a regression fixture for each discovered gap.
+- [x] Commit: `feat(canvas): compile documents into closed render plans`
 
 ### Task 1.3: Vendor and verify the WebAssembly engine reproducibly
 
@@ -126,14 +126,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_runtime_assets.py`
 - Modify: `pyproject.toml`
 
-- [ ] Record an ADR-115 addendum choosing or rejecting the candidate only after reviewing its license, published integrity, maintenance posture, browser support, and disclosure that the package is not itself a security audit. The current candidate is `quickjs-emscripten`/`quickjs-emscripten-core`/`@jitl/quickjs-singlefile-browser-release-sync` 0.32.0; reverify those facts at execution time.
-- [ ] Write a failing manifest test that requires exact package names, versions, source URLs, SHA-512 tarball integrity, extracted-file SHA-256 values, licenses, build tool version, runtime profile, and reproducible command.
-- [ ] Implement a vendoring script that downloads only pinned HTTPS package URLs, verifies SRI before extraction, rejects traversal/symlinks, extracts an allowlist into a temporary directory, builds the trusted bundle with an exact build-tool version, and atomically replaces only the declared generated assets. The generated JS/WASM and notices are committed; application startup never invokes Node or the network.
-- [ ] Add `runtime_assets.py` to load assets via `importlib.resources`, compare them to the committed manifest, and disable Canvas with a bounded diagnostic on any digest mismatch.
-- [ ] Include `tldw_chatbook.Canvas` and all static runtime assets in sdists and wheels.
-- [ ] Re-run the vendoring process twice in clean temporary directories and compare SHA-256 outputs; investigate any difference rather than blessing it.
-- [ ] Run `pytest Tests/Canvas/test_runtime_assets.py -q`, build sdist/wheel, install the wheel into a fresh venv, disconnect networking, and verify that the runtime assets load.
-- [ ] Commit: `build(canvas): vendor the pinned wasm runtime`
+- [x] Record an ADR-115 addendum choosing or rejecting the candidate only after reviewing its license, published integrity, maintenance posture, browser support, and disclosure that the package is not itself a security audit. The current candidate is `quickjs-emscripten`/`quickjs-emscripten-core`/`@jitl/quickjs-singlefile-browser-release-sync` 0.32.0; reverify those facts at execution time.
+- [x] Write a failing manifest test that requires exact package names, versions, source URLs, SHA-512 tarball integrity, extracted-file SHA-256 values, licenses, build tool version, runtime profile, and reproducible command.
+- [x] Implement a vendoring script that downloads only pinned HTTPS package URLs, verifies SRI before extraction, rejects traversal/symlinks, extracts an allowlist into a temporary directory, builds the trusted bundle with an exact build-tool version, and atomically replaces only the declared generated assets. The generated JS/WASM and notices are committed; application startup never invokes Node or the network.
+- [x] Add `runtime_assets.py` to load assets via `importlib.resources`, compare them to the committed manifest, and disable Canvas with a bounded diagnostic on any digest mismatch.
+- [x] Include `tldw_chatbook.Canvas` and all static runtime assets in sdists and wheels.
+- [x] Re-run the vendoring process twice in clean temporary directories and compare SHA-256 outputs; investigate any difference rather than blessing it.
+- [x] Run `pytest Tests/Canvas/test_runtime_assets.py -q`, build sdist/wheel, install the wheel into a fresh venv, disconnect networking, and verify that the runtime assets load.
+- [x] Commit: `build(canvas): vendor the pinned wasm runtime`
 
 ### Task 1.4: Implement the virtual DOM worker and adversarial proof
 
@@ -145,21 +145,21 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/browser/fixtures/`
 - Modify: `Tests/Canvas/test_runtime_assets.py`
 
-- [ ] First build a browser harness whose trusted shell can load a render plan and whose test HTTP servers record all DNS-independent requests, redirects, websocket attempts, navigation, popup, beacon, form, media, font, CSS, and worker activity.
-- [ ] Add failing adversarial cases for literal and computed URLs, DOM clobbering, prototype pollution, encoded CSS URLs, SVG animation/links, timers, event storms, infinite loops, promise/job loops, deep recursion, oversized patches, listener leaks, blob/data navigation, native downloads, and bridge spoofing.
-- [ ] Implement a worker-only QuickJS runtime exposing a documented virtual subset of `document`, nodes, events, timers, JSON, console, SVG, `canvas.submit()`, and `canvas.download()`. Do not expose browser globals, import/module hooks, native fetch primitives, SharedArrayBuffer, storage, cookies, filesystem, WebAssembly compilation, workers, or arbitrary host callbacks.
-- [ ] Enforce QuickJS memory, stack, interrupt/time, pending-job, timer, listener, patch-count, and mutation-rate limits. Termination must discard the worker and leave the trusted shell responsive with scripts disabled.
-- [ ] Implement a trusted renderer that creates nodes only with `createElement`/`createTextNode`, applies an allowlisted property/attribute/style patch vocabulary, revalidates every patch, owns all object URLs, and never interprets generated strings as markup or code.
-- [ ] Use a renderer iframe with an opaque origin and a CSP that denies network, navigation, forms, plugins, frames, and native scripts except the packaged trusted renderer. Generated code remains data sent to the worker.
-- [ ] Assert from the harness that every adversarial case produced zero egress and zero top-level navigation while a benign interactive counter/form/SVG fixture still works.
-- [ ] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q` in Chromium and, if supported by the existing CI matrix, WebKit/Firefox.
-- [ ] Commit: `feat(canvas): execute scripts in a bounded virtual browser`
+- [x] First build a browser harness whose trusted shell can load a render plan and whose test HTTP servers record all DNS-independent requests, redirects, websocket attempts, navigation, popup, beacon, form, media, font, CSS, and worker activity.
+- [x] Add failing adversarial cases for literal and computed URLs, DOM clobbering, prototype pollution, encoded CSS URLs, SVG animation/links, timers, event storms, infinite loops, promise/job loops, deep recursion, oversized patches, listener leaks, blob/data navigation, native downloads, and bridge spoofing.
+- [x] Implement a worker-only QuickJS runtime exposing a documented virtual subset of `document`, nodes, events, timers, JSON, console, SVG, `canvas.submit()`, and `canvas.download()`. Do not expose browser globals, import/module hooks, native fetch primitives, SharedArrayBuffer, storage, cookies, filesystem, WebAssembly compilation, workers, or arbitrary host callbacks.
+- [x] Enforce QuickJS memory, stack, interrupt/time, pending-job, timer, listener, patch-count, and mutation-rate limits. Termination must discard the worker and leave the trusted shell responsive with scripts disabled.
+- [x] Implement a trusted renderer that creates nodes only with `createElement`/`createTextNode`, applies an allowlisted property/attribute/style patch vocabulary, revalidates every patch, owns all object URLs, and never interprets generated strings as markup or code.
+- [x] Use a renderer iframe with an opaque origin and a CSP that denies network, navigation, forms, plugins, frames, and native scripts except the packaged trusted renderer. Generated code remains data sent to the worker.
+- [x] Assert from the harness that every adversarial case produced zero egress and zero top-level navigation while a benign interactive counter/form/SVG fixture still works.
+- [x] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q` in Chromium and, if supported by the existing CI matrix, WebKit/Firefox.
+- [x] Commit: `feat(canvas): execute scripts in a bounded virtual browser`
 
 ### Delivery 1 checkpoint
 
-- [ ] Update TASK-31226 acceptance criteria and Implementation Notes with package versions, measured limits, threat cases, commands, and evidence paths.
-- [ ] Request a security-focused code review before any Canvas tool or UI is enabled.
-- [ ] If zero egress is not demonstrated through the real browser harness, stop here: keep Canvas disabled and do not continue with product integration.
+- [x] Update TASK-31226 acceptance criteria and Implementation Notes with package versions, measured limits, threat cases, commands, and evidence paths.
+- [x] Request a security-focused code review before any Canvas tool or UI is enabled.
+- [x] If zero egress is not demonstrated through the real browser harness, stop here: keep Canvas disabled and do not continue with product integration.
 
 ---
 
@@ -490,12 +490,12 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: native and served route startup seams
 - Create/modify: focused Settings and configuration tests
 
-- [ ] Add failing tests for defaults, environment/config precedence, invalid limits, live-disable behavior, and disabled startup in native/served modes.
-- [ ] Add settings only to the canonical F9 Settings surface: enabled, auto-open on create, remote access policy/status, and read-only effective hard quotas. Do not add new controls to deprecated settings widgets.
-- [ ] Implement one kill switch whose disabled state removes Canvas tool schemas, hides HTML-block actions, revokes browser/control capabilities, returns fail-closed route responses, and leaves stored artifacts/export intact.
-- [ ] Keep security ceilings non-increasable from ordinary UI. Any advanced lower-limit overrides must validate through `CanvasLimits` and apply consistently after restart.
-- [ ] Run focused config, Settings screen, tool registration, and route tests.
-- [ ] Commit: `feat(canvas): add settings and a global kill switch`
+- [x] Add failing tests for defaults, environment/config precedence, invalid limits, live-disable behavior, and disabled startup in native/served modes.
+- [x] Add settings only to the canonical F9 Settings surface: enabled, auto-open on create, remote access policy/status, and read-only effective hard quotas. Do not add new controls to deprecated settings widgets.
+- [x] Implement one kill switch whose disabled state removes Canvas tool schemas, hides HTML-block actions, revokes browser/control capabilities, returns fail-closed route responses, and leaves stored artifacts/export intact.
+- [x] Keep security ceilings non-increasable from ordinary UI. Any advanced lower-limit overrides must validate through `CanvasLimits` and apply consistently after restart.
+- [x] Run focused config, Settings screen, tool registration, and route tests.
+- [x] Commit: `feat(canvas): add settings and a global kill switch`
 
 ### Task 7.2: Measure and freeze conservative defaults
 
