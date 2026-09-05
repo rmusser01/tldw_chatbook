@@ -16,6 +16,8 @@ from typing import Any, Callable, Optional, Protocol, Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
 MEETING_JSON = "meeting.json"
 TRANSCRIPT_JSONL = "transcript.jsonl"
 MEETING_SEGMENT_CAP_S = 10.0
@@ -138,6 +140,15 @@ class MeetingSession:
         self.failed_segments = 0
         self._listeners: list[Callable[[str, Any], None]] = []
         self._lock = threading.RLock()
+        # Separate from `_lock` on purpose (final whole-branch review, C2).
+        # `LocalMeetingSink.on_stopped` marshals the Library submit onto the
+        # app thread and BLOCKS there; holding `_lock` across that call
+        # deadlocked against the screen's own `subscribe`/`unsubscribe`
+        # (app thread, same lock) when the user navigated away mid-submit.
+        # Sinks are only ever driven from capture/worker threads, never from
+        # the app thread, so their own lock still serialises on_segment vs
+        # on_stopped without any path back into `_lock`.
+        self._sink_lock = threading.Lock()
         self._last_end_s = 0.0
         self._result: MeetingResult | None = None
         self._closing = False
@@ -167,7 +178,7 @@ class MeetingSession:
         self._emit("state", state)
 
     def _each_sink(self, method: str, *args: Any) -> None:
-        with self._lock:
+        with self._sink_lock:
             for sink in self._sinks:
                 try:
                     getattr(sink, method)(*args)
@@ -304,7 +315,9 @@ class MeetingSession:
                 self.segments.append(segment)
                 self._last_end_s = end
         if late:
-            logger.warning("meeting: final transcript arrived after stop and was dropped: {!r}", text[:80])
+            # Length only: transcript text is meeting content and never goes
+            # to the log (final whole-branch review, I1).
+            logger.warning("meeting: final transcript arrived after stop and was dropped ({} chars)", len(text))
             self.failed_segments += 1
             return
         self._emit("segment", segment)
@@ -406,4 +419,6 @@ class LocalMeetingSink:
         except Exception as exc:  # noqa: BLE001 - the footer reports it (spec §7)
             self.last_submit_error = str(exc)
             update_meeting_json(self.folder, ingest_error=str(exc))
-            logger.error("meeting ingest submit failed: {}", exc)
+            # The submit kwargs carry the meeting folder, so a registry
+            # error usually echoes an absolute path back at us.
+            logger.error("meeting ingest submit failed: {}", redact_user_paths(str(exc)))

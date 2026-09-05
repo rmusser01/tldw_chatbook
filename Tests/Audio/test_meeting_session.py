@@ -272,6 +272,38 @@ def test_stop_emits_stopping_state_outside_the_lock(tmp_path):
     assert seen == [True]
 
 
+def test_sinks_are_called_outside_the_session_lock(tmp_path):
+    """C2: `LocalMeetingSink.on_stopped` marshals the Library submit onto the
+    app thread and BLOCKS there. `_each_sink` used to hold `self._lock`
+    across that call, while the screen's `subscribe`/`unsubscribe` take the
+    same lock ON the app thread -- so a user who pressed Stop and navigated
+    away during the submit froze the app. Sinks now have their own lock.
+    """
+    seen = []
+
+    class BlockingSink(RecordingSink):
+        def on_stopped(self, result):
+            super().on_stopped(result)
+            box = []
+
+            def acquire_release():
+                # Stands in for the app thread reaching subscribe()/
+                # unsubscribe() while this sink call is still in flight.
+                acquired = session._lock.acquire(timeout=0.5)
+                box.append(acquired)
+                if acquired:
+                    session._lock.release()
+
+            t = threading.Thread(target=acquire_release)
+            t.start(); t.join()
+            seen.append(bool(box and box[0]))
+
+    session, capture, built = _session(tmp_path, sinks=[BlockingSink()])
+    session.start()
+    session.stop()
+    assert seen == [True]
+
+
 def test_final_after_stop_is_dropped_and_counted(tmp_path):
     sink = RecordingSink()
     session, capture, built = _session(tmp_path, sinks=[sink])
