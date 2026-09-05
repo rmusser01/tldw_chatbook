@@ -66,7 +66,7 @@ from ..Prompt_Management.prompt_chatbook_record import (
     PromptChatbookRecordError,
     decode_chatbook_prompt_record,
 )
-from ..Utils.path_validation import validate_filename
+from ..Utils.path_validation import validate_filename, validate_path_simple
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
@@ -84,6 +84,7 @@ _MAX_ARCHIVE_PATH_DEPTH = 32
 _MAX_ARCHIVE_PATH_COMPONENT_BYTES = 255
 _ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
 _ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
+_ARCHIVE_SOURCE_PATH_ERROR = "Invalid chatbook source path."
 _MAX_V2_GRAPH_MESSAGES = 10_000
 _MAX_V2_MESSAGE_ID_CHARS = 256
 _MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
@@ -773,6 +774,12 @@ class ChatbookImporter:
         """
         extract_dir: Optional[Path] = None
         try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                return None, _ARCHIVE_SOURCE_PATH_ERROR
             if chatbook_path.suffix != ".zip":
                 return (
                     None,
@@ -825,16 +832,24 @@ class ChatbookImporter:
         Returns:
             Tuple of (success, message)
         """
-        logger.info(
-            f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
-        )
-        logger.info(
-            f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
-        )
         status = import_status if import_status else ImportStatus()
         extract_dir: Optional[Path] = None
 
         try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                status.add_error(_ARCHIVE_SOURCE_PATH_ERROR)
+                return False, _ARCHIVE_SOURCE_PATH_ERROR
+
+            logger.info(
+                f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
+            )
+            logger.info(
+                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
+            )
             logger.info(f"Importing chatbook from {chatbook_path}")
 
             if chatbook_path.suffix != ".zip":
