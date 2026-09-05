@@ -508,6 +508,9 @@ from ..Library_Modules.library_conversations_state import LibraryConversationsSt
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
+from ..Library_Modules.library_note_import_controller import (
+    LibraryNoteImportController,
+)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -2089,6 +2092,10 @@ class LibraryScreen(BaseAppScreen):
             ensure_library_skill_import_coordinator,
         )
         from ..Library_Modules.library_skills_controller import LibrarySkillsController
+        from ..Library_Modules.library_notes_sync_controller import (
+            InertLastingSyncRuntime,
+            LibraryNotesSyncController,
+        )
 
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)

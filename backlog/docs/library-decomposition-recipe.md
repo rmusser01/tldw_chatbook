@@ -5277,3 +5277,22 @@ regressions fail before the fix and cover accepted replacement, suppressed
 replacement, and an initially suppressed entry sync. Each new browse sync now
 owns its current guard, releasing it when synchronization is suppressed. No stale
 callback is replayed. The screen measures 41,324 lines / 1,301 methods afterward.
+
+## 21. Keep controller execution payload behind construction (task 31662)
+
+Controller extraction alone does not reduce route-discovery import cost if the
+screen still imports every implementation at module scope. The Notes sync
+controller imported its execution runtime, executor, coordinator and support
+modules during the whole-registry preimport pass, even before Library opened.
+Moving its existing import block into `LibraryScreen.__init__` preserves both
+original classes, all constructor ports and the app-owned runtime lifecycle.
+There is no new lazy proxy or lifecycle owner.
+
+Fresh-process Library marginal payload fell from 188 modules / 146,804 lines to
+178 modules / 130,426 lines: 10 modules / 16,378 lines deferred. Screen size stays
+41,324 lines / 1,301 methods. The isolated packaging regression first proves
+the execution closure absent after app, Chat and Library route imports, then
+constructs a real screen and checks exact controller and runtime identity.
+This applies existing ADR-097; global budget tightening and snapshot refresh
+must use the final combined census, because concurrent route changes affect
+the aggregate and marginal attribution is route-order dependent.
