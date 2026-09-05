@@ -33,7 +33,6 @@ from ...Video_Generation.video_store import (
     VideoStoreSaveError,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.Console.console_video_capacity_modal import ConsoleVideoCapacityModal
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
 
@@ -919,6 +918,10 @@ class ConsoleVideoController:
         artifacts[message_id] = artifact
         try:
             while self._owns_pending_console_video(artifact):
+                from ...Widgets.Console.console_video_capacity_modal import (
+                    ConsoleVideoCapacityModal,
+                )
+
                 choice = await self._wait_for_console_screen_result(
                     ConsoleVideoCapacityModal(
                         reason=artifact.reason,
