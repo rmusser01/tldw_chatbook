@@ -3,7 +3,7 @@
 import time
 from typing import Optional, Any
 
-from ..base_effect import BaseEffect, register_effect
+from ..base_effect import BaseEffect, ESCAPED_OPEN_BRACKET, register_effect
 
 
 @register_effect("phonebooths_dialing")
@@ -129,6 +129,8 @@ class PhoneboothsDialingEffect(BaseEffect):
                     line += f"[blue]{char}[/blue]"
                 elif char == "#":
                     line += f"[dim white]{char}[/dim white]"
+                elif char == "[":
+                    line += ESCAPED_OPEN_BRACKET
                 else:
                     line += char
             lines.append(line)
