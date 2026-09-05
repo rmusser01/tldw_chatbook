@@ -132,7 +132,6 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
-from ..Console_Modules.environment import ConsoleEnvironmentController
 from ..Console_Modules.capture_policy_bindings import (
     build_inspector_capture_policy_wiring,
 )
@@ -380,13 +379,6 @@ from ...Chat.console_display_state import (
     console_staged_source_count,
     estimate_console_next_send_tokens,
 )
-from ...Chat.console_environment_state import (
-    ENVIRONMENT_SECTION_ID,
-    EnvironmentSnapshot,
-    TASKS_SECTION_ID,
-    project_environment_section,
-    project_tasks_section,
-)
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     build_console_detected_server_action,
@@ -438,6 +430,8 @@ from ...Chat.console_paste_attach import (
     looks_attachable,
 )
 from ...Chat.console_rail_state import (
+    ENVIRONMENT_SECTION_ID,
+    TASKS_SECTION_ID,
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
     console_auto_open_would_evict_context,
@@ -681,6 +675,10 @@ FeedbackRequested = ConsoleSelectionFeedbackRequested
 NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
+    from tldw_chatbook.UI.Console_Modules.environment import (
+        ConsoleEnvironmentController,
+    )
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsCredentialRequest,
@@ -2387,7 +2385,11 @@ class ChatScreen(BaseAppScreen):
         that, because its test called the method directly rather than posting
         the real event through the production path).
         """
-        self._console_environment.request_refresh()
+        if (
+            self._console_environment_owner is not None
+            or self._is_console_widget_displayed("console-right-rail")
+        ):
+            self._console_environment.request_refresh()
 
     @on(ConsoleInspectorSection.RowCancelRequested)
     def on_console_agent_fleet_row_cancel_requested(
@@ -6918,28 +6920,8 @@ class ChatScreen(BaseAppScreen):
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
         )
-        # task-13: the Environment panel's own cadence/TTL/backoff
-        # orchestrator. Built here beside the other controllers, but every
-        # seam it takes is a LATE-BOUND lambda: `self.app` is not resolvable
-        # during `__init__` (no active app context in the bare-screen tests),
-        # and the rail-open/root answers must be read at dispatch time, not
-        # frozen at construction time.
-        # `exit_on_error=False` is not decoration: Textual's default PANICS
-        # the whole app on a raising worker, and these jobs run git/`gh`
-        # subprocesses and marshal back through `call_from_thread` -- which
-        # itself raises if the screen is torn down while a gather is in
-        # flight. A status panel must never be able to take the app down.
-        self._console_environment = ConsoleEnvironmentController(
-            run_worker=(
-                lambda job, **kwargs: self.run_worker(job, exit_on_error=False, **kwargs)
-            ),
-            marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
-            workspace_root_accessor=self._console_environment_root,
-            rail_open_accessor=(
-                lambda: self._is_console_widget_displayed("console-right-rail")
-            ),
-            on_snapshot=self._land_console_environment,
-        )
+        # ADR-097: closed Inspect must not import its collectors at first paint.
+        self._console_environment_owner = None
         # `_console_provider_gateway`/`_console_chat_controller`: properties
         # over the app-owned runtime, no `__init__` slot -- see the note at
         # `_console_chat_store`'s old slot.
@@ -7992,7 +7974,44 @@ class ChatScreen(BaseAppScreen):
             readiness,
         )
 
-    def _console_environment_snapshot(self) -> EnvironmentSnapshot:
+    @property
+    def _console_environment(self) -> "ConsoleEnvironmentController":
+        """Keep one first-use Environment owner for this screen's lifetime."""
+        owner = getattr(self, "_console_environment_owner", None)
+        if owner is None:
+            from tldw_chatbook.UI.Console_Modules.environment import (
+                ConsoleEnvironmentController,
+            )
+
+            # Keep app access late-bound and worker failures non-fatal, as before.
+            owner = ConsoleEnvironmentController(
+                run_worker=(
+                    lambda job, **kwargs: self.run_worker(
+                        job, exit_on_error=False, **kwargs
+                    )
+                ),
+                marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
+                workspace_root_accessor=self._console_environment_root,
+                rail_open_accessor=(
+                    lambda: self.app.screen is self
+                    and self._is_console_widget_displayed("console-right-rail")
+                ),
+                on_snapshot=self._land_console_environment,
+            )
+            self._console_environment_owner = owner
+        return owner
+
+    def _poll_console_environment(self) -> None:
+        """Keep hidden-panel ticks cold; preserve the owner's existing cadence."""
+        if self.app.screen is not self:
+            return
+        if (
+            self._console_environment_owner is not None
+            or self._is_console_widget_displayed("console-right-rail")
+        ):
+            self._console_environment.poll_tick()
+
+    def _console_environment_snapshot(self) -> "EnvironmentSnapshot":
         """Return the controller's current snapshot (default before first land).
 
         A bare `ChatScreen` built outside `__init__`'s controller wiring
@@ -8000,7 +8019,9 @@ class ChatScreen(BaseAppScreen):
         `EnvironmentSnapshot()`'s NOT_APPLICABLE tiers are the right answer
         there anyway -- the quiet "No git workspace" row.
         """
-        controller = getattr(self, "_console_environment", None)
+        from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
+
+        controller = getattr(self, "_console_environment_owner", None)
         if controller is None:
             return EnvironmentSnapshot()
         return controller.snapshot
@@ -8014,7 +8035,10 @@ class ChatScreen(BaseAppScreen):
         data `_land_console_environment` last patched in, instead of
         reverting to "No git workspace" until the next poll tick.
         """
-        from datetime import datetime as _datetime, timezone as _timezone
+        from datetime import datetime as _datetime
+        from datetime import timezone as _timezone
+
+        from tldw_chatbook.Chat.console_environment_state import project_environment_section
 
         return project_environment_section(
             self._console_environment_snapshot(),
@@ -8028,6 +8052,8 @@ class ChatScreen(BaseAppScreen):
         Same live-snapshot sourcing as the Environment section above; an
         empty projection still hides the section entirely.
         """
+        from tldw_chatbook.Chat.console_environment_state import project_tasks_section
+
         return project_tasks_section(
             self._console_environment_snapshot(),
             frozenset(self._console_environment_expanded),
@@ -8046,7 +8072,7 @@ class ChatScreen(BaseAppScreen):
             return None
         return roots[0]
 
-    def _land_console_environment(self, snapshot: EnvironmentSnapshot) -> None:
+    def _land_console_environment(self, snapshot: "EnvironmentSnapshot") -> None:
         """Repaint the Environment/Tasks sections from a landed snapshot.
 
         Runs on the UI thread (the controller marshals every landing through
@@ -8057,7 +8083,13 @@ class ChatScreen(BaseAppScreen):
         Args:
             snapshot: The controller's newly landed environment snapshot.
         """
-        from datetime import datetime as _datetime, timezone as _timezone
+        from datetime import datetime as _datetime
+        from datetime import timezone as _timezone
+
+        from tldw_chatbook.Chat.console_environment_state import (
+            project_environment_section,
+            project_tasks_section,
+        )
 
         expanded = frozenset(self._console_environment_expanded)
         environment_state = project_environment_section(
@@ -8397,7 +8429,11 @@ class ChatScreen(BaseAppScreen):
         """
         self._console_agent_fleet_sync_scheduled = False
         self._sync_console_agent_section()
-        self._console_environment.request_refresh()
+        if (
+            self._console_environment_owner is not None
+            or self._is_console_widget_displayed("console-right-rail")
+        ):
+            self._console_environment.request_refresh()
 
     def _sync_console_agent_section(self) -> None:
         """Apply the Agent rail's derived payload to the mounted widgets.
@@ -12461,6 +12497,9 @@ class ChatScreen(BaseAppScreen):
         if rail_state.right_open and not (previous is not None and previous.right_open):
             controller = getattr(self, "_console_environment", None)
             if controller is not None:
+                # With no workspace there will be no worker landing to paint
+                # the first-open empty state. Paint the captured state now.
+                self._land_console_environment(controller.snapshot)
                 controller.notify_rail_opened()
 
     @staticmethod
@@ -14931,8 +14970,20 @@ class ChatScreen(BaseAppScreen):
                     inspector_more_open=rail_state.inspector_more_open,
                     environment_section_state=(
                         self._console_environment_section_state()
+                        if (
+                            rail_state.right_open
+                            or self._console_environment_owner is not None
+                        )
+                        else None
                     ),
-                    tasks_section_state=self._console_tasks_section_state(),
+                    tasks_section_state=(
+                        self._console_tasks_section_state()
+                        if (
+                            rail_state.right_open
+                            or self._console_environment_owner is not None
+                        )
+                        else None
+                    ),
                     environment_open=rail_state.environment_open,
                     tasks_open=rail_state.tasks_open,
                     agent_fleet_section_state=agent_fleet_section_state,
@@ -15213,10 +15264,10 @@ class ChatScreen(BaseAppScreen):
         # task-13: the Environment panel's local-tier poll. Same audited
         # create/stop pairing as the cost-TTL and transcript-sync timers
         # above it. `poll_tick` is a cheap no-op while the Inspect rail is
-        # closed or the workspace has no root, so this runs for the screen's
-        # whole life rather than being armed and disarmed.
+        # closed, the screen is covered, or the workspace has no root, so
+        # this runs for the screen's whole life rather than being re-armed.
         self._console_environment_poll_timer = self.set_interval(
-            CONSOLE_ENVIRONMENT_POLL_SECONDS, self._console_environment.poll_tick
+            CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
         self._record_ui_timer_created("console-environment-poll")
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
@@ -21354,6 +21405,11 @@ class ChatScreen(BaseAppScreen):
                 )
         if not ordered_resume_active:
             self._session.consume_pending_console_first_chat_intent()
+            if (
+                not mount_already_refreshed
+                and self._console_environment_owner is not None
+            ):
+                self._console_environment_owner.notify_rail_opened()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via

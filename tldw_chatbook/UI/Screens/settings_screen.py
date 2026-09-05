@@ -49,6 +49,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.LLM_Management import snapshot_settings as snapshot_preferences
 from tldw_chatbook.UI.focus_ownership import (
     focus_is_on_screen,
     focused_id_on_screen,
@@ -185,6 +186,7 @@ from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
+    validate_bounded_integer,
     validate_number_range,
     validate_text_input,
     validate_url,
@@ -2644,6 +2646,10 @@ class SettingsScreen(BaseAppScreen):
         # (GUIDED_SETTINGS_MUTATION_CATEGORIES) with a self-contained save
         # branch in action_settings_save_category.
         self._network_pending: dict[str, object] = {}
+        self._snapshot_preferences_loaded = None
+        self._snapshot_preferences_raw = None
+        self._snapshot_preferences_saving = False
+        self._snapshot_preferences_unavailable = False
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -4650,6 +4656,8 @@ class SettingsScreen(BaseAppScreen):
                     "api_settings.<provider>.api_mode",
                     "api_settings.<provider>.model_defaults.<model>",
                     "model_capabilities.models.<model>.context_window",
+                    "llamacpp_snapshots.enabled",
+                    "llamacpp_snapshots.keep_count",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
@@ -6765,7 +6773,139 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
-        return bool(draft and draft.is_dirty)
+        return bool(draft and draft.is_dirty) or (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_dirty()
+        )
+
+    _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
+        "Snapshot preferences unavailable. In Advanced Config, correct "
+        "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Revert."
+    )
+
+    def _snapshot_preferences_dirty(self) -> bool:
+        loaded = getattr(self, "_snapshot_preferences_loaded", None)
+        return loaded is not None and self._snapshot_preferences_raw != (
+            loaded.enabled,
+            str(loaded.keep_count),
+        )
+
+    @on(Input.Changed, "#settings-snapshot-keep")
+    @on(Checkbox.Changed, "#settings-snapshot-enabled")
+    def _snapshot_preferences_changed(self, event) -> None:
+        event.stop()
+        self._snapshot_preferences_raw = (
+            self.query_one("#settings-snapshot-enabled", Checkbox).value,
+            self.query_one("#settings-snapshot-keep", Input).value,
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _save_snapshot_preferences_draft(
+        self, raw, expected, provider_dirty
+    ) -> None:
+        try:
+            value = snapshot_preferences.SnapshotPreferences(
+                enabled=raw[0],
+                keep_count=validate_bounded_integer(raw[1], minimum=1, maximum=1000),
+            )
+            saved = await asyncio.to_thread(
+                snapshot_preferences.save_snapshot_preferences, value, expected=expected
+            )
+            if not saved:
+                raise ValueError("save failed")
+            self._snapshot_preferences_loaded = value
+            unchanged = self._snapshot_preferences_raw == raw
+            if self.is_mounted:
+                # Input.Changed may still be queued after the visible value changed.
+                unchanged = (
+                    unchanged
+                    and all(
+                        widget.value == raw[1]
+                        for widget in self.query("#settings-snapshot-keep")
+                    )
+                    and all(
+                        widget.value == raw[0]
+                        for widget in self.query("#settings-snapshot-enabled")
+                    )
+                )
+            if unchanged:
+                self._snapshot_preferences_raw = (value.enabled, str(value.keep_count))
+                if self.is_mounted:
+                    with self.prevent(Input.Changed, Checkbox.Changed):
+                        for widget in self.query("#settings-snapshot-keep"):
+                            widget.value = str(value.keep_count)
+                        for widget in self.query("#settings-snapshot-enabled"):
+                            widget.value = value.enabled
+            message = (
+                "Snapshot preferences saved. Enable/disable applies on next launch."
+            )
+            if provider_dirty:
+                message = "Snapshot preferences saved separately. Provider changes have their own Save result."
+            self._set_static_text("#settings-snapshot-result", message)
+            if (
+                provider_dirty
+                and self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                # Resume the existing provider workflow only when this pair settled.
+                self._snapshot_preferences_saving = False
+                if unchanged:
+                    self.action_settings_save_category(allow_text_entry_focus=True)
+            self.app.notify(message, severity="information")
+        except snapshot_preferences.SnapshotPreferencesConflict:
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Preferences changed elsewhere. Use Revert to reload before Save.",
+            )
+            self.app.notify(
+                "Snapshot preferences changed elsewhere; Revert before Save.",
+                severity="warning",
+            )
+        except (ValueError, OSError):
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Not saved. Keep count must be 1–1000; check config access.",
+            )
+        finally:
+            self._snapshot_preferences_saving = False
+            if self.is_mounted:
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _revert_snapshot_preferences(self) -> None:
+        try:
+            loaded = await asyncio.to_thread(
+                snapshot_preferences.load_snapshot_preferences
+            )
+        except (ValueError, OSError):
+            loaded = None
+        self._snapshot_preferences_loaded = loaded
+        self._snapshot_preferences_unavailable = loaded is None
+        self._snapshot_preferences_raw = (
+            (loaded.enabled, str(loaded.keep_count)) if loaded else (False, "")
+        )
+        if self.is_mounted:
+            try:
+                with self.prevent(Input.Changed, Checkbox.Changed):
+                    self.query_one(
+                        "#settings-snapshot-enabled", Checkbox
+                    ).value = self._snapshot_preferences_raw[0]
+                    self.query_one(
+                        "#settings-snapshot-keep", Input
+                    ).value = self._snapshot_preferences_raw[1]
+                self.query_one("#settings-snapshot-enabled", Checkbox).disabled = (
+                    loaded is None
+                )
+                self.query_one("#settings-snapshot-keep", Input).disabled = (
+                    loaded is None
+                )
+                self._set_static_text(
+                    "#settings-snapshot-result",
+                    "Snapshot preferences reloaded."
+                    if loaded
+                    else self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY,
+                )
+            except QueryError:
+                pass
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     # ------------------------------------------------------------------
     # Video Gen (task-3401.12): draft/dirty editing + Save/Revert, mirroring
@@ -7304,6 +7444,13 @@ class SettingsScreen(BaseAppScreen):
                 continue
             button.disabled = not actions_enabled
             button.label = self._guided_action_label(base, dirty=dirty)
+            if (
+                selector == "#settings-revert-category"
+                and category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+            ):
+                button.disabled = False
+                button.label = "Revert (r) — reload preferences"
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -14063,6 +14210,30 @@ class SettingsScreen(BaseAppScreen):
             else "api_settings.<provider>"
         )
         field_id = self._active_settings_field_id
+        if field_id in {"settings-snapshot-enabled", "settings-snapshot-keep"}:
+            enabled = field_id == "settings-snapshot-enabled"
+            return (
+                (
+                    "Focused setting",
+                    "Prompt-cache snapshots" if enabled else "Snapshot keep count",
+                ),
+                (
+                    "Purpose",
+                    "Enable/disable applies on next launch."
+                    if enabled
+                    else "Keep the newest snapshots across all models; lower counts apply after the next successful Save.",
+                ),
+                (
+                    "Saved as",
+                    "llamacpp_snapshots.enabled"
+                    if enabled
+                    else "llamacpp_snapshots.keep_count",
+                ),
+                (
+                    "Validation",
+                    "On or Off" if enabled else "whole number from 1 to 1000",
+                ),
+            )
         if field_id == "settings-provider-value":
             return (
                 ("Focused setting", "Provider"),
@@ -15034,6 +15205,25 @@ class SettingsScreen(BaseAppScreen):
                     yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
+        if self._snapshot_preferences_loaded is None:
+            try:
+                self._snapshot_preferences_loaded = (
+                    snapshot_preferences.load_snapshot_preferences()
+                )
+            except (ValueError, OSError):
+                self._snapshot_preferences_loaded = None
+            self._snapshot_preferences_unavailable = (
+                self._snapshot_preferences_loaded is None
+            )
+            self._snapshot_preferences_raw = (
+                (
+                    self._snapshot_preferences_loaded.enabled,
+                    str(self._snapshot_preferences_loaded.keep_count),
+                )
+                if self._snapshot_preferences_loaded
+                else (False, "")
+            )
+            self.call_after_refresh(self._update_guided_action_widgets)
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_display_setting_values()
         provider = str(values["provider"])
@@ -15048,6 +15238,43 @@ class SettingsScreen(BaseAppScreen):
         )
         provider_card.disabled = self._vllm_default_recovery() is not None
         with provider_card:
+            with Collapsible(
+                title="Prompt-cache snapshots",
+                collapsed=True,
+                id="settings-snapshot-controls",
+            ):
+                yield Static(
+                    "Save processed context to reuse later. Restoring does not change your conversations.",
+                    classes="settings-help-copy",
+                )
+                yield Static(
+                    "Enable/disable applies on next launch.",
+                    id="settings-snapshot-launch-scope",
+                    classes="settings-help-copy",
+                )
+                yield Checkbox(
+                    "Enable snapshots",
+                    value=self._snapshot_preferences_raw[0],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-enabled",
+                )
+                yield Static(
+                    "Keep count (1–1000, across all models)",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    self._snapshot_preferences_raw[1],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-keep",
+                    type="integer",
+                )
+                yield Static(
+                    self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
+                    if self._snapshot_preferences_unavailable
+                    else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
+                    id="settings-snapshot-result",
+                    classes="settings-help-copy",
+                )
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -19504,6 +19731,13 @@ class SettingsScreen(BaseAppScreen):
                 summary.category is SettingsCategoryId.PROVIDERS_MODELS
                 and self._vllm_default_recovery() is not None
             )
+            if (
+                summary.category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+                and self._vllm_default_recovery() is None
+            ):
+                revert_button.disabled = False
+                revert_button.label = "Revert (r) — reload preferences"
             yield revert_button
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
@@ -26045,6 +26279,22 @@ class SettingsScreen(BaseAppScreen):
             panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
+            if self._snapshot_preferences_saving:
+                return
+            if self._snapshot_preferences_dirty():
+                self._snapshot_preferences_saving = True
+                draft = self._settings_drafts.get(category)
+                self.run_worker(
+                    self._save_snapshot_preferences_draft(
+                        self._snapshot_preferences_raw,
+                        self._snapshot_preferences_loaded,
+                        bool(draft and draft.is_dirty),
+                    ),
+                    group="settings-snapshot-save",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
             current_provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
@@ -26850,6 +27100,18 @@ class SettingsScreen(BaseAppScreen):
                 "Raw CLI unlock save is still in progress.", severity="warning"
             )
             return
+        if (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_unavailable
+            and not self._category_has_unsaved_changes(category)
+        ):
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(
@@ -26967,6 +27229,12 @@ class SettingsScreen(BaseAppScreen):
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
             values = self._provider_setting_values()
             try:
                 provider = str(values["provider"])
