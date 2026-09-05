@@ -5,7 +5,7 @@ status: To Do
 assignee:
   - '@claude'
 created_date: '2026-09-03 22:30'
-updated_date: '2026-09-03 22:44'
+updated_date: '2026-09-05 06:19'
 labels:
   - library
   - media-ux
@@ -25,6 +25,9 @@ Re-critique 2026-09-03 P0 (user: full root-cause hunt): in a ~25-min live sessio
 - [ ] #2 The root cause of the wedge is identified with reproduction evidence
 - [ ] #3 A durable fix lands with a regression pin, and displayed state can no longer silently diverge from durable state
 - [ ] #4 One storage-health surface tells the user when local storage is unhealthy
+- [ ] #5 The bulk-delete receipt is derived from the service result: a write that did not land renders as a failure with a reason, never as ✓
+- [ ] #6 The bulk-mutation interlock is released on every path, and Retry, row opens and select mode are never gated behind it
+- [ ] #7 Undo is enabled whenever the receipt says ✓, and the receipt never says ✓ when Undo cannot be
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,7 +41,6 @@ Re-critique 2026-09-03 P0 (user: full root-cause hunt): in a ~25-min live sessio
 <!-- SECTION:NOTES:BEGIN -->
 Hunt round 1 (2026-09-03): 24-round scripted repro (create->complete->picker->dismiss + read-later + trash + chooser, external RO probes every round) reproduced NOTHING - all 24 completions durably persisted (done_marks=6, completed_at stamped), every Sets press produced the modal, zero probe errors. The critique session's divergence evidence is now suspect: Assessment A ran a scratch-profile harness mid-session and its external DB dump may have read the scratch profile's collections DB (which would contain exactly the observed fresh-set shape). The in-app dead controls (Sets silent, Read later inert, media detail unavailable) remain unexplained and observed-once. AC1 SHIPPED (picker except now logs the traceback - the one wrapper 30042 missed), so the next natural occurrence self-documents in tldw_cli_app.log. AC2-4 open pending a reproducible occurrence; repro script kept at scratchpad/hunt_31202.sh (SIGUSR2 all-thread dump wired).
 <!-- SECTION:NOTES:END -->
-
 
 ## Renumbering
 
