@@ -765,6 +765,12 @@ class LibraryMediaCanvasState:
     # until acted on or replaced by a newer bulk-delete action. 0 means no
     # receipt to show (the normal state).
     delete_receipt_count: int = 0
+    # task-31220: when a receipt's Undo FAILS, the receipt stops claiming
+    # success: "<n> of <m> · <reason>" here retitles it "✗ undo failed
+    # · <n> of <m> · <reason>" and turns Undo into "Retry undo" over the
+    # still-failed ids ``delete_receipt_count`` now names. "" (the
+    # default) is the ordinary "✓ deleted" receipt.
+    delete_receipt_undo_failure: str = ""
     # task-14902: True while the type chooser's direct-pick strip replaces
     # the browse toolbar row (the Notes Sort choice-strip pattern).
     type_choices_visible: bool = False
@@ -954,6 +960,7 @@ def build_library_media_browse_state(
     selected_ids: frozenset[str] = frozenset(),
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
+    delete_receipt_undo_failure: str = "",
     type_choices_visible: bool = False,
     sort_choices_visible: bool = False,
     loading_id: str = "",
@@ -1057,6 +1064,7 @@ def build_library_media_browse_state(
         selected_count=sum(row.checked for row in rows),
         confirming_bulk_delete=confirming_bulk_delete,
         delete_receipt_count=max(0, delete_receipt_count),
+        delete_receipt_undo_failure=delete_receipt_undo_failure,
         type_choices_visible=type_choices_visible,
         query=result.scope.query,
         sort_by=result.scope.sort_by,
@@ -1139,6 +1147,7 @@ def build_library_media_state(
     selected_ids: frozenset[str] = frozenset(),
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
+    delete_receipt_undo_failure: str = "",
     type_choices_visible: bool = False,
     review_dismiss_receipt_name: str = "",
     analyze_receipt_total: int = 0,
@@ -1162,6 +1171,10 @@ def build_library_media_state(
             receipt with Undo/Dismiss until acted on or replaced by a
             newer bulk-delete action. 0 (the default) means no receipt to
             show.
+        delete_receipt_undo_failure: "<n> of <m> · <reason>" when that
+            receipt's Undo failed, retitling it "✗ undo failed · ..."
+            with a "Retry undo" over the still-failed ids (task-31220).
+            "" (the default) keeps the ordinary "✓ deleted" receipt.
         review_dismiss_receipt_name: Name of the most recently dismissed
             review set, rendered as a "✓ dismissed · <name>" undo receipt
             until acted on or replaced (task-31236). "" (the default)
@@ -1289,6 +1302,7 @@ def build_library_media_state(
         selected_count=selected_count,
         confirming_bulk_delete=confirming_bulk_delete,
         delete_receipt_count=max(0, delete_receipt_count),
+        delete_receipt_undo_failure=delete_receipt_undo_failure,
         type_choices_visible=type_choices_visible,
         review_dismiss_receipt_name=review_dismiss_receipt_name,
         analyze_receipt_total=max(0, analyze_receipt_total),

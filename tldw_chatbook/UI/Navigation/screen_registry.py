@@ -20,6 +20,19 @@ class ScreenRoute:
     module_path: str
     class_name: str
     dependency_check: str | None = None
+    #: TASK-24452: opt-in screen-instance reuse. A reusable route's screen is
+    #: constructed once, installed (``App.install_screen``), and re-switched
+    #: to on every later visit -- Textual SUSPENDS an installed screen
+    #: instead of unmounting it, so the widget tree survives and warm visits
+    #: skip construction/mount entirely (measured: Home-class screens drop
+    #: from hundreds of ms of CPU per visit to tens). Opt-in per route
+    #: because reuse changes lifecycle semantics: ``on_mount``/``on_unmount``
+    #: fire once per app run instead of once per visit, so a route may only
+    #: set this after auditing that (a) per-visit refresh work runs from
+    #: ``on_screen_resume``, and (b) nothing load-bearing lives in
+    #: ``on_unmount`` teardown (see ``_create_navigation_screen``'s history
+    #: of why UNINSTALLED instances must never be reused).
+    reusable: bool = False
 
     def dependencies_available(self) -> bool:
         """Return whether optional dependencies for this route are available."""
@@ -54,7 +67,15 @@ class ScreenRoute:
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "home": ScreenRoute(
-        "home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"
+        "home",
+        "home",
+        "tldw_chatbook.UI.Screens.home_screen",
+        "HomeScreen",
+        # TASK-24452 first enablement: Home has no ``on_unmount`` teardown,
+        # no timers, and its per-visit refresh workers are re-triggered from
+        # ``on_screen_resume`` (all ``exclusive=True`` groups, so the
+        # first-visit mount+resume double-fire coalesces).
+        reusable=True,
     ),
     "chat": ScreenRoute(
         "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
