@@ -15965,6 +15965,171 @@ async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(
         await pilot.pause()
 
 
+# --- task-31632 AC#2/#3: the source snapshot's own failure callout --------
+
+
+class _SlowLibraryNotesScopeService:
+    """A notes source that never answers inside the snapshot deadline."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self.delay = delay
+
+    def list_notes(self, **_kwargs):
+        time.sleep(self.delay)
+        return {"items": []}
+
+
+class _RaisingLibraryNotesScopeService:
+    """A notes source whose read fails hard, private message and all."""
+
+    def list_notes(self, **_kwargs):
+        raise RuntimeError("private-snapshot-failure")
+
+
+def _library_source_failure_app(notes_service):
+    """One Library app whose ONLY broken source seam is notes."""
+    app = _build_test_app()
+    app.notes_scope_service = notes_service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    return app
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_retry(
+    monkeypatch,
+):
+    """task-31632 AC#2/#3: a snapshot that misses its deadline is a WARNING
+    that names how long was waited, inside one ``ds-recovery-callout`` whose
+    own Retry re-runs the snapshot -- not the flat sentence "Library source
+    services unavailable; retry Library later." above a lower-stakes card,
+    whose only control was Continue.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    app = _library_source_failure_app(_SlowLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot timeout never produced a recovery state.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "warning"
+        assert state.retry_id == "library-source-retry"
+        assert state.message == "Library sources did not answer · waited 0.05 s"
+        assert screen._library_lookup_error == state.message
+
+        callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
+        assert callout.has_class("ds-recovery-callout")
+        assert not callout.has_class("is-blocked")
+        assert str(
+            screen.query_one("#library-hub-load-failure-copy", Static).renderable
+        ) == state.message
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button)), (
+            "the Retry must live INSIDE the callout, next to the reason"
+        )
+        # AC#3: Continue is no longer the failure's control, and nothing
+        # navigated away from Library.
+        assert not screen.query("#library-hub-continue")
+        assert host.seen_routes == []
+        # No false zeros anywhere: the callout carries the failure instead.
+        hub_counts = str(screen.query_one("#library-hub-counts", Static).renderable)
+        assert "Notes (0)" not in hub_counts
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_class():
+    """task-31632 AC#2/#3: a hard failure is tinted as an error and names the
+    exception CLASS as its reason -- never the exception text, which can carry
+    a private path (the ``private-media-failure`` rule).
+    """
+    app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "error"
+        assert state.why == "RuntimeError"
+        assert state.unavailable_what == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+        assert state.retry_id == "library-source-retry"
+
+        callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button))
+        assert not screen.query("#library-hub-continue")
+        assert host.seen_routes == []
+        assert "private-snapshot-failure" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_reentry_auto_retries_a_timeout_but_not_a_hard_failure(
+    monkeypatch,
+):
+    """task-31632 AC#2: returning to Library re-runs a TIMED-OUT snapshot
+    exactly once (the reusable route's ``on_screen_resume`` visit-refresh
+    seam). A hard failure does not auto-retry -- its callout stands with the
+    Retry the user can press.
+    """
+    from tldw_chatbook.UI.destination_recovery import load_failure_recovery_state
+
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    def _failure(kind):
+        return load_failure_recovery_state(
+            what="Library sources did not answer",
+            reason="waited 5 s",
+            retry_id="library-source-retry",
+            stable_selector="#library-hub-load-failure",
+            kind=kind,
+        )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        refreshes = Mock()
+        monkeypatch.setattr(screen, "_refresh_local_source_snapshot", refreshes)
+
+        screen._library_lookup_recovery_state = _failure("timeout")
+        screen._library_lookup_error = screen._library_lookup_recovery_state.message
+        screen.on_screen_resume()
+        assert refreshes.call_count == 1, (
+            "a timed-out snapshot must retry itself once on return to Library"
+        )
+
+        refreshes.reset_mock()
+        screen._library_lookup_recovery_state = _failure("error")
+        screen._library_lookup_error = screen._library_lookup_recovery_state.message
+        screen.on_screen_resume()
+        assert refreshes.call_count == 0, (
+            "a hard failure must not auto-retry; its callout carries the Retry"
+        )
+
+        refreshes.reset_mock()
+        screen._library_lookup_recovery_state = None
+        screen._library_lookup_error = None
+        screen.on_screen_resume()
+        assert refreshes.call_count == 1, (
+            "the ordinary per-visit snapshot refresh must be untouched"
+        )
+
+
 @pytest.mark.asyncio
 async def test_library_shell_repeat_visit_composes_exactly_once_when_data_is_unchanged(
     monkeypatch,

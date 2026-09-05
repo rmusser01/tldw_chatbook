@@ -2249,6 +2249,39 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
 
 
 @pytest.mark.asyncio
+async def test_media_facet_failure_paints_the_same_callout():
+    """task-31632 AC#1 (Task 2 review carry-over): the type-list failure was
+    only ever covered at controller level. It reaches the SAME callout, with
+    the same single Retry, because the type list has no control of its own.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+
+        async def _fails(**_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        host.app_instance.media_reading_scope_service.list_library_media_types = _fails
+        screen._request_library_media_facets()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.facet_failure is not None and not controller.facet_loading,
+            message="The forced Media facet failure never settled.",
+        )
+        await pilot.pause()
+
+        assert controller.page_failure is None
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        painted = " ".join(_painted(host, copy.region).split())
+        assert painted == "Couldn't load media types · database is locked", painted
+        retry = screen.query_one("#library-media-retry", Button)
+        assert retry in callout.query(Button)
+        assert len(screen.query("#library-media-retry")) == 1
+
+
+@pytest.mark.asyncio
 async def test_media_failure_callout_tint_follows_the_severity():
     """task-31632 AC#1: a timeout and a hard failure do not paint alike."""
     host = _host()

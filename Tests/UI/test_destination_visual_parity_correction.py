@@ -791,8 +791,14 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
-    assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
-    assert recovery_state is None
+    # task-31632 AC#2: the DEADLINE is told apart from a hard failure -- a
+    # warning-tinted recovery state that names how long was waited and
+    # carries the callout's own Retry, not the flat service sentence.
+    assert error == "Library sources did not answer · waited 0.01 s"
+    assert recovery_state is not None
+    assert recovery_state.severity == "warning"
+    assert recovery_state.retry_id == "library-source-retry"
+    assert recovery_state.message == error
     assert study_counts == {
         "study_decks": None,
         "flashcards_due": None,
@@ -856,8 +862,14 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(
     }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
-    assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
-    assert recovery_state is None
+    # task-31632 AC#2: the DEADLINE is told apart from a hard failure -- a
+    # warning-tinted recovery state that names how long was waited and
+    # carries the callout's own Retry, not the flat service sentence.
+    assert error == "Library sources did not answer · waited 0.01 s"
+    assert recovery_state is not None
+    assert recovery_state.severity == "warning"
+    assert recovery_state.retry_id == "library-source-retry"
+    assert recovery_state.message == error
     assert study_counts == {
         "study_decks": None,
         "flashcards_due": None,
