@@ -57,8 +57,15 @@ tool finished and the model is composing the next round, and `Generating…`
 is the wait for the model's first response of the turn. The elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
-completed `Tool` rows below instead. A sub-agent's work never appears here;
-it belongs to the **Sub-agents** panel in the left rail.
+completed `Tool` rows below instead. During a fleet turn, while the primary
+waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
+(the count of running sub-agents and their longest-running tool) instead of
+`Thinking…`; each child's full step list stays in the **Sub-agents** panel
+in the left rail. Once a tool call has run for five seconds the line grows
+a `✕ abandon call` link: clicking it abandons that one call (the model sees
+it fail as "tool call cancelled") and the turn continues, unlike **Stop**,
+which ends the run. A tool that must finish once started (a Watchlists
+mutation, for example) cannot be abandoned and shows no link.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
