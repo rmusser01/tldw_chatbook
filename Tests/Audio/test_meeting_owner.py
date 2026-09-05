@@ -232,6 +232,35 @@ def test_scan_and_recover_unfinished_folder(tmp_path):
     assert mo.scan_recoverable(tmp_path / "meetings") == []
 
 
+def test_recover_folder_survives_a_folder_key_in_meeting_json(tmp_path):
+    # TASK-31551 live-verification finding: the real writer (MeetingSession /
+    # meeting_owner.start()/stop()) always persists a "folder" field in
+    # meeting.json (see write_meeting_json call sites) -- the two tests
+    # above hand-write a meeting.json WITHOUT that key, which is exactly
+    # the field recover_folder's `update_meeting_json(folder, **payload)`
+    # collides with, so they can never see the bug. Recovering an actual
+    # crashed meeting reproducibly raised
+    # `TypeError: update_meeting_json() got multiple values for argument
+    # 'folder'`, and Textual's default `exit_on_error=True` on the
+    # `@work(thread=True)`-decorated recover worker took the whole app
+    # down with it.
+    folder = tmp_path / "meetings" / "2026-09-04_1200"
+    folder.mkdir(parents=True)
+    writer = PlaceholderWavWriter(folder / "mixed.wav")
+    writer.write(b"\x00\x00" * 320 * 10)
+    writer._handle.flush()  # crash: never closed
+    (folder / "meeting.json").write_text(json.dumps({
+        "schema": 1,
+        "folder": str(folder),
+        "started_at": "2026-09-04T12:00:00",
+        "ended_at": None,
+        "mode": "call",
+    }))
+    payload = mo.recover_folder(folder)
+    assert payload["recovered"] is True
+    assert payload["folder"] == str(folder)
+
+
 def test_cleanup_raw_tracks_only_when_job_done(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     states = {"ingest-job-1": "parsing"}

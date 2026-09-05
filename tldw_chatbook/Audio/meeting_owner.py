@@ -124,6 +124,14 @@ def recover_folder(folder: Path) -> dict:
         )
         payload["ended_at"] = ended_at.isoformat(timespec="seconds")
     payload.update(recovered=True, duration_s=duration_s, stop_reason=payload.get("stop_reason") or "crash")
+    # The real writer always persists "folder" in meeting.json (see
+    # write_meeting_json call sites); spreading it back in here collides
+    # with the positional `folder` argument below (`update_meeting_json()
+    # got multiple values for argument 'folder'`). update_meeting_json()
+    # re-reads the on-disk payload and merges these fields into it, so the
+    # existing "folder" value on disk survives untouched -- dropping it
+    # from the spread only removes the duplicate-argument crash.
+    payload.pop("folder", None)
     return update_meeting_json(folder, **payload)
 
 
