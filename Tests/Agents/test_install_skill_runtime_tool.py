@@ -9,15 +9,8 @@ runtime_schemas (never disclosure-gated) only for the top-level agent
 import json
 
 from tldw_chatbook.Agents.agent_models import (
-    CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
-    WAIT_AGENTS_TOOL_NAME,
-    RUN_LOG_SLICE_TOOL_NAME,
-    RUN_LOG_STATS_TOOL_NAME,
-    RUN_SKILL_SCRIPT_TOOL_NAME,
-    SEARCH_RUN_LOG_TOOL_NAME,
-    SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
@@ -28,7 +21,6 @@ from tldw_chatbook.Agents.agent_models import (
     ModelTurn,
     RUN_DONE,
     RunBudget,
-    ToolCatalogEntry,
     ToolLoadSelection,
     ToolResult,
     ToolSchema,
@@ -38,9 +30,16 @@ from tldw_chatbook.Agents.agent_models import (
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
 )
-from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.tool_catalog import (
+    INSTALL_SKILL_TOOL_SCHEMA,
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+)
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
@@ -156,13 +155,6 @@ def test_install_skill_falls_through_when_not_wired():
 
 
 # -- AgentService wiring, gated to the top-level agent ----------------------
-
-from tldw_chatbook.Agents.agent_service import AgentService
-from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.conftest import join_fleet_children
 
 
 def _svc_fence(name, args):
