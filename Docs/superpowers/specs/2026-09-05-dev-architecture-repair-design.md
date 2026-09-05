@@ -4,7 +4,7 @@ Approved scope: repair bounded failures, then decompose oversized screens under
 their existing ratchets and resume the comprehensive test sweep. Rebased onto
 origin/dev `93388ba69b` before implementation.
 
-## Bounded repairs (TASK-31640)
+## Bounded repairs (TASK-31715)
 
 - Reuse `egress.create_default_session` for the TLS requests factory, preserving
   explicit verification overrides and adding the existing timeout protection.

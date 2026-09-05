@@ -1,5 +1,5 @@
 ---
-id: TASK-31640
+id: TASK-31715
 title: Restore bounded Architecture contracts on rebased dev
 status: Done
 assignee:

@@ -5278,7 +5278,7 @@ replacement, and an initially suppressed entry sync. Each new browse sync now
 owns its current guard, releasing it when synchronization is suppressed. No stale
 callback is replayed. The screen measures 41,324 lines / 1,301 methods afterward.
 
-## 21. Keep controller execution payload behind construction (task 31662)
+## 21. Keep controller execution payload behind construction (task 31720)
 
 Controller extraction alone does not reduce route-discovery import cost if the
 screen still imports every implementation at module scope. The Notes sync
@@ -5343,7 +5343,7 @@ filter's loading-phase caret before editing. Final stale-request, caret, retry,
 collapse and no-change assertions remain unchanged. A conflict restore waits for
 detail adoption and notification, not merely the earlier SQLite version write.
 
-## 25. Source admission must not repaint the retained authority (task 31700)
+## 25. Source admission must not repaint the retained authority (task 31724)
 
 Files admission called Notes navigation invalidation with its default rendering
 enabled. That reached the shared canvas synchronizer and recomposed the outgoing

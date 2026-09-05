@@ -1,5 +1,5 @@
 ---
-id: TASK-31639
+id: TASK-31714
 title: Preserve Loguru capture sinks across app mount
 status: Done
 assignee:

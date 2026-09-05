@@ -31,7 +31,7 @@ Update stale regression expectations to the explicitly shipped retained-open-row
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Aligned stale tests with the explicit Reader contracts already merged in TASK31567 / b6740f08912 (retain the open row on same-context refresh) and a62d92f590c (keep retry chrome visible). Refresh still requests a fresh first page and preserves selected content; assertions now also pin retained rows without inflating the service snapshot count. Failure coverage retains all stale-data and retry checks and adds real search/filter/pager visibility and geometry. Both complete Watchlists files passed, 48 pagination plus 57 scoped rebuilds, within the clean 269-test combined gate (/private/tmp/tldw-31693-31695-final.xml). Scoped Ruff and diff checks passed. No product changes or new ADR required.
+Aligned stale tests with the explicit Reader contracts already merged in TASK31725 / b6740f08912 (retain the open row on same-context refresh) and a62d92f590c (keep retry chrome visible). Refresh still requests a fresh first page and preserves selected content; assertions now also pin retained rows without inflating the service snapshot count. Failure coverage retains all stale-data and retry checks and adds real search/filter/pager visibility and geometry. Both complete Watchlists files passed, 48 pagination plus 57 scoped rebuilds, within the clean 269-test combined gate (/private/tmp/tldw-31693-31695-final.xml). Scoped Ruff and diff checks passed. No product changes or new ADR required.
 
 Parent completed bounded final diff review with no actionable findings.
 <!-- SECTION:NOTES:END -->

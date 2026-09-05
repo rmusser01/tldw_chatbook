@@ -1,5 +1,5 @@
 ---
-id: TASK-31571
+id: TASK-31729
 title: Repair Console local citation boundary regressions
 status: Done
 assignee: []
