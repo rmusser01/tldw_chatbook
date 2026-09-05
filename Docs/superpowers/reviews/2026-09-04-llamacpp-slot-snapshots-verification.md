@@ -6,7 +6,9 @@ The manual manager, private storage, bounded client, lifecycle integration, and
 canonical preferences are implemented. Units 1–5 passed their independent scoped
 reviews, including accepted fix rounds. Task6 supplies an opt-in real-server
 harness and honest evidence closeout; it is not evidence that the live scenario
-has run. A separate final feature review remains scheduled.
+has run. The integrated final review identified three important boundary omissions
+and two minor issues; the one bounded fix wave below addresses them. A scoped
+re-review of that wave remains required.
 
 ## Evidence boundaries
 
@@ -72,6 +74,56 @@ Reviewed upstream revision: `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`.
 The controller independently checked the media/prefix/mapping source anchors;
 the implementer checked the cached pinned README/parser. Missing counters,
 changed totals, or inability to demonstrate the boundary fail the live gate.
+
+## Integrated review fix wave
+
+The accepted whole-feature review findings were addressed together after Task6:
+
+- I1: expected preference read/validation errors become fixed pre-submission
+  errors before operation reservation. Models invalidates/reloads affected
+  controls using existing Advanced Config recovery guidance; browsing and
+  confirmed Delete remain available. Real mounted valid-load → invalid-config →
+  Save and confirmed Restore tests run without an intervening Refresh and prove
+  no reservation and no POST.
+- I2: initialization and entry/explicit Refresh run retained off-thread
+  reconciliation with an **empty terminated set**, before catalog publication.
+  Only verified terminal work and validated interrupted deletion are retried.
+  Reserved, acknowledged, and unknown writers remain untouched; page browsing
+  stays catalog-only. Warnings do not turn ready management into an unavailable
+  launch. A held-publication-lock/cancel barrier verifies worker settlement and
+  preservation of an acknowledged Save.
+- I3: both stdlib JSON boundaries catch recursion failure. Complete scans recover
+  corrupt publication counters; incomplete scans still refuse ordering/pruning.
+  Malformed tombstones remain while later valid tombstones reconcile. Unexpected
+  reconciliation failure no longer bypasses confirmed-Stop client closure/status.
+- M1: Details shows an absolute local observation timestamp. The elapsed-only
+  timer performs no HTTP or table rebuild; the regression advances a controlled
+  clock during an actual pending service operation.
+- M2: the aggregate-deadline fixture uses deterministic endpoint costs instead
+  of a 4 ms scheduling margin. A temporary reset-per-request production mutation
+  made it fail; restoring the original aggregate scope made it pass. No client
+  implementation change remains from that mutation check.
+
+Final affected-file verification (existing venv, owned-loopback permission):
+
+```bash
+python -m pytest Tests/LLM_Management/test_snapshot_store.py Tests/LLM_Management/test_snapshot_service.py Tests/LLM_Management/test_snapshot_client.py Tests/UI/test_llamacpp_snapshot_manager.py -q --tb=short --show-capture=no
+```
+
+**156 passed, 1 existing RequestsDependencyWarning**, exit 0, 48.21s. No 14-file
+or full-suite repeat. Scoped Ruff lint/format (seven Python files), compilation,
+and diff whitespace checks pass. CSS was unchanged. The pure focused store-sink
+scan still matches the tracked row/count 8; inherited unrelated owner/summary
+drift remains untouched. No new environment repair or broad FD audit occurred.
+
+Recursion evidence uses real stdlib decoding of a bounded 20,001-byte array.
+This environment's CPython 3.12 C decoder accepts the review's 1,500-level example;
+10,000 levels produce the intended RecursionError within the 64 KiB file bound.
+A briefly tested Python recursion-limit fixture did not alter that C-decoder
+threshold and was removed; no process recursion-limit modification remains.
+All new regressions were observed failing at their intended boundary, with
+fixture setup corrections recorded in the execution report. Live AC5 is still
+open; these tests do not establish real-model cache persistence or reuse.
 
 ## Commands and results
 

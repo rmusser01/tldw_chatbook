@@ -346,10 +346,14 @@ class LlamaCppSnapshotManager(Vertical):
             view.catalog.next_offset is None
         )
         observed = max((slot.observed_at for slot in view.slots), default=None)
-        age = (
+        observed_time = (
             "Unknown"
             if observed is None
-            else f"{int(max(0, time.monotonic() - observed))}s ago"
+            else datetime.fromtimestamp(
+                time.time() - max(0, time.monotonic() - observed)
+            )
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
         )
         record = next(
             (
@@ -359,7 +363,7 @@ class LlamaCppSnapshotManager(Vertical):
             ),
             None,
         )
-        details = f"Updated {age}\nStored on this device: {token_copy(view.catalog.stored_bytes)} bytes · Residual: {token_copy(view.catalog.residual_bytes)} bytes"
+        details = f"Updated {observed_time}\nStored on this device: {token_copy(view.catalog.stored_bytes)} bytes · Residual: {token_copy(view.catalog.residual_bytes)} bytes"
         if (
             not self.query_one("#snapshot-details-panel", Collapsible).collapsed
             and view.storage_location
@@ -427,7 +431,7 @@ class LlamaCppSnapshotManager(Vertical):
             try:
                 self.service.start_save(self._slot_id)
             except SnapshotError as error:
-                self.app.notify(error.code.replace("_", " "), severity="warning")
+                self._operation_error(error)
         elif action in {"snapshot-restore", "snapshot-delete"}:
             self._confirm(action == "snapshot-restore")
         elif action in {"snapshot-next", "snapshot-previous"}:
@@ -496,7 +500,7 @@ class LlamaCppSnapshotManager(Vertical):
                 try:
                     self.service.start_restore(record.snapshot_id, slot_id)
                 except SnapshotError as error:
-                    self.app.notify(error.code.replace("_", " "), severity="warning")
+                    self._operation_error(error)
             else:
                 self._offsets = [0]
                 self.app.run_worker(
@@ -512,6 +516,18 @@ class LlamaCppSnapshotManager(Vertical):
             ),
             confirmed,
         )
+
+    def _operation_error(self, error: SnapshotError) -> None:
+        if error.code == "preferences_unavailable":
+            self._set_loaded_preferences(None)
+            self._paint()
+            self.app.run_worker(
+                self._save_preferences(True),
+                group="snapshot-preferences",
+                exit_on_error=False,
+            )
+            return
+        self.app.notify(error.code.replace("_", " "), severity="warning")
 
     async def _save_preferences(self, reload: bool) -> None:
         attachment = self._attachment

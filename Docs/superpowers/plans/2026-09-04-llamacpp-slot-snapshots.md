@@ -12,7 +12,7 @@
 
 **Backlog:** [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
 
-**Status:** Implementation in progress. Units 1–5 are implemented and reviewed; Task6 adds the opt-in harness and [evidence closeout](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md). Live AC5 remains open because no eligible asset set or measured counters was supplied. See TASK-31552 for feature completion status.
+**Status:** Implementation in progress. Units 1–5 are implemented and reviewed; Task6 adds the opt-in harness and [evidence closeout](../reviews/2026-09-04-llamacpp-slot-snapshots-verification.md). The integrated final review's I1/I2/I3/M1/M2 findings are addressed in one bounded fix wave (156 affected tests passed); its scoped re-review remains pending. Live AC5 remains open because no eligible asset set or measured counters was supplied. See TASK-31552 for feature completion status.
 
 ADR required: yes
 
@@ -422,6 +422,15 @@ TLDW_LLAMA_SNAPSHOT_LIVE=1 python -m pytest Tests/LLM_Management/test_snapshot_l
 Review after each unit before advancing. Task 1's effective-configuration table and Task 4's claim/worker interleavings are the highest-risk review points. Implementation must not weaken a blocked/unknown state simply to make the happy-path test pass.
 
 ## Plan self-review result
+
+Integrated-review follow-through: preference admission failures are payload-free
+before reservation and recover safely in Models; initialization/entry performs
+retained off-thread safe reconciliation without claiming writer termination;
+bounded nested JSON preserves counter/tombstone policies and cannot bypass Stop
+teardown. Details uses an absolute observation time, and the aggregate-deadline
+regression uses a deterministic budget with a verified per-request-reset mutant.
+Final affected run: 156 passed, 1 existing warning; no broad rerun or new runtime
+evidence. See the linked verification record for exact boundaries and commands.
 
 - All nine spec sections and all 11 task criteria have implementation and verification owners above.
 - All new public type and method names are defined in the shared interface section; task boundaries do not introduce a second client, config writer, or process owner.

@@ -147,6 +147,188 @@ async def settled(service):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["save", "restore"])
+@pytest.mark.parametrize("failure", [ValueError, OSError])
+async def test_preference_admission_failure_is_safe_and_reserves_nothing(
+    harness, monkeypatch, action, failure
+):
+    from tldw_chatbook.LLM_Management import snapshot_service as module
+
+    h = harness
+    await h.service.refresh()
+    before = tuple(h.store.working.rglob("*"))
+
+    def invalid():
+        raise failure("private-preference-canary")
+
+    monkeypatch.setattr(module, "load_snapshot_preferences", invalid)
+    with pytest.raises(SnapshotError, match="preferences_unavailable") as raised:
+        if action == "save":
+            h.service.start_save(0)
+        else:
+            h.service.start_restore("saved-id", 0)
+    assert not raised.value.submission_possible
+    assert raised.value.__cause__ is None
+    assert h.service.view().operation_id is None
+    assert not h.clients["launch-a"].calls
+    assert tuple(h.store.working.rglob("*")) == before
+    await h.service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_stop_reconciliation_failure_still_closes_and_settles(
+    harness, monkeypatch
+):
+    h = harness
+    await h.service.refresh()
+
+    def fail_reconcile(_terminated):
+        raise RuntimeError("private-reconcile-canary")
+
+    monkeypatch.setattr(h.store, "reconcile", fail_reconcile)
+    await h.service.server_stopped(h.first.claim, confirmed=True)
+    assert h.clients["launch-a"].closed == 1
+    assert h.service.view().status == "stopped"
+    assert h.service.view().operation_id is None
+    assert h.service.view().message == "cleanup_failed"
+    await h.service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["initialize", "refresh"])
+async def test_entry_reconciliation_cleans_only_settled_work_offthread(
+    harness, monkeypatch, entry
+):
+    from Tests.LLM_Management.snapshot_fixtures import commit_test_snapshot
+    from tldw_chatbook.LLM_Management import snapshot_store as store_module
+    from tldw_chatbook.LLM_Management.snapshot_service import LlamaCppSnapshotService
+
+    h = harness
+    work = {}
+    for state in ("terminal", "reserved", "acknowledged", "unknown"):
+        item = h.store.reserve_save("residue-" + state, 0)
+        item.path.write_bytes(state.encode())
+        if state != "reserved":
+            h.store.set_operation_state(item, state)
+        work[state] = item
+    record = commit_test_snapshot(h.store, payload=b"deleted snapshot", slot_id=0)
+    binary = h.store.catalog / record.filename
+    unlink = store_module._unlink_verified
+
+    def fail_unlink(path, identity):
+        if path == binary:
+            raise OSError("private-unlink-canary")
+        return unlink(path, identity)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store_module, "_unlink_verified", fail_unlink)
+        assert h.store.delete(record.snapshot_id)
+    tombstone = h.store.catalog / f"{record.snapshot_id}.deleting"
+    assert tombstone.exists() and binary.exists()
+    assert not (h.store.catalog / f"{record.snapshot_id}.json").exists()
+    calls = []
+    reconcile = SnapshotStore.reconcile
+
+    def observed(store, terminated):
+        calls.append((threading.get_ident(), terminated))
+        return reconcile(store, terminated)
+
+    monkeypatch.setattr(SnapshotStore, "reconcile", observed)
+    owner = (
+        h.service
+        if entry == "refresh"
+        else LlamaCppSnapshotService(None, lambda _claim: False)
+    )
+    try:
+        if entry == "initialize":
+            await owner.initialize(lambda: h.store.root)
+        else:
+            await owner.refresh()
+        assert calls and all(
+            thread != threading.get_ident() and not terminated
+            for thread, terminated in calls
+        )
+        assert not work["terminal"].path.exists()
+        for state in ("reserved", "acknowledged", "unknown"):
+            assert work[state].path.read_bytes() == state.encode()
+            assert (
+                work[state].path.parent / f"{work[state].operation_id}.json"
+            ).exists()
+        assert not binary.exists() and not tombstone.exists()
+        assert owner.view().catalog.residual_bytes > 0
+        before = len(calls)
+        await owner.browse_catalog()
+        assert len(calls) == before
+    finally:
+        await owner.shutdown()
+        if owner is not h.service:
+            await h.service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_entry_cleanup_warning_does_not_disable_ready_management(
+    harness, monkeypatch
+):
+    h = harness
+    monkeypatch.setattr(h.store, "reconcile", lambda _terminated: ("cleanup_failed",))
+    await h.service.refresh()
+    assert h.service.view().status == "idle"
+    assert h.service.view().disabled_reason is None
+    assert h.service.view().message == "cleanup_incomplete"
+    monkeypatch.setattr(h.store, "reconcile", lambda _terminated: ())
+    await h.service.refresh()
+    assert h.service.view().message is None
+    await h.service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_entry_reconciliation_waits_for_acknowledged_publication_lock(
+    harness, monkeypatch
+):
+    from tldw_chatbook.LLM_Management import snapshot_store as module
+
+    h = harness
+    await h.service.refresh()
+    publishing, reconcile_entered, release = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    flush = module._flush_binary
+    reconcile = h.store.reconcile
+
+    def held_flush(stream):
+        publishing.set()
+        assert release.wait(30)
+        flush(stream)
+
+    def entered_reconcile(terminated):
+        assert not terminated
+        reconcile_entered.set()
+        return reconcile(terminated)
+
+    monkeypatch.setattr(module, "_flush_binary", held_flush)
+    monkeypatch.setattr(h.store, "reconcile", entered_reconcile)
+    refresh = None
+    try:
+        h.service.start_save(0)
+        assert await asyncio.to_thread(publishing.wait, 5)
+        refresh = asyncio.create_task(h.service.refresh())
+        assert await asyncio.to_thread(reconcile_entered.wait, 5)
+        refresh.cancel()
+        await asyncio.sleep(0)
+        assert not refresh.done()
+    finally:
+        release.set()
+        if refresh:
+            await refresh
+        await settled(h.service)
+        await h.service.shutdown()
+    assert len(h.store.list_records().records) == 1
+    assert not any(h.store.working.rglob("*.bin"))
+
+
+@pytest.mark.asyncio
 async def test_catalog_compatibility_projection_tracks_ready_and_invalidated_launch(
     harness,
 ):

@@ -275,7 +275,7 @@ def test_incomplete_scan_keeps_old_records_and_reports_unknown_totals(
     assert old in store.list_records().records
 
 
-@pytest.mark.parametrize("counter", ["missing", "corrupt"])
+@pytest.mark.parametrize("counter", ["missing", "corrupt", "nested"])
 def test_incomplete_scan_cannot_recover_sequence_counter(
     store, tmp_path, monkeypatch, counter
 ):
@@ -285,6 +285,8 @@ def test_incomplete_scan_cannot_recover_sequence_counter(
     counter_path = tmp_path / "snapshots" / "publication.json"
     if counter == "missing":
         counter_path.unlink()
+    elif counter == "nested":
+        counter_path.write_text("[" * 10000 + "0" + "]" * 10000)
     else:
         counter_path.write_text("{}")
     monkeypatch.setattr(module, "MAX_SCAN_ENTRIES", 1)
@@ -293,6 +295,14 @@ def test_incomplete_scan_cannot_recover_sequence_counter(
     monkeypatch.undo()
     assert store.list_records().records == (old,)
     assert _save(store).record.publication_sequence == 2
+
+
+def test_deep_counter_recovers_only_from_complete_catalog(store):
+    old = _save(store).record
+    (store.root / "publication.json").write_text("[" * 10000 + "0" + "]" * 10000)
+    result = _save(store)
+    assert result.record.publication_sequence == 2
+    assert old in store.list_records().records
 
 
 @pytest.mark.parametrize("state", ["reserved", "acknowledged", "terminal", "unknown"])
@@ -638,7 +648,11 @@ def _pending_tombstone(store):
     return binary, tombstone, envelope
 
 
-@pytest.mark.parametrize("payload", ["null", "1", '[{"x":1}]', "true", '"text"', "[]"])
+@pytest.mark.parametrize(
+    "payload",
+    ["null", "1", '[{"x":1}]', "true", '"text"', "[]", "[" * 10000 + "0" + "]" * 10000],
+    ids=["null", "number", "array", "bool", "text", "empty", "deep"],
+)
 def test_nonobject_tombstone_is_preserved_and_reconciliation_continues(
     store, monkeypatch, payload
 ):

@@ -434,16 +434,35 @@ async def test_probe_timeout_is_fixed_and_pre_submission(
 async def test_readiness_has_one_aggregate_probe_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
     requests: list[str] = []
+    clock = 0
+    deadlines = []
+
+    @asynccontextmanager
+    async def controlled_timeout(seconds):
+        deadlines.append(clock + seconds)
+        try:
+            yield
+        finally:
+            deadlines.pop()
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal clock
         requests.append(request.url.path)
-        await asyncio.sleep(0.008)
+        # Charge two deterministic units per endpoint. Three independently
+        # reset five-unit budgets would succeed; one aggregate budget expires.
+        clock += 2
+        assert deadlines, "Readiness request escaped its deadline scope"
+        if clock >= min(deadlines):
+            raise TimeoutError
         return _response(request)
 
     import tldw_chatbook.LLM_Management.snapshot_client as module
 
-    monkeypatch.setattr(module, "PROBE_SECONDS", 0.02)
+    monkeypatch.setattr(module, "asyncio", SimpleNamespace(timeout=controlled_timeout))
     client = module.SnapshotClient(
         _descriptor(), transport=httpx.MockTransport(handler)
     )

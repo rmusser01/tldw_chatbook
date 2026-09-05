@@ -88,3 +88,14 @@ See [user guidance](../../Docs/LLMs/llamacpp-snapshots.md) and the
 for exact scope, tests, known environment/inventory limitations, and missing live
 counters. No real model/audio reuse, Windows ACL equivalence, or feature completion
 is claimed. No Done transition, merge, push, or asset download was performed.
+
+Integrated final review I1/I2/I3/M1/M2 were addressed in one bounded wave:
+preference admission errors are safe before reservation with Models recovery;
+entry/init reconciles only terminal work and valid deletion tombstones while
+preserving unproven writers; nested JSON obeys existing conservative recovery
+policies and unexpected reconciliation failure cannot bypass Stop teardown.
+Details now shows absolute observation time, and the aggregate-deadline test no
+longer depends on a narrow scheduling margin. Final affected verification:
+156 passed, 1 existing RequestsDependencyWarning; scoped lint/format/compile/diff
+checks pass. Scoped re-review remains pending. Live AC5 and status In Progress
+are unchanged; no real-model or audio reuse evidence was added.

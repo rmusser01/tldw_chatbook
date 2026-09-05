@@ -398,7 +398,7 @@ class SnapshotStore:
             ):
                 raise ValueError("invalid counter")
             previous = value["publication_sequence"]
-        except (OSError, ValueError, TypeError, SnapshotError):
+        except (OSError, ValueError, TypeError, RecursionError, SnapshotError):
             if not complete:
                 raise _error("ordering_unavailable") from None
             previous = 0
@@ -766,7 +766,7 @@ class SnapshotStore:
                             path, _identity(os.fstat(opened.stream.fileno()))
                         )
                     _sync_directory(self.catalog)
-                except (OSError, ValueError, SnapshotError):
+                except (OSError, ValueError, RecursionError, SnapshotError):
                     failures.append("cleanup_failed")
             if not complete or not catalog_complete:
                 failures.append("cleanup_incomplete")
