@@ -173,7 +173,15 @@ _BUDGETS: dict[str, int] = {
     # because their patch sites used a variable name other than
     # `library_screen`/`library_screen_module`; see the recipe's §3 for the
     # full correction) -- all fixed in this task, +22 lines. 2536 -> 2558.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2558,
+    #
+    # 2026-09-05, wave-5 task 3 fix round 1 (post-review, counts only):
+    # comment-only growth, no method body touched. The `_sync_library_
+    # canvas` census's own "site" definition (one match/line of the
+    # 3-shape pattern set, deduplicated per file) and its reproducible
+    # 10-file breakdown summing to 38 were added to this module's own
+    # docstring so a reviewer can re-derive the number without re-running
+    # the census script. 2558 -> 2569.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2569,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

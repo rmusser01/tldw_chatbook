@@ -442,7 +442,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `_library_ingest_restage_discards_work`, `_restage_library_ingest_
     # last_submission`, `_set_library_ingest_panels_collapsed`, `_update_
     # library_ingest_retry_label` -- 6 `FunctionDef`s out, no replacement
-    # (1302 -> 1296, exactly the pruned-delegator count). 9 dead imports
+    # (1302 -> 1296, exactly the pruned-delegator count). 8 dead imports
     # pruned, each independently confirmed already re-imported and live
     # inside `library_ingest_controller.py`: `ACTIVE_INGEST_STATES`,
     # `normalize_active_ingest_source` (`Library.library_ingest_jobs`);
@@ -453,8 +453,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # capabilities`) -- a 9th candidate, `_ingestible_file_filters`
     # (`Library_Modules.screen_helpers`), is genuinely unused by the screen
     # too but stays per the PR-0a re-export contract (`Tests/Architecture/
-    # test_library_support_layer_surface.py`'s `_SURFACE`), the first time
-    # this series' own dead-import prune has collided with that contract.
+    # test_library_support_layer_surface.py`'s `_SURFACE`) -- the SAME
+    # shape the conversations exemplar's own Task 7 first hit, not a new
+    # one (recipe §11).
     # 40131/1302 -> 40094/1296.
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 40094, 1296),
 }

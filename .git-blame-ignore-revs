@@ -103,7 +103,7 @@ ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
 # deleted; 37 screen-side + 297 test-side flat-name occurrences
 # retargeted to self._ingest_state.<field>/<receiver>._ingest_state.
 # <field> (a mechanical receiver swap, no assertion values changed); 6
-# dead screen delegators and 9 dead imports removed; docstring/
+# dead screen delegators and 8 dead imports removed; docstring/
 # census-listing corrections in library_ingest_controller.py -- every
 # per-line change is a mechanical receiver swap, a removal, or a comment
 # fix, not new logic, same shape as the export/collections/search+RAG/

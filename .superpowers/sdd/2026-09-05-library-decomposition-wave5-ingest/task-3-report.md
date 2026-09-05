@@ -186,31 +186,47 @@ across `tldw_chatbook/` and every `Tests/` root, excluding
 `library_ingest_controller.py`'s own internal calls and each name's own
 one-line screen-delegator body — found:
 
+**Correction (fix round 1, post-review)**: every "mover caller"/"listener
+registration"-shaped label below was WRONG in the original draft of this
+table — a moved method's body no longer lives on the screen to make such
+a call (only the controller's own internal calls could do that, and those
+are explicitly excluded from this census by definition). Every real
+screen-side caller found here is either an EXCLUDED method (still
+full-bodied on the screen) or an unrelated SHELL method — re-verified
+name-by-name via `ast`-derived containing-method lookup, not re-guessed.
+Re-verifying also caught two count errors: `_apply_library_ingest_
+preflight_result` (11 → 10: the dropped 1 was a controller-internal prose
+mention, out of this census's own scope) and `_library_ingest_registry`
+(33 → 11: the original count was contaminated by `_library_ingest_
+registry` being a literal substring of `_handle_library_ingest_registry_
+changed`, so a substring-based grep silently double-counted that name's
+own 22 references as this one's).
+
 | Name | External references | Verdict |
 |---|---|---|
-| `_apply_library_ingest_backend_save` | 1 (constructor dependency binding) | KEEP |
-| `_apply_library_ingest_preflight_result` | 11 (screen `set_timer` callback + 8 test call sites) | KEEP |
-| `_authoritative_library_ingest_consent_is_current` | 1 (mover caller) | KEEP |
+| `_apply_library_ingest_backend_save` | 1 (excluded caller: `_save_library_ingest_backend`) | KEEP |
+| `_apply_library_ingest_preflight_result` | 10 (1 excluded caller via `call_from_thread`: `_run_library_ingest_preflight` + 9 test call sites) | KEEP |
+| `_authoritative_library_ingest_consent_is_current` | 1 (shell caller: `_apply_library_external_preparation`) | KEEP |
 | `_cancel_library_ingest_preflight` | 3 (2 test monkeypatches + 1 prose) | KEEP |
-| `_current_library_ingest_start_consent` | 13 (2 mover callers + 11 test call sites) | KEEP |
-| `_disarm_library_ingest_retry_confirm` | 2 (1 mover caller + 1 test fixture kwarg) | KEEP |
-| `_disarm_library_ingest_start_confirm` | 5 (4 mover callers + 1 test fixture kwarg) | KEEP |
-| `_focus_library_ingest_path` | 1 (mover caller via `call_after_refresh`) | KEEP |
-| `_handle_library_ingest_progress_changed` | 3 (2 listener registrations + 1 test call) | KEEP |
-| `_handle_library_ingest_registry_changed` | 20 (listener registration + many test calls) | KEEP |
-| `_invalidate_library_ingest_preflight` | 5 (mover caller + 4 test sites) | KEEP |
-| `_library_ingest_registry` | 33 (heavily-shared accessor) | KEEP |
-| `_library_ingest_shortcuts_for_current_state` | 4 (mover caller + 3 test sites) | KEEP |
-| `_pause_library_ingest_transient_ui` | 1 (mover caller) | KEEP |
-| `_reset_library_ingest_transient_state` | 3 (mover caller + 2 prose) | KEEP |
-| `_restore_library_ingest_canvas_context` | 2 (mover caller + 1 test call) | KEEP |
-| `_scroll_library_ingest_queue_into_view` | 1 (mover caller via `call_after_refresh`) | KEEP |
-| `_submit_library_ingest_form` | 47 (many test call sites) | KEEP |
-| `_sync_library_ingest_rail_for_width` | 6 (3 mover callers + 1 test call + 2 prose) | KEEP |
-| `_sync_library_ingest_rail_from_shell` | 1 (mover caller via `call_after_refresh`) | KEEP |
-| `_trigger_library_ingest_preflight` | 12 (mover callers + test sites) | KEEP |
-| `_update_library_ingest_fold_hint` | 1 (mover caller via `call_after_refresh`) | KEEP |
-| `_update_library_ingest_group_receipt` | 1 (mover caller) | KEEP |
+| `_current_library_ingest_start_consent` | 13 (1 shell caller: `_apply_library_external_preparation` + 1 excluded caller: `_enqueue_library_ingest_snapshot` + 11 test call sites) | KEEP |
+| `_disarm_library_ingest_retry_confirm` | 2 (1 excluded caller: `handle_library_ingest_option_value_changed` + 1 test fixture kwarg) | KEEP |
+| `_disarm_library_ingest_start_confirm` | 5 (4 excluded callers: `handle_library_ingest_backend_switch`, `handle_library_ingest_option_value_changed`, `handle_library_ingest_directory_browse`, `handle_library_ingest_option_reset` + 1 test fixture kwarg) | KEEP |
+| `_focus_library_ingest_path` | 1 (shell caller via `call_after_refresh`: `_select_library_rail_row_after_source_admission`) | KEEP |
+| `_handle_library_ingest_progress_changed` | 3 (2 shell listener registrations in `on_mount`/`on_unmount` + 1 test call) | KEEP |
+| `_handle_library_ingest_registry_changed` | 19 (2 shell listener registrations in `on_mount`/`on_unmount` + 1 shell prose comment + 16 test call sites) | KEEP |
+| `_invalidate_library_ingest_preflight` | 5 (1 excluded caller: `_enqueue_library_ingest_snapshot` + 4 test sites) | KEEP |
+| `_library_ingest_registry` | 11 (7 screen callers -- `on_mount`, `on_unmount`, `_library_landing_attention_action`, `check_action` (shell) + `_build_library_ingest_state`, `_enqueue_library_ingest_snapshot`, `_library_ingest_job_by_id` (excluded) -- + 4 test sites) | KEEP |
+| `_library_ingest_shortcuts_for_current_state` | 4 (1 shell caller: `_library_route_shortcuts_for_current_state` + 3 test sites) | KEEP |
+| `_pause_library_ingest_transient_ui` | 1 (shell caller: `_select_library_rail_row_after_source_admission`) | KEEP |
+| `_reset_library_ingest_transient_state` | 3 (1 shell caller: `_apply_navigation_context_state` + 2 prose) | KEEP |
+| `_restore_library_ingest_canvas_context` | 2 (1 excluded caller: `_refresh_library_ingest_canvas_preserving_context` + 1 test call) | KEEP |
+| `_scroll_library_ingest_queue_into_view` | 1 (excluded caller via `call_after_refresh`: `_enqueue_library_ingest_snapshot`) | KEEP |
+| `_submit_library_ingest_form` | 47 (test call sites only, zero screen-side callers) | KEEP |
+| `_sync_library_ingest_rail_for_width` | 6 (3 shell callers: `_update_library_notes_responsive_state`, `on_resize`, `_select_library_rail_row_after_source_admission` + 1 test call + 2 prose) | KEEP |
+| `_sync_library_ingest_rail_from_shell` | 1 (shell caller via `call_after_refresh`: `_select_library_rail_row_after_source_admission`) | KEEP |
+| `_trigger_library_ingest_preflight` | 12 (1 excluded caller: `_run_debounced_library_ingest_preflight` + 1 shell caller: `_trigger_preflight`, its own alias + 1 prose (that alias's own docstring) + 9 test sites) | KEEP |
+| `_update_library_ingest_fold_hint` | 1 (excluded caller via `call_after_refresh`: `_update_library_ingest_gate`) | KEEP |
+| `_update_library_ingest_group_receipt` | 1 (excluded caller: `handle_library_ingest_option_value_changed`) | KEEP |
 | **`_adopt_library_ingest_path`** | **0** | **PRUNED** |
 | **`_ingest_job_id_from_button`** (staticmethod) | **0** (internal-only `self.<name>()` calls on the controller instance) | **PRUNED** |
 | **`_library_ingest_restage_discards_work`** | **0** | **PRUNED** |
@@ -254,7 +270,7 @@ INGEST-related names only (the census also surfaced ~35 unrelated dead
 names from other subsystems' historical residue — explicitly out of
 scope for this task; not touched).
 
-**9 removed**, each independently confirmed already re-imported and live
+**8 removed**, each independently confirmed already re-imported and live
 inside `library_ingest_controller.py` before deletion from the screen:
 
 | Name | Source module |
@@ -280,7 +296,8 @@ size`, `library_ingest_retry_available`, `library_ingest_retry_label`,
 `parse_keywords`, and `ingest_capabilities`'s `get_capabilities`, `list_
 type_groups`, and `library_ingest_canvas`'s `ingest_scope_label`.)
 
-**1 candidate found dead but deliberately KEPT**: `_ingestible_file_
+**1 more candidate (the 9th of 9 total) found dead but deliberately
+KEPT**: `_ingestible_file_
 filters` (`Library_Modules.screen_helpers`) — checked against `Tests/
 Architecture/test_library_support_layer_surface.py`'s `_SURFACE` dict (the
 PR-0a re-export contract) BEFORE removal and found pinned there;
@@ -320,9 +337,16 @@ CONSTRUCTOR docstrings (not moved method bodies):
    sites used an import alias other than `library_screen`/`library_
    screen_module` (`screen_module`, or the same alias reached through
    `monkeypatch.context()`'s own `patcher.setattr(...)` inside a
-   multi-line call). Re-read all 10; all still LATENT (none reaches
-   `_apply_library_ingest_backend_save`'s own call path) — verdict
-   unchanged (KEEP as a mover), only the recorded evidence corrected.
+   multi-line call). **"Site" defined and the per-file breakdown made
+   reproducible** (post-review fix round 1): a site is one match, one
+   line, of the census's own 3-shape pattern set (direct-attribute form,
+   fully-qualified string form, or the two-argument `monkeypatch.
+   setattr`/`patch.object` form), deduplicated by line number within a
+   file — see `library_ingest_controller.py`'s own module docstring for
+   the exact 10-file breakdown that sums to 38. Re-read all 10; all
+   still LATENT (none reaches `_apply_library_ingest_backend_save`'s own
+   call path) — verdict unchanged (KEEP as a mover), only the recorded
+   evidence corrected.
    This is the carried minor from task 2's own re-review. Also corrected
    in the wiring test's own two docstring mentions of "63" and in
    `task-2-report.md` (an appended correction note, not a rewrite of the
@@ -369,12 +393,15 @@ only count change) — all 5 green post-cleanup.
 | File | Before | After |
 |---|---|---|
 | `tldw_chatbook/UI/Screens/library_screen.py` (lines/methods) | 40131/1302 | **40094/1296** |
-| `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` (lines) | 2536 | **2558** |
+| `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` (lines) | 2536 | **2558** → **2569** (fix round 1) |
 
 1296 = 1302 − 6 (exactly the pruned-delegator count — a pure deletion, no
 replacement). Controller growth (+22) is comment-only (§7's four
 corrections) — no method body touched, no mover count change (56
-unchanged). Both re-pinned in this same commit per recipe §6/§17;
+unchanged). **Fix round 1 (post-review) grew it a further +11**, also
+comment-only: the `_sync_library_canvas` census's own "site" definition
+and reproducible 10-file breakdown, added to close item 3 of the review.
+Both re-pinned in this same commit per recipe §6/§17;
 `Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_
 left_slack_after_a_wave` and `test_library_modules_size_ratchet.py::
 test_budget_is_not_left_slack_after_a_move` both pass at the new pins
@@ -503,8 +530,8 @@ sweep completed.
 ## 12. Files changed
 
 - `tldw_chatbook/UI/Screens/library_screen.py` — shim block deleted;
-  37 screen-side field retargets; 6 delegators deleted; 9 dead imports
-  removed (1 kept, `_SURFACE`-pinned).
+  37 screen-side field retargets; 6 delegators deleted; 8 dead imports
+  removed (1 more candidate kept, `_SURFACE`-pinned).
 - `tldw_chatbook/UI/Library_Modules/library_ingest_controller.py` —
   4 docstring corrections (no method body touched).
 - `tldw_chatbook/UI/Library_Modules/library_ingest_state.py` — 1

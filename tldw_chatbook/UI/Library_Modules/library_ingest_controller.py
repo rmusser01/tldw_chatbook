@@ -271,7 +271,18 @@ examples):
    (``from .canvas_sync import _sync_library_canvas``, the same shape
    every sibling controller already uses for its own ``kind=`` call). The
    census found every ``library_screen``-scoped patch target for this name
-   across ``Tests/`` (10 files, 38 sites, both the direct-attribute and the
+   across ``Tests/`` (10 files, 38 sites -- **a "site" is one match, one
+   line, of the census's own 3-shape pattern set (direct-attribute form
+   ``alias.name``, fully-qualified string form, or the two-argument
+   ``monkeypatch.setattr``/``patch.object`` form), deduplicated by line
+   number within a file; the exact, reproducible per-file breakdown is
+   2 (``Tests/Skills/test_skills_import.py``) + 3 (``test_library_canvas_
+   scoped_sync.py``) + 13 (``test_library_entry_compose_once.py``) + 1
+   (``test_library_file_notes_workspace.py``) + 2 (``test_library_media_
+   trash.py``) + 5 (``test_library_note_import_flow.py``) + 5
+   (``test_library_notes_folder_navigator.py``) + 1 (``test_library_
+   notes_reader.py``) + 2 (``test_library_review_round_t21116.py``) + 4
+   (``test_review_set_walker.py``) = 38**, both the direct-attribute and the
    ``monkeypatch.setattr(module, "name", ...)``/fully-qualified-string
    patch shapes -- **corrected by wave-5 task 3**: the original 7-file/~20-
    site count missed 3 files whose patch sites used a variable name other
