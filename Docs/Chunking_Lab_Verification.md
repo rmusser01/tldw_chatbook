@@ -11,9 +11,11 @@ Branch: `codex/chunking-lab`, based on `origin/dev` commit
 All eight tasks received independent specification and quality reviews. Task8
 screen integration is `c1b320d11b`; its reviewed edit-drain correction is
 `cd3e13926a`. Whole-branch review at `462e5cc30e` found seven Important gaps and
-five bounded refinements. The single final correction wave is implemented and
-awaits the controller's scoped independent re-review; TASK-31428 remains In Progress
-with new AC9–14 unchecked. No merge or push
+five bounded refinements. The single final correction commit `5d0df113ff` received
+scoped independent re-review: all twelve findings addressed, no new breakage in
+that fix diff. TASK-31428 remains In Progress despite verified AC9–14 because the
+controller's final targeted gate found the two unresolved architecture guards
+described below (AC15). No merge or push
 has been performed. The original working checkout was not used for implementation.
 
 Verification used the existing Python3.12.11 virtual environment with Textual8.2.8
@@ -62,6 +64,39 @@ This is targeted correction evidence, not a replacement for the original non-gre
 integration run or a new startup/platform qualification. Earlier task notes that say
 In Progress/pending review are chronological records; tasks 31421–31427 have since
 received their task-level reviews and remain Done. Final branch acceptance is pending.
+
+## Final controller gate: not green
+
+At correction commit `5d0df113ff`, the combined targeted feature/compatibility
+selection produced **466 passed, 2 failed, 9 warnings in 100.58s**. Both failures
+are in `Tests/Chunking/test_template_runtime.py::TestEnumerationGuards`:
+
+- `test_exactly_one_flat_mapper_in_production`
+- `test_the_mapper_guard_can_see_what_it_guards`
+
+An exact two-node rerun reproduced both failures in 1.02s. The import census
+detects `lab_runner.py:225`, introduced by this branch's Task5 commit `1a26e51827`:
+`_child_admission` imports and uses the vendored `TemplateProcessor` for bounded
+preprocessing/resource admission. It does not construct a second flat-template
+mapper, but the existing guard permits vendor-template consumers only in
+`template_runtime` and `auto_selection`. This is a branch-introduced integration
+gap, **not a proven baseline failure** and not waived by the clean final-fix review.
+The runtime-seam/guard contract under ADR-078/ADR-118 still needs reconciliation;
+mechanically broadening the allowlist has not been authorized or performed.
+
+The final scoped reviewer recorded this outside its correction diff, without
+waiving branch readiness. The single final correction wave is exhausted; no
+second wave was dispatched and no source fix was made by the controller.
+TASK-31428 stays In Progress with AC15 unchecked. Branch/worktree/evidence remain
+preserved; no merge or push is ready to claim.
+
+Genuine XML: `controller-final-targeted.xml` and
+`controller-final-guard-repro.xml`; exact commands and diagnosis:
+`controller-final-verification.md` in the plan-owned evidence directory. Fresh
+controller Ruff checks passed on the new Lab modules/tests, and the entire branch
+diff passed whitespace checks. The nine test warnings include the known Requests
+and vendored datetime warnings plus seven `record_property`/JUnit xunit2 notices
+from the resource fixtures; those reporting notices do not explain either failure.
 
 ## Non-green checks and startup qualification
 

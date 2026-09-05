@@ -1,7 +1,7 @@
 # Chunking Lab: template authoring and recoverable A/B experiments
 
 Date: 2026-09-04
-Status: Implemented under ADR-118; single final correction wave awaiting scoped independent re-review.
+Status: Implemented under ADR-118; final correction review passed, but final acceptance is pending two runtime import-guard failures documented in Docs/Chunking_Lab_Verification.md.
 Scope: v1. Task-level implementation/review is recorded in TASK-31421–TASK-31428; TASK-31428 remains In Progress for final acceptance.
 
 ## 1. Purpose and confirmed decisions

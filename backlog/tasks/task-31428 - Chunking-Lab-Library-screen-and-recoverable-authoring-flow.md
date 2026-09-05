@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 23:13'
-updated_date: '2026-09-05 05:12'
+updated_date: '2026-09-05 05:54'
 labels:
   - chunking
   - chunking-lab
@@ -38,12 +38,13 @@ Ship the Library-owned single-sample A/B authoring screen by composing the teste
 - [x] #6 Pure record-field edits and saved-record association preserve invalid JSON, pending controls, undo semantics and captured provenance; unsaved pinned records retain authored fields without fabricated catalog identity, and late saves cannot attach to an unrelated draft.
 - [x] #7 Fallback to a previous valid recovery checkpoint is visibly explained through a read-only coordinator warning without exposing private sample/path details.
 - [x] #8 Exclusive result preparation/inspection workers can be canceled before starting without leaking an unawaited coroutine.
-- [ ] #9 Catalog save acknowledgments identify exactly the revision written by that operation; an intervening peer update conflicts with the next unchanged local save.
-- [ ] #10 Malformed known recovery presentation fields are refused before replacement, while valid historical unsupported results remain readable after restore and reopen.
-- [ ] #11 Recovery import is inspectable after initial local-store failure and requires a validated summary plus explicit Replace current session confirmation before writable replacement.
-- [ ] #12 Users can explicitly inspect current and retained Previous output per candidate, including after failed or pending reruns, without substituting old output into current comparisons.
-- [ ] #13 Unfinished raw tag input survives ordinary renders and reopening, and deliberate save produces the intended separate tags.
-- [ ] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
+- [x] #9 Catalog save acknowledgments identify exactly the revision written by that operation; an intervening peer update conflicts with the next unchanged local save.
+- [x] #10 Malformed known recovery presentation fields are refused before replacement, while valid historical unsupported results remain readable after restore and reopen.
+- [x] #11 Recovery import is inspectable after initial local-store failure and requires a validated summary plus explicit Replace current session confirmation before writable replacement.
+- [x] #12 Users can explicitly inspect current and retained Previous output per candidate, including after failed or pending reruns, without substituting old output into current comparisons.
+- [x] #13 Unfinished raw tag input survives ordinary renders and reopening, and deliberate save produces the intended separate tags.
+- [x] #14 Final review refinements cover lazy screen workers, builtin Save-as-new default, visible sample provenance, preservation-only template export, and accurate final documentation status.
+- [ ] #15 The final targeted feature and compatibility selection passes the runtime mapper/import architecture guards without waiving the single-runtime-seam contract.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -84,4 +85,6 @@ full suite, environment upgrade, startup repair, merge or push. The original
 and earlier privacy incident remain explicit in Docs/Chunking_Lab_Verification.md.
 Status stays In Progress and AC9–14 remain unchecked until the controller's scoped
 independent final re-review. Earlier pending-review statements above are chronology.
+
+Final scoped re-review at 5d0df113ff accepted all seven Important and five Minor corrections, with no new breakage in that fix diff. AC9-14 are verified; status remains In Progress because the controller final targeted gate found 466 passes and two branch-introduced runtime mapper/import guard failures. Exact two-node rerun reproduces both failures. Task5 lab_runner.py:225 imports TemplateProcessor for resource admission outside the existing guard allowlist; it is not a second flat mapper, but the runtime-seam/guard contract is unresolved and must not be waived as baseline. No second final fix wave was dispatched. ADR118 and ADR078 remain applicable; final-rereview.md, controller-final-targeted.xml and controller-final-guard-repro.xml retain evidence. Docs/Chunking_Lab_Verification.md records current readiness. No Done, merge or push claim.
 <!-- SECTION:NOTES:END -->

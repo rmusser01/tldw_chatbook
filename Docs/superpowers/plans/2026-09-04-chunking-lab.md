@@ -2,8 +2,10 @@
 
 Current status: the eight implementation slices and task-level reviews are complete.
 The original checklist below is retained as planning history, not a current progress
-board. TASK-31428 is In Progress for the single final correction wave and controller's
-scoped re-review; new AC9–14 remain unchecked pending that review. TASK-31421–31427
+board. The single final correction wave passed scoped independent re-review;
+AC9–14 are verified. TASK-31428 remains In Progress with AC15 unchecked because
+the controller final targeted gate has two unresolved runtime import-guard failures.
+No second final fix wave was dispatched. TASK-31421–31427
 retain their task-level Done status. See [verification](../../Chunking_Lab_Verification.md)
 and `.superpowers/sdd/2026-09-04-chunking-lab/final-fix-report.md` for the correction
 evidence. No merge or push is authorized by this handoff.
