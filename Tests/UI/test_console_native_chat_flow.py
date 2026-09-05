@@ -13214,7 +13214,8 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
 
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = SimpleNamespace(
-        db_path=str(tmp_path / "chacha.db")
+        db_path=str(tmp_path / "chacha.db"),
+        get_message_exchanges=lambda _message_id: [],
     )
     runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
     primary_id = runs_db.create_run(
