@@ -66,6 +66,14 @@ class PlaceholderWavWriter:
             wav_header(0, sample_rate=sample_rate, channels=channels, sample_width=sample_width)
         )
 
+    def __enter__(self) -> "PlaceholderWavWriter":
+        """Return the writer itself so ``with PlaceholderWavWriter(p) as w`` works."""
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Finalise the header on the way out, exception or not."""
+        self.close()
+
     @property
     def closed(self) -> bool:
         return self._closed

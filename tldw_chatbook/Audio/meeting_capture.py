@@ -1,6 +1,9 @@
 """Meeting capture: mic + system audio mixed into one dictation stream.
 
-Textual-free. numpy is required (the recorder already requires it).
+Textual-free. numpy is required (the recorder already requires it) and is
+reached through `optional_deps.require_dependency` rather than a bare
+import, so an install without the `audio` extra gets the project's standard
+missing-dependency message instead of a raw ImportError.
 
 `EnergyRing` answers "who was talking in this window" from per-source RMS
 history (spec §4). `MeetingCapture` (Task 5) duck-types the recorder
@@ -15,8 +18,9 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Deque, Mapping, Optional, Tuple
 
-import numpy as np
 from loguru import logger
+
+from tldw_chatbook.Utils.optional_deps import require_dependency
 
 from .wav_writer import PlaceholderWavWriter
 
@@ -27,11 +31,35 @@ SHARE_YOU: float = 0.7
 SHARE_OTHERS: float = 0.3
 FLOOR_MULTIPLIER: float = 3.0
 
+#: numpy feature name: the `audio` extra is the one that ships numpy for
+#: capture (`pyproject.toml`), so its name is what the install hint names.
+NUMPY_FEATURE = "audio"
+_NUMPY: Any = None
+
+
+def _np() -> Any:
+    """Return numpy through the project's optional-dependency guard.
+
+    Cached after the first call: this runs once per 20 ms audio frame.
+
+    Returns:
+        The numpy module.
+
+    Raises:
+        ImportError: When numpy is unavailable, with the standard
+            "install tldw_chatbook[audio]" message.
+    """
+    global _NUMPY
+    if _NUMPY is None:
+        _NUMPY = require_dependency("numpy", NUMPY_FEATURE)
+    return _NUMPY
+
 
 def rms_int16(pcm: bytes) -> float:
     """RMS of little-endian int16 PCM; 0.0 for an empty buffer."""
     if len(pcm) < 2:
         return 0.0
+    np = _np()
     samples = np.frombuffer(pcm[: len(pcm) - (len(pcm) % 2)], dtype=np.int16)
     if samples.size == 0:
         return 0.0
@@ -97,6 +125,7 @@ class EnergyRing:
         values = mic if source == "mic" else sys_
         if not values:
             return ABS_MIN_RMS
+        np = _np()
         p10 = float(np.percentile(np.asarray(values, dtype=np.float64), 10))
         return max(FLOOR_MULTIPLIER * p10, ABS_MIN_RMS)
 
@@ -129,6 +158,7 @@ BYTES_PER_S = 32000
 
 def mix_int16(a: bytes, b: bytes) -> bytes:
     """Saturating sum of two equal-length int16 buffers."""
+    np = _np()
     x = np.frombuffer(a, dtype=np.int16).astype(np.int32)
     y = np.frombuffer(b, dtype=np.int16).astype(np.int32)
     return np.clip(x + y, -32768, 32767).astype(np.int16).tobytes()
@@ -163,9 +193,14 @@ class MeetingCapture:
         vad_factory: Callable[[], Any] | None = None,
         silence_threshold_s: float = 2.0,
         preroll_frames: int = 12,
+        mic_device_name: str | None = None,
     ) -> None:
         if "mixed" not in writers:
             raise ValueError("writers must include 'mixed'")
+        # Fail here, with the project's optional-dependency message, rather
+        # than on the first audio frame inside the recorder callback.
+        self._np = _np()
+        self._mic_device_name = mic_device_name or None
         self._mic_factory = mic_recorder_factory
         self._tap = tap
         # `start_recording` clears `self._tap` when the tap fails to start,
@@ -197,6 +232,17 @@ class MeetingCapture:
 
     # ---- recorder surface -------------------------------------------------
     def start_recording(self, callback=None, save_to_file=None) -> bool:
+        """Build the mic recorder, select the device, start mic and tap.
+
+        Args:
+            callback: Receives VAD-gated mixed audio (the dictation stream).
+            save_to_file: Ignored; this capture owns its own writers.
+
+        Returns:
+            True when the microphone is recording. False leaves every writer
+            CLOSED (spec §3.2: no half-open files on a failed start) and, for
+            an unresolvable device, ``self.fault`` set to a ``LookupError``.
+        """
         self._callback = callback
         try:
             self._vad = self._vad_factory()
@@ -205,11 +251,55 @@ class MeetingCapture:
             self._vad = None
         self._mic = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
         self._running = True
+        if self._mic_device_name is not None and not self._select_mic_device(self._mic_device_name):
+            return self._abandon_start()
         if self._tap is not None and not self._tap.start(self._on_tap_frame):
             logger.warning("System audio tap failed to start; continuing in room mode")
             self._tap = None
             self.mode = "room"
-        return bool(self._mic.start_recording(callback=self._on_mic_frame))
+        try:
+            started = bool(self._mic.start_recording(callback=self._on_mic_frame))
+        except Exception as exc:  # noqa: BLE001 - reported through the return value
+            logger.error("Meeting microphone failed to start: {}", exc)
+            self.fault = exc
+            started = False
+        return True if started else self._abandon_start()
+
+    def _select_mic_device(self, name: str) -> bool:
+        """Point the recorder at the microphone the user chose, by name.
+
+        Enumeration returns names while ``set_device`` wants an id, so the
+        name is resolved against the recorder's own device list. A name that
+        no longer resolves is NOT silently downgraded to the system default:
+        recording the wrong microphone for a whole meeting is worse than
+        refusing to start (same rule as ``DeviceTap``).
+
+        Args:
+            name: The configured microphone's device name.
+
+        Returns:
+            True when the device was found and selected.
+        """
+        try:
+            devices = list(self._mic.get_audio_devices())
+        except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
+            logger.warning("Meeting microphone enumeration failed: {}", exc)
+            devices = []
+        for device in devices:
+            if str(device.get("name", "")) == name:
+                self._mic.set_device(device.get("id", device.get("index")))
+                return True
+        # The device NAME stays out of the log: audio devices are routinely
+        # named after their owner ("<Name>'s AirPods"), and the user picked
+        # it -- `self.fault` carries it to the caller instead.
+        logger.warning("the configured meeting microphone was not found; not falling back to the default input")
+        self.fault = LookupError(f"microphone {name!r} not found")
+        return False
+
+    def _abandon_start(self) -> bool:
+        """Close everything a partial start opened; always returns False."""
+        self.stop_recording()
+        return False
 
     def stop_recording(self) -> None:
         if self._stopped:

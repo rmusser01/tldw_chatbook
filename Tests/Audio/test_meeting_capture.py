@@ -341,6 +341,105 @@ def test_recorder_surface_forwards_to_mic(tmp_path):
     assert 0.0 <= cap.get_audio_level() <= 1.0
 
 
+class NamedRecorder(FakeRecorder):
+    """Two named devices; records every ``set_device`` id it is handed."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected: list = []
+
+    def get_audio_devices(self):
+        return [{"id": 3, "name": "MacBook Pro Microphone"}, {"id": 7, "name": "Shure MV7"}]
+
+    def set_device(self, device_id):
+        self.selected.append(device_id)
+        return True
+
+
+def _capture_with_mic(tmp_path, recorder_cls, **kwargs):
+    writers = {"mixed": PlaceholderWavWriter(tmp_path / "mixed.wav")}
+    recorders = []
+
+    def factory(**kw):
+        recorders.append(recorder_cls(**kw))
+        return recorders[-1]
+
+    cap = MeetingCapture(
+        mic_recorder_factory=factory, tap=None, writers=writers, vad_factory=EnergyVad, **kwargs
+    )
+    return cap, recorders, writers
+
+
+def test_configured_microphone_is_resolved_by_name_and_selected(tmp_path):
+    """Q15: enumeration returns names, set_device wants an id -- the picked
+    device was persisted and displayed but never actually applied, so every
+    non-default microphone recorded from the system default instead."""
+    cap, recorders, _ = _capture_with_mic(tmp_path, NamedRecorder, mic_device_name="Shure MV7")
+    assert cap.start_recording(callback=lambda b: None) is True
+    assert recorders[0].selected == [7]
+
+
+def test_no_configured_microphone_leaves_the_default_alone(tmp_path):
+    cap, recorders, _ = _capture_with_mic(tmp_path, NamedRecorder)
+    assert cap.start_recording(callback=lambda b: None) is True
+    assert recorders[0].selected == []
+
+
+def test_unknown_microphone_refuses_to_start_instead_of_falling_back(tmp_path):
+    cap, recorders, writers = _capture_with_mic(tmp_path, NamedRecorder, mic_device_name="Unplugged USB Mic")
+    assert cap.start_recording(callback=lambda b: None) is False
+    assert isinstance(cap.fault, LookupError) and "Unplugged USB Mic" in str(cap.fault)
+    assert recorders[0].selected == []
+    assert all(w.closed for w in writers.values())
+
+
+def test_failed_mic_start_closes_every_writer(tmp_path):
+    """Q3: a start that never got a microphone left three half-written WAVs
+    with placeholder headers behind (and their descriptors open)."""
+
+    class RefusingRecorder(FakeRecorder):
+        def start_recording(self, callback=None, save_to_file=None):
+            return False
+
+    cap, recorders, tap, writers = _capture(tmp_path)
+    cap._mic_factory = lambda **kw: RefusingRecorder(**kw)
+    assert cap.start_recording(callback=lambda b: None) is False
+    assert all(w.closed for w in writers.values())
+    assert tap.stops == 1          # the tap it had already started is stopped too
+
+
+def test_raising_mic_start_closes_every_writer(tmp_path):
+    class ExplodingRecorder(FakeRecorder):
+        def start_recording(self, callback=None, save_to_file=None):
+            raise OSError("device is busy")
+
+    cap, recorders, tap, writers = _capture(tmp_path)
+    cap._mic_factory = lambda **kw: ExplodingRecorder(**kw)
+    assert cap.start_recording(callback=lambda b: None) is False
+    assert isinstance(cap.fault, OSError)
+    assert all(w.closed for w in writers.values())
+
+
+def test_numpy_is_reached_through_the_optional_dependency_guard(tmp_path, monkeypatch):
+    """Q1: numpy was a bare module-scope import, so an install without the
+    `audio` extra got a raw ImportError instead of the project's message."""
+    import tldw_chatbook.Audio.meeting_capture as mc
+
+    assert mc.NUMPY_FEATURE == "audio"   # the extra that actually ships numpy
+
+    def refuse(module_name, feature_name=None):
+        raise ImportError(
+            f"Required dependency '{module_name}' for feature '{feature_name}' is not available. "
+            f"Please install the optional dependencies with: pip install tldw_chatbook[{feature_name}]"
+        )
+
+    monkeypatch.setattr(mc, "_NUMPY", None)
+    monkeypatch.setattr(mc, "require_dependency", refuse)
+    writers = {"mixed": PlaceholderWavWriter(tmp_path / "mixed.wav")}
+    with pytest.raises(ImportError, match=r"tldw_chatbook\[audio\]"):
+        MeetingCapture(mic_recorder_factory=FakeRecorder, tap=None, writers=writers)
+
+
 def test_partial_chunks_are_carried_not_dropped(tmp_path):
     cap, recorders, _, _ = _capture(tmp_path, silence=5.0, preroll=0)
     got: list[bytes] = []

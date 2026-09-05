@@ -62,6 +62,26 @@ def test_write_after_close_raises(tmp_path):
         writer.write(FRAME)
 
 
+def test_writer_is_a_context_manager_and_close_is_idempotent(tmp_path):
+    """Qodo Q3: the handle must not depend on a caller remembering close()."""
+    path = tmp_path / "ctx.wav"
+    with PlaceholderWavWriter(path) as writer:
+        writer.write(FRAME)
+    assert writer.closed and not wav_needs_patch(path)
+    with wave.open(str(path), "rb") as handle:
+        assert handle.getnframes() == 320
+    writer.close()  # idempotent
+
+
+def test_writer_context_manager_closes_on_exception(tmp_path):
+    path = tmp_path / "boom.wav"
+    with pytest.raises(RuntimeError):
+        with PlaceholderWavWriter(path) as writer:
+            writer.write(FRAME)
+            raise RuntimeError("crash mid-meeting")
+    assert writer.closed and not wav_needs_patch(path)
+
+
 def test_needs_patch_false_for_missing_or_tiny_file(tmp_path):
     assert not wav_needs_patch(tmp_path / "absent.wav")
     (tmp_path / "tiny.wav").write_bytes(b"RIFF")
