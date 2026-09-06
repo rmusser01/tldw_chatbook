@@ -167,7 +167,9 @@ def test_colliding_keys_cannot_serve_a_wrong_estimate():
     long = token_estimate_signature((("user", "hi " * 500),), MODEL, PROVIDER)
 
     short_tokens = cache.estimate(
-        "same-key", short, lambda: tracker._estimate_row_tokens("user", "hi", MODEL, PROVIDER)
+        "same-key",
+        short,
+        lambda: tracker._estimate_row_tokens("user", "hi", MODEL, PROVIDER),
     )
     long_tokens = cache.estimate(
         "same-key",
@@ -175,7 +177,9 @@ def test_colliding_keys_cannot_serve_a_wrong_estimate():
         lambda: tracker._estimate_row_tokens("user", "hi " * 500, MODEL, PROVIDER),
     )
     short_again = cache.estimate(
-        "same-key", short, lambda: tracker._estimate_row_tokens("user", "hi", MODEL, PROVIDER)
+        "same-key",
+        short,
+        lambda: tracker._estimate_row_tokens("user", "hi", MODEL, PROVIDER),
     )
 
     assert long_tokens > short_tokens

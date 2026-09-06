@@ -57,3 +57,7 @@ recursive-exclude * .DS_Store
 global-exclude *.pyc
 global-exclude *.pyo
 global-exclude __pycache__
+
+# Bundled pixel-migu character resources.
+recursive-include tldw_chatbook/assets/characters/pixel_migu *.json *.png *.md
+recursive-include tldw_chatbook/assets/persona_visual/pixel_migu *.json *.png *.md

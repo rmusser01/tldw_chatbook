@@ -153,28 +153,21 @@ def project_capture_for_viewer(
         tool_call_count = len(tool_calls) if isinstance(tool_calls, list) else 0
         request_mapping = {
             "system_message": (
-                _SAFE_BODY_OMISSION
-                if request_mapping.get("system_message")
-                else ""
+                _SAFE_BODY_OMISSION if request_mapping.get("system_message") else ""
             ),
             "messages_payload": [
                 {"role": "hidden", "content": _SAFE_BODY_OMISSION}
                 for _index in range(message_count)
             ],
-            "tools": [
-                {"schema": _SAFE_BODY_OMISSION} for _index in range(tool_count)
-            ],
+            "tools": [{"schema": _SAFE_BODY_OMISSION} for _index in range(tool_count)],
             "truncation_inventory": list(
                 request_mapping.get("truncation_inventory") or ()
             ),
         }
         response_mapping = {
-            "content": (
-                _SAFE_BODY_OMISSION if response_mapping.get("content") else ""
-            ),
+            "content": (_SAFE_BODY_OMISSION if response_mapping.get("content") else ""),
             "tool_calls": [
-                {"call": _SAFE_BODY_OMISSION}
-                for _index in range(tool_call_count)
+                {"call": _SAFE_BODY_OMISSION} for _index in range(tool_call_count)
             ],
             "synthetic_fallback": bool(
                 response_mapping.get("synthetic_fallback", False)
@@ -384,9 +377,10 @@ class ConsoleTraceProjection:
             True when normalized reads are enabled and a reader is available.
         """
 
-        return self._gate_enabled(
-            self._normalized_reads_enabled
-        ) and self._normalized_reader is not None
+        return (
+            self._gate_enabled(self._normalized_reads_enabled)
+            and self._normalized_reader is not None
+        )
 
     def read_calls(self, message_id: str) -> tuple[ProjectedTraceCall, ...]:
         """Return normalized-first calls for one persisted assistant message."""

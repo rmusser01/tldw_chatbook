@@ -1,0 +1,18 @@
+{
+  "run_id": "provider-20260905-f666185a7f",
+  "child_pid": 20108,
+  "wrapper_pid": 20100,
+  "child_returncode": 0,
+  "method": "Read-only independent SQLite connection after the matching wrapper reaped the child; no transcript content copied.",
+  "assistants": [
+    {
+      "id": "d8fd6030-b78f-44e6-9ca9-ccd25303cf8a",
+      "assistant_generation_state": "stopped",
+      "version": 3,
+      "content_characters": 0,
+      "remaining_dispatch_checkpoints": 0
+    }
+  ],
+  "persisted_user_stop_markers": 0,
+  "production_diff_sha256": "72fff5947be564d1f15b7905caf812ac11051cfeea0314db47c95f5ab25af364"
+}

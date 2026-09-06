@@ -4428,6 +4428,10 @@ tail_max_chars = 4000
 # LLM Management settings
 model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
+[llamacpp_snapshots]
+enabled = false
+keep_count = 10
+
 [notes]
 # Device-private lasting-sync settings. Legacy sync keys are intentionally not
 # emitted for fresh profiles; already-present keys remain migration input only.
@@ -4868,6 +4872,26 @@ max_video_file_size_mb = 2000
 # Temporary file cleanup
 cleanup_temp_files = true
 temp_dir = ""  # Empty means use system temp
+
+[meetings]
+# Meetings screen: record a call (mic + system audio) or a room (mic only).
+# STT provider for the live transcript; "auto" = the Console dictation choice.
+provider = "auto"
+# Model override for that provider; empty = the provider's default.
+model = ""
+# "auto" = native system audio (macOS 14.2+ tap, Linux parec/pw-record,
+# Windows WASAPI loopback). Or name an input device such as "BlackHole 2ch".
+system_source = "auto"
+# Input device name for the mic; empty = system default.
+mic_device = ""
+# Where meeting folders go; empty = <data_dir>/meetings.
+recordings_dir = ""
+# Keep you.wav / others.wav after the Library ingest finishes (mixed.wav is always kept).
+keep_raw_tracks = true
+# Re-transcribe mixed.wav offline after the meeting (needed for speaker labels).
+post_transcribe = true
+# Ask that offline pass for speaker diarization (needs torch + speechbrain).
+post_diarize = true
 
 [transcription]
 # Default transcription provider
@@ -8733,6 +8757,14 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
         ensure_builtin_samira(db)
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
         logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
+    try:
+        from tldw_chatbook.Character_Chat.builtin_pixel_migu import (
+            ensure_builtin_pixel_migu,
+        )
+
+        ensure_builtin_pixel_migu(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning("pixel_migu_profile_seed_failed category={}", type(exc).__name__)
     return db
 
 

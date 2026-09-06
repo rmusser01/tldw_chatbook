@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 487,
-  "pass_added_loc": 376166,
+  "pass_added_modules": 490,
+  "pass_added_loc": 363740,
   "routes": {
     "acp": {
       "loc": 520,
@@ -22,7 +22,7 @@
       ]
     },
     "ccp": {
-      "loc": 53375,
+      "loc": 53520,
       "modules": [
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
         "tldw_chatbook.Character_Chat.character_generation",
@@ -101,6 +101,23 @@
         "tldw_chatbook.UI.Screens.chatbooks_screen"
       ]
     },
+    "chunking_lab": {
+      "loc": 5296,
+      "modules": [
+        "tldw_chatbook.Chunking.chunking_interop_library",
+        "tldw_chatbook.Chunking.lab_comparison",
+        "tldw_chatbook.Chunking.lab_preflight",
+        "tldw_chatbook.Chunking.lab_recovery",
+        "tldw_chatbook.Chunking.lab_state",
+        "tldw_chatbook.RAG_Admin.chunking_lab_service",
+        "tldw_chatbook.UI.Chunking_Lab_Modules",
+        "tldw_chatbook.UI.Chunking_Lab_Modules.dialogs",
+        "tldw_chatbook.UI.Chunking_Lab_Modules.editor_region",
+        "tldw_chatbook.UI.Chunking_Lab_Modules.results_region",
+        "tldw_chatbook.UI.Chunking_Lab_Modules.sample_region",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen"
+      ]
+    },
     "conversation": {
       "loc": 29,
       "modules": [
@@ -108,7 +125,7 @@
       ]
     },
     "evals": {
-      "loc": 16862,
+      "loc": 16869,
       "modules": [
         "tldw_chatbook.Evals.character_probe",
         "tldw_chatbook.Evals.character_probe.cards",
@@ -147,7 +164,7 @@
       ]
     },
     "home": {
-      "loc": 1408,
+      "loc": 1421,
       "modules": [
         "tldw_chatbook.Home.home_rail_state",
         "tldw_chatbook.UI.Screens.home_screen",
@@ -157,7 +174,7 @@
       ]
     },
     "library": {
-      "loc": 133616,
+      "loc": 113319,
       "modules": [
         "tldw_chatbook.Chunking",
         "tldw_chatbook.Chunking.Chunk_Lib",
@@ -194,6 +211,7 @@
         "tldw_chatbook.Chunking.engine.strategies.tokens",
         "tldw_chatbook.Chunking.engine.strategies.words",
         "tldw_chatbook.Chunking.engine.templates",
+        "tldw_chatbook.Chunking.lab_models",
         "tldw_chatbook.Chunking.language_chunkers",
         "tldw_chatbook.Chunking.template_runtime",
         "tldw_chatbook.Chunking.token_chunker",
@@ -207,6 +225,7 @@
         "tldw_chatbook.Internal_Prompts.resolver",
         "tldw_chatbook.Internal_Prompts.summarization_prompts",
         "tldw_chatbook.Internal_Prompts.websearch_prompts",
+        "tldw_chatbook.Library.collections_capture_models",
         "tldw_chatbook.Library.export_progress",
         "tldw_chatbook.Library.library_conversation_reader_state",
         "tldw_chatbook.Library.library_conversations_state",
@@ -229,25 +248,12 @@
         "tldw_chatbook.Library.row_selection",
         "tldw_chatbook.Notes.note_import_discovery",
         "tldw_chatbook.Notes.note_import_execution_models",
-        "tldw_chatbook.Notes.note_import_executor",
         "tldw_chatbook.Notes.note_import_parsers",
         "tldw_chatbook.Notes.note_import_plan_models",
         "tldw_chatbook.Notes.note_import_planner",
-        "tldw_chatbook.Notes.note_import_receipts",
-        "tldw_chatbook.Notes.note_import_windows_fs",
-        "tldw_chatbook.Notes.notes_device_state_schema",
-        "tldw_chatbook.Notes.notes_device_state_store",
-        "tldw_chatbook.Notes.notes_sync_authority",
         "tldw_chatbook.Notes.notes_sync_conflicts",
-        "tldw_chatbook.Notes.notes_sync_coordinator",
-        "tldw_chatbook.Notes.notes_sync_executor",
-        "tldw_chatbook.Notes.notes_sync_filesystem",
-        "tldw_chatbook.Notes.notes_sync_legacy",
         "tldw_chatbook.Notes.notes_sync_models",
         "tldw_chatbook.Notes.notes_sync_reconciler",
-        "tldw_chatbook.Notes.notes_sync_runtime",
-        "tldw_chatbook.Notes.notes_sync_watcher",
-        "tldw_chatbook.Notes.sync_paths",
         "tldw_chatbook.Prompt_Management.prompt_markdown_export",
         "tldw_chatbook.RAG_Search.chunking_service",
         "tldw_chatbook.STT.parakeet_external",
@@ -267,22 +273,31 @@
         "tldw_chatbook.Third_Party.textual_fspicker.safe_tests",
         "tldw_chatbook.Third_Party.textual_fspicker.select_directory",
         "tldw_chatbook.UI.Library_Modules",
+        "tldw_chatbook.UI.Library_Modules.canvas_sync",
         "tldw_chatbook.UI.Library_Modules.library_collections_capture_controller",
+        "tldw_chatbook.UI.Library_Modules.library_collections_state",
+        "tldw_chatbook.UI.Library_Modules.library_conversations_controller",
+        "tldw_chatbook.UI.Library_Modules.library_conversations_state",
+        "tldw_chatbook.UI.Library_Modules.library_export_controller",
+        "tldw_chatbook.UI.Library_Modules.library_export_state",
         "tldw_chatbook.UI.Library_Modules.library_media_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_media_trash_browse_controller",
-        "tldw_chatbook.UI.Library_Modules.library_note_import_controller",
-        "tldw_chatbook.UI.Library_Modules.library_notes_sync_controller",
         "tldw_chatbook.UI.Library_Modules.library_notes_work_session",
         "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller",
+        "tldw_chatbook.UI.Library_Modules.library_rag_search_state",
         "tldw_chatbook.UI.Library_Modules.library_skills_browse_controller",
+        "tldw_chatbook.UI.Library_Modules.library_skills_state",
         "tldw_chatbook.UI.Library_Modules.library_snapshot_cache",
+        "tldw_chatbook.UI.Library_Modules.note_session_port",
         "tldw_chatbook.UI.Library_Modules.prompt_collections",
         "tldw_chatbook.UI.Library_Modules.prompt_history",
         "tldw_chatbook.UI.Library_Modules.prompt_history_region",
+        "tldw_chatbook.UI.Library_Modules.screen_constants",
+        "tldw_chatbook.UI.Library_Modules.screen_helpers",
+        "tldw_chatbook.UI.Library_Modules.screen_support_types",
         "tldw_chatbook.UI.Screens.destination_recovery",
         "tldw_chatbook.UI.Screens.library_screen",
         "tldw_chatbook.UI.Screens.model_browser_state",
-        "tldw_chatbook.UI.Screens.skills_screen",
         "tldw_chatbook.Utils.markdown_parsing",
         "tldw_chatbook.Utils.text_wrap_index",
         "tldw_chatbook.Widgets.Library",
@@ -323,12 +338,11 @@
         "tldw_chatbook.Widgets.ModelArtifacts.local_gguf_import",
         "tldw_chatbook.Widgets.ModelArtifacts.plan_panel",
         "tldw_chatbook.Widgets.ModelArtifacts.runtime_choice_modal",
-        "tldw_chatbook.Widgets.destination_workbench",
         "tldw_chatbook.Widgets.workbench_focus"
       ]
     },
     "llm": {
-      "loc": 19328,
+      "loc": 22621,
       "modules": [
         "tldw_chatbook.Event_Handlers.LLM_Management_Events",
         "tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes",
@@ -344,6 +358,9 @@
         "tldw_chatbook.Model_Artifacts.curated_registry",
         "tldw_chatbook.Model_Artifacts.machine_memory",
         "tldw_chatbook.Model_Artifacts.remote_huggingface",
+        "tldw_chatbook.UI.LLM_Management.vllm_connection",
+        "tldw_chatbook.UI.LLM_Management.vllm_profiles",
+        "tldw_chatbook.UI.LLM_Management.vllm_setup_view",
         "tldw_chatbook.UI.LLM_Management_Window",
         "tldw_chatbook.UI.Lab_Modules.lab_server_status",
         "tldw_chatbook.UI.Screens.llm_screen",
@@ -353,8 +370,7 @@
         "tldw_chatbook.UI.Screens.model_memory_presenter",
         "tldw_chatbook.UI.Screens.model_remote_view",
         "tldw_chatbook.Utils.log_widget_manager",
-        "tldw_chatbook.Widgets.delete_confirmation_dialog",
-        "tldw_chatbook.Widgets.enhanced_file_picker"
+        "tldw_chatbook.Widgets.delete_confirmation_dialog"
       ]
     },
     "logs": {
@@ -365,7 +381,7 @@
       ]
     },
     "mcp": {
-      "loc": 15622,
+      "loc": 16552,
       "modules": [
         "tldw_chatbook.MCP.hub_test_execution",
         "tldw_chatbook.MCP.local_server_tools",
@@ -417,62 +433,50 @@
       ]
     },
     "research_workspace": {
-      "loc": 2006,
+      "loc": 2069,
       "modules": [
-        "tldw_chatbook.UI.Screens.research_workspace_screen"
+        "tldw_chatbook.UI.Screens.research_workspace_screen",
+        "tldw_chatbook.tldw_api.exceptions"
       ]
     },
     "schedules": {
-      "loc": 3928,
+      "loc": 13659,
       "modules": [
+        "tldw_chatbook.Scheduling.automation_health",
         "tldw_chatbook.Scheduling.events",
+        "tldw_chatbook.Scheduling.schedule_compute",
+        "tldw_chatbook.Scheduling.schedule_input_parsing",
         "tldw_chatbook.UI.Screens.scheduling",
         "tldw_chatbook.UI.Screens.scheduling.conflicts_tab",
+        "tldw_chatbook.UI.Screens.scheduling.definition_audit_view",
+        "tldw_chatbook.UI.Screens.scheduling.definition_detail",
         "tldw_chatbook.UI.Screens.scheduling.forms",
+        "tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form",
+        "tldw_chatbook.UI.Screens.scheduling.forms.new_task_choice_modal",
         "tldw_chatbook.UI.Screens.scheduling.forms.reminder_form",
+        "tldw_chatbook.UI.Screens.scheduling.results_tab",
         "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
         "tldw_chatbook.UI.Screens.scheduling.sync_status_widget",
-        "tldw_chatbook.UI.Screens.scheduling.task_detail"
+        "tldw_chatbook.UI.Screens.scheduling.task_detail",
+        "tldw_chatbook.UI.Screens.scheduling.unified_rows",
+        "tldw_chatbook.UI.Screens.scheduling.workbench_host_screen",
+        "tldw_chatbook.Widgets.detail_value_row"
       ]
     },
     "settings": {
-      "loc": 58288,
+      "loc": 45983,
       "modules": [
         "tldw_chatbook.Internal_Prompts.authoring",
-        "tldw_chatbook.RAG_Search.config_profiles",
-        "tldw_chatbook.RAG_Search.enhanced_chunking_service",
-        "tldw_chatbook.RAG_Search.parallel_processor",
-        "tldw_chatbook.RAG_Search.parent_child_adapter",
-        "tldw_chatbook.RAG_Search.reranker",
-        "tldw_chatbook.RAG_Search.simplified",
-        "tldw_chatbook.RAG_Search.simplified.active_config",
-        "tldw_chatbook.RAG_Search.simplified.circuit_breaker",
-        "tldw_chatbook.RAG_Search.simplified.citations",
-        "tldw_chatbook.RAG_Search.simplified.collection_fingerprint",
-        "tldw_chatbook.RAG_Search.simplified.collection_indexes",
-        "tldw_chatbook.RAG_Search.simplified.config",
-        "tldw_chatbook.RAG_Search.simplified.data_models",
-        "tldw_chatbook.RAG_Search.simplified.db_connection_pool",
-        "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper",
-        "tldw_chatbook.RAG_Search.simplified.enhanced_indexing_helpers",
-        "tldw_chatbook.RAG_Search.simplified.enhanced_rag_service",
-        "tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2",
-        "tldw_chatbook.RAG_Search.simplified.health_check",
-        "tldw_chatbook.RAG_Search.simplified.indexing_helpers",
-        "tldw_chatbook.RAG_Search.simplified.rag_factory",
-        "tldw_chatbook.RAG_Search.simplified.rag_service",
-        "tldw_chatbook.RAG_Search.simplified.simple_cache",
-        "tldw_chatbook.RAG_Search.simplified.vector_store",
+        "tldw_chatbook.Terminal",
+        "tldw_chatbook.Terminal.contracts",
         "tldw_chatbook.UI.Lab_Modules",
         "tldw_chatbook.UI.Lab_Modules.lab_speech_status",
         "tldw_chatbook.UI.Screens.settings_appearance_defaults",
         "tldw_chatbook.UI.Screens.settings_config_adapter",
         "tldw_chatbook.UI.Screens.settings_context_memory",
-        "tldw_chatbook.UI.Screens.settings_endpoint_probe",
         "tldw_chatbook.UI.Screens.settings_image_gen_defaults",
         "tldw_chatbook.UI.Screens.settings_privacy_security",
         "tldw_chatbook.UI.Screens.settings_provider_view_model",
-        "tldw_chatbook.UI.Screens.settings_rag_profile_adapter",
         "tldw_chatbook.UI.Screens.settings_screen",
         "tldw_chatbook.UI.Screens.settings_search_index",
         "tldw_chatbook.UI.Screens.settings_storage_defaults",
@@ -481,6 +485,9 @@
         "tldw_chatbook.UI.focus_ownership",
         "tldw_chatbook.Video_Generation.video_templates",
         "tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel",
+        "tldw_chatbook.Widgets.Settings_Widgets.tool_profiles_panel",
+        "tldw_chatbook.Widgets.destination_workbench",
+        "tldw_chatbook.Widgets.enhanced_file_picker",
         "tldw_chatbook.Widgets.settings_agents_panel",
         "tldw_chatbook.Widgets.settings_image_gen_panel",
         "tldw_chatbook.Widgets.settings_internal_prompts_editor_modal",
@@ -499,7 +506,7 @@
       ]
     },
     "stts": {
-      "loc": 19576,
+      "loc": 20212,
       "modules": [
         "tldw_chatbook.Audio.dictation_service_lazy",
         "tldw_chatbook.Event_Handlers.Audio_Events",
@@ -508,6 +515,7 @@
         "tldw_chatbook.TTS.voice_blend_paths",
         "tldw_chatbook.UI.Dictation_Window_Improved",
         "tldw_chatbook.UI.STTS_Window",
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe",
         "tldw_chatbook.UI.Screens.stts_screen",
         "tldw_chatbook.UI.Speech.audio_cpp_runtime_card",
         "tldw_chatbook.UI.Speech.speech_action_strip",
@@ -544,7 +552,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 29900,
+      "loc": 29962,
       "modules": [
         "tldw_chatbook.Subscriptions.feed_server",
         "tldw_chatbook.Subscriptions.item_dates",

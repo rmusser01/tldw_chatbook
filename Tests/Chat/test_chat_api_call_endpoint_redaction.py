@@ -152,7 +152,10 @@ def test_the_log_line_keeps_the_length_for_debugging(loguru_caplog):
     with pytest.raises(Exception):
         chat_api_call("abcdefghij", [{"role": "user", "content": "q"}])
 
-    routing = [r.getMessage() for r in loguru_caplog.records
-               if "Routing to endpoint" in r.getMessage()]
+    routing = [
+        r.getMessage()
+        for r in loguru_caplog.records
+        if "Routing to endpoint" in r.getMessage()
+    ]
     assert routing, "expected a routing log line"
     assert any("10 chars" in line for line in routing), routing[:2]

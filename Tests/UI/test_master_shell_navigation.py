@@ -116,6 +116,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-watchlists_collections", "\u23036 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
+        ("nav-meetings", "F11 Meetings"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F7 Lab"),
@@ -452,6 +453,7 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "logs": "f8",
         "settings": "f9",
         "research": "f10",
+        "meetings": "f11",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for binding in hotkey_bindings:

@@ -25,9 +25,7 @@ def _row(message_id: str, index_label: str, preview: str) -> RewindPromptRow:
 
 
 def test_rewind_choice_dataclass_shape():
-    choice = ConsoleRewindChoice(
-        kind="restore", message_id="m1", prompt_text="hello"
-    )
+    choice = ConsoleRewindChoice(kind="restore", message_id="m1", prompt_text="hello")
     assert (choice.kind, choice.message_id, choice.prompt_text) == (
         "restore",
         "m1",
@@ -104,8 +102,7 @@ def _painted_widget_text(modal: ConsoleRewindModal, widget: Static) -> str:
         max(0, widget.region.y) : min(len(strips), widget.region.bottom)
     ]
     return "\n".join(
-        row.text[max(0, widget.region.x) : widget.region.right]
-        for row in visible_rows
+        row.text[max(0, widget.region.x) : widget.region.right] for row in visible_rows
     )
 
 
@@ -191,8 +188,7 @@ async def test_action_order_copy_and_keyboard_reachability_at_supported_widths(s
         for action_id, copy_id in summary_pairs:
             copy = _static_plain_text(modal.query_one(copy_id, Static))
             assert copy == (
-                "Uses the active model once\n"
-                "Replaces current conversation memory"
+                "Uses the active model once\nReplaces current conversation memory"
             )
             action = modal.query_one(action_id, Button)
             warning = modal.query_one(copy_id, Static)
@@ -262,9 +258,7 @@ async def test_known_summary_refusal_disables_only_summary_actions_with_guidance
 
         assert not modal.query_one("#console-rewind-action-restore", Button).disabled
         assert modal.query_one("#console-rewind-action-summarize", Button).disabled
-        assert modal.query_one(
-            "#console-rewind-action-summarize-from", Button
-        ).disabled
+        assert modal.query_one("#console-rewind-action-summarize-from", Button).disabled
         assert not modal.query_one("#console-rewind-action-cancel", Button).disabled
         guidance = modal.query_one("#console-rewind-summary-disabled", Static)
         assert _static_plain_text(guidance) == (

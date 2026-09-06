@@ -49,9 +49,7 @@ def _controller(tmp_path, gateway):
     session = store.create_session(title="Stop reliability", ephemeral=True)
     store.active_session_id = session.id
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,

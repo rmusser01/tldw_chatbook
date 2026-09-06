@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Tool_Packs.service import (
-    ToolProfileListing,
-    ToolProfilePresentation,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Tool_Packs.service import (
+        ToolProfileListing,
+        ToolProfilePresentation,
+    )
 
 
 _ORIGIN_LABELS = {

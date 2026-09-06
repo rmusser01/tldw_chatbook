@@ -213,6 +213,196 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "missing",
+        "foreign_turn",
+        "changed_policy",
+        "changed_actor",
+        "stale_surface",
+        "same_surface_new_run",
+        "ambiguous",
+    ],
+)
+async def test_tool_loop_uses_recorded_chain_and_rejects_changed_ownership(
+    tmp_path,
+    make_database,
+    make_gateway,
+    scenario,
+):
+    database = make_database(tmp_path / "tool-chain.sqlite", "tool-chain")
+    conversation_id = database.add_conversation({"title": "tool chain"})
+    user_id, revision = _saved_message(database, conversation_id, "calculate")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    factory = ConsoleTraceBoundaryFactory(database)
+    gateway = make_gateway(
+        chat_api_call_fn=lambda **kwargs: {"choices": [{"message": {"content": "ok"}}]},
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="openai",
+        model="gpt-test",
+        execution_key="openai",
+        base_url="https://api.openai.com/v1",
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "calculate"}]
+    initial = _semantic_request(
+        messages,
+        [revision],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=actor,
+        chain_id=chain,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        initial,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        route_actor_id=actor,
+        route_chain_id=chain,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            route_actor_id=actor,
+            route_chain_id=chain,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ] == ["ok"]
+    with database.transaction() as cursor:
+        origin_run_id = cursor.execute(
+            "SELECT run_id FROM console_trace_calls WHERE call_sequence = 0"
+        ).fetchone()[0]
+    if scenario == "missing":
+        chain = new_opaque_id()
+    elif scenario == "foreign_turn":
+        other = database.add_conversation({"title": "foreign"})
+        _, revision = _saved_message(database, other, "calculate")
+    elif scenario == "changed_policy":
+        policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    elif scenario == "changed_actor":
+        actor = new_opaque_id()
+    elif scenario == "ambiguous":
+        other = database.add_conversation({"title": "colliding chain"})
+        other_id, _ = _saved_message(database, other, "other turn")
+        with database.transaction() as cursor:
+            segment = factory.repository.create_segment(cursor)
+            owner = factory.repository.attach_owner(
+                cursor, conversation_id=other, root_segment_id=segment.segment_id
+            )
+            factory.repository.reserve_call(
+                cursor,
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                turn_id=other_id,
+                run_id=origin_run_id,
+                call_sequence=0,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            )
+    elif scenario == "stale_surface":
+        _, later = _saved_message(database, conversation_id, "new turn")
+        next_request = _semantic_request(
+            messages + [{"role": "user", "content": "new turn"}],
+            [revision, later],
+            policy,
+        )
+        next_prepared = gateway.prepare_chat_request(
+            resolution,
+            next_request,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        assert [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                next_prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ] == ["ok"]
+    elif scenario == "same_surface_new_run":
+        newer_chain = new_opaque_id()
+        newer_request = _semantic_request(
+            messages,
+            [revision],
+            policy,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            actor_id=actor,
+            chain_id=newer_chain,
+        )
+        newer_prepared = gateway.prepare_chat_request(
+            resolution,
+            newer_request,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            route_actor_id=actor,
+            route_chain_id=newer_chain,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        assert [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                newer_prepared,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                route_actor_id=actor,
+                route_chain_id=newer_chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ] == ["ok"]
+    tool_result = {"role": "tool", "content": "323", "tool_call_id": "call-1"}
+    loop_request = _semantic_request(
+        messages + [tool_result],
+        [
+            revision,
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy),
+        ],
+        policy,
+        route=ConsoleRequestRoute.TOOL_LOOP,
+        actor_id=actor,
+        chain_id=chain,
+    )
+    loop_prepared = gateway.prepare_chat_request(
+        resolution,
+        loop_request,
+        route=ConsoleRequestRoute.TOOL_LOOP,
+        route_actor_id=actor,
+        route_chain_id=chain,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    with database.transaction() as cursor:
+        before = cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[
+            0
+        ]
+    if scenario == "valid":
+        # A new factory must recover the chain from SQLite, not a process cache.
+        boundary = ConsoleTraceBoundaryFactory(database)(
+            loop_prepared, resolution, ConsoleRequestRoute.TOOL_LOOP
+        )
+        assert boundary.identity.turn_id == user_id
+        assert boundary.identity.run_id == origin_run_id
+        assert boundary.identity.call_sequence == 1
+    else:
+        with pytest.raises(ValueError, match="trace_tool_chain_unavailable"):
+            factory(loop_prepared, resolution, ConsoleRequestRoute.TOOL_LOOP)
+        with database.transaction() as cursor:
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                == before
+            )
+
+
+@pytest.mark.asyncio
 async def test_dual_write_legacy_capture_reuses_normalized_call_identity(
     tmp_path,
     make_database,

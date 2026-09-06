@@ -1,0 +1,47 @@
+{
+  "method": "Read-only SQLite inspection after matching launcher child exit; content excluded. Raw live receipts remain unchanged.",
+  "runs": {
+    "provider-20260905-5d742494f3": {
+      "assistants": [
+        {
+          "assistant_id": "e406921d-24f6-4a8c-a7fd-3f7017e1f5fb",
+          "assistant_generation_state": "complete",
+          "version": 3,
+          "content_characters": 23,
+          "checkpoint_state": null,
+          "checkpoint_revision": null
+        },
+        {
+          "assistant_id": "1d1cac92-2890-4b73-90d2-91e631b29b97",
+          "assistant_generation_state": "dispatch_started",
+          "version": 2,
+          "content_characters": 0,
+          "checkpoint_state": "dispatch_started",
+          "checkpoint_revision": 2
+        }
+      ],
+      "persisted_user_stop_markers": 0
+    },
+    "provider-20260905-ad64a006d7": {
+      "assistants": [
+        {
+          "assistant_id": "5139d56e-5671-4aa8-8fb9-8fd229e923b7",
+          "assistant_generation_state": "complete",
+          "version": 3,
+          "content_characters": 23,
+          "checkpoint_state": null,
+          "checkpoint_revision": null
+        },
+        {
+          "assistant_id": "ce5b24b3-86f3-4aa4-a742-37beae053dc3",
+          "assistant_generation_state": "stopped",
+          "version": 3,
+          "content_characters": 1,
+          "checkpoint_state": null,
+          "checkpoint_revision": null
+        }
+      ],
+      "persisted_user_stop_markers": 0
+    }
+  }
+}
