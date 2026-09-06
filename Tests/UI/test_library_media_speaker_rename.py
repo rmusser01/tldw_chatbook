@@ -78,6 +78,19 @@ def test_render_uses_the_meetings_stored_display_name(tmp_media_db, meeting_fold
     assert "Alice:" in row["content"]
 
 
+def test_render_overlap_segment_uses_the_meetings_stored_display_name(
+    tmp_media_db, meeting_folder_media_item
+):
+    """task 31746 review (spec gap): a `both` (overlap) segment must render
+    "<name> + Others", not bare "Others" -- the same fix as the `you`
+    channel, on the same render path."""
+    media_id, _folder = meeting_folder_media_item(
+        names={}, segments=[(None, "hi", "both")], user_display_name="Alice",
+    )
+    row = tmp_media_db.get_media_by_id(media_id)
+    assert "Alice + Others:" in row["content"]
+
+
 def test_presentation_reachability_reflects_meeting_folder(
     tmp_media_db, meeting_folder_media_item
 ):

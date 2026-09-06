@@ -130,9 +130,10 @@ def test_settings_from_config_reads_flat_meetings_section(tmp_path):
 
 
 def test_meeting_user_display_name_defaults_to_you_when_unset():
-    """No `chat_defaults.user_display_name` at all: `get_setting` returns the
-    factory default it was handed, same as the real `get_cli_setting`."""
-    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: default) == "You"
+    """No `chat_defaults.user_display_name` at all: the validated getter
+    returns the factory default it was handed, same as the real
+    `get_chat_defaults_user_display_name`."""
+    assert mo.meeting_user_display_name(get_display_name=lambda default: default) == "You"
 
 
 def test_meeting_user_display_name_defaults_to_you_for_the_factory_default():
@@ -142,11 +143,36 @@ def test_meeting_user_display_name_defaults_to_you_for_the_factory_default():
     from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 
     factory_default = DEFAULT_CONFIG_FROM_TOML["chat_defaults"]["user_display_name"]
-    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: factory_default) == "You"
+    assert mo.meeting_user_display_name(get_display_name=lambda default: factory_default) == "You"
 
 
 def test_meeting_user_display_name_honours_a_real_override():
-    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: "Alice") == "Alice"
+    assert mo.meeting_user_display_name(get_display_name=lambda default: "Alice") == "Alice"
+
+
+def test_meeting_user_display_name_treats_whitespace_only_as_unset(tmp_path, monkeypatch):
+    """task 31746 review (Important): a whitespace-only configured name must
+    not leak through as a literal "   " display name. Reuses Console's own
+    validated getter (`get_chat_defaults_user_display_name`), which
+    normalizes it away to the neutral "User" -- exercised here against a
+    REAL config file, same pattern as
+    `test_config_console_defaults.py::test_blank_chat_display_name_falls_back_to_user`."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults]\nuser_display_name = '   '\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert mo.meeting_user_display_name() == "You"
+
+
+def test_meeting_user_display_name_rejects_a_control_character_name(tmp_path, monkeypatch):
+    """A hostile/control-character name is normalized/rejected the same way
+    Console does, not passed through verbatim."""
+    config_path = tmp_path / "config.toml"
+    invalid_value = "unsafe-secret\u202e"
+    config_path.write_text(
+        f'[chat_defaults]\nuser_display_name = "{invalid_value}"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert mo.meeting_user_display_name() == "You"
 
 
 def test_diarization_requirements_uses_find_spec_not_imports():

@@ -39,7 +39,11 @@ from ..Navigation.main_navigation import NavigateToScreen
 # `meeting_session.py`/`library_media_canvas.py`'s own import of it.
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
-LABELS = {"you": "You", "others": "Others", "both": "You + Others"}
+# "you"/"both" are NOT here (task 31746 review): `_coarse_label` resolves
+# them through the configured display-name helper instead, so a stale
+# literal can't drift out of sync with it again. This is only the fallback
+# for "others" and any other coarse label.
+LABELS = {"others": "Others"}
 STOP_REASON_COPY = {
     "mic_lost": "Microphone stopped delivering audio; the meeting was ended.",
     "disk_error": "Recording stopped: the disk write failed.",

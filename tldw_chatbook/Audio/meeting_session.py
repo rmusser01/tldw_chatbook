@@ -272,7 +272,7 @@ def render_label(segment: MeetingSegment, names: dict[str, str], user_display_na
 
     Returns:
         The display name, or None when the segment carries no label at all
-        (room mode before diarization) or is overlap-coarse.
+        (room mode before diarization).
     """
     if segment.label == "you":
         return user_display_name
@@ -285,7 +285,13 @@ def render_label(segment: MeetingSegment, names: dict[str, str], user_display_na
         # recordings mint an "S" id in the worker so this only guards old data).
         n = segment.speaker_id[1:] if segment.speaker_id[:1] in ("S", "F") else segment.speaker_id
         return f"Speaker {n}"
-    if segment.label in ("others", "both"):
+    # task 31746 review (spec gap): an overlap segment still names the mic
+    # channel, so it must honour the same configured name as "you" -- bare
+    # "Others" here would silently disagree with the partial preview and
+    # `render_markdown`, which already say "Alice + Others".
+    if segment.label == "both":
+        return f"{user_display_name} + Others"
+    if segment.label == "others":
         return "Others"
     return None
 
@@ -692,23 +698,16 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
         f"- Transcriber: {meta.provider} {meta.model}".rstrip(),
         "",
     ]
-    # task 31746: the mic channel's name comes from `meta` (stamped by the
-    # owner at start, or back-filled by `read_meeting_json`), not a literal.
-    names = {"you": meta.user_display_name, "others": "Others", "both": f"{meta.user_display_name} + Others"}
+    # task 31746 review: one call to `render_label` covers every case (a
+    # diarized segment's authoritative name/"Speaker N" -- final whole-branch
+    # review I2 -- the coarse you/others/both channel label, or no label at
+    # all) instead of duplicating its precedence here with a second, literal
+    # "you"/"both" mapping that had already drifted out of sync with it once.
     speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        if segment.speaker_id:
-            # A diarized segment carries the authoritative (reconciled) speaker
-            # id; render its name/"Speaker N" so the markdown reflects the Stop
-            # pass, not the coarse You/Others label (final whole-branch review
-            # I2). Undiarized segments keep the coarse channel label below.
-            who = render_label(segment, speaker_names, names["you"])
-            lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
-        elif segment.label:
-            lines.append(f"{stamp} **{names.get(segment.label, segment.label)}:** {segment.text}")
-        else:
-            lines.append(f"{stamp} {segment.text}")
+        who = render_label(segment, speaker_names, meta.user_display_name)
+        lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
     return "\n".join(lines) + "\n"
 
 

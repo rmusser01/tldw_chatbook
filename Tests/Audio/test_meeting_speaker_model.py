@@ -38,9 +38,13 @@ def test_others_without_cluster_renders_others():
     seg = _seg(label="others", speaker_id=None)
     assert render_label(seg, {}, "Me") == "Others"
 
-def test_both_channel_without_cluster_renders_others():
+def test_both_channel_without_cluster_renders_the_display_name_plus_others():
+    """task 31746 review (spec gap): an overlap segment names the mic channel
+    too -- bare "Others" would silently disagree with the partial preview and
+    `render_markdown`, which already say "<name> + Others"."""
     seg = _seg(label="both", speaker_id=None)
-    assert render_label(seg, {}, "Me") == "Others"
+    assert render_label(seg, {}, "You") == "You + Others"
+    assert render_label(seg, {}, "Alice") == "Alice + Others"
 
 def test_room_mode_segment_without_speaker_renders_none():
     seg = _seg(label=None, speaker_id=None)

@@ -259,6 +259,11 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         raise InputError(f"Media item {media_id} not found")
     folder = Path(row["url"]).parent
 
+    # `read_meeting_json` only back-fills `speaker_names`/`user_display_name`
+    # when `meeting.json` EXISTS -- a missing file (already ruled out for the
+    # real UI path by `can_rename_meeting_speakers`, but not enforced here)
+    # returns `{}` with neither key, so these `.get(..., default)` calls are
+    # not redundant with that back-fill (task 31746 review, item 3).
     meeting = read_meeting_json(folder)
     names = dict(meeting.get("speaker_names") or {})
     user_display_name = meeting.get("user_display_name", "You")

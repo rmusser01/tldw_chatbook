@@ -65,7 +65,7 @@ def resolve_effective_config() -> "EffectiveConfig | None":
     return resolve()
 
 
-def meeting_user_display_name(get_setting: Callable[[str, str, Any], Any] | None = None) -> str:
+def meeting_user_display_name(get_display_name: Callable[[str], str] | None = None) -> str:
     """The one shared display name for the mic ("you") channel (task 31746).
 
     Deliberately NOT a bare `chat_defaults.user_display_name` read: that
@@ -77,20 +77,32 @@ def meeting_user_display_name(get_setting: Callable[[str, str, Any], Any] | None
     default counts as a deliberate choice; everything else falls back to
     Meetings' own already-shipped "You".
 
+    Reuses `config.get_chat_defaults_user_display_name` (task 31746 review)
+    rather than reading the raw config value: that getter is already the
+    validated read for this exact key, normalizing via
+    `console_roleplay_identity.normalize_chat_display_name` (strips
+    whitespace, rejects control characters, caps length) the same way
+    Console does -- so a whitespace-only or hostile configured value can
+    never leak through here as a literal display name (a raw comparison
+    used to return "   " verbatim).
+
     Args:
-        get_setting: `(section, key, default)` config accessor, injectable
-            for tests; defaults to the real CLI config.
+        get_display_name: `(default) -> str` validated getter, injectable
+            for tests; defaults to the real
+            `config.get_chat_defaults_user_display_name`.
 
     Returns:
-        The configured `chat_defaults.user_display_name` when it differs
-        from the shipped factory default, else "You".
+        The configured, normalized `chat_defaults.user_display_name` when it
+        differs from the shipped factory default, else "You".
     """
-    if get_setting is None:
-        get_setting = _config_accessors()[0]
+    if get_display_name is None:
+        from tldw_chatbook.config import get_chat_defaults_user_display_name
+
+        get_display_name = get_chat_defaults_user_display_name
     from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 
     factory_default = DEFAULT_CONFIG_FROM_TOML.get("chat_defaults", {}).get("user_display_name", "User")
-    configured = get_setting("chat_defaults", "user_display_name", factory_default)
+    configured = get_display_name(factory_default)
     if configured and configured != factory_default:
         return configured
     return "You"

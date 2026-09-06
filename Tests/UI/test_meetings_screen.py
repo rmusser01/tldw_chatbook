@@ -596,6 +596,22 @@ def test_transcript_honours_the_configured_display_name(meetings_screen_with_ses
     assert screen.rendered_lines == ["[00:00:00] Alice: hi"]
 
 
+def test_finalized_overlap_segment_honours_the_configured_display_name(
+    meetings_screen_with_session, monkeypatch
+):
+    """task 31746 review (spec gap): a finalized `both` (overlap) row must
+    say "<name> + Others", matching the partial preview -- bare "Others"
+    would silently disagree with it."""
+    screen = meetings_screen_with_session(segments=[("both", None, "hi")])
+    assert screen.rendered_lines == ["[00:00:00] You + Others: hi"]
+
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+    screen = meetings_screen_with_session(segments=[("both", None, "hi")])
+    assert screen.rendered_lines == ["[00:00:00] Alice + Others: hi"]
+
+
 @pytest.mark.asyncio
 async def test_partial_preview_honours_the_configured_display_name(tmp_path, monkeypatch):
     """task 31746: the in-flight "you" partial preview must not disagree with
