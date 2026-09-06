@@ -7,6 +7,7 @@ from .console_assistant_turn import (
     ConsoleAssistantTurnWidget,
 )
 from .console_control_bar import ConsoleControlBar
+from .console_character_context import ConsoleCharacterContext
 from .console_speech_controls import ConsoleSpeechControls
 from .console_context_controls import (
     ConsoleContextControlState,
@@ -129,6 +130,7 @@ __all__ = [
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
     "ConsoleControlBar",
+    "ConsoleCharacterContext",
     "ConsoleSpeechControls",
     "ConsoleContextControlState",
     "ConsoleEditMessageModal",

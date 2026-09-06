@@ -5,7 +5,7 @@ decomposition, task 3): the subtree that used to live inside
 ``with self._frame_console_region(left_rail):`` — the rail header, the
 pinned fleet-summary line, and the scrollable context sections. The former
 mixed Session section is now three peer sections (Sessions, Workspaces, and
-Conversations), followed by Model, Agent, Details, and Character.
+Conversations), followed by Character, Model, Agent, and Details.
 
 Deliberately NOT included: ``left_handle`` (``ConsoleRailHandle``, id
 ``console-context-rail-handle``), the collapsed 13-column form shown when
@@ -86,6 +86,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+from ...Widgets.Console.console_character_context import ConsoleCharacterContext
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -100,6 +101,10 @@ from .agent import (
     apply_console_agent_status_state,
 )
 from .frame import frame_console_region
+from .character_context import (
+    ConsoleCharacterContextController,
+    ConsoleCharacterContextState,
+)
 from .rail_section_layout import (
     ContextSectionDemand,
     fallback_active_section,
@@ -153,10 +158,10 @@ CONTEXT_SECTION_DESCRIPTORS = (
     # marked "active session".
     ContextSectionDescriptor("workspace", "Workspaces", 20),
     ContextSectionDescriptor("conversations", "Conversations", 20),
+    ContextSectionDescriptor("character", "Character", 35),
     ContextSectionDescriptor("model", "Model", 15),
     ContextSectionDescriptor("agent", "Agent", 15),
     ContextSectionDescriptor("details", "Details", 15),
-    ContextSectionDescriptor("character", "Character", 35),
 )
 
 
@@ -286,10 +291,8 @@ class ConsoleLeftRail(Vertical):
             if bool(header.open) is opened:
                 continue
             self.post_message(
-                self.SectionToggled(
-                    section_id=descriptor.section_id, opened=opened
+                self.SectionToggled(section_id=descriptor.section_id, opened=opened)
                 )
-            )
 
 
     class SectionToggled(Message):
@@ -342,6 +345,7 @@ class ConsoleLeftRail(Vertical):
         character_avatar_name: str,
         character_avatar_fit_box: CharacterAvatarFitBox | None = None,
         character_avatar_prerender_job: CharacterAvatarPrerenderJob | None = None,
+        character_context_controller: ConsoleCharacterContextController | None = None,
         workspace_tree_expanded_ids: frozenset[str] | None = None,
         workspace_tree_expansion_preferences_changed: (
             Callable[[frozenset[str]], None] | None
@@ -393,12 +397,11 @@ class ConsoleLeftRail(Vertical):
                 visible``. Passed at construction for the same
                 recompose-mid-state reason as ``agent_steering_state``;
                 the default keeps bare test constructions valid (hidden).
-            show_character_section: Whether the Character section is
-                composed at all (config-gated; matches
-                ``resolve_show_character_avatar``).
+            show_character_section: Historical keyword for the avatar image
+                preference. Character navigation itself is always composed.
             character_avatar_widget_builder: Callable that builds the avatar
-                widget for an optional fitted cell box, when
-                ``show_character_section`` is True (``None`` otherwise). The
+                widget for an optional fitted cell box, when the avatar image
+                preference is true (``None`` otherwise). The
                 screen still owns
                 ``_build_character_avatar_widget`` and the spec it reads
                 (``self._active_character_avatar``); only the CALL is
@@ -415,8 +418,7 @@ class ConsoleLeftRail(Vertical):
                 late-binding constructor rule -- see ``dictation.py``'s
                 module docstring) always mounts a brand-new instance built
                 from the CURRENT ``self._active_character_avatar`` instead.
-            character_avatar_name: Character name label text, when
-                ``show_character_section`` is True.
+            character_avatar_name: Character identity label text.
             character_avatar_fit_box: Late-binding source-aware contain fitter.
                 It receives the mounted body's measured image budget and returns
                 the scale-down-only cell box, ``(0, 0)`` when no image rows
@@ -449,7 +451,10 @@ class ConsoleLeftRail(Vertical):
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
         self._agent_cancel_all_visible = agent_cancel_all_visible
-        self._show_character_section = show_character_section
+        # Kept under the historical keyword for compatibility: this setting
+        # now controls only the image, never whether Character exists.
+        self._show_character_avatar = show_character_section
+        self._character_context_controller = character_context_controller
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
         self._character_avatar_fit_box = character_avatar_fit_box
@@ -499,6 +504,35 @@ class ConsoleLeftRail(Vertical):
 
         return self._character_avatar_box
 
+    def sync_character_context(self, state: ConsoleCharacterContextState) -> None:
+        """Synchronize body content and the collapsed Character summary."""
+
+        try:
+            widget = self.query_one("#console-character-context", ConsoleCharacterContext)
+            header = self.query_one(
+                "#console-rail-section-header-character",
+                DestinationRailSectionHeader,
+            )
+            title = header.query_one("#console-rail-section-title-character", Static)
+        except (NoMatches, QueryError):
+            return
+        widget.sync_state(state)
+        header.title = self._character_context_title(state)
+        title.update(header.title)
+        title.tooltip = header.title
+        self.request_allocation_reconcile()
+
+    @staticmethod
+    def _character_context_title(state: ConsoleCharacterContextState) -> str:
+        """Build the collapsed summary from an already-loaded snapshot."""
+
+        current = next((group for group in state.groups if group.is_current), None)
+        if current is None and state.groups:
+            current = state.groups[0]
+        if current is None:
+            return "Character · No chats"
+        return f"Character · {current.character_label} · {current.total} chats"
+
     def invalidate_character_avatar_geometry(self) -> None:
         """Start a new source/viewport epoch for the Character contain fit."""
 
@@ -520,6 +554,8 @@ class ConsoleLeftRail(Vertical):
     def _section_header(
         section_id: str,
         is_open: bool,
+        *,
+        title: str | None = None,
     ) -> DestinationRailSectionHeader:
         """Build a direct header from the stable descriptor title source."""
 
@@ -529,7 +565,7 @@ class ConsoleLeftRail(Vertical):
             if item.section_id == section_id
         )
         header = DestinationRailSectionHeader(
-            descriptor.title,
+            title or descriptor.title,
             section_id=section_id,
             open=is_open,
             id=f"console-rail-section-header-{section_id}",
@@ -1089,7 +1125,10 @@ class ConsoleLeftRail(Vertical):
         if (
             self.app.focused is target
             and target.is_mounted
-            and not self._section_is_outer_visible(section_id)
+            and (
+                section_id == "character"
+                or not self._section_is_outer_visible(section_id)
+            )
         ):
             self.activate_section(section_id, reveal_target=target)
             return
@@ -1793,6 +1832,16 @@ class ConsoleLeftRail(Vertical):
             return
         if not (outer.is_mounted and header.is_mounted and bounded.display):
             return
+        if target_required and target_id and target_id.startswith("console-character-"):
+            # A search result can be below the header-sized visible slice. The
+            # validated keyboard target, not the header, owns this reveal.
+            outer.scroll_to_widget(
+                self.query_one(f"#{target_id}", Widget),
+                animate=False,
+                immediate=True,
+                force=True,
+            )
+            return
         outer.scroll_to(
             y=max(0, outer.scroll_y + header.region.y - outer.content_region.y),
             animate=False,
@@ -2041,6 +2090,106 @@ class ConsoleLeftRail(Vertical):
             yield _ContextBoundedSection(
                 conversations_body,
                 section_id="conversations",
+                owner=self,
+            )
+
+            # Character is a peer navigation surface, always immediately
+            # after Conversations. The preference gates only avatar pixels.
+            character_state = (
+                self._character_context_controller.state
+                if self._character_context_controller is not None
+                else ConsoleCharacterContextState()
+            )
+            yield self._section_header(
+                "character",
+                rail_state.character_open,
+                title=self._character_context_title(character_state),
+            )
+            avatar_children = ()
+            if (
+                self._show_character_avatar
+                and self._character_avatar_widget_builder is not None
+            ):
+                avatar_children = (
+                    self._character_avatar_widget_builder(self._character_avatar_box),
+                )
+            avatar_holder = ClickableAvatarBox(
+                *avatar_children,
+                id="console-character-avatar",
+            )
+            avatar_holder.styles.width = "auto"
+            avatar_holder.styles.height = "auto"
+            avatar_frame = Horizontal(avatar_holder, id="console-character-avatar-frame")
+            avatar_frame.styles.width = "100%"
+            avatar_frame.styles.height = "auto"
+            avatar_frame.styles.align_horizontal = "center"
+            if not self._show_character_avatar:
+                avatar_frame.styles.display = "none"
+            character_name = Static(
+                self._character_avatar_name or "Roleplay character",
+                id="console-character-name",
+                markup=False,
+            )
+            # Kept as a hidden avatar-caption seam for the existing painter;
+            # the visible Local/open identity below has one controller owner.
+            character_name.styles.display = "none"
+            character_identity = Static(
+                "No current character · Local · No open chat",
+                id="console-character-identity",
+                markup=False,
+            )
+            reaction_state = Static(
+                (
+                    f"Reaction: {self._manual_reaction_label} (manual)"
+                    if self._manual_reaction_label
+                    else "Reaction: Automatic"
+                ),
+                id="console-character-reaction-state",
+                markup=False,
+            )
+            reaction_state.styles.text_wrap = "nowrap"
+            reaction_state.styles.text_overflow = "ellipsis"
+            reaction_button = Button(
+                "Reaction…",
+                id="console-character-reaction-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            reaction_button.tooltip = "Choose or clear a reaction"
+            if self._character_context_controller is not None:
+                character_content: Widget = Vertical(
+                    # Avatar painting is independent of the browser's data
+                    # refresh/recompose lifecycle.  Keep its holder and
+                    # private caption outside that replaceable subtree.
+                    avatar_frame,
+                    character_name,
+                    character_identity,
+                    reaction_state,
+                    reaction_button,
+                    ConsoleCharacterContext(
+                        self._character_context_controller,
+                        identity_state=character_identity,
+                    ),
+                )
+            else:
+                character_content = Vertical(
+                    avatar_frame,
+                    character_name,
+                    reaction_state,
+                    reaction_button,
+                    Static("No character chats yet", markup=False),
+                    id="console-character-context",
+                )
+            character_content.styles.height = "auto"
+            character_content.styles.min_height = 0
+            character_body = self._section_body(
+                "character",
+                rail_state.character_open,
+                character_content,
+            )
+            yield _ContextBoundedSection(
+                character_body,
+                section_id="character",
                 owner=self,
             )
 
@@ -2310,70 +2459,6 @@ class ConsoleLeftRail(Vertical):
                 section_id="details",
                 owner=self,
             )
-
-            # Character (avatar of the active character).
-            if self._show_character_section:
-                yield self._section_header(
-                    "character",
-                    rail_state.character_open,
-                )
-                avatar_children = ()
-                if self._character_avatar_widget_builder is not None:
-                    avatar_children = (
-                        self._character_avatar_widget_builder(
-                            self._character_avatar_box
-                        ),
-                    )
-                avatar_holder = ClickableAvatarBox(
-                    *avatar_children,
-                    id="console-character-avatar",
-                )
-                # task-1661: hug the image instead of claiming the rail.
-                avatar_holder.styles.width = "auto"
-                avatar_holder.styles.height = "auto"
-                avatar_frame = Horizontal(
-                    avatar_holder,
-                    id="console-character-avatar-frame",
-                )
-                avatar_frame.styles.width = "100%"
-                avatar_frame.styles.height = "auto"
-                avatar_frame.styles.align_horizontal = "center"
-                character_name = Static(
-                    self._character_avatar_name,
-                    id="console-character-name",
-                    markup=False,
-                )
-                reaction_state = Static(
-                    (
-                        f"Reaction: {self._manual_reaction_label} (manual)"
-                        if self._manual_reaction_label
-                        else "Reaction: Automatic"
-                    ),
-                    id="console-character-reaction-state",
-                    markup=False,
-                )
-                reaction_state.styles.text_wrap = "nowrap"
-                reaction_state.styles.text_overflow = "ellipsis"
-                reaction_button = Button(
-                    "Reaction…",
-                    id="console-character-reaction-open",
-                    classes="console-workspace-action",
-                    compact=True,
-                )
-                reaction_button.tooltip = "Choose or clear a reaction"
-                character_body = self._section_body(
-                    "character",
-                    rail_state.character_open,
-                    avatar_frame,
-                    character_name,
-                    reaction_state,
-                    reaction_button,
-                )
-                yield _ContextBoundedSection(
-                    character_body,
-                    section_id="character",
-                    owner=self,
-                )
 
         outer_hint = Static(
             "",

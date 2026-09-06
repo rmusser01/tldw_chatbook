@@ -3244,6 +3244,10 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: underline bold;
 }
 
+#console-character-context .console-character-row.-opening {
+    text-style: italic;
+}
+
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {

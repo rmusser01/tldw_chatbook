@@ -110,10 +110,10 @@ async def test_context_section_headers_match_inspector_title_band() -> None:
         assert [section.max_content_lines for section in sections] == [
             20,
             20,
-            15,
-            15,
-            15,
             35,
+            15,
+            15,
+            15,
         ]
 
 
@@ -297,28 +297,28 @@ async def test_context_direct_bodies_use_six_bounded_wrappers_in_dom_order():
         assert [section.section_id for section in sections] == [
             "workspace",
             "conversations",
+            "character",
             "model",
             "agent",
             "details",
-            "character",
         ]
         assert [section.max_content_lines for section in sections] == [
             20,
             20,
-            15,
-            15,
-            15,
             35,
+            15,
+            15,
+            15,
         ]
         assert [
             section.query_one(".console-rail-section-body").id for section in sections
         ] == [
             "console-rail-section-body-workspace",
             "console-rail-section-body-conversations",
+            "console-rail-section-body-character",
             "console-rail-section-body-model",
             "console-rail-section-body-agent",
             "console-rail-section-body-details",
-            "console-rail-section-body-character",
         ]
         assert [
             (
@@ -329,12 +329,12 @@ async def test_context_direct_bodies_use_six_bounded_wrappers_in_dom_order():
         ] == [
             (section_id, section_id)
             for section_id in [
-                                "workspace",
+                "workspace",
                 "conversations",
+                "character",
                 "model",
                 "agent",
                 "details",
-                "character",
             ]
         ]
         assert all(
@@ -377,12 +377,12 @@ async def test_pinned_terminal_action_posts_typed_request_outside_six_sections(
 
 
 @pytest.mark.asyncio
-async def test_character_absence_omits_its_bounded_descriptor_without_phantom_body():
-    """The config-gated Character section vanishes from the mounted allocation set."""
+async def test_avatar_preference_never_omits_character_navigation_descriptor():
+    """The old image gate hides pixels, not Character navigation."""
 
     async with make_console_pilot() as pilot:
         rail = pilot.app.screen.query_one("#console-left-rail")
-        rail._show_character_section = False
+        rail._show_character_avatar = False
         await rail.recompose()
         await pilot.pause()
 
@@ -390,8 +390,9 @@ async def test_character_absence_omits_its_bounded_descriptor_without_phantom_bo
             section.section_id
             for section in rail.query("#console-left-rail-body ConsoleBoundedSection")
         ] == [
-                        "workspace",
+            "workspace",
             "conversations",
+            "character",
             "model",
             "agent",
             "details",
@@ -406,8 +407,9 @@ async def test_character_absence_omits_its_bounded_descriptor_without_phantom_bo
         ] == [
             (section_id, section_id)
             for section_id in [
-                                "workspace",
+                "workspace",
                 "conversations",
+                "character",
                 "model",
                 "agent",
                 "details",
@@ -418,7 +420,7 @@ async def test_character_absence_omits_its_bounded_descriptor_without_phantom_bo
             and isinstance(direct_children[index + 1], ConsoleBoundedSection)
             for index in range(0, len(direct_children), 2)
         )
-        assert not rail.query("#console-bounded-section-character")
+        assert rail.query_one("#console-character-avatar-frame").display is False
 
 
 @pytest.mark.asyncio
