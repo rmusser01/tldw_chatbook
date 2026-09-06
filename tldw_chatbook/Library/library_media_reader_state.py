@@ -30,7 +30,12 @@ BackingMediaId = int | str
 
 MediaReaderLayoutPreferences = AdaptiveReaderLayoutPreferences
 MediaReaderEffectiveLayout = AdaptiveReaderEffectiveLayout
-MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=46)
+MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(
+    work_min_width=46,
+    # task-31633: Media is the one destination whose Items column shares the
+    # Reader's surplus width instead of pinning at the 40-cell target.
+    list_grows=True,
+)
 normalize_media_reader_preferences = normalize_adaptive_reader_preferences
 
 

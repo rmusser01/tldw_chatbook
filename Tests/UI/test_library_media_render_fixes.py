@@ -1692,7 +1692,11 @@ async def test_reader_body_wraps_at_a_reading_measure():
         await _open_first_reader_row(screen, pilot)
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
-        assert box.region.width > 120, box.region
+        # task-31633: the Items column now takes half of the Reader's surplus
+        # at 235 columns, so the pane is 115 cells rather than 147. The box
+        # still spans the whole pane -- only the prose inside it is capped.
+        work = screen.query_one(".library-adaptive-reader-work")
+        assert box.region.width == work.region.width, (box.region, work.region)
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.

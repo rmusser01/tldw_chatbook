@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.Utils.adaptive_reader_state import (
     LAYOUT_HYSTERESIS_WIDTH,
     PANE_GRIP_WIDTH,
+    READER_COMFORT_WIDTH,
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,
@@ -19,6 +20,11 @@ from tldw_chatbook.Library.library_media_reader_state import (
     MediaReaderLayoutPreferences,
     normalize_media_reader_preferences,
     resolve_media_reader_layout,
+)
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_COLLECTIONS_READER_PROFILE,
+    LIBRARY_CONVERSATION_READER_PROFILE,
+    LIBRARY_SKILLS_READER_PROFILE,
 )
 from tldw_chatbook.Utils.library_rail_width import project_default_library_width
 
@@ -39,6 +45,7 @@ def test_adaptive_profile_exposes_approved_widths() -> None:
         list_max_width=72,
         work_min_width=44,
         work_comfort_width=44,
+        list_grows=False,
     )
 
 
@@ -65,18 +72,22 @@ def test_shared_normalization_matches_current_media_custom_width_behavior() -> N
 
 
 @pytest.mark.parametrize(
-    ("width", "expected_geometry"),
+    ("width", "expected_geometry", "expected_media_geometry"),
     [
-        (160, (True, True, 30, 40, 80)),
-        (120, (True, True, 24, 40, 46)),
-        (100, (False, True, 0, 46, 44)),
-        (80, (False, False, 0, 0, 70)),
-        (60, (False, False, 0, 0, 50)),
+        # task-31633: the Media profile shares the Reader's surplus with its
+        # Items column, so it diverges from the generic profile wherever the
+        # Reader sits above its 46-cell minimum.
+        (160, (True, True, 30, 40, 80), (True, True, 30, 57, 63)),
+        (120, (True, True, 24, 40, 46), (True, True, 24, 40, 46)),
+        (100, (False, True, 0, 46, 44), (False, True, 0, 44, 46)),
+        (80, (False, False, 0, 0, 70), (False, False, 0, 0, 70)),
+        (60, (False, False, 0, 0, 50), (False, False, 0, 0, 50)),
     ],
 )
 def test_shared_resolution_uses_adaptive_width_classes(
     width: int,
     expected_geometry: tuple[bool, bool, int, int, int],
+    expected_media_geometry: tuple[bool, bool, int, int, int],
 ) -> None:
     preferences = AdaptiveReaderLayoutPreferences()
 
@@ -90,8 +101,13 @@ def test_shared_resolution_uses_adaptive_width_classes(
         shared.items_width,
         shared.reader_width,
     ) == expected_geometry
-    if width != 100:
-        assert shared == media
+    assert (
+        media.library_open,
+        media.items_open,
+        media.library_width,
+        media.items_width,
+        media.reader_width,
+    ) == expected_media_geometry
 
 
 def test_custom_width_above_comfort_is_not_shrunk_when_it_fits() -> None:
@@ -401,3 +417,143 @@ def test_custom_width_normalization_uses_explicit_range_not_default_ceiling(
     )
 
     assert preferences.library_width == expected_width
+
+
+# ---------------------------------------------------------------------------
+# task-31633 AC#1/AC#4: the Media Items column grows with the terminal once the
+# Reader is comfortable.
+#
+# Critique #5 P1 measured the inversion: at 235x52 the Items list was 40 cells
+# and truncated a 98-character title after 31, while at 100x30 the same list
+# was 44 cells and truncated after 39 -- the wider terminal got the narrower
+# list, because every cell past the two panes' nominal widths went to the
+# Reader. `resolve_adaptive_reader_layout` is shared by four destinations, so
+# growth is opt-in per profile and the sibling surfaces are pinned below at the
+# two review widths and at their own library-open edge.
+# ---------------------------------------------------------------------------
+
+SIBLING_PROFILES = {
+    "conversations": LIBRARY_CONVERSATION_READER_PROFILE,
+    "skills": LIBRARY_SKILLS_READER_PROFILE,
+    "collections": LIBRARY_COLLECTIONS_READER_PROFILE,
+}
+
+
+def _pane_widths(
+    layout: AdaptiveReaderEffectiveLayout,
+) -> tuple[bool, bool, int, int, int]:
+    return (
+        layout.library_open,
+        layout.items_open,
+        layout.library_width,
+        layout.items_width,
+        layout.reader_width,
+    )
+
+
+def test_only_the_media_profile_opts_into_list_growth() -> None:
+    assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
+    for name, profile in SIBLING_PROFILES.items():
+        assert profile.list_grows is False, name
+    assert AdaptiveReaderLayoutProfile().list_grows is False
+
+
+@pytest.mark.parametrize(
+    ("surface", "width", "expected"),
+    [
+        # Recorded from the resolver at badff73f1, before list growth existed.
+        ("conversations", 100, (False, True, 0, 46, 44)),
+        ("conversations", 117, (False, True, 0, 56, 51)),
+        ("conversations", 118, (True, True, 24, 40, 44)),
+        ("conversations", 235, (True, True, 34, 40, 151)),
+        ("skills", 100, (False, True, 0, 42, 48)),
+        ("skills", 121, (False, True, 0, 56, 55)),
+        ("skills", 122, (True, True, 24, 40, 48)),
+        ("skills", 235, (True, True, 34, 40, 151)),
+        ("collections", 100, (False, True, 0, 42, 48)),
+        ("collections", 121, (False, True, 0, 56, 55)),
+        ("collections", 122, (True, True, 24, 40, 48)),
+        ("collections", 235, (True, True, 34, 40, 151)),
+    ],
+)
+def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
+    surface: str, width: int, expected: tuple[bool, bool, int, int, int]
+) -> None:
+    layout = resolve_adaptive_reader_layout(
+        width,
+        AdaptiveReaderLayoutPreferences(),
+        SIBLING_PROFILES[surface],
+    )
+
+    assert _pane_widths(layout) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        # The Reader sits on its 46-cell minimum at both of these, so there is
+        # no surplus to share and the layout is byte-identical to badff73f1.
+        (100, (False, True, 0, 44, 46)),
+        (120, (True, True, 24, 40, 46)),
+    ],
+)
+def test_media_layout_is_unchanged_where_the_reader_has_no_surplus(
+    width: int, expected: tuple[bool, bool, int, int, int]
+) -> None:
+    layout = resolve_media_reader_layout(width, MediaReaderLayoutPreferences())
+
+    assert _pane_widths(layout) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        # 235: was (True, True, 34, 40, 151) -- 111 surplus cells all went to
+        # the Reader. 119: was (False, True, 0, 56, 53).
+        (235, (True, True, 34, 72, 119)),
+        (119, (False, True, 0, 59, 50)),
+    ],
+)
+def test_media_items_column_grows_once_the_reader_is_comfortable(
+    width: int, expected: tuple[bool, bool, int, int, int]
+) -> None:
+    layout = resolve_media_reader_layout(width, MediaReaderLayoutPreferences())
+
+    assert _pane_widths(layout) == expected
+
+
+def test_media_items_column_is_wider_at_235_than_at_100() -> None:
+    narrow = resolve_media_reader_layout(100, MediaReaderLayoutPreferences())
+    wide = resolve_media_reader_layout(235, MediaReaderLayoutPreferences())
+
+    assert wide.items_width >= 47
+    assert wide.items_width > narrow.items_width
+    assert wide.reader_width >= READER_COMFORT_WIDTH
+
+
+@pytest.mark.parametrize("width", range(60, 301))
+def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
+    width: int,
+) -> None:
+    preferences = MediaReaderLayoutPreferences()
+    ungrown = resolve_adaptive_reader_layout(
+        width,
+        preferences,
+        AdaptiveReaderLayoutProfile(work_min_width=46),
+    )
+    grown = resolve_media_reader_layout(width, preferences)
+
+    assert grown.items_width >= ungrown.items_width
+    assert grown.items_width <= MEDIA_READER_LAYOUT_PROFILE.list_max_width
+    assert (grown.library_open, grown.items_open) == (
+        ungrown.library_open,
+        ungrown.items_open,
+    )
+    assert grown.library_width == ungrown.library_width
+    if grown.items_open:
+        assert grown.reader_width >= READER_COMFORT_WIDTH
+        assert grown.reader_width >= MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    assert (
+        grown.library_width + grown.items_width + grown.reader_width
+        + 2 * PANE_GRIP_WIDTH
+    ) == width

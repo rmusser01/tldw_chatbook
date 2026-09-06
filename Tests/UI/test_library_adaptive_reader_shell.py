@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
+    READER_COMFORT_WIDTH,
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,
@@ -595,6 +596,7 @@ from Tests.UI.test_library_media_side_by_side import (  # noqa: E402
 )
 from Tests.UI.test_library_shell import (  # noqa: E402
     LibraryGlobalKeyProductionCSSHarness,
+    LibraryProductionCSSHarness,
     _seed_conversations,
     _two_conversations,
     _wait_for_condition,
@@ -649,3 +651,84 @@ async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
         assert not screen.focused.has_class(
             "library-adaptive-reader-pane-grip"
         ), screen.focused
+
+
+# ---------------------------------------------------------------------------
+# task-31633 AC#1/AC#4: the Items column grows with the terminal.
+#
+# Painted, not just resolved: critique #5 P1 measured a 98-character title
+# truncated after 31 characters at 235x52 while the SAME title survived to 39
+# at 100x30 -- the wider terminal painted the narrower list. The 100x30 pane
+# width is pinned exactly, because PR D/F/G rows are sized against it.
+# ---------------------------------------------------------------------------
+
+MEDIA_LONG_TITLE = (
+    "Quarterly roadmap interview recording with the leadership panel "
+    "and appendix notes " * 2
+)[:98]
+
+
+def _media_items_with_a_long_title() -> list[dict[str, object]]:
+    rows = _two_media_items()
+    rows[0]["title"] = MEDIA_LONG_TITLE
+    return rows
+
+
+def _painted_lines(host, region) -> list[str]:
+    strips = list(host.screen._compositor.render_strips())
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("size", "expected_items_width", "expected_title_characters"),
+    [
+        # 235x52 was 40 cells / 31 painted title characters at badff73f1.
+        ((235, 52), 72, 63),
+        # 100x30 is unchanged: the Reader is already on its 46-cell minimum.
+        ((100, 30), 44, 39),
+    ],
+)
+@pytest.mark.asyncio
+async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortable(
+    size: tuple[int, int],
+    expected_items_width: int,
+    expected_title_characters: int,
+) -> None:
+    assert len(MEDIA_LONG_TITLE) == 98
+    app = _build_media_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_items_with_a_long_title()
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+        )
+        row = next(
+            candidate
+            for candidate in screen.query(".library-media-row").results(Button)
+            if MEDIA_LONG_TITLE[:20] in str(candidate.label)
+        )
+        painted_title = _painted_lines(host, row.region)[0]
+
+        assert "\u2026" in painted_title, painted_title
+        visible = painted_title.split("\u2026", 1)[0].strip()
+        assert MEDIA_LONG_TITLE.startswith(visible), (visible, painted_title)
+        assert (shell.items.region.width, len(visible)) == (
+            expected_items_width,
+            expected_title_characters,
+        ), (shell.items.region, painted_title)
+        assert shell.work.region.width >= READER_COMFORT_WIDTH
+        if size == (235, 52):
+            # AC#4 floors: the wide list is at least as wide as the compact
+            # one, and the 98-character title survives past 44 characters.
+            assert shell.items.region.width >= 47
+            assert len(visible) >= 44

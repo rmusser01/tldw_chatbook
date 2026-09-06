@@ -38,7 +38,12 @@ PaneName = Literal["library", "items"]
 
 @dataclass(frozen=True)
 class AdaptiveReaderLayoutProfile:
-    """Destination-specific list and work-pane width policy."""
+    """Destination-specific list and work-pane width policy.
+
+    ``list_grows`` is opt-in per destination (task-31633): when set, a
+    comfortable Reader shares its surplus width with the list instead of
+    absorbing every extra cell. Only Media opts in today.
+    """
 
     list_min_width: int = 32
     list_target_width: int = 40
@@ -46,6 +51,7 @@ class AdaptiveReaderLayoutProfile:
     list_max_width: int = 72
     work_min_width: int = 44
     work_comfort_width: int = 44
+    list_grows: bool = False
 
 
 @dataclass(frozen=True)
@@ -285,6 +291,20 @@ def resolve_adaptive_reader_layout(
             comfort_width,
             max(width - grip_width - work_min_width, items_width),
         )
+    if items_open and profile.list_grows:
+        # task-31633: past this point every remaining cell used to go to the
+        # Reader, so a 235-cell terminal painted a NARROWER list than a
+        # 100-cell one. Split the Reader's surplus once it is comfortable --
+        # its floor is its own minimum, which for a destination whose reader
+        # needs more than READER_COMFORT_WIDTH is what "comfortable" means,
+        # and which leaves the compact allocations byte-identical.
+        reader_floor = max(work_min_width, READER_COMFORT_WIDTH)
+        surplus = width - grip_width - library_width - items_width - reader_floor
+        if surplus > 0:
+            items_width = min(
+                items_width + surplus // 2,
+                max(profile.list_max_width, items_width),
+            )
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,
