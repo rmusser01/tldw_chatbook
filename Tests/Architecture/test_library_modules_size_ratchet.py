@@ -381,6 +381,10 @@ _BUDGETS: dict[str, int] = {
 #: pin every file to its exact byte count at all times.
 _SLACK_TOLERANCE_LINES = 50
 
+# TASK-31244: initial exact pin for the focused navigation helper. Existing
+# controller ceilings remain unchanged; route hooks stay outside LibraryScreen.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 811
+
 
 @lru_cache(maxsize=None)
 def _measure(rel_path: str) -> int:

@@ -11854,3 +11854,16 @@ guard on a modal must measure from first paint, not from mount: under load
 those diverge by seconds. Note also that the wizard's bottom hint line stays
 visible while the dialog is up, so grepping the footer proves nothing about
 whether a dialog opened.
+
+### TASK-31244: navigation completion is not completion of every app worker
+
+During the Character Context fix-round return tests, all Back, focus-paint and
+preference assertions passed, but a blanket `app.workers.wait_for_complete()`
+made all three cases fail with `WorkerCancelled`: normal navigation had
+cancelled unrelated visit-scoped workers. The covering run recorded 231 passes
+and those three fixture failures. Waiting instead for the destination's bounded
+loading/layout completion produced 19 passing ownership/return regressions.
+Do not make successful completion of every app worker a navigation assertion;
+observe the destination's completion state. Preserve genuine late-publish
+stacks separately: this incident also found and fixed an owned Character
+presentation callback running after its screen stack had been removed.

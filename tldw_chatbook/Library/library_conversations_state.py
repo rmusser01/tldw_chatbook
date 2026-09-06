@@ -63,6 +63,7 @@ class LibraryConversationsCanvasState:
     pager: LibraryPagerDisplay | None = None
     selection_notice: str = ""
     actions_disabled: bool = False
+    title: str = "Conversations"
 
 
 @dataclass(frozen=True)
