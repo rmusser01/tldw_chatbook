@@ -2047,7 +2047,11 @@ class SetupWizardProvider(Provider):
 
                 self.app.push_screen(
                     FirstRunSetupWizard(self.app, rerun=True),
-                    self.app.handle_first_run_wizard_result,
+                    # TASK-31226: a re-run's cancellation must return to
+                    # Settings, not route to the Console.
+                    lambda result: self.app._handle_first_run_wizard_result(
+                        result, cancel_to_console=False
+                    ),
                 )
         except Exception as e:
             self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
@@ -15449,8 +15453,14 @@ class TldwCli(
         for key in delete_keys.get("first_run", ()):
             first_run.pop(key, None)
 
-    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
-        """Optionally chain personalization before the existing continuation."""
+    def _handle_first_run_wizard_result(
+        self, result: dict | None, *, cancel_to_console: bool = True
+    ) -> None:
+        """Optionally chain personalization before the existing continuation.
+
+        ``cancel_to_console`` is forwarded for cancellation routing
+        (TASK-31226); dict results are unaffected by it.
+        """
 
         if type(result) is dict and result.get("offer_profile_interview") is True:
             completed = result.get("completed")
@@ -15467,7 +15477,9 @@ class TldwCli(
             if eligible:
 
                 def continuation() -> None:
-                    TldwCli._continue_first_run_wizard_result(self, result)
+                    TldwCli._continue_first_run_wizard_result(
+                        self, result, cancel_to_console=cancel_to_console
+                    )
 
                 try:
                     request = self.prepare_personal_context_interview_request(
@@ -15498,13 +15510,39 @@ class TldwCli(
 
                 launch_profile_interview_after_commit(self, request, continuation)
                 return
-        TldwCli._continue_first_run_wizard_result(self, result)
+        TldwCli._continue_first_run_wizard_result(
+            self, result, cancel_to_console=cancel_to_console
+        )
 
-    def _continue_first_run_wizard_result(self, result: dict | None) -> None:
-        """Preserve the pre-interview first-run result handling byte-for-byte."""
+    def _continue_first_run_wizard_result(
+        self, result: dict | None, *, cancel_to_console: bool = True
+    ) -> None:
+        """Preserve the pre-interview first-run result handling byte-for-byte.
+
+        TASK-31226: the cancel branch changed. Esc-exiting the boot-offered
+        wizard used to strand the user on Home (the screen the wizard was
+        pushed over, per the first-run startup route); cancelling now lands
+        on the Console workbench. Settings/command-palette RE-RUNS opt out
+        via ``cancel_to_console=False`` so cancelling a re-run leaves the
+        caller's screen alone.
+        """
 
         if type(result) is not dict:
-            return  # cancelled / finish-later: recovery state handles next launch
+            # Cancelled / finish-later: recovery state handles the NEXT
+            # launch; this landing is for the user pressing Esc now.
+            if not cancel_to_console:
+                return
+            # task-18812 parity: consume a deferred focus request under the
+            # same Chat-route rule the completed paths use.
+            if getattr(self, "_deferred_focus_request", False):
+                self._deferred_focus_request = False
+                self.focus_mode = True
+            from tldw_chatbook.UI.Navigation.main_navigation import (
+                NavigateToScreen,
+            )
+
+            self.post_message(NavigateToScreen(TAB_CHAT, {}))
+            return
         exit_route = result.get("exit_route")
         completed = result.get("completed")
         exit_context = result.get("exit_context")

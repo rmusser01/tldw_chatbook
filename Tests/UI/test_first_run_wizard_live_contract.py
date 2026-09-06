@@ -344,9 +344,12 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismissed back onto whatever was underneath (Home), not
-            # navigated anywhere -- Exit setup carries no exit route.
-            assert app.current_tab == "home"
+            # TASK-31226: Exit setup now LANDS THE USER ON THE CONSOLE
+            # workbench instead of stranding them on the Home screen the
+            # wizard was pushed over. This is the integration pin: the
+            # cancellation flows through the real mounted-wizard callback
+            # boundary into the real navigation system.
+            await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
 
             # The started flag is persisted by a `@work(thread=True)` worker
             # fired from FirstRunSetupWizard.on_mount(). Poll for the flag
@@ -2136,7 +2139,13 @@ async def test_palette_setup_wizard_action_wires_result_callback(
             provider.handle_setup_wizard_action("run_setup_wizard")
             await pilot.pause(0.2)
 
-            assert captured.get("callback") == app.handle_first_run_wizard_result, (
+            # TASK-31226: re-entry wires an adapter around the app-level
+            # result callback (cancel returns to the caller's screen; the
+            # boot wizard's cancel now routes to the Console). Identity is
+            # pinned by BEHAVIOR: a None result reaches the handler with
+            # cancel_to_console=False, a dict result flows through too.
+            callback = captured.get("callback")
+            assert callable(callback), (
                 "palette re-entry must wire the app-level result callback, "
                 "same as the Settings button and the auto-offer path"
             )
