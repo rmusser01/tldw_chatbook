@@ -14,6 +14,7 @@ from tldw_chatbook.Canvas.profiles import (
     ProfileRecord,
     load_profile_snapshot,
     resolve_profile,
+    runtime_assets_for,
     runtime_snapshot_id,
 )
 
@@ -207,6 +208,117 @@ def test_owned_snapshot_does_not_reread_mutated_packaged_inputs(tmp_path, monkey
     assert resolve_profile(
         snapshot, operation="load", parent_profile="canvas-v1", has_diagrams=False
     ).executable
+    owned = runtime_assets_for(snapshot, "canvas-v1")
+    assert owned is not None
+    assert hashlib.sha256(owned.manifest_bytes).hexdigest() == (
+        snapshot.profiles[0].manifest_sha256
+    )
+
+
+def test_snapshot_owns_exact_manifest_and_library_bytes_for_each_profile(
+    tmp_path, monkeypatch
+):
+    static = _isolated_static(tmp_path, monkeypatch)
+    catalog_path = static / "profile-catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    manifest = json.loads(
+        static.joinpath("runtime-manifest.json").read_text(encoding="utf-8")
+    )
+    manifest["runtime_profile"] = "canvas-test-library"
+    second_manifest = static / "canvas-test-library-manifest.json"
+    second_manifest.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    library_bytes = b"verified-library-fixture"
+    library = static / "canvas-test-library.js"
+    library.write_bytes(library_bytes)
+    catalog["profiles"].append(
+        {
+            "executable": False,
+            "library": {
+                "bytes": len(library_bytes),
+                "files": {
+                    library.name: {
+                        "bytes": len(library_bytes),
+                        "sha256": hashlib.sha256(library_bytes).hexdigest(),
+                    }
+                },
+            },
+            "manifest": second_manifest.name,
+            "manifest_sha256": hashlib.sha256(second_manifest.read_bytes()).hexdigest(),
+            "profile_id": "canvas-test-library",
+            "reason": "profile-unqualified",
+        }
+    )
+    catalog["build_id"] = _catalog_build_id(catalog)
+    catalog["policy_id"] = _catalog_policy_id(catalog)
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    snapshot = load_profile_snapshot()
+    owned = runtime_assets_for(snapshot, "canvas-test-library")
+
+    assert owned is not None
+    assert owned.manifest_name == second_manifest.name
+    assert owned.manifest["runtime_profile"] == "canvas-test-library"
+    assert owned.library_files[library.name] == library_bytes
+    assert owned.javascript == static.joinpath("quickjs-runtime.js").read_bytes()
+    assert (
+        owned.worker_javascript
+        == static.joinpath("canvas_runtime_worker.js").read_bytes()
+    )
+    assert (
+        owned.renderer_javascript == static.joinpath("canvas_renderer.js").read_bytes()
+    )
+    with pytest.raises(TypeError):
+        owned.library_files[library.name] = b"replacement"
+
+    second_manifest.write_bytes(b"changed after snapshot")
+    library.write_bytes(b"changed after snapshot")
+    static.joinpath("quickjs-runtime.js").write_bytes(b"changed after snapshot")
+    assert owned.manifest["runtime_profile"] == "canvas-test-library"
+    assert owned.library_files[library.name] == library_bytes
+    assert (
+        hashlib.sha256(owned.javascript).hexdigest()
+        == owned.manifest["outputs"]["quickjs-runtime.js"]["sha256"]
+    )
+
+
+def _catalog_build_id(catalog: dict) -> str:
+    projection = [
+        {
+            "library": entry["library"],
+            "manifest_sha256": entry["manifest_sha256"],
+            "profile_id": entry["profile_id"],
+        }
+        for entry in catalog["profiles"]
+    ]
+    return hashlib.sha256(
+        json.dumps(
+            sorted(projection, key=lambda item: item["profile_id"]),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _catalog_policy_id(catalog: dict) -> str:
+    projection = {
+        "default_diagram_profile": catalog["default_diagram_profile"],
+        "profiles": sorted(
+            (
+                {
+                    "executable": entry["executable"],
+                    "profile_id": entry["profile_id"],
+                    "reason": entry["reason"],
+                }
+                for entry in catalog["profiles"]
+            ),
+            key=lambda item: item["profile_id"],
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 @pytest.mark.parametrize(

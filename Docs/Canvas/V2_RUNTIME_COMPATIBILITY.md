@@ -20,15 +20,20 @@ Its top-level schema is closed:
 
 Each profile entry contains exactly `profile_id`, `manifest`,
 `manifest_sha256`, `executable`, `reason`, and `library`. `manifest` is an exact
-packaged filename, not a path or archive member. `library` contains exactly a
+safe packaged JSON filename, not a path or archive member; each profile may name
+its own manifest. `library` contains exactly a
 verified aggregate `bytes` value and a closed `files` mapping whose values contain
 exactly `bytes` and lower-case `sha256`. Duplicate JSON keys, duplicate profile
 IDs, unsafe IDs, unknown fields, missing files, byte mismatches, and inconsistent
 aggregate sizes fail the complete snapshot closed.
 
-The catalog entry is only a bounded, source-free admission projection. The runtime
-asset loader owns the immutable verified manifest bytes, parsed manifest, engine,
-worker, renderer, and any future profile library bytes. Archives carry revision
+The catalog entry is only a bounded, source-free admission projection. For every
+profile, the runtime-asset loader owns one frozen object containing the immutable
+verified manifest bytes, parsed manifest, engine, worker, renderer, and profile
+library bytes. The process-owned `ProfileSnapshot` retains those objects in a
+private tuple and exposes exact-profile lookup through the pure
+`runtime_assets_for()` accessor. This keeps bytes attached to the verified policy
+without a mutable global registry or a filesystem reread. Archives carry revision
 source and profile IDs only; they are never accepted by the profile loader and
 cannot supply manifests or executable assets.
 
@@ -66,5 +71,7 @@ identity for parent/child consistency and cache binding; it is not a browser
 credential.
 
 The production catalog currently admits only `canvas-v1`, with zero library bytes
-and `default_diagram_profile: null`. `canvas-v2-mermaid-1` remains unavailable until
-its runtime assets and all qualification gates are complete.
+and `default_diagram_profile: null`. Task 2 first registers
+`canvas-v2-mermaid-1` as non-executable after its real verified candidate manifest
+and grammar assets exist; Task 1 does not fabricate a placeholder byte identity.
+V2 remains unavailable until all qualification gates are complete.

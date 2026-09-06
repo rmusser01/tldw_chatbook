@@ -176,7 +176,9 @@ source-free cross-process identity, not a browser credential.
 
 - [ ] Add byte-tamper, duplicate-ID, retired profile and snapshot retention tests;
   rereading the same owned snapshot after changing a fixture file cannot change
-  its bytes/identity. Keep V2 `executable=False` and default `None` in production.
+  its bytes/identity. Keep the diagram default `None` in production. Task 2 first
+  registers V2 with `executable=False` after its real candidate manifest/assets
+  exist; do not invent placeholder byte identities in this slice.
   Test fixtures may construct candidate records; never add an environment bypass.
 - [ ] Run profile/runtime-asset tests, targeted static checks and commit
   `feat(canvas): add immutable runtime profile admission` with the task record.

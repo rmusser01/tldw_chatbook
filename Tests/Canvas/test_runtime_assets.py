@@ -235,6 +235,18 @@ def test_runtime_loader_returns_only_verified_packaged_bytes() -> None:
         result.manifest["runtime_profile"] = "canvas-v2"
 
 
+def test_profile_asset_loader_rejects_unsafe_manifest_name() -> None:
+    from tldw_chatbook.Canvas.runtime_assets import load_canvas_profile_runtime_assets
+
+    with pytest.raises(ValueError, match="manifest filename"):
+        load_canvas_profile_runtime_assets(
+            profile_id="canvas-v1",
+            manifest_name="../runtime-manifest.json",
+            manifest_sha256="a" * 64,
+            library_inventory={"bytes": 0, "files": {}},
+        )
+
+
 @pytest.mark.parametrize(
     "damage", ["quickjs", "worker", "renderer", "manifest", "missing"]
 )
