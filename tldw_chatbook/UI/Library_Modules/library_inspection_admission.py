@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...Constants import LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION
 from .library_unavailable_navigation import (
@@ -15,12 +15,15 @@ from .library_unavailable_navigation import (
     _LibraryCharacterNavigationAdmission,
 )
 
+if TYPE_CHECKING:
+    from ..Screens.library_screen import LibraryScreen
+
 
 @dataclasses.dataclass
 class PreparedLibraryInspection:
     """One display-neutral locator result and its request-owned source lease."""
 
-    screen: Any
+    screen: LibraryScreen
     admission: _LibraryCharacterNavigationAdmission
     service: Any
     local_service: Any
@@ -34,6 +37,11 @@ class PreparedLibraryInspection:
     disposed: bool = False
 
     def is_current(self) -> bool:
+        """Check the unconsumed preparation against its captured owners.
+
+        Returns:
+            True only while source, Library generation, and storage owners agree.
+        """
         screen = self.screen
         return bool(
             not self.consumed
@@ -51,6 +59,7 @@ class PreparedLibraryInspection:
         )
 
     def discard(self) -> None:
+        """Invalidate this token and release only its own source lease once."""
         self.disposed = True
         release, self.release = self.release, None
         if release is not None:
@@ -79,9 +88,19 @@ async def _flush_library_navigation_sources(self, *, is_current) -> bool:
 
 
 async def prepare_character_inspection(
-    self: Any, context: Mapping[str, Any], *, is_current: Callable[[], bool]
+    self: LibraryScreen, context: Mapping[str, Any], *, is_current: Callable[[], bool]
 ) -> PreparedLibraryInspection | None:
-    """Prepare the existing bounded local locator without replacing any view."""
+    """Prepare the existing bounded local locator without replacing any view.
+
+    Args:
+        self: Library screen owning the locator and retained save guards.
+        context: Closed typed Character inspection navigation context.
+        is_current: Source visit and cancellation validity callback across awaits.
+
+    Returns:
+        A display-neutral exact selection token, or None on rejected admission.
+        The caller owns disposal of a returned token and its source lease.
+    """
     from ...Library.library_conversation_reader_state import (
         LIBRARY_CONVERSATION_PAGE_SIZE,
     )
@@ -159,8 +178,19 @@ async def prepare_character_inspection(
             prepared.discard()
 
 
-def commit_character_inspection(self: Any, prepared: PreparedLibraryInspection) -> bool:
-    """Install one fully prepared exact selection synchronously, without I/O."""
+def commit_character_inspection(
+    self: LibraryScreen, prepared: PreparedLibraryInspection
+) -> bool:
+    """Install one fully prepared exact selection synchronously, without I/O.
+
+    Args:
+        self: Library screen that owns the preparation.
+        prepared: Unconsumed token carrying the exact bounded locator snapshot.
+
+    Returns:
+        True after installing the route and reader selection; False for a stale
+        or foreign token. The caller remains responsible for lease disposal.
+    """
     from ...Library.library_conversation_reader_state import ConversationReaderState
 
     if prepared.screen is not self or not prepared.is_current():
@@ -189,8 +219,12 @@ def commit_character_inspection(self: Any, prepared: PreparedLibraryInspection) 
     return True
 
 
-async def consume_prepared_character_inspection(self) -> None:
-    """Render the admitted selection; never perform a second locator admission."""
+async def consume_prepared_character_inspection(self: LibraryScreen) -> None:
+    """Render the admitted selection without a second locator admission.
+
+    Args:
+        self: Library screen whose pending admitted selection should be rendered.
+    """
     admission = getattr(self, "_prepared_library_inspection_entry", None)
     if admission is None:
         return

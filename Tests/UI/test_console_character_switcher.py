@@ -190,11 +190,12 @@ class _CharacterSwitcherApp(ConsolidatedCSSApp):
             await handler()
 
 
-def test_character_results_sort_by_activity_then_stable_identity() -> None:
+def test_character_results_preserve_repository_order_and_first_identity() -> None:
     rows = (
         _character_row("conversation-b", "B", "2026-09-01T12:00:00+00:00"),
         _character_row("conversation-c", "C", "2026-09-02T12:00:00+00:00"),
         _character_row("conversation-a", "A", "2026-09-01T12:00:00+00:00"),
+        _character_row("conversation-b", "Duplicate", "2026-09-03T12:00:00+00:00"),
     )
 
     results = build_console_character_results(
@@ -202,13 +203,170 @@ def test_character_results_sort_by_activity_then_stable_identity() -> None:
     )
 
     assert [result.target.conversation_id for result in results if result.target] == [
+        "conversation-b",
         "conversation-c",
         "conversation-a",
-        "conversation-b",
     ]
     assert all(isinstance(result, ConsoleSwitcherCharacterResult) for result in results)
-    assert results[0].relative_time == "1d"
-    assert results[0].absolute_time.startswith("Updated 2026-09-02 ")
+    assert results[0].title == "B"
+    assert results[0].relative_time == "2d"
+    assert results[0].absolute_time.startswith("Updated 2026-09-01 ")
+
+
+@pytest.mark.asyncio
+async def test_character_sqlite_rank_survives_visible_page_projection(tmp_path):
+    from Tests.DB.test_character_conversation_search_projection import _card, _chat
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        CharacterConversationNavigationService,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "rank.sqlite", client_id="rank")
+    try:
+        card = _card(db, "Ada")
+        for index in range(52):
+            _chat(
+                db,
+                conversation_id=f"rank-{index:02d}",
+                character_id=card,
+                title=f"Ranked chat {index:02d}",
+                content="needle " * (60 - index) + "other " * index,
+                modified=f"2026-09-01T00:00:{index:02d}Z",
+            )
+        service = CharacterConversationNavigationService(db)
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        repository_ids = []
+
+        async def loader(**kwargs):
+            page = service.keyword_search(**kwargs)
+            repository_ids.extend(row.target.conversation_id for row in page.rows)
+            return page
+
+        app = _CharacterSwitcherApp(
+            character_loader=loader,
+            initial_mode=SwitcherMode.CHARACTER_CHATS,
+            initial_character_query="needle",
+        )
+        async with app.run_test(size=(52, 20)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            first = [entry.target.conversation_id for entry in modal._entries]
+            assert first == [f"rank-{index:02d}" for index in range(50)]
+            frame = "\n".join(s.text for s in modal._compositor.render_strips())
+            assert "Ranked chat 00" in frame
+            await pilot.click("#console-switcher-next-page")
+            await pilot.pause()
+            second = [entry.target.conversation_id for entry in modal._entries]
+            assert second == ["rank-50", "rank-51"]
+            assert first + second == repository_ids
+            frame = "\n".join(s.text for s in modal._compositor.render_strips())
+            assert "Ranked chat 50" in frame
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["x" * 201, " " * 201, "bad\x00query"])
+async def test_character_rejected_edit_keeps_painted_page_and_target(invalid):
+    calls = []
+
+    async def loader(**kwargs):
+        calls.append(kwargs)
+        offset = kwargs["offset"]
+        rows = tuple(
+            _character_row(f"chat-{i}", f"Kept chat {i}", "2026-09-01T12:00:00Z")
+            for i in range(offset, offset + (50 if offset == 0 else 3))
+        )
+        return CharacterConversationPage(rows, 53, None, 7)
+
+    app = _CharacterSwitcherApp(
+        character_loader=loader,
+        initial_mode=SwitcherMode.CHARACTER_CHATS,
+        initial_character_query="needle",
+    )
+    async with app.run_test(size=(52, 20)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await pilot.click("#console-switcher-next-page")
+        await pilot.pause()
+        modal.action_switcher_cursor_down()
+        query = modal.query_one("#console-switcher-query", Input)
+        query.focus()
+        key = modal._candidate_key()
+        payload = modal._committed_payload_for_key(key)
+        generation = modal._committed_result_generation
+        scroll = modal.query_one(
+            "#console-switcher-results", VerticalScroll
+        ).scroll_offset
+        query.value = invalid
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.05)
+        assert query.value == modal._character_query == "needle"
+        assert modal._page_offset == 50 and modal._candidate_key() == key
+        assert modal._committed_result_generation == generation
+        assert modal._pointer_payload_can_activate(payload)
+        results = modal.query_one("#console-switcher-results", VerticalScroll)
+        assert (
+            results.scroll_offset == scroll and results.styles.visibility == "visible"
+        )
+        assert all(not button.disabled for button in modal._result_buttons())
+        frame = "\n".join(s.text for s in modal._compositor.render_strips())
+        assert "Kept chat 50" in frame and "Previous search kept" in frame
+        assert len(calls) == 2
+        query.value = "界" * 200
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.05)
+        assert calls[-1] == {"query": "界" * 200, "offset": 0, "limit": 50}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["debounce", "loading"])
+async def test_character_rejected_edit_preserves_pending_valid_query(phase):
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def loader(**kwargs):
+        calls.append(kwargs["query"])
+        if kwargs["query"] == "next":
+            started.set()
+            await asyncio.wait_for(release.wait(), 3)
+        return CharacterConversationPage(
+            (_character_row(kwargs["query"], "Owned row", "2026-09-01T12:00:00Z"),),
+            1,
+            None,
+            7,
+        )
+
+    app = _CharacterSwitcherApp(
+        character_loader=loader,
+        initial_mode=SwitcherMode.CHARACTER_CHATS,
+        initial_character_query="needle",
+    )
+    async with app.run_test(size=(52, 20)) as pilot:
+        try:
+            await pilot.pause()
+            modal = app.screen
+            query = modal.query_one("#console-switcher-query", Input)
+            old = modal._committed_payload_for_key(modal._candidate_key())
+            with query.prevent(Input.Changed):
+                query.value = "next"
+            modal._query_changed(Input.Changed(query, "next"))
+            if phase == "loading":
+                await asyncio.wait_for(started.wait(), 2)
+            timer = modal._query_debounce_timer
+            with query.prevent(Input.Changed):
+                query.value = "x" * 201
+            modal._query_changed(Input.Changed(query, query.value))
+            assert query.value == modal._character_query == "next"
+            assert modal._query_pending and modal._query_debounce_timer is timer
+            assert not modal._pointer_payload_can_activate(old)
+            assert all(button.disabled for button in modal._result_buttons())
+            await asyncio.wait_for(started.wait(), 2)
+            release.set()
+            await pilot.pause()
+            assert calls == ["needle", "next"]
+            assert modal._rendered_query == "next" and not modal._query_pending
+            assert modal._entries[0].target.conversation_id == "next"
+        finally:
+            release.set()
 
 
 @pytest.mark.asyncio

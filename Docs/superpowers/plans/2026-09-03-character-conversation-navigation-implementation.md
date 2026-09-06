@@ -1056,9 +1056,15 @@ def test_character_f2_is_a_noop_with_truthful_hint(): ...
 - [ ] **Step 3: Extend pure switcher state without semantic concepts**
 
 Add the third enum member and result type. Preserve section-first ordering for
-Active. Character rows sort by last activity descending with stable identity as
-the final tie. Validate query through the existing length/control-character
-boundary before calling Task 2.
+Active. Character result projection preserves the repository-provided page
+order after stable deduplication: Keyword pages retain relevance rank and its
+date/identity tie-breaks rather than being re-sorted by the presentation layer.
+This clarifies the original recent-first wording under the spec's ranked-query
+and rank-aware pagination contract (PR2469 review). Date-browse order remains
+owned by its repository; this correction does not add blank Keyword browsing.
+Validate query through the existing length/control-character boundary before
+calling Task 2. Rejected Character edits restore the prior accepted query and
+preserve its committed or pending ownership without issuing a replacement read.
 
 - [ ] **Step 4: Write failing activation and pointer-stability tests**
 

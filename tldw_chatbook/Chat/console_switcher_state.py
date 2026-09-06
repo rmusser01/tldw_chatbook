@@ -165,10 +165,15 @@ def build_console_character_results(
     now: datetime | None = None,
     limit: int = CONSOLE_SWITCHER_PAGE_LIMIT,
 ) -> tuple[ConsoleSwitcherCharacterResult, ...]:
-    """Build deterministic recent-first Character-chat switcher rows.
+    """Project Character-chat rows without changing repository page order.
 
-    This presentation projection preserves Task 2's immutable identity and
-    safe selected excerpt. It does not introduce semantic/model state.
+    Args:
+        rows: Repository-ordered rows; the first occurrence of each identity wins.
+        now: Reference clock for relative ages, defaulting to the current time.
+        limit: Maximum number of unique rows to return; nonpositive means empty.
+
+    Returns:
+        Immutable rows retaining exact identities and safe selected excerpts.
     """
 
     reference_now = now or datetime.now(UTC)
@@ -177,16 +182,8 @@ def build_console_character_results(
         if row.row_key and row.row_key not in bounded:
             bounded[row.row_key] = row
 
-    def sort_key(row: CharacterConversationRow) -> tuple[Any, ...]:
-        instant = _parse_instant(row.last_modified)
-        return (
-            instant is None,
-            -(instant.timestamp() if instant is not None else 0.0),
-            row.row_key,
-        )
-
     results: list[ConsoleSwitcherCharacterResult] = []
-    for row in sorted(bounded.values(), key=sort_key)[: max(0, int(limit))]:
+    for row in list(bounded.values())[: max(0, int(limit))]:
         instant = _parse_instant(row.last_modified)
         absolute = (
             f"Updated {instant.astimezone().strftime('%Y-%m-%d %H:%M %Z')}"
