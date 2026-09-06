@@ -12914,6 +12914,13 @@ TaskDetail, DefinitionDetail {
     padding: 0 1;
 }
 
+/* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
+ * + definition) -- a plain class on each Button, never an
+ * ancestor-scoped bare-type rule. */
+.detail-secondary-action-button {
+    margin: 0 1 0 0;
+}
+
 /* Both live instances of the pane: the docked one and, at narrow widths,
  * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
  * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which

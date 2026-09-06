@@ -305,6 +305,29 @@ target and only changes through **Edit in full…** or the create form.
   buttons, and the automation-only transfer keys that went with them,
   are retired.
 
+### Duplicate, View runs, and View results
+
+A second row of buttons sits under Edit/Acknowledge/Run now/Enable/
+Disable/Delete:
+
+- **Duplicate** creates a new local copy of the task, named "*Title*
+  (copy)" — same schedule, body, and linked item, but a fresh id, no
+  transfer state, and no borrowed run history. It always lands on this
+  device, even when the task you duplicated is server-owned: duplicating
+  is a plain new draft, not an implicit move. It is disabled (with the
+  reason shown under the button, same as Edit/Enable/Disable/Delete)
+  while the task is mid-transfer, for the same reason those four are.
+- **View runs** scrolls the pane down to the **Recent runs** list — a
+  reminder has no separate run-history screen of its own, only that
+  inline section, so this is a shortcut to it rather than a new view.
+- **View results** is always disabled here: results
+  (`automation_results` rows) are a recurring-question concept a
+  reminder has no equivalent of. The reason is written under the button,
+  not left as a hover-only tooltip.
+
+The automation detail pane carries the same three buttons — see "The
+automation detail pane", below, for what they do there.
+
 ## Creating a scheduled task
 
 Press **n**, or click **Create ▾** in the rail header. Both ask which
@@ -689,6 +712,20 @@ selection, not "all searchable library" — pick **Edit in full…** if you
 want the scope to keep resolving to whatever sources are readable at
 each run rather than freezing today's three.
 
+Below Pause/Resume/Run now sits a second row: **Duplicate**, **View
+runs**, and **View results**. **View runs** and **View results** are
+plain shortcuts onto the `Last run` and `Unread results` rows above —
+same destination, same "always reachable, viewing history is never
+gated" rule — so they work for any definition regardless of family or
+lock state. **Duplicate** creates a new local copy named "*Name*
+(copy)" with the same question, schedule, model pin, generation mode,
+sources, and notification policy, but a fresh id, `version` 1, and its
+lifecycle reset to active — even a paused source duplicates as active.
+It always lands on this device, the same "new draft, not an implicit
+move" rule the reminder pane's own Duplicate follows, and is disabled
+(with the reason shown under the button) while the definition is
+mid-transfer or is a family this pane cannot author (`agent_task`).
+
 At narrow widths this pane opens full-screen over the list instead of
 beside it — see "Narrow terminals", above. Everything described here
 works there unchanged.
@@ -789,6 +826,22 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against task-31823 (the detail-pane Duplicate/View runs/View
+results affordance — the redesign spec §5 kebab item deferred twice) —
+docs pass against shipped code/tests, 2026-09-06. New: both detail panes
+gained a second button row under their existing lifecycle buttons.
+Reminder pane: **Duplicate** (creates a local copy, disabled mid-transfer
+same as Edit/Enable/Disable/Delete), **View runs** (scrolls to Recent
+runs — reminders have no separate run-history screen), and **View
+results** (always disabled — reminders produce no automation results).
+Automation pane: the same three, with **View runs**/**View results**
+reusing the `Last run`/`Unread results` rows' own navigation verbatim,
+and **Duplicate** additionally gated on family (only recurring-question
+definitions can be duplicated) and resetting the copy's lifecycle to
+active. Pinned by `Tests/UI/test_schedules_transfer_actions.py`,
+`Tests/UI/test_schedules_workbench.py`, and
+`Tests/UI/test_schedules_automations_tab.py`.*
 
 *Verified against the schedules UAT remediation, Tasks 1/3/4 — live in
 the real TUI, 2026-09-05 (scratch profile, 235x52 and 80x24). Copy

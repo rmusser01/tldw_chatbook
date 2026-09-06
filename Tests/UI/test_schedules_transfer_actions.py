@@ -39,10 +39,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from textual import on
 from textual.widgets import Button, DataTable, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.events import DuplicateTaskRequested
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -84,7 +86,10 @@ class _DetailHarnessApp(ConsolidatedCSSApp):
 )
 async def test_in_flight_row_disables_lifecycle_actions_with_a_reason(state):
     """Final review I7 / spec §6.3: an in-flight row is read-only except
-    cancel. The reason must be in TEXT, not only a tooltip (UX-073)."""
+    cancel. The reason must be in TEXT, not only a tooltip (UX-073).
+
+    task-31823 AC#2: `Duplicate` joins Edit/Delete in the same gate -- a
+    row mid-transfer is not a settled row to fork from."""
     async with _DetailHarnessApp().run_test() as pilot:
         detail = pilot.app.query_one(TaskDetail)
         detail.set_task(_reminder(owner_id="local", transfer_state=state))
@@ -95,6 +100,7 @@ async def test_in_flight_row_disables_lifecycle_actions_with_a_reason(state):
             "scheduling-delete-task",
             "scheduling-enable-task",
             "scheduling-disable-task",
+            "scheduling-duplicate-task",
         ):
             assert detail.query_one(f"#{button_id}", Button).disabled, button_id
         why = detail.query_one("#scheduling-transfer-why", Static)
@@ -114,11 +120,96 @@ async def test_clearing_the_lifecycle_lock_restores_the_buttons():
 
         assert not detail.query_one("#scheduling-edit-task", Button).disabled
         assert not detail.query_one("#scheduling-delete-task", Button).disabled
+        assert not detail.query_one("#scheduling-duplicate-task", Button).disabled
         # set_task's own UX-059 rule still owns these two.
         assert detail.query_one("#scheduling-enable-task", Button).disabled
         assert not detail.query_one("#scheduling-disable-task", Button).disabled
         why = detail.query_one("#scheduling-transfer-why", Static)
         assert "locked for now" not in why.visual.plain
+
+
+# ---------------------------------------------------------------------------
+# task-31823: the reminder pane's secondary-actions row (Duplicate / View
+# runs / View results -- the rest of spec §5's deferred kebab list).
+# ---------------------------------------------------------------------------
+
+
+class _CapturingTaskDetailApp(_DetailHarnessApp):
+    """`_DetailHarnessApp`'s twin with its own message capture (mirrors
+    `test_schedules_workbench.py`'s `_CapturingDefinitionDetailApp`): a
+    plain bare harness cannot observe a posted `Message` bubbling past
+    it -- an `@on` handler on the App itself records what `TaskDetail`
+    posts, no workbench needed."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.duplicate_events: list = []
+
+    @on(DuplicateTaskRequested)
+    def _capture_duplicate(self, event: DuplicateTaskRequested) -> None:
+        self.duplicate_events.append(event.task)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_posts_duplicate_task_requested():
+    """AC#1: `Duplicate` is reachable from the reminder pane and posts
+    `DuplicateTaskRequested` carrying the painted task -- the pane
+    performs no I/O of its own (same "post a message" shape every other
+    lifecycle button here already uses)."""
+    async with _CapturingTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        task = _reminder(owner_id="local")
+        detail.set_task(task)
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-duplicate-task", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert pilot.app.duplicate_events == [task]
+
+
+@pytest.mark.asyncio
+async def test_view_results_is_permanently_disabled_with_a_reason():
+    """AC#2 (UX-073): reminders have no automation-results surface at
+    all (results are keyed by `definition_id`, a `recurring_question`
+    concept), so `View results` is disabled unconditionally -- unlike
+    the mid-transfer gates above, this never re-evaluates per task. The
+    reason lives in an always-visible Static, not just the tooltip."""
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_reminder(owner_id="local"))
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-view-results-task", Button)
+        assert button.disabled is True
+        assert "recurring questions" in str(button.tooltip)
+        why = detail.query_one("#scheduling-task-detail-secondary-why", Static)
+        assert "recurring questions" in why.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_view_runs_button_scrolls_the_run_history_section_into_view():
+    """AC#1: `View runs` is reachable from the reminder pane and reuses
+    the SAME scroll-to-"Recent runs:" affordance 31712 AC#5's history
+    link row already performs -- reminders have no separate run-history
+    VIEW to push, only this inline section."""
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_reminder(owner_id="local"))
+        await pilot.pause()
+
+        run_history = detail.query_one("#scheduling-task-detail-run-history", Static)
+        calls: list = []
+        run_history.scroll_visible = lambda *args, **kwargs: calls.append(True)
+
+        button = detail.query_one("#scheduling-view-runs-task", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert calls == [True]
 
 
 # ---------------------------------------------------------------------------

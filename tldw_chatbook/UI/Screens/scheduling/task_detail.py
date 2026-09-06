@@ -16,6 +16,7 @@ from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
+    DuplicateTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
     ReminderFieldEditRequested,
@@ -79,6 +80,19 @@ _REPEAT_CUSTOM_REFUSAL = "Use the full Edit form to set a custom cron expression
 _RUNS_ON_EDITOR_ID = "scheduling-detail-runs-on-editor"
 _RUNS_ON_CANCEL_ID = "scheduling-detail-runs-on-cancel"
 _RUNS_ON_RETRY_ID = "scheduling-detail-runs-on-retry"
+
+#: task-31823: the spec §5 kebab's `View results` action has no target
+#: for a reminder -- automation results (`automation_results` table) are
+#: keyed by `definition_id`, a `recurring_question` concept a reminder
+#: has no equivalent of. Permanently disabled with this reason (UX-073:
+#: text, not just a tooltip), never re-evaluated per task the way the
+#: lifecycle lock is. task-23106: user-facing copy says "scheduled
+#: task", never the internal "reminder" noun (`test_schedules_
+#: terminology.py`'s AST sweep).
+_VIEW_RESULTS_UNAVAILABLE_REASON = (
+    "Scheduled tasks don't produce automation results — that's specific "
+    "to recurring questions."
+)
 
 
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
@@ -641,6 +655,9 @@ class TaskDetail(Vertical):
             # doc, finding 2). It carries the one Edit-in-full affordance
             # this pane has (no kebab -- plan ruling 1), so it now composes
             # FIRST, mirroring `DefinitionDetail`'s own Pause/Run-now row.
+            # task-31823: the REST of spec §5's kebab list (Duplicate ·
+            # View runs · View results) lands as a second compact button
+            # row right below -- same "no popup menu" ruling, still.
             yield Horizontal(
                 Button(
                     "Edit",
@@ -684,6 +701,46 @@ class TaskDetail(Vertical):
                     tooltip="Delete this scheduled task.",
                 ),
                 id="scheduling-task-detail-lifecycle",
+            )
+            # task-31823: spec §5's kebab (Run now · Duplicate · View runs
+            # · View results · Edit in full… · Delete/Archive) minus the
+            # four already covered by the lifecycle row above -- a second
+            # compact button row rather than a popup menu (same idiom as
+            # the lifecycle row itself; a dropdown menu buys nothing here
+            # and adds a dismissal/focus-trap surface this pane does not
+            # otherwise have). `View runs` reuses 31712 AC#5's existing
+            # scroll-to-"Recent runs:" affordance -- reminders have no
+            # separate run-history VIEW to push, only this inline
+            # section. `View results` has no target at all for a
+            # reminder (`_VIEW_RESULTS_UNAVAILABLE_REASON`) and is
+            # permanently disabled, UX-073 reason in both the tooltip and
+            # the always-visible Static below.
+            yield Horizontal(
+                Button(
+                    "Duplicate",
+                    id="scheduling-duplicate-task",
+                    tooltip="Duplicate this scheduled task.",
+                    classes="detail-secondary-action-button",
+                ),
+                Button(
+                    "View runs",
+                    id="scheduling-view-runs-task",
+                    tooltip="Scroll to this task's recent runs.",
+                    classes="detail-secondary-action-button",
+                ),
+                Button(
+                    "View results",
+                    id="scheduling-view-results-task",
+                    disabled=True,
+                    tooltip=_VIEW_RESULTS_UNAVAILABLE_REASON,
+                    classes="detail-secondary-action-button",
+                ),
+                id="scheduling-task-detail-secondary-actions",
+            )
+            yield Static(
+                _VIEW_RESULTS_UNAVAILABLE_REASON,
+                id="scheduling-task-detail-secondary-why",
+                classes="follow-why",
             )
             yield Horizontal(
                 Static("Title:", classes="scheduling-detail-label"),
@@ -862,9 +919,9 @@ class TaskDetail(Vertical):
         # (`_runs_on_cancel_button`/`_runs_on_retry_button` above) is now
         # the one transfer surface (PR-3 task 5's "coexistence pinned"
         # window is over). `#scheduling-transfer-why` stays: `set_
-        # lifecycle_lock` still writes the Edit/Enable/Disable/Delete
-        # read-only reason into it (UX-073 -- keyboard users can't see
-        # hover tooltips).
+        # lifecycle_lock` still writes the Edit/Duplicate/Enable/Disable/
+        # Delete read-only reason into it (UX-073 -- keyboard users can't
+        # see hover tooltips).
         yield Static("", id="scheduling-transfer-why", classes="follow-why")
         yield Button(
             "Follow in Console",
@@ -886,6 +943,8 @@ class TaskDetail(Vertical):
             "scheduling-disable-task",
             "scheduling-delete-task",
             "scheduling-ack-incident",
+            "scheduling-duplicate-task",
+            "scheduling-view-runs-task",
             _RUNS_ON_CANCEL_ID,
             _RUNS_ON_RETRY_ID,
         }:
@@ -902,6 +961,10 @@ class TaskDetail(Vertical):
             self.request_delete()
         elif button_id == "scheduling-ack-incident":
             self._request_acknowledge()
+        elif button_id == "scheduling-duplicate-task":
+            self._request_duplicate()
+        elif button_id == "scheduling-view-runs-task":
+            self._request_view_runs()
         elif button_id == _RUNS_ON_CANCEL_ID:
             self._request_runs_on_cancel()
         elif button_id == _RUNS_ON_RETRY_ID:
@@ -951,6 +1014,20 @@ class TaskDetail(Vertical):
         """Post a run-now request for the current reminder (task-18938)."""
         if isinstance(self._current_task, ReminderTask):
             self.post_message(RunReminderNowRequested(self._current_task))
+
+    def _request_duplicate(self) -> None:
+        """Post a duplicate request for the current reminder (task-31823)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(DuplicateTaskRequested(self._current_task))
+
+    def _request_view_runs(self) -> None:
+        """`View runs` button pressed (task-31823) -- reuses the SAME
+        scroll-to-"Recent runs:" affordance `_history_link_row`'s own
+        activation already performs (31712 AC#5): reminders have no
+        separate run-history view to push, only this inline section.
+        """
+        run_history = self.query_one("#scheduling-task-detail-run-history", Static)
+        run_history.scroll_visible()
 
     def _request_runs_on_cancel(self) -> None:
         """Post a cancel request from the Runs-on row's own mini-bar
@@ -1156,12 +1233,11 @@ class TaskDetail(Vertical):
             # 31712 AC#5: not an editor -- scroll the pane to the section
             # this row names. Checked before `_editable_rows()` below,
             # which this row deliberately is NOT part of (it has no
-            # editor to open or close).
+            # editor to open or close). task-31823: the SAME scroll the
+            # secondary-actions row's own `View runs` button now performs
+            # (`_request_view_runs`) -- two entry points, one action.
             event.stop()
-            run_history = self.query_one(
-                "#scheduling-task-detail-run-history", Static
-            )
-            run_history.scroll_visible()
+            self._request_view_runs()
             return
         if row not in self._editable_rows():
             return
@@ -1641,7 +1717,8 @@ class TaskDetail(Vertical):
         self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
-        """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
+        """Freeze Edit/Duplicate/Enable/Disable/Delete while a transfer is
+        in flight.
 
         Spec §6.3's "dormant and in-flight rows are read-only except
         cancel" (final review I7): the transfer snapshotted this row's
@@ -1658,12 +1735,18 @@ class TaskDetail(Vertical):
         handler (`self._lifecycle_lock_reason`) -- the SAME reason, not a
         second `transfer_lock_reason` call, per survey §8's one-source-
         of-truth rule.
+
+        task-31823: `Duplicate` joins Edit/Delete in this same gate -- a
+        row mid-transfer is about to adopt a different id/owner, so a
+        "snapshot now" copy would fork off transitional state rather
+        than the settled row the user actually means to duplicate.
         """
         self._lifecycle_lock_reason = reason
         locked = reason is not None
         for button_id, tooltip in (
             ("scheduling-edit-task", "Edit this scheduled task."),
             ("scheduling-delete-task", "Delete this scheduled task."),
+            ("scheduling-duplicate-task", "Duplicate this scheduled task."),
         ):
             button = self.query_one(f"#{button_id}", Button)
             button.disabled = locked
@@ -1680,11 +1763,11 @@ class TaskDetail(Vertical):
             disable_btn.tooltip = "Disable this scheduled task."
 
         why = self.query_one("#scheduling-transfer-why", Static)
-        line = f"Edit/Enable/Disable/Delete: {reason}" if reason else ""
+        line = f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else ""
         existing = [
             text
             for text in str(why.renderable).split("\n")
-            if text and not text.startswith("Edit/Enable/Disable/Delete:")
+            if text and not text.startswith("Edit/Duplicate/Enable/Disable/Delete:")
         ]
         if line:
             existing.append(line)

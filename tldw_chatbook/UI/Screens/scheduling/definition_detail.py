@@ -79,6 +79,7 @@ from ....Scheduling.events import (
     DefinitionLifecycleToggleRequested,
     DefinitionOwnerActionRequested,
     DefinitionRunNowRequested,
+    DuplicateDefinitionRequested,
     ViewDefinitionAuditRequested,
     ViewDefinitionResultsRequested,
 )
@@ -556,6 +557,15 @@ class DefinitionDetail(Vertical):
     below. A header `Run now` button sits beside Pause/Resume (redesign
     PR-4, task 3, ruling 2): the retired Automations-tab `r` key's live
     replacement, posting `DefinitionRunNowRequested`.
+
+    task-31823: a second row (`Duplicate` / `View runs` / `View
+    results`) delivers the rest of spec §5's deferred kebab list.
+    `View runs`/`View results` are plain shortcuts onto the SAME
+    `ViewDefinitionAuditRequested`/`ViewDefinitionResultsRequested`
+    messages the `Last run`/`Unread results` rows already post --
+    unconditional, like those rows. `Duplicate` posts
+    `DuplicateDefinitionRequested`, gated the same way Pause/Resume is
+    (`_refresh_duplicate_button`).
     """
 
     def __init__(self, *args, **kwargs: object) -> None:
@@ -579,6 +589,9 @@ class DefinitionDetail(Vertical):
         #: redesign PR-4, task 3: the retired Automations-tab `r` key's
         #: live replacement (ruling 2 -- a button, not a new global key).
         self._run_now_button: Button | None = None
+        #: task-31823: spec §5 kebab's `Duplicate` action -- gated the
+        #: same way Pause/Resume already is (`_refresh_duplicate_button`).
+        self._duplicate_button: Button | None = None
         self._why_static: Static | None = None
         #: Cached from `set_lifecycle_lock` (never re-derived here) --
         #: same one-source-of-truth rule survey §8 documents for
@@ -659,6 +672,37 @@ class DefinitionDetail(Vertical):
                     classes="detail-lifecycle-button",
                 )
                 yield self._run_now_button
+            # task-31823: spec §5's kebab list (Run now · Duplicate ·
+            # View runs · View results · Edit in full… · Delete/Archive)
+            # minus the four already covered elsewhere (Run now above;
+            # Edit in full/Delete/Archive are the `e`/`d` queue-row
+            # keybindings, task 3/5's own routing) -- a second compact
+            # button row, same "no popup menu" shape `TaskDetail`'s own
+            # secondary-actions row uses. `View runs`/`View results`
+            # reuse the EXISTING `Last run`/`Unread results` History-row
+            # navigation verbatim (same messages, same handlers) --
+            # unconditionally enabled, "viewing history is not an edit"
+            # (task 2/3's own ruling for those rows). `Duplicate` is
+            # gated like Pause/Resume (`_refresh_duplicate_button`).
+            with Horizontal(id="scheduling-automation-detail-secondary-actions"):
+                self._duplicate_button = Button(
+                    "Duplicate",
+                    id="scheduling-automation-duplicate",
+                    classes="detail-secondary-action-button",
+                )
+                yield self._duplicate_button
+                yield Button(
+                    "View runs",
+                    id="scheduling-automation-view-runs",
+                    tooltip="View this automation's run history.",
+                    classes="detail-secondary-action-button",
+                )
+                yield Button(
+                    "View results",
+                    id="scheduling-automation-view-results",
+                    tooltip="View this automation's results.",
+                    classes="detail-secondary-action-button",
+                )
             # Visible when the lifecycle button (or an editable row) is
             # locked by an in-flight transfer: keyboard users can't see
             # hover tooltips, so the reason must live in text too
@@ -936,6 +980,7 @@ class DefinitionDetail(Vertical):
         self._configure_row_editability(schedule)
         self._configure_runs_on_row(definition)
         self._refresh_lifecycle_button()
+        self._refresh_duplicate_button()
         self._refresh_why_note()
 
     # -- In-pane row editing (PR-3 task 4) -----------------------------------
@@ -1404,6 +1449,17 @@ class DefinitionDetail(Vertical):
         elif button_id == "scheduling-automation-run-now":
             event.stop()
             self._request_run_now()
+        elif button_id == "scheduling-automation-duplicate":
+            event.stop()
+            self._request_duplicate()
+        elif button_id == "scheduling-automation-view-runs":
+            event.stop()
+            if self._definition is not None:
+                self.post_message(ViewDefinitionAuditRequested(self._definition))
+        elif button_id == "scheduling-automation-view-results":
+            event.stop()
+            if self._definition is not None:
+                self.post_message(ViewDefinitionResultsRequested(self._definition))
         elif button_id == _RUNS_ON_CANCEL_ID:
             event.stop()
             self._request_runs_on_cancel()
@@ -1700,6 +1756,29 @@ class DefinitionDetail(Vertical):
         button.disabled = self._lifecycle_lock_reason is not None
         button.tooltip = self._lifecycle_lock_reason or default_tooltip
 
+    def _refresh_duplicate_button(self) -> None:
+        """Disable `Duplicate` with a reason (UX-073) while a transfer is
+        in flight OR the row's family is unsupported (task-31823) --
+        reuses the SAME combined reason `_refresh_why_note` already
+        renders into `#scheduling-automation-detail-why` for Pause/
+        Resume, since both share one cause: a locked/unsupported row has
+        nothing settled to fork from either way. Called alongside every
+        `_refresh_lifecycle_button` call.
+        """
+        button = self._duplicate_button
+        if button is None or self._definition is None:
+            return
+        reason = self._lifecycle_lock_reason or self._family_note
+        button.disabled = reason is not None
+        button.tooltip = reason or "Duplicate this automation as a new local definition."
+
+    def _request_duplicate(self) -> None:
+        """`Duplicate` button pressed (task-31823)."""
+        definition = self._definition
+        if definition is None:
+            return
+        self.post_message(DuplicateDefinitionRequested(definition))
+
     def _toggle_lifecycle(self) -> None:
         definition = self._definition
         if definition is None or self._lifecycle_lock_reason is not None:
@@ -1751,17 +1830,19 @@ class DefinitionDetail(Vertical):
         self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
-        """Freeze the Pause/Resume button while a transfer is in flight
-        (spec §6.3's "dormant and in-flight rows are read-only except
-        cancel"), mirroring `TaskDetail.set_lifecycle_lock` exactly:
-        ``reason`` comes from `SchedulingService.transfer_lock_reason`
-        (never re-derived here) and is both the button's tooltip and a
-        line in the always-visible `#scheduling-automation-detail-why`
-        Static (UX-073). Row affordance is untouched here -- editable
-        rows stay lit and surface the SAME cached reason at activation
-        time instead (`on_detail_value_row_activated`), the same split
+        """Freeze the Pause/Resume and Duplicate buttons while a transfer
+        is in flight (spec §6.3's "dormant and in-flight rows are
+        read-only except cancel"), mirroring `TaskDetail.
+        set_lifecycle_lock` exactly: ``reason`` comes from
+        `SchedulingService.transfer_lock_reason` (never re-derived here)
+        and is both the buttons' tooltip and a line in the
+        always-visible `#scheduling-automation-detail-why` Static
+        (UX-073). Row affordance is untouched here -- editable rows stay
+        lit and surface the SAME cached reason at activation time
+        instead (`on_detail_value_row_activated`), the same split
         `TaskDetail`'s own Frequency rows already use.
         """
         self._lifecycle_lock_reason = reason
         self._refresh_lifecycle_button()
+        self._refresh_duplicate_button()
         self._refresh_why_note()

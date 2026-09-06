@@ -67,6 +67,22 @@ class RunReminderNowRequested(Message):
         self.task = task
 
 
+class DuplicateTaskRequested(Message):
+    """Posted when the reminder pane's `Duplicate` button is pressed
+    (task-31823: the deferred detail-pane kebab's `Duplicate` action).
+
+    `TaskDetail` performs no I/O -- the workbench copies ``task``'s
+    authored fields through the existing `SchedulingService.
+    create_reminder` create path (same "post a message, let the
+    workbench own the facade" shape every other lifecycle action here
+    already uses).
+    """
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
 # redesign PR-4, task 4 (ruling 2): `TransferToServerRequested`/
 # `TransferToLocalRequested`/`CancelTransferRequested`/
 # `RetryTransferRequested` (schedules-handoff spec §6, PR-5 task 7) were
@@ -244,6 +260,29 @@ class ViewDefinitionAuditRequested(Message):
     `DefinitionDetail.set_definition` was last painted with; the
     workbench pushes a `definition_audit_view.DefinitionAuditView` scoped
     to this one definition.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
+        super().__init__()
+        self.definition = definition
+
+
+class DuplicateDefinitionRequested(Message):
+    """Definition-pane counterpart of `DuplicateTaskRequested`
+    (task-31823). ``definition`` is the raw dict `DefinitionDetail.
+    set_definition` was last painted with; the workbench copies its
+    authored fields through the existing `SchedulingService.
+    save_definition` create path (``definition_id=None``), always onto
+    the LOCAL owner regardless of the source row's own owner (task-31823
+    ruling: duplicating a server-owned definition never auto-queues a
+    push -- the copy starts as a plain local draft the user can transfer
+    like any other, same as a fresh create).
     """
 
     def __init__(self, definition: dict[str, Any]) -> None:

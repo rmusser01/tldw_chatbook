@@ -1857,6 +1857,47 @@ async def test_last_run_row_activation_pushes_audit_view_with_painted_events():
 
 
 @pytest.mark.asyncio
+async def test_view_runs_button_pushes_the_audit_view_the_same_way_the_row_does():
+    """task-31823 AC#1: the definition pane's `View runs` button reaches
+    the SAME navigation target the `Last run` row's own activation does
+    (the test directly above) -- proven at the workbench level, not just
+    the message-capture the bare-pane test in test_schedules_workbench.py
+    already covers."""
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        detail = workbench.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        )
+        button = detail.query_one("#scheduling-automation-view-runs", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, WorkbenchHostScreen)
+        assert str(pilot.app.screen.title).startswith("Run history — Morning brief")
+        overlay = pilot.app.screen.query_one(DefinitionAuditView)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        audit_table = overlay.query_one("#scheduling-audit-view-table", DataTable)
+        assert audit_table.row_count == 2
+
+
+@pytest.mark.asyncio
 async def test_run_now_button_on_queue_definition_pane_dispatches_locally():
     """PR-4 task 3, ruling 2: the retired Automations-tab `r` key
     relocates to a `Run now` button beside Pause/Resume on the pane
