@@ -15,6 +15,15 @@ path redaction/recovery callouts and speaker-rename cache, named handoff timing,
 Canvas terminal transaction contributions, locked promotion publication, and
 Buddy listening cleanup. The review's ownership and lifecycle repairs remain.
 
+After committing the reconciliation as `aab86d1b87`, the 177-commit series
+rebased cleanly onto the newer dev `c47e0da6002475416240252b2954fcf9761d4aac`,
+producing `438f6e9122188c5a92d445715d90ce36cff1b140`. The tree delta from the
+preceding checkpoint is exactly dev's six files for Persona Inspector avatar
+clearing and boot-worker warning handling. Backlog and diagnostic inventory
+checks pass again on this revision. The bounded PR Fast Lane plus those two
+newly landed test files is being verified in
+`/private/tmp/pr2427-latest-dev-fast-lane.xml` and its matching log.
+
 ## Review-only task renumbering
 
 The user-approved policy preserves upstream task identities even where a review
@@ -125,3 +134,9 @@ Evidence: `/private/tmp/pr2427-rebase-character-resources.xml` and matching log.
 Do not merge until required checks pass and Qodo has reviewed the final revision.
 Absence of Qodo comments and the draft-skipped CodeRabbit check are not review
 approval. A thread heartbeat watches PR 2427; pause it after confirmed normal merge.
+
+The Console Canvas/citation ownership cleanup still awaits the user's design
+approval. Media browse remains 107 lines over its unchanged ceiling; its recovery
+and independent page/facet fences must be preserved in any separately reviewed
+ownership reduction. Publication is a progress/review checkpoint, not permission
+to merge with these failures.
