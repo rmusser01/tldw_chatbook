@@ -87,12 +87,23 @@ afterwards, and items outside the set stay blank — the marks update the moment
 you mark an item reviewed in the Reader, without leaving it. Select mode
 reuses that same cell for its **☑/☐**, so a row never carries two markers.
 
+While a filter is active, a row it found only through one of its **keywords**
+adds **· keyword: \<term\>** — the filter searches titles, item text and
+keywords, so without it a hit whose title and body hold nothing you typed
+reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
+text carries the term already shows you why it is there and says nothing
+extra. Long tags are cut to ten characters (`keyword: quokkasand…`) so the
+line still fits the Items pane at its narrowest.
+
 *Verified against fix/media-wave5-i @ 8da37ba63 — 2026-09-06 (tasks 28008/28009: four
 seeded `document` items, two of them analysed, live at 235x52 and 100x30.
 Both analysed rows painted `document · 5m · analysed` in full at the Items
 pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses
 turned the first two into `✓`, and `s` replaced the slot with `☐` on every
-row rather than adding a second marker.)*
+row rather than adding a second marker. task-28008 match reasons: three
+seeded `article` items filtered live at 235x52 on `quokka` — the two
+keyword-only rows painted `article · 1m · keyword: quokka` and `article · 1m ·
+keyword: quokkasand…`, the title hit painted `article · 1m`.)*
 
 ## Features & controls
 

@@ -798,6 +798,16 @@ class MediaReadingScopeService:
                     else item
                     for item in raw_items
                 ]
+            raw_reasons = payload.get("match_reasons")
+            if isinstance(raw_reasons, Mapping):
+                # task-28008: why a keyword-only row is on this page, re-keyed
+                # onto the same canonical stable ids the rows carry. A
+                # per-QUERY fact, so it travels BESIDE the rows -- the summary
+                # contract is per-row identity and stays exactly seven keys.
+                result["match_reasons"] = {
+                    f"local:media:{backing_id}": str(keyword)
+                    for backing_id, keyword in raw_reasons.items()
+                }
             return result
         raw_items = (
             list(payload.get("items", []))

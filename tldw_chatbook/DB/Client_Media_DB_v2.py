@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
-from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Sequence, Union
 
 #
 # Third-Party Libraries (Ensure these are installed if used)
@@ -3139,6 +3139,70 @@ class MediaDatabase:
                 resolved_sort_by,
             )
         return results_list, total_matches
+
+    def library_browse_keyword_only_matches(
+        self, media_ids: Sequence[int], query: str
+    ) -> Dict[int, str]:
+        """Return ``{media id: keyword}`` for page rows ONLY a keyword matched.
+
+        task-28008 (critique #5 P2): the Library browse filter also searches
+        keywords (``LIBRARY_BROWSE_SEARCH_FIELDS``), so a hit whose title and
+        body hold nothing the user typed reads as a mismatch. This is the
+        evidence the row needs to explain itself -- and only for the rows
+        that need it: a row whose title or content matched already shows the
+        user why it is there.
+
+        ONE statement for the whole page, not one per row. The title and
+        content legs are spelled exactly as ``search_media_db`` spells them
+        (raw ``%query%`` with ``COLLATE NOCASE``) and the keyword leg exactly
+        as its own branch does (``_escape_library_like`` plus ``ESCAPE``), so
+        this probe can never disagree with the search that produced the page.
+        It deliberately ignores the FTS half of the text branch, which is
+        AND-ed with the LIKE half: skipping it can only make this answer
+        FEWER reasons, never a wrong one.
+
+        Args:
+            media_ids: Backing media ids of the page just fetched.
+            query: The raw user search text that fetched them.
+
+        Returns:
+            Matched keyword per keyword-only row; empty when the page has
+            none, or when there is no query to explain.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        ids = [int(media_id) for media_id in media_ids]
+        if not ids or not query:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        like_pattern = f"%{query}%"
+        keyword_pattern = f"%{self._escape_library_like(query)}%"
+        sql = f"""
+            SELECT m.id AS media_id,
+                   (SELECT k.keyword
+                      FROM MediaKeywords mk
+                      JOIN Keywords k ON mk.keyword_id = k.id
+                     WHERE mk.media_id = m.id AND k.deleted = 0
+                       AND k.keyword LIKE ? ESCAPE '\\'
+                     ORDER BY LENGTH(k.keyword), k.keyword
+                     LIMIT 1) AS keyword
+              FROM Media m
+             WHERE m.id IN ({placeholders})
+               AND COALESCE(m.title, '') NOT LIKE ? COLLATE NOCASE
+               AND COALESCE(m.content, '') NOT LIKE ? COLLATE NOCASE
+        """
+        params = [keyword_pattern, *ids, like_pattern, like_pattern]
+        try:
+            with self.transaction() as conn:
+                rows = conn.execute(sql, tuple(params)).fetchall()
+        except sqlite3.Error as e:
+            raise DatabaseError("Failed to read library keyword match reasons.") from e
+        return {
+            row["media_id"]: row["keyword"]
+            for row in rows
+            if row["keyword"] is not None
+        }
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
     def add_keyword(self, keyword: str) -> Tuple[Optional[int], Optional[str]]:

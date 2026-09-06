@@ -460,12 +460,20 @@ class LocalMediaReadingService:
                 list(rows)[offset : offset + limit]
             )
         )
-        return {
+        payload = {
             "items": items,
             "total": total,
             "offset": offset,
             "limit": limit,
         }
+        if library_summary and query and "keywords" in (filters.get("fields") or ()):
+            # task-28008: ONE extra SELECT for the whole page, only when the
+            # keyword leg was actually part of the search. Absent (not empty)
+            # otherwise, so an unqueried browse carries no side channel.
+            payload["match_reasons"] = db.library_browse_keyword_only_matches(
+                [row["id"] for row in items], query
+            )
+        return payload
 
     def list_library_media_types(self) -> list[str]:
         """Return every active local Media type in database order."""

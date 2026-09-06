@@ -7031,3 +7031,108 @@ async def test_library_media_browse_filter_keyword_leg_respects_type_facet():
         assert payload["total"] == 1
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_names_the_keyword_behind_an_otherwise_invisible_hit():
+    """task-28008: a keyword-only hit carries the keyword that matched it.
+
+    Critique #5 P2: a filtered row whose title and body hold nothing the
+    user typed reads as a mismatch. The reason is a per-QUERY side channel
+    beside the rows -- never an eighth summary key -- so the row whose
+    TITLE matched carries no reason at all.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        titled_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Day2 planning",
+            content="Nothing notable.",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert {item["backing_media_id"] for item in payload["items"]} == {
+            tagged_id,
+            titled_id,
+        }
+        assert payload["match_reasons"] == {f"local:media:{tagged_id}": "day2"}
+        # The seven-key contract is untouched by the side channel.
+        assert all(
+            set(item)
+            == {
+                "id",
+                "backing_media_id",
+                "title",
+                "media_type",
+                "updated_at",
+                "has_analysis",
+                "reviewed",
+            }
+            for item in payload["items"]
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_gives_no_reason_when_the_body_matched_too():
+    """Only an OTHERWISE invisible hit earns a reason.
+
+    A row whose content also holds the term already explains itself, so
+    labelling it would be noise; and a browse with no query asks no
+    question, so it carries no reasons at all.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason-visible")
+    try:
+        both_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Untagged note",
+            content="A body mentioning roadmap once.",
+            media_type="article",
+            keywords=["roadmap"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+        assert [item["backing_media_id"] for item in payload["items"]] == [both_id]
+        assert payload["match_reasons"] == {}
+
+        unfiltered = await scope_service.search_media(
+            mode="local",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+        assert "match_reasons" not in unfiltered
+    finally:
+        db.close_connection()

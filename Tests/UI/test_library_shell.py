@@ -552,7 +552,7 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         offset = kwargs["offset"]
         limit = kwargs["limit"]
         page = rows[offset : offset + limit]
-        return {
+        payload = {
             "items": [
                 summary_row(
                     id=self._backing_id(row, index),
@@ -567,6 +567,37 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
             "offset": offset,
             "limit": limit,
         }
+        reasons = self._match_reasons(page, query, offset)
+        if reasons:
+            payload["match_reasons"] = reasons
+        return payload
+
+    def _match_reasons(self, page, query, offset) -> dict[str, str]:
+        """Mirror task-28008's keyword-ONLY match reasons for the page.
+
+        Same rule the real service applies: a row whose title or content
+        holds the query already explains itself, so only a hit that lives
+        purely in a keyword earns a reason -- and the shortest matching
+        keyword is the one named.
+        """
+        reasons: dict[str, str] = {}
+        if not query:
+            return reasons
+        for index, row in enumerate(page, start=offset):
+            visible = (
+                str(row.get("title") or ""),
+                str(row.get("content") or ""),
+            )
+            if any(query in text.casefold() for text in visible):
+                continue
+            matched = sorted(
+                (str(word) for word in row.get("keywords") or ()),
+                key=lambda word: (len(word), word),
+            )
+            hit = next((w for w in matched if query in w.casefold()), None)
+            if hit is not None:
+                reasons[f"local:media:{self._backing_id(row, index)}"] = hit
+        return reasons
 
     async def list_library_media_types(self, **kwargs):
         self.type_calls.append(dict(kwargs))

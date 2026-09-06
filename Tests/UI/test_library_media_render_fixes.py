@@ -2776,3 +2776,75 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
             _ANALYSED_SECONDARY,
         ], secondaries
         assert "…" not in "".join(secondaries), secondaries
+
+
+# ---------------------------------------------------------------------------
+# task-28008 (critique #5 P2): a keyword-only hit says which keyword matched.
+# ---------------------------------------------------------------------------
+
+
+def _match_reason_items() -> list[dict]:
+    """Three ``article`` rows, all aged "2m", for the query ``notes``.
+
+    Row 1 matches ONLY through its keyword; row 2 matches through its title
+    (so it explains itself and earns no reason); row 3 matches only through
+    a keyword too long for the Items pane's 36-cell floor.
+    """
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "id": "media-1",
+            "title": "Opening remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=10)).isoformat(),
+            "keywords": ["notes"],
+            "content": "Transcript of the opening session.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Field notes",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=20)).isoformat(),
+            "keywords": [],
+            "content": "A body about nothing in particular.",
+            "version": 1,
+        },
+        {
+            "id": "media-3",
+            "title": "Closing remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=30)).isoformat(),
+            "keywords": ["notesandmorestuff"],
+            "content": "Transcript of the closing session.",
+            "version": 1,
+        },
+    ]
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
+    """The reason is WORDS on the secondary line, and only where it is needed.
+
+    ``Field notes`` matched the query in its own painted title, so it says
+    nothing extra; the two rows whose match lives in a keyword name it. The
+    keyword is capped at ten characters because the Items pane's floor is
+    36 cells -- ``notesandmorestuff`` would push the line past it whole.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        secondaries = [line.strip() for line in lines if "article · " in line]
+        assert secondaries == [
+            "article · 2m · keyword: notes",
+            "article · 2m",
+            "article · 2m · keyword: notesandmo…",
+        ], secondaries
