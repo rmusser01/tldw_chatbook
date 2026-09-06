@@ -12056,3 +12056,16 @@ transition around the caller's publication block fixed both while retaining
 other-session access and exception cleanup. When reviewing composed mutations,
 test the handoff after an inner guard exits; individually fenced setters do not
 make a multi-component publication atomic.
+
+## Detached-plan cleanup belongs to task completion, not an await scope
+
+**TASK-31800, 2026-09-06 dev review.** Retaining fork ownership during the
+settings display-name write exposed leaks on stale results, exceptions, and
+cancellation before the coroutine started. A coroutine-local `finally` cannot
+run in that last case; an outer `gather` `finally` can run too early if a sibling
+fails while the writer continues. Attaching exact-plan abandonment to the
+display-name task's completion handles both, because the existing serialized
+writer drains cancellation before its task can finish. Event-controlled real
+SQLite tests keep the writer blocked during delivered cancellation and sibling
+failure, verify that forks remain rejected, then release the writer and verify
+cleanup. Test the lifetime of the actual writer, not just the awaiting caller.

@@ -11759,7 +11759,8 @@ class ConsoleChatStore:
 
         This method owns every live store and session mutation and must remain
         on the event-loop owner thread.  Only the returned immutable plan is
-        safe to consume from a worker thread.
+        safe to consume from a worker thread. Its fork-transition lease must be
+        released by accepting the persistence result or abandoning the plan.
         """
         if not isinstance(commit, ConsoleSettingsLiveCommit):
             raise TypeError("commit must be ConsoleSettingsLiveCommit")
@@ -11774,28 +11775,34 @@ class ConsoleChatStore:
         normalized = normalize_chat_display_name(value, blank_means_none=True)
         if session.user_display_name_override == normalized:
             return session, None
-        session.user_display_name_override = normalized
-        self._bump_identity_revision(session.id)
-        context_write = self._snapshot_roleplay_context_write(session)
-        plan = self._materialize_roleplay_projections_live(
-            session.id,
-            global_default=global_default,
-        )
-        if plan is None:
-            plan = ConsoleRoleplayProjectionPersistencePlan(
-                session_id=session.id,
-                generation=session.identity_revision,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=(
-                    session.conversation_binding_revision
-                ),
-                system_prompt_write=None,
-                message_writes=(),
-                context_write=context_write,
+        with self._fork_source_transition(session.id):
+            session.user_display_name_override = normalized
+            self._bump_identity_revision(session.id)
+            context_write = self._snapshot_roleplay_context_write(session)
+            plan = self._materialize_roleplay_projections_live(
+                session.id,
+                global_default=global_default,
             )
-        else:
-            plan = replace(plan, context_write=context_write)
-        return session, plan
+            if plan is None:
+                plan = ConsoleRoleplayProjectionPersistencePlan(
+                    session_id=session.id,
+                    generation=session.identity_revision,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                    system_prompt_write=None,
+                    message_writes=(),
+                    context_write=context_write,
+                )
+            else:
+                plan = replace(plan, context_write=context_write)
+            transition_token = str(uuid4())
+            plan = replace(plan, fork_transition_token=transition_token)
+            self._begin_fork_source_transition(session.id)
+            with self._fork_source_lock:
+                self._roleplay_fork_transition_leases[transition_token] = session.id
+            return session, plan
 
     @_fork_session_transition
     def refresh_session_roleplay_projections(

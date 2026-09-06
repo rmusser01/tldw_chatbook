@@ -589,3 +589,41 @@ refresh; its consumer also has stale-result, error and cancellation exits to
 audit before introducing lease ownership. No blanket wrapper or exemption was
 added to hide that lifetime question. Broader review failures and both pending
 task-ID decisions remain open.
+
+## Display-name fork lifetime
+
+TASK-31800 closes the live and detached display-name gap. The original real-
+SQLite regression observed an eligible fork inside materialization (1 failed /
+3 passed, `/private/tmp/tldw-name-lifetime-red.xml`). An ordinary transition now
+protects live changes and plan construction, and the existing roleplay token
+keeps ownership until result acceptance or explicit abandonment.
+
+The coordinator initially leaked that token on stale results, persistence-entry
+errors and actual event-loop cancellation before startup (3 failed / 5 passed,
+`/private/tmp/tldw-name-coordinator-red.xml`). It now owns an explicit display-name
+task whose completion callback abandons the exact plan. The existing serializer
+still drains a cancelled writer; no new drain loop, rollback policy or scope
+exemption was introduced. Two event-controlled tests verify that cancellation
+and sibling failure cannot release a blocked real writer's fork ownership.
+
+All 10 complete lifetime tests pass. After review identified worker-handle
+cleanup, the fixture now quiesces the actual database and asserts zero registered
+connections after all async work drains. The complete lifetime+census selection
+returned **36 passed / 1 known classification failure in 18.49 seconds**, with
+two existing dependency warnings
+(`/private/tmp/tldw-name-lifetime-cleanup-census.xml`). Independent re-review and
+scoped static checks pass. All 81 store and 10 settings-controller diagnostic
+statements are unchanged; no pin was edited.
+
+The six complete lifetime, publication, settings-apply, first-send, fork and
+provider-apply UI files passed **331 tests in 161.27 seconds**, with three existing
+dependency warnings (`/private/tmp/tldw-name-lifetime-final.xml`). This run began
+before the fixture-cleanup-only refinement; the complete lifetime file was rerun
+after that refinement in the 36-pass/1-known-failure selection above. Production
+code and all behavioral assertions were unchanged between those runs.
+
+The census now leaves six routes unclassified: serialized settings persistence,
+settings retry, first-persist publication, conversation rebind, durable-turn
+settings reconciliation, and the committed synchronous display-name setter.
+Broader failures and both pending task-ID decisions remain open; no full-suite
+or merge-readiness claim is made.
