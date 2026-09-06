@@ -998,13 +998,45 @@ class PersonasCharacterEditorWidget(Container):
         self._set_avatar_status_from_record()
 
     def discard_unsaved_form(self) -> None:
-        """Restore all fields and attachments to this session's saved/new base."""
+        """Restore the raw baseline without restarting the visual identity session."""
 
-        actor_pack = self._actor_pack_mode
-        self.discard_unsaved_attachment()
-        self.load_character(self._character_data)
-        self._actor_pack_mode = actor_pack
-        self._sync_actor_pack_mode()
+        if self._loaded_snapshot is None:
+            return
+        fields = (
+            ("name", Input, "value"),
+            ("first-message", TextArea, "text"),
+            ("description", TextArea, "text"),
+            ("personality", TextArea, "text"),
+            ("system-prompt", TextArea, "text"),
+            ("scenario", TextArea, "text"),
+            ("post-history", TextArea, "text"),
+            ("creator-notes", TextArea, "text"),
+            ("creator", Input, "value"),
+            ("version", Input, "value"),
+            ("tags", Input, "value"),
+        )
+        self._loading = True
+        try:
+            for (name, widget_type, attribute), value in zip(
+                fields, self._loaded_snapshot[:-1], strict=True
+            ):
+                setattr(
+                    self.query_one(f"#personas-char-editor-{name}", widget_type),
+                    attribute,
+                    value,
+                )
+            self._greetings = list(self._loaded_snapshot[-1])
+            self._selected_greeting_index = None
+            self._area("greeting-edit").text = ""
+            self._render_greetings_table()
+            self.discard_unsaved_attachment()
+        finally:
+            self._loading = False
+        self._dirty_posted = False
+        self._user_touched = False
+        self.query_one("#personas-char-editor-validation", Static).update("")
+        for fid in self._validated_field_ids():
+            self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
 
     # --- LLM-assisted generation -------------------------------------------------
 
