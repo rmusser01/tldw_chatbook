@@ -33,8 +33,17 @@ async def test_blocked_provider_discovery_failure_never_says_continue_anyway():
             "discovery-failure copy promises continuing while commit() is"
             f" hard-blocked on the missing key: {copy!r}"
         )
-        assert "API key" in copy, (
-            f"blocked-state copy should name the unblock (an API key): {copy!r}"
+        # The blocked-state copy must name the provider's OWN unblock, and it
+        # must be the SAME string commit()'s refusal footer shows -- so the
+        # two surfaces never disagree (Qodo PR #2445: a hardcoded "add an API
+        # key" is wrong for auth modes that need a login instead).
+        recovery = (step._current_provider_readiness().recovery or "").strip()
+        assert recovery and recovery in copy, (
+            "blocked-state copy should embed the provider's readiness recovery"
+            f" guidance ({recovery!r}), got: {copy!r}"
+        )
+        assert "go Back" in copy, (
+            f"blocked-state copy should still offer the Back escape: {copy!r}"
         )
 
 

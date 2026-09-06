@@ -2503,15 +2503,21 @@ class ProviderStep(SetupStep):
         "go Back" matches the pinned refusal's vocabulary).
         """
         try:
-            ready = bool(self._current_provider_readiness().ready)
+            readiness = self._current_provider_readiness()
+            ready = bool(readiness.ready)
         except Exception:
             return f"Couldn't discover models for {display}."
         if ready:
             return f"Couldn't discover models for {display}. You can continue anyway."
-        return (
-            f"Couldn't discover models for {display}. "
-            "Add an API key below to continue, or go Back."
-        )
+        # Qodo (PR #2445): name the provider's OWN unblock -- "add an API
+        # key" is wrong for auth modes that need a login instead (e.g. a
+        # Claude subscription). readiness.recovery is the same string
+        # commit()'s refusal footer shows, so both surfaces speak with one
+        # vocabulary; fall back to the key-input hint only if it is empty.
+        recovery = (getattr(readiness, "recovery", None) or "").strip()
+        if not recovery:
+            recovery = "Add an API key below to continue."
+        return f"Couldn't discover models for {display}. {recovery} Or go Back."
 
     async def _models_from_selected_discovery(
         self,
