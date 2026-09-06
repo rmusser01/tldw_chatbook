@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-05 23:14'
-updated_date: '2026-09-06 01:16'
+updated_date: '2026-09-06 01:22'
 labels:
   - bug
   - ui
@@ -70,4 +70,6 @@ Pre-existing, untouched: test_local_provider_probe_feedback_is_visible_and_adjac
 Live post-fix verification (tmux, fresh scratch profile, no keys): Welcome shows new copy; blocked Provider state shows "Add an API key below to continue, or go Back."; Escape opens Exit dialog; double-Escape within grace keeps it open; settled second Escape still cancels.
 
 Full-file arms for Tests/UI/test_first_run_wizard_live_contract.py: two randomized full runs completed (87/94 and 86/94 passed) with every failure triaged — all either pass deterministically in targeted re-runs (load/order flakes; the machine was simultaneously running another session's 10-worker full-suite gate) or fail identically on unmodified origin/dev (file-swap arm: test_local_provider_probe_feedback_is_visible_and_adjacent). A third, deterministic full run was starved by that gate suite after 35+ minutes and was abandoned; targeted deterministic evidence stands.
+
+PR: https://github.com/rmusser01/tldw_chatbook/pull/2445 (base dev, branch fix/first-run-wizard-esc-and-provider-copy). Not merged — release owner to merge.
 <!-- SECTION:NOTES:END -->
