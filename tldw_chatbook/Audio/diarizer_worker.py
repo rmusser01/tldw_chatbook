@@ -95,6 +95,15 @@ def _reconcile_windows(spans, embeddings, live_centroids, max_speakers, cluster_
         grouped.setdefault(f"F{label}", []).append(emb)
     final_centroids = [(key, np.mean(vecs, axis=0)) for key, vecs in grouped.items()]
     mapping = reconcile(live_centroids, final_centroids)  # final label -> live id
+    # An unmatched final cluster (no live centroid to match -- e.g. near-live
+    # labelling was backpressured the whole meeting, so live_centroids is
+    # empty) must NOT surface as "Speaker F0" (final whole-branch review I2):
+    # mint it a fresh live-style id continuing past the highest live number.
+    next_n = max((int(k[1:]) for k in live_centroids if k[1:].isdigit()), default=0) + 1
+    for fid, _cen in final_centroids:
+        if fid not in mapping:
+            mapping[fid] = f"S{next_n}"
+            next_n += 1
     return [
         {"start_s": s0, "end_s": s1, "speaker": mapping.get(f"F{label}", f"F{label}")}
         for (s0, s1), label in zip(spans, labels)

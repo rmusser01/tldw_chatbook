@@ -193,6 +193,21 @@ def test_batch_skips_clustering_for_a_single_live_speaker():
     assert [s["speaker"] for s in out] == ["S1", "S1"]
 
 
+def test_batch_mints_a_live_style_id_when_there_are_no_live_clusters():
+    # Backpressure degraded near-live labelling the whole meeting -> no live
+    # centroids -> the Stop pass is the only labeller. Its cluster must NOT
+    # surface as "Speaker F0" (final whole-branch review I2): mint an "S" id.
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    embs = [np.array([1.0, 0.0], np.float32), np.array([0.9, 0.1], np.float32)]
+    spans = [(0.0, 1.5), (1.5, 3.0)]
+    out = _reconcile_windows(spans, embs, {}, 8, lambda x, n: np.zeros(len(x)))
+    assert [s["speaker"] for s in out] == ["S1", "S1"]
+    assert not any(s["speaker"].startswith("F") for s in out)
+
+
 def test_close_is_best_effort_and_idempotent():
     proc = FakeProc(['{"id": "S1"}\n'])
     d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)

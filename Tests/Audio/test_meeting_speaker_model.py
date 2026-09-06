@@ -23,6 +23,13 @@ def test_render_falls_back_to_generic_speaker_when_unnamed():
     seg = _seg(label="others", speaker_id="S2")
     assert render_label(seg, {}, "Me") == "Speaker 2"
 
+def test_render_never_shows_a_raw_final_cluster_id():
+    """A legacy recording whose jsonl still holds an unmatched final-cluster
+    id ('F0') must never render as 'Speaker F0' (final whole-branch review I2;
+    new recordings mint an 'S' id in the worker)."""
+    seg = _seg(label="others", speaker_id="F0")
+    assert render_label(seg, {}, "Me") == "Speaker 0"
+
 def test_you_channel_renders_the_user_display_name():
     seg = _seg(label="you", speaker_id=None)
     assert render_label(seg, {}, "Me") == "Me"

@@ -241,6 +241,28 @@ async def test_start_pause_stop_flow_renders_transcript_and_footer(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_coarse_then_labeled_segment_updates_one_line_in_place(tmp_path):
+    """I1: a segment delivered coarse ("Others: hi") then again with its
+    speaker id (same seq) must UPDATE its transcript line in place, never add a
+    second line."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        seg = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "others", "hi")
+        owner.session.segments.append(seg)
+        owner.session.emit("segment", seg)                 # coarse
+        await pilot.pause(0.05)
+        assert screen.rendered_lines == ["[00:00:00] Others: hi"]
+        seg.speaker_id = "S1"
+        owner.session.emit("segment", seg)                 # refined, same seq
+        await pilot.pause(0.05)
+        assert screen.rendered_lines == ["[00:00:00] Speaker 1: hi"]   # one line, updated
+
+
+@pytest.mark.asyncio
 async def test_lost_tap_updates_system_status(tmp_path):
     # Spec §7: when the tap dies and gives up, the rail must say so -- it
     # must not keep reading its Start-time "Native (macOS tap)" copy

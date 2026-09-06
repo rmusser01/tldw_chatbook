@@ -69,6 +69,11 @@ class MeetingsScreen(BaseAppScreen):
         # once the first prepare cycle has settled.
         self._syncing_pickers = True
         self.rendered_lines: list[str] = []
+        # seq -> index into `rendered_lines`, so a re-delivered segment (its
+        # near-live speaker-id refinement, or the Stop pass's reconciled id)
+        # UPDATES its transcript line in place instead of appending a second
+        # one (final whole-branch review I1). Reset on Start.
+        self._line_index_by_seq: dict[int, int] = {}
         # Cluster ids (segment.speaker_id) seen so far this meeting, each
         # backing one row in the speaker legend (task 7). Reset on Start.
         self._seen_speakers: set[str] = set()
@@ -261,6 +266,7 @@ class MeetingsScreen(BaseAppScreen):
         self._lost_shown = False
         self.query_one("#meetings-start", Button).disabled = True
         self.rendered_lines.clear()
+        self._line_index_by_seq.clear()
         self.query_one("#meetings-transcript", RichLog).clear()
         self.query_one("#meetings-footer", Static).update("")
         self.query_one("#meetings-open-library", Button).disabled = True
@@ -412,8 +418,27 @@ class MeetingsScreen(BaseAppScreen):
     def _render_segment(self, segment: MeetingSegment) -> None:
         self._note_speaker(segment)
         line = self._line_for_segment(segment)
-        self.rendered_lines.append(line)
-        self.query_one("#meetings-transcript", RichLog).write(line)
+        idx = self._line_index_by_seq.get(segment.seq)
+        if idx is None:
+            # First time we've seen this seq: append a new line.
+            self._line_index_by_seq[segment.seq] = len(self.rendered_lines)
+            self.rendered_lines.append(line)
+            self.query_one("#meetings-transcript", RichLog).write(line)
+        elif self.rendered_lines[idx] != line:
+            # A re-delivery whose label changed (coarse "Others: hi" becoming
+            # "Speaker 1: hi"): update in place. RichLog can't rewrite one
+            # line, so repaint the whole log -- cheap at meeting sizes.
+            self.rendered_lines[idx] = line
+            self._repaint_log()
+
+    def _repaint_log(self) -> None:
+        """Clear the transcript log and rewrite it from `rendered_lines`."""
+        if not self.is_mounted:
+            return
+        log = self.query_one("#meetings-transcript", RichLog)
+        log.clear()
+        for line in self.rendered_lines:
+            log.write(line)
 
     # ---- speaker legend + rename (task 7) ----------------------------------
     def _user_display_name(self) -> str:
@@ -509,13 +534,10 @@ class MeetingsScreen(BaseAppScreen):
         mounted, rewrite the transcript log to match (a rename can change
         every line naming that speaker, not just the newest one)."""
         session = self._session
-        self.rendered_lines = [self._line_for_segment(seg) for seg in (session.segments if session else [])]
-        if not self.is_mounted:
-            return
-        log = self.query_one("#meetings-transcript", RichLog)
-        log.clear()
-        for line in self.rendered_lines:
-            log.write(line)
+        segments = list(session.segments) if session else []
+        self.rendered_lines = [self._line_for_segment(seg) for seg in segments]
+        self._line_index_by_seq = {seg.seq: i for i, seg in enumerate(segments)}
+        self._repaint_log()
 
     def _rendered_transcript_text(self) -> str:
         """Test hook: the transcript as currently rendered, one line each."""
