@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-05 23:14'
-updated_date: '2026-09-06 01:22'
+updated_date: '2026-09-06 01:37'
 labels:
   - bug
   - ui
@@ -72,4 +72,6 @@ Live post-fix verification (tmux, fresh scratch profile, no keys): Welcome shows
 Full-file arms for Tests/UI/test_first_run_wizard_live_contract.py: two randomized full runs completed (87/94 and 86/94 passed) with every failure triaged — all either pass deterministically in targeted re-runs (load/order flakes; the machine was simultaneously running another session's 10-worker full-suite gate) or fail identically on unmodified origin/dev (file-swap arm: test_local_provider_probe_feedback_is_visible_and_adjacent). A third, deterministic full run was starved by that gate suite after 35+ minutes and was abandoned; targeted deterministic evidence stands.
 
 PR: https://github.com/rmusser01/tldw_chatbook/pull/2445 (base dev, branch fix/first-run-wizard-esc-and-provider-copy). Not merged — release owner to merge.
+
+Rebased onto origin/dev 3ff76c89e0 (PR #2442, TASK-31226: wizard cancel lands on Console). One conflict: both branches appended to lessons-testing-evidence.md tail — resolved keeping both entries. Semantic reconciliation verified behaviorally: their integration pin (exit lands on TAB_CHAT) and their palette-callback pin both pass on this branch alongside my dialog-settle and copy tests (8/8), Tests/Wizards/ 815 passed, ruff clean. PR #2445 MERGEABLE at d9dd48e72c.
 <!-- SECTION:NOTES:END -->
