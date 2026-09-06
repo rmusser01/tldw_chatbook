@@ -204,9 +204,14 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
     resized = resolve_media_reader_layout(81, preferences, previous=opened)
 
     assert resized.items_open is True
-    # The priority branch's ceiling is width-bound, so the eight cells the
-    # grips gave back reach it: 32 (ITEMS_MIN_WIDTH) at five-cell grips.
-    assert resized.items_width == 33
+    # The priority branch caps the list at whatever the width leaves once the
+    # grips and the Reader's minimum are paid for -- so at 81 columns it lands
+    # ABOVE ITEMS_MIN_WIDTH now (it was exactly 32 at five-cell grips, where
+    # the same subtraction left less than the minimum).
+    assert resized.items_width == 81 - MEDIA_GRIP_CELLS - (
+        MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    )
+    assert resized.items_width > ITEMS_MIN_WIDTH
     assert resized.priority_pane == "items"
 
 

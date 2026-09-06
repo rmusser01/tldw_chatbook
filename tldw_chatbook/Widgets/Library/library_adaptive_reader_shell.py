@@ -82,9 +82,9 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         """Patch arrow and action copy without changing geometry."""
         action = "Collapse" if open else "Expand"
         copy = f"{action} {self.pane_label} pane"
-        # task-31633 AC#2: the arrow is as wide as the grip. The four-cell
-        # "<---"/"--->" run needs five columns; a one-cell grip paints the
-        # one-cell guillemet instead of a truncated "<".
+        # task-31633 AC#2: the arrow is as wide as the grip. The
+        # "<---"/"--->" run is four cells, so a grip narrower than that would
+        # paint a truncated "<" -- it takes the one-cell guillemet instead.
         if self.grip_width < len("<---"):
             label = "‹" if open else "›"
         else:

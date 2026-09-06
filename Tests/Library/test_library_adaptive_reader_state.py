@@ -521,21 +521,30 @@ def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
 @pytest.mark.parametrize(
     ("width", "expected"),
     [
-        # The Reader sits on its 46-cell minimum at both of these, so list
-        # growth has no surplus to share: every cell of movement from
-        # (0, 44, 46) / (24, 40, 46) is the eight the one-cell grips gave back
-        # (task-31633 AC#2), which is why the list -- not the Reader -- has
-        # them.
+        # ``required_width()`` counts the grips, so the eight cells Media's
+        # one-cell grips gave back (task-31633 AC#2) moved the open-all-three
+        # threshold down from 120 to 112. These rows pin BOTH edges of the
+        # band that moved, with the pre-AC#2 layout beside each:
+        #
+        #   100  was (False, 0, 44, 46)  -- rail closed either way, and the
+        #        Reader is on its 46-cell minimum, so this is the one row with
+        #        no surplus: all eight cells go to the list.
+        #   111  was (False, 0, 55, 46)  -- still below the threshold, so the
+        #        rail stays closed and the list takes its comfort ceiling.
+        #   112  was (False, 0, 56, 46)  -- the new threshold: the rail OPENS
+        #        here now, and the list drops from its 56-cell ceiling to 40.
+        #   119  was (False, 0, 56, 53)  -- inside the band, rail open.
+        #   120  was (True, 24, 40, 46)  -- the old threshold; the rail was
+        #        already open, so here the eight cells are a plain surplus,
+        #        split 4/4 between list and Reader by ``surplus // 2``.
         (100, (False, True, 0, 52, 46)),
-        (120, (True, True, 24, 44, 50)),
-        # 119 used to close the rail and put the list on its 56-cell comfort
-        # ceiling: (False, True, 0, 56, 53). Eight more cells is enough for the
-        # rail to stay open there, so this is the one width where the grips
-        # changed which panes are open, not just how wide they are.
+        (111, (False, True, 0, 56, 53)),
+        (112, (True, True, 24, 40, 46)),
         (119, (True, True, 24, 43, 50)),
+        (120, (True, True, 24, 44, 50)),
     ],
 )
-def test_media_layout_where_list_growth_has_no_surplus_to_share(
+def test_media_layout_across_the_rail_open_threshold(
     width: int, expected: tuple[bool, bool, int, int, int]
 ) -> None:
     layout = resolve_media_reader_layout(width, MediaReaderLayoutPreferences())

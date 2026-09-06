@@ -11704,7 +11704,8 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
     gave Media's panes the eight cells its two grips used to waste, so a
     120-column terminal now fits all three panes -- and task-31272 composes
     no Back control in the three-pane layout, where the list never left the
-    screen. The title is the header's first row in both layouts.
+    screen. The title is above the search bar in either layout; Back, when it
+    is composed at all, sits above the title.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
@@ -11729,8 +11730,8 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
         assert "Next ▶" not in painted_inactive
 
         # Active: the chrome appears in place -- the bar keeps the exact ``y``
-        # it had when Find opened it and stays below Back; exactly one search
-        # box is painted (task-31276).
+        # it had when Find opened it and stays below the header; exactly one
+        # search box is painted (task-31276).
         inactive_y = controls.region.y
         await _submit_content_search_query(screen, pilot, "budget")
         await pilot.pause()
