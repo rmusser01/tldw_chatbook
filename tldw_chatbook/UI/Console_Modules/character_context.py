@@ -709,7 +709,20 @@ class ConsoleCharacterContextController:
     async def keyword_page(
         self, *, query: str, offset: int, limit: int
     ) -> CharacterConversationPage:
-        """Load one authority-fenced Keyword page for the installed switcher."""
+        """Load one authority-fenced Keyword page for the installed switcher.
+
+        Args:
+            query: Literal Keyword text, bounded to 200 raw characters.
+            offset: Nonnegative result offset in repository relevance order.
+            limit: Maximum page size, from 1 through 50.
+
+        Returns:
+            The current authority's page, or an absent page if scope is unavailable
+            or cannot remain stable across the bounded capture attempts.
+
+        Raises:
+            ValueError: Query, offset, or limit violates its input boundary.
+        """
 
         query = validate_console_character_query(query)
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):

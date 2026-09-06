@@ -5139,12 +5139,24 @@ class ChatScreen(BaseAppScreen):
         return await completion
 
     def console_character_switcher_available(self) -> bool:
-        """Report the installed local Character-chats switcher capability."""
+        """Report the installed local Character-chats switcher capability.
+
+        Returns:
+            True because this screen provides the Character-chats handoff.
+        """
 
         return True
 
     def open_console_character_switcher_query(self, query: str) -> bool:
-        """Transfer one Context Keyword query into the installed switcher."""
+        """Dispatch one Context Keyword query into the installed switcher.
+
+        Args:
+            query: Nonblank literal Keyword text within the Character boundary.
+
+        Returns:
+            True after worker dispatch, not completed modal admission; False for
+            invalid or blank input, without dispatching a handoff.
+        """
 
         try:
             validated_query = validate_console_character_query(query)

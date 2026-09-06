@@ -541,6 +541,7 @@ if TYPE_CHECKING:
         LibraryFileNotesWorkspace,
     )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
     from ..Library_Modules.library_unavailable_navigation import (
         _LibraryCharacterNavigationAdmission,
     )
@@ -11199,8 +11200,16 @@ class LibraryScreen(BaseAppScreen):
 
     async def prepare_character_inspection(
         self, context: Mapping[str, Any], *, is_current: Callable[[], bool]
-    ) -> Any:
-        """Prepare exact local inspection without replacing the retained view."""
+    ) -> PreparedLibraryInspection | None:
+        """Prepare exact local inspection without replacing the retained view.
+
+        Args:
+            context: Closed typed Character inspection navigation context.
+            is_current: Request-owned visit and cancellation validity callback.
+
+        Returns:
+            A single-use Library preparation, or None if admission is rejected.
+        """
         from ..Library_Modules.library_inspection_admission import (
             prepare_character_inspection,
         )
@@ -11209,8 +11218,15 @@ class LibraryScreen(BaseAppScreen):
             self, context, is_current=is_current
         )
 
-    def commit_character_inspection(self, prepared) -> bool:
-        """Consume the Library-owned preparation synchronously."""
+    def commit_character_inspection(self, prepared: PreparedLibraryInspection) -> bool:
+        """Consume the Library-owned preparation synchronously.
+
+        Args:
+            prepared: Exact selection token returned by this screen's preparation.
+
+        Returns:
+            True if the still-current token installs its selection; False otherwise.
+        """
         from ..Library_Modules.library_inspection_admission import (
             commit_character_inspection,
         )

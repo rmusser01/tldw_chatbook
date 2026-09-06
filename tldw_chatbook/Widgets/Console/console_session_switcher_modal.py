@@ -1198,6 +1198,18 @@ class ConsoleSessionSwitcherModal(
         if not self._query_pending and event.value == self._rendered_query:
             return
         if self._mode is SwitcherMode.CHARACTER_CHATS:
+            try:
+                validate_console_character_query(event.value)
+            except ValueError:
+                # Reject before changing a committed page or an in-flight query.
+                # Suppress the restoration event, including its queued delivery.
+                with event.input.prevent(Input.Changed):
+                    self._restore_owned_query()
+                self._set_feedback("Previous search kept. Max 200; no controls.")
+                self.query_one("#console-switcher-selected-detail", Static).update(
+                    "Previous search kept.\nMax 200 characters; no control characters."
+                )
+                return
             self._character_query = event.value
         else:
             self._operational_query = event.value
