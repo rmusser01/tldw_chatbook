@@ -1,7 +1,7 @@
 """Failure containment for the explicitly imported Console resource fixture."""
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 import pytest
 
@@ -17,6 +17,8 @@ from Tests import console_resource_fixtures as resources
         "quiescence",
         "quiescence_cancel",
         "count",
+        "auxiliary",
+        "auxiliary_cancel",
         "all",
     ],
 )
@@ -28,6 +30,8 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
     shutdown_cancel = asyncio.CancelledError("shutdown cancelled")
     quiescence_error = TimeoutError("database still active")
     quiescence_cancel = asyncio.CancelledError("database cleanup cancelled")
+    auxiliary_error = RuntimeError("auxiliary cleanup failed")
+    auxiliary_cancel = asyncio.CancelledError("auxiliary cleanup cancelled")
 
     # These narrow owners inject lifecycle failures; the fixture's constructor
     # tracking, path filter, teardown ordering and error reporting remain real.
@@ -69,7 +73,18 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
     fixture = resources.close_owned_console_resources.__wrapped__(
         monkeypatch, tmp_path, None
     )
-    await anext(fixture)
+    auxiliary = await anext(fixture)
+    assert isinstance(auxiliary, ExitStack)
+
+    def close_last_auxiliary():
+        events.append(("auxiliary", "last"))
+        if failure in {"auxiliary", "all"}:
+            raise auxiliary_error
+        if failure == "auxiliary_cancel":
+            raise auxiliary_cancel
+
+    auxiliary.callback(events.append, ("auxiliary", "first"))
+    auxiliary.callback(close_last_auxiliary)
     Controller("first")
     Controller("second")
     for name in ("healthy", "retained", "busy"):
@@ -95,13 +110,14 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
             "all",
         }:
             expected.extend([("release", name), ("count", name)])
+    expected.extend([("auxiliary", "last"), ("auxiliary", "first")])
     assert events == expected
     if failure is None:
         assert caught is None
     else:
         expected_group = (
             BaseExceptionGroup
-            if failure in {"shutdown_cancel", "quiescence_cancel"}
+            if failure in {"shutdown_cancel", "quiescence_cancel", "auxiliary_cancel"}
             else ExceptionGroup
         )
         assert isinstance(caught, expected_group)
@@ -120,4 +136,10 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
             assert caught.exceptions[0] is quiescence_cancel
         if failure in {"count", "all"}:
             expected_types.append(AssertionError)
+        if failure in {"auxiliary", "all"}:
+            expected_types.append(RuntimeError)
+            assert caught.exceptions[-1] is auxiliary_error
+        if failure == "auxiliary_cancel":
+            expected_types.append(asyncio.CancelledError)
+            assert caught.exceptions[-1] is auxiliary_cancel
         assert [type(error) for error in caught.exceptions] == expected_types
