@@ -53,3 +53,36 @@ there was no dedicated empty terminal readiness response, so no real-terminal
 walkthrough was attempted. The task remains In Progress with unsupported
 completion claims open. The controller's local delivery report contains raw
 logs, resource attribution, inherited static failures and commit provenance.
+
+## External review correction round 2
+
+The eight Qodo findings and the narrow-mode CSS ratchet regression were
+corrected from published base `0e9e797c42f740047b2beda3803c09936f0bd760`.
+Fresh synthetic-data tests cover strict wire validation, exact typed cancellation,
+stale repair ownership, saved/new Character and Persona Discard across cached
+screen reuse, and exact-link authority/identity/revision fences before selection
+and after page rendering. Exact links remain pending until their row is focused;
+missing/stale results expose recovery, explicit Retry refreshes only the same
+identity's revision, and a new search abandons the old seek. Both slow and fast
+compact completion keep the relevant list or recovery pane visible.
+
+The narrow navigation rule now targets a dedicated class on Back, Open in
+Library and conditional Back to Console. The original seven SVGs above remain
+historical round-1 captures, not regenerated round-2 evidence. Fresh round-2
+Pilot assertions cover production CSS, painted recovery, full preview controls,
+pointer/keyboard return and hit targets; they are not a native walkthrough.
+
+Rollback diagnostics add only ephemeral object-token correlation and literal
+stage/target-type fields. The inventory refresh changes three owner digests only;
+counts, sink topology and path metadata remain unchanged. Existing exception
+tracebacks are retained under the incumbent logging policy: this is not a new
+blanket privacy clearance.
+
+Native status has changed from the historical readiness limitation above: the
+user authorized a dedicated temporary-data Terminal window and an ignored
+sandboxed packet was prepared, but it is now **HOLD** pending correction review
+on a stable head. No native app was launched and the packet was not re-pinned.
+The local `task-3-qodo-fix-2-report.md` contains exact RED/GREEN attempts, failed
+fixture attempts, final commands and inherited static/resource/timing limits.
+TASK-31243 remains In Progress; controller review and native/platform evidence
+are still required.
