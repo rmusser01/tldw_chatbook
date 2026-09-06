@@ -26,14 +26,19 @@ class OnlineClusterer:
     Args:
         threshold: Cosine distance threshold (1 - similarity) for matching.
         max_speakers: Maximum number of clusters to maintain.
+        start_id: Highest cluster number already in use elsewhere; the first id
+            minted here is ``S{start_id + 1}``. A worker restarted after a
+            crash (31749) inherits the dead worker's high-water mark this way,
+            so its clusters can never take an id the user has already NAMED on
+            a pre-crash segment.
     """
-    def __init__(self, threshold: float = 0.25, max_speakers: int = 8) -> None:
+    def __init__(self, threshold: float = 0.25, max_speakers: int = 8, start_id: int = 0) -> None:
         self._threshold = threshold
         self._max = max_speakers
         self._centroids: dict[str, np.ndarray] = {}
         self._counts: dict[str, int] = {}
         self._pinned: set[str] = set()
-        self._n = 0
+        self._n = max(0, int(start_id))
 
     def assign(self, embedding: np.ndarray) -> str:
         """Assign embedding to a cluster ID.
@@ -96,6 +101,18 @@ class OnlineClusterer:
         the SAME yardstick live assignment used, rather than a second constant.
         """
         return self._threshold
+
+    @property
+    def max_id(self) -> int:
+        """Highest cluster number in use: minted here, or inherited via
+        `start_id` from a worker that died before this one (31749).
+
+        The Stop pass reads it so a batch cluster nothing live claims is minted
+        PAST the pre-crash ids too -- after a crash this clusterer holds no
+        centroids at all (the rest of the meeting is coarse), so the mint has
+        no live id to count from.
+        """
+        return self._n
 
     def pin(self, cluster_id: str) -> None:
         """Mark a cluster as pinned (centroid never corrupted by folds).

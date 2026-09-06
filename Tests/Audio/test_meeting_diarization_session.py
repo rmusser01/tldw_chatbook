@@ -266,6 +266,97 @@ def test_stop_merge_of_two_named_clusters_keeps_both_names_and_flags(tmp_path, m
     assert persisted["flagged_speakers"] == ["S1"]
 
 
+# ---- 31749: a crash mid-meeting must not cost the pre-crash names ----------
+
+class CrashedThenBatchDiarizer:
+    """Live labelling stopped at `crashed_at_seq`; the restarted worker still
+    serves the Stop pass, and its batch labels the WHOLE file."""
+
+    crashed_at_seq = 2
+
+    def __init__(self):
+        self.seen = None
+        self.closed = False
+
+    def assign(self, pcm, sample_rate, seq):
+        return "S1" if seq < self.crashed_at_seq else None   # coarse after the crash
+
+    def diarize(self, wav_path, start_s, end_s):
+        self.seen = (start_s, end_s)
+        return [SpeakerSegment(0.0, 1e6, "S9")]              # covers every segment
+
+    def centroids(self):
+        return {}
+
+    def close(self):
+        self.closed = True
+
+
+def _advance(session, to_s: float) -> None:
+    """Move the fake capture's clocks so each final lands on its own span."""
+    session.capture.audio_position_s = to_s
+    session.capture.last_speech_position_s = to_s
+
+
+def test_stop_pass_after_a_crash_leaves_pre_crash_segments_and_names_alone(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """31749: the restarted worker's clusterer is empty, so the Stop batch
+    re-labels from scratch. Applied to the whole meeting it would overwrite the
+    pre-crash ids the user had already NAMED. The pass is limited to the
+    post-crash span, both in what it diarizes and in what it overlays."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    session.meta.speaker_names["S1"] = "Alice"
+    for i in range(4):
+        _advance(session, 2.0 * (i + 1))
+        session._on_final_for_test(f"line {i}", label="others")
+    session.stop()
+
+    assert [s.speaker_id for s in session.segments[:2]] == ["S1", "S1"]   # untouched
+    assert session.meta.speaker_names["S1"] == "Alice"
+    assert all(s.speaker_id == "S9" for s in session.segments[2:])        # re-labelled
+    assert fake.seen[0] == session.segments[2].t_audio_start             # span-limited
+
+
+def test_stop_pass_without_a_crash_still_covers_the_whole_recording(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """The non-crash path is unchanged: diarize from 0.0, overlay everything."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    fake.crashed_at_seq = None
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    for i in range(2):
+        _advance(session, 2.0 * (i + 1))
+        session._on_final_for_test(f"line {i}", label="others")
+    session.stop()
+
+    assert fake.seen[0] == 0.0
+    assert all(s.speaker_id == "S9" for s in session.segments)
+
+
+def test_stop_pass_ignores_a_crash_seq_past_the_last_segment(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """A crash after the final segment leaves nothing to re-label -- the batch
+    pass must not index off the end (best-effort: no exception, no overlay)."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    fake.crashed_at_seq = 5
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    _advance(session, 2.0)
+    session._on_final_for_test("only line", label="others")
+    session.stop()
+
+    assert [s.speaker_id for s in session.segments] == ["S1"]   # near-live kept
+    assert fake.seen is None                                     # batch skipped
+
+
 def test_stop_captures_the_backend_coarse_reason_for_the_footer(tmp_path, meeting_session_with_fake_capture):
     """Fix I4 / spec §7: a backend that degraded to coarse labels has to reach
     the user. `close()` tears the reason down, so `stop()` reads it first."""

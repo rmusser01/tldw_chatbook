@@ -471,11 +471,23 @@ class MeetingSession:
                 # skip, keep near-live labels, never raise.
                 wav_name = "others.wav" if self.capture.mode == "call" else "mixed.wav"
                 wav_path = Path(self.meta.folder) / wav_name
-                if wav_path.exists():
+                with self._lock:
+                    meeting_segments = list(self.segments)
+                # 31749: a crashed-and-restarted backend holds NO live
+                # centroids, so its batch pass mints ids from scratch. Applied
+                # to the whole meeting it would re-label the PRE-crash
+                # segments too and silently strand the names the user typed on
+                # those ids. Re-label only from the crash on; everything
+                # before it keeps the near-live id its name is attached to.
+                crash_seq = getattr(self._diarizer, "crashed_at_seq", None)
+                start_from: float | None = 0.0
+                if crash_seq is not None:
+                    meeting_segments = [s for s in meeting_segments if s.seq >= crash_seq]
+                    # Nothing after the crash -> nothing this pass may touch.
+                    start_from = meeting_segments[0].t_audio_start if meeting_segments else None
+                if wav_path.exists() and start_from is not None:
                     duration = float(self.capture.audio_position_s)
-                    speaker_segments = self._diarizer.diarize(wav_path, 0.0, duration)
-                    with self._lock:
-                        meeting_segments = list(self.segments)
+                    speaker_segments = self._diarizer.diarize(wav_path, start_from, duration)
                     transitions: list[tuple[str | None, str]] = []
                     changed: list[MeetingSegment] = []
                     for meeting_segment in meeting_segments:

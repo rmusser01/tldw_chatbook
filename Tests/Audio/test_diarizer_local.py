@@ -217,6 +217,46 @@ def test_restart_happens_once_and_live_labels_stay_coarse_after_it():
     assert [s.speaker for s in segs] == ["S1"]
 
 
+def test_restart_spawns_with_start_id_past_max_seen_and_records_crash_seq():
+    """31749: the restarted worker must not re-mint ids the user may already
+    have NAMED. It inherits the pre-crash high-water mark on its argv, and the
+    backend remembers WHICH segment was in flight when the worker died so the
+    Stop pass can leave everything before it alone."""
+    cmds: list[list[str]] = []
+    procs: list[FakeProc] = []
+
+    def _spawn(cmd, *a, **k):
+        cmds.append(list(cmd))
+        proc = FakeProc(['{"id": "S2", "seq": 0}\n']) if not procs else FakeProc([_SEGMENTS_REPLY])
+        procs.append(proc)
+        return proc
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    assert d.assign(_PCM, 16000, 0) == "S2"       # live id S2 -- may be named
+    procs[0]._alive = False                        # ... then the worker dies
+    assert d.assign(_PCM, 16000, 1) is None        # detected here -> one restart
+
+    assert d.crashed_at_seq == 1
+    assert d.max_id_seen == 2
+    assert "--start-id" not in cmds[0]              # the first worker starts at 0
+    assert cmds[1][cmds[1].index("--start-id") + 1] == "2"
+
+
+def test_crash_seq_keeps_the_first_crash(monkeypatch):
+    """The restart budget is one, but `crashed_at_seq` must stay pinned to the
+    FIRST death -- that is where the pre-crash id space ends."""
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([])))
+    d._fail(seq=3)
+    d._fail(seq=9)
+    assert d.crashed_at_seq == 3
+
+
+def test_no_crash_leaves_crash_seq_none():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc(['{"id": "S1", "seq": 0}\n'])))
+    assert d.assign(_PCM, 16000, 0) == "S1"
+    assert d.crashed_at_seq is None and d.max_id_seen == 1
+
+
 def test_assign_timeout_is_a_skip_not_a_crash():
     """Fix I1: one slow reply used to call `_fail()`, burning the restart
     budget and blocking the transcript thread behind a fresh warm-up. Spec
@@ -361,6 +401,21 @@ def test_batch_mints_a_live_style_id_when_there_are_no_live_clusters():
     out = _reconcile_windows(spans, embs, {}, lambda x, n: np.zeros(len(x)))
     assert [s["speaker"] for s in out] == ["S1", "S1"]
     assert not any(s["speaker"].startswith("F") for s in out)
+
+
+def test_batch_mint_starts_past_the_post_crash_start_id():
+    """31749, second half: after a crash the restarted worker holds NO live
+    centroids (the rest of the meeting is coarse), so the Stop pass mints from
+    scratch -- straight onto the pre-crash "S1" the user may have named. The
+    mint has to continue past the inherited start id too."""
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    embs = [np.array([1.0, 0.0], np.float32), np.array([0.9, 0.1], np.float32)]
+    spans = [(0.0, 1.5), (1.5, 3.0)]
+    out = _reconcile_windows(spans, embs, {}, lambda x, n: np.zeros(len(x)), start_id=4)
+    assert [s["speaker"] for s in out] == ["S5", "S5"]
 
 
 def test_close_is_best_effort_and_idempotent():
