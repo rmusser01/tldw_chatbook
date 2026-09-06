@@ -627,3 +627,38 @@ settings retry, first-persist publication, conversation rebind, durable-turn
 settings reconciliation, and the committed synchronous display-name setter.
 Broader failures and both pending task-ID decisions remain open; no full-suite
 or merge-readiness claim is made.
+
+## Conversation-binding fork publication
+
+TASK-31801 protects both public conversation-binding publishers with the existing
+session-transition decorator. The corrected regression run first returned
+**4 failed / 4 passed**: both success and injected-error variants admitted a
+fork during publication (`/private/tmp/tldw-binding-publication-red.xml`). The
+probe runs before identity mutation, because missing durable message IDs would
+otherwise conceal the missing guard. It keeps the real lookup and checks actual
+eligibility/fence issuance, independent-session access, and ownership cleanup.
+Invalid input and missing-session errors retain their existing behavior.
+
+Six complete publication, settings-apply, first-send, fork, display-name-lifetime
+and census files returned **329 passed / 1 known census failure in 49.39 seconds**
+with two existing dependency warnings
+(`/private/tmp/tldw-binding-publication-final.xml`). All eight publication tests
+pass. Scoped Ruff, formatting and diff checks pass; independent review found no
+actionable issues. All 81 store diagnostic statements remain unchanged.
+
+The census still has one failing test, now covering four unclassified routes.
+Read-only call-graph tracing and independent review established that the three
+async roots (`persist_console_settings_commit_serialized`,
+`retry_console_settings_persistence`, `reconcile_durable_turn_settings`) reach
+only one fork-field-shaped assignment: pending-work carrier
+`drain.context_policy_overrides` in `_join_console_settings_persistence_drain`.
+This is not live-session policy publication. The fourth route,
+`set_session_user_display_name_override_for_commit`, delegates to its existing
+guarded setter. No exemptions or scanner changes were made in this slice.
+
+Next classification work must remain fail-closed: prove the drain's local
+provenance (including its valid `None` binding) and reject alias/lifecycle
+poisoning, direct live writes and newly mutating callees. The name delegation
+must require the exact store receiver/arguments, no direct mutation, and no
+additional mutating child. Broader failures and both pending task-ID decisions
+remain open; this is not a full-suite or merge-readiness claim.
