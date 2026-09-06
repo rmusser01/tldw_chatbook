@@ -693,3 +693,35 @@ diagnostic pins, direct-owner inventory and broad exemption sets are unchanged.
 The broader review, including architecture ceilings, other behavioral failure
 families and both pending task-ID decisions, remains open. No full-suite or
 merge-readiness claim is made.
+
+## Terminal exchange and temporary-session repair
+
+TASK-31809 restores two runtime contracts at the common terminal persistence
+owner: successful paired-generation writes flush attached legacy exchange
+captures, and temporary sessions finish without requiring a durable projection.
+Existing durable version checks, trace settlement and best-effort sidecar
+failure behavior remain intact. Two obsolete privacy repository fixtures now
+exercise the current privacy and detail write seams, retaining Safe/pending
+assertions for failures at either stage.
+
+The complete exchange baseline was **11 failed / 13 passed**. Six new real
+SQLite cases cover complete/stopped/failed across durable/temporary sessions.
+After correcting setup to materialize the streaming row through the public
+getter, the genuine pre-fix run was **17 failed / 13 passed**
+(`/private/tmp/tldw-store-exchanges-real-red.xml`). Durable cases failed on missing
+exchange rows; temporary cases failed on the false durable-write requirement.
+The repaired exchange file passes **31 tests**. Assertions verify reopened
+durable content/captures, exactly one message-version increment, no temporary
+rows and zero remaining SQLite handles.
+
+Final eight complete files (exchanges, store, terminal citations, generation
+store, provider continuation, trace settlement, capture-policy repository and
+fork census): **667 passed in 148.81 seconds**, with two existing dependency
+warnings (`/private/tmp/tldw-store-exchanges-final.xml`). Scoped Ruff, formatting,
+diff checks and independent review pass; all 81 store diagnostic calls are
+unchanged. Review noted redundant idempotent flushes in deferred citation
+callers, also possible on the pre-existing fallback; they remain outside this
+bounded repair. No schema, capture authority or diagnostic pin changed.
+
+Broader behavioral failures, architecture ceilings and both pending task-ID
+decisions remain open. This is not full-suite or merge-readiness evidence.
