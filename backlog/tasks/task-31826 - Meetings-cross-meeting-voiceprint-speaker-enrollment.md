@@ -1,5 +1,5 @@
 ---
-id: TASK-31741
+id: TASK-31826
 title: 'Meetings: cross-meeting voiceprint speaker enrollment'
 status: To Do
 assignee: []
@@ -19,3 +19,7 @@ Remember a speaker's voice as a named person across meetings so a known voice is
 <!-- AC:BEGIN -->
 - [ ] #1 Design approved
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-31741 to TASK-31826 on 2026-09-06 when `feat/meeting-diarization` was brought up to date with dev: TASK-31741 had already been taken on dev by a Canvas task (the older arrival keeps the id, per the TASK-19601 owner rule). No dependencies: entries or doc/code references pointed at the old id.

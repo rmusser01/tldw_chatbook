@@ -1,5 +1,5 @@
 ---
-id: TASK-31742
+id: TASK-31827
 title: 'Meetings: MOSS/server diarizer backend behind the Diarizer seam'
 status: To Do
 assignee: []
@@ -19,3 +19,7 @@ Add a second Diarizer backend using MOSS-Transcribe-Diarize (0.9B, batch, CUDA-f
 <!-- AC:BEGIN -->
 - [ ] #1 Design approved
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-31742 to TASK-31827 on 2026-09-06 when `feat/meeting-diarization` was brought up to date with dev: TASK-31742 had already been taken on dev by a Canvas task (the older arrival keeps the id, per the TASK-19601 owner rule). No dependencies: entries or doc/code references pointed at the old id.
