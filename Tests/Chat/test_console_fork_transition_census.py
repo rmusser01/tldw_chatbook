@@ -52,6 +52,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "prepare_dispatch_recovery_message",
         "prepare_message_retry",
         "prepare_session_roleplay_projection_refresh",
+        "prepare_session_user_display_name_override_for_commit",
         "promote_ephemeral_session",
         "publish_committed_identity",
         "publish_durable_recovery_owner",
