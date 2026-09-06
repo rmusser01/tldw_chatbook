@@ -41,8 +41,10 @@ class AdaptiveReaderLayoutProfile:
     """Destination-specific list and work-pane width policy.
 
     ``list_grows`` is opt-in per destination (task-31633): when set, a
-    comfortable Reader shares its surplus width with the list instead of
-    absorbing every extra cell. Only Media opts in today.
+    comfortable Reader shares its surplus width with the list -- up to
+    ``list_comfort_width`` -- instead of absorbing every extra cell. It
+    applies to automatic widths only; a custom width is obeyed as typed.
+    Only Media opts in today.
     """
 
     list_min_width: int = 32
@@ -291,19 +293,30 @@ def resolve_adaptive_reader_layout(
             comfort_width,
             max(width - grip_width - work_min_width, items_width),
         )
-    if items_open and profile.list_grows:
+    if items_open and profile.list_grows and not preferences.custom_widths_enabled:
         # task-31633: past this point every remaining cell used to go to the
         # Reader, so a 235-cell terminal painted a NARROWER list than a
-        # 100-cell one. Split the Reader's surplus once it is comfortable --
-        # its floor is its own minimum, which for a destination whose reader
-        # needs more than READER_COMFORT_WIDTH is what "comfortable" means,
-        # and which leaves the compact allocations byte-identical.
+        # 100-cell one. Split the Reader's surplus once it is comfortable, up
+        # to the same comfort ceiling the library-closed branch above uses.
+        #
+        # The floor is the Reader's OWN minimum, not READER_COMFORT_WIDTH: a
+        # literal 44 would leave Media's Reader on 45 cells at width 100,
+        # below the work_min_width=46 that every open/close and hysteresis
+        # decision in required_width() was computed against. It is never
+        # below READER_COMFORT_WIDTH, so the intent holds for profiles at or
+        # under 44.
+        #
+        # Custom widths are a hand-typed number in Settings: "Automatic"
+        # adapts, "Custom" obeys, so growth is off in that mode entirely.
         reader_floor = max(work_min_width, READER_COMFORT_WIDTH)
         surplus = width - grip_width - library_width - items_width - reader_floor
         if surplus > 0:
             items_width = min(
                 items_width + surplus // 2,
-                max(profile.list_max_width, items_width),
+                max(
+                    min(profile.list_comfort_width, profile.list_max_width),
+                    items_width,
+                ),
             )
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,

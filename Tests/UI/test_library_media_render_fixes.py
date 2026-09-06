@@ -25,7 +25,10 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
 from textual.worker import WorkerState
 
-from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.Library.library_media_reader_state import (
+    READER_COMFORT_WIDTH,
+    set_mode,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -1697,6 +1700,9 @@ async def test_reader_body_wraps_at_a_reading_measure():
         # still spans the whole pane -- only the prose inside it is capped.
         work = screen.query_one(".library-adaptive-reader-work")
         assert box.region.width == work.region.width, (box.region, work.region)
+        # The equality alone would also hold if the pane itself collapsed, so
+        # keep an absolute floor now that the pane width is dynamic.
+        assert work.region.width >= READER_COMFORT_WIDTH, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.

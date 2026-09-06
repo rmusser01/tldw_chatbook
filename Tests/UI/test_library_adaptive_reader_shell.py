@@ -686,7 +686,9 @@ def _painted_lines(host, region) -> list[str]:
     ("size", "expected_items_width", "expected_title_characters"),
     [
         # 235x52 was 40 cells / 31 painted title characters at badff73f1.
-        ((235, 52), 72, 63),
+        # 56 is the profile's list comfort ceiling, the same one the
+        # library-closed branch of the resolver already uses.
+        ((235, 52), 56, 46),
         # 100x30 is unchanged: the Reader is already on its 46-cell minimum.
         ((100, 30), 44, 39),
     ],

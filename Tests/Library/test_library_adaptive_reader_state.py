@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     normalize_media_reader_preferences,
     resolve_media_reader_layout,
 )
+from tldw_chatbook.UI.Library_Modules import screen_constants
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_COLLECTIONS_READER_PROFILE,
     LIBRARY_CONVERSATION_READER_PROFILE,
@@ -77,7 +78,7 @@ def test_shared_normalization_matches_current_media_custom_width_behavior() -> N
         # task-31633: the Media profile shares the Reader's surplus with its
         # Items column, so it diverges from the generic profile wherever the
         # Reader sits above its 46-cell minimum.
-        (160, (True, True, 30, 40, 80), (True, True, 30, 57, 63)),
+        (160, (True, True, 30, 40, 80), (True, True, 30, 56, 64)),
         (120, (True, True, 24, 40, 46), (True, True, 24, 40, 46)),
         (100, (False, True, 0, 46, 44), (False, True, 0, 44, 46)),
         (80, (False, False, 0, 0, 70), (False, False, 0, 0, 70)),
@@ -432,10 +433,19 @@ def test_custom_width_normalization_uses_explicit_range_not_default_ceiling(
 # two review widths and at their own library-open edge.
 # ---------------------------------------------------------------------------
 
+# The three pinned below are the ones with explicit geometry tuples; the
+# opt-in guard sweeps EVERY profile constant the Library screen declares
+# (Notes, File Notes and Prompts included) so a future destination cannot
+# quietly inherit growth.
 SIBLING_PROFILES = {
     "conversations": LIBRARY_CONVERSATION_READER_PROFILE,
     "skills": LIBRARY_SKILLS_READER_PROFILE,
     "collections": LIBRARY_COLLECTIONS_READER_PROFILE,
+}
+DECLARED_PROFILES = {
+    name: value
+    for name, value in vars(screen_constants).items()
+    if isinstance(value, AdaptiveReaderLayoutProfile)
 }
 
 
@@ -453,7 +463,9 @@ def _pane_widths(
 
 def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
-    for name, profile in SIBLING_PROFILES.items():
+    assert set(SIBLING_PROFILES.values()) <= set(DECLARED_PROFILES.values())
+    assert len(DECLARED_PROFILES) >= 6, sorted(DECLARED_PROFILES)
+    for name, profile in DECLARED_PROFILES.items():
         assert profile.list_grows is False, name
     assert AdaptiveReaderLayoutProfile().list_grows is False
 
@@ -495,6 +507,9 @@ def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
         # no surplus to share and the layout is byte-identical to badff73f1.
         (100, (False, True, 0, 44, 46)),
         (120, (True, True, 24, 40, 46)),
+        # 119 has surplus but the list is already at its 56-cell comfort
+        # ceiling, so growth has nowhere to go -- also byte-identical.
+        (119, (False, True, 0, 56, 53)),
     ],
 )
 def test_media_layout_is_unchanged_where_the_reader_has_no_surplus(
@@ -508,10 +523,11 @@ def test_media_layout_is_unchanged_where_the_reader_has_no_surplus(
 @pytest.mark.parametrize(
     ("width", "expected"),
     [
-        # 235: was (True, True, 34, 40, 151) -- 111 surplus cells all went to
-        # the Reader. 119: was (False, True, 0, 56, 53).
-        (235, (True, True, 34, 72, 119)),
-        (119, (False, True, 0, 59, 50)),
+        # 235: was (True, True, 34, 40, 151) -- 105 surplus cells all went to
+        # the Reader. 122 is the narrowest width where growth moves a cell:
+        # was (True, True, 24, 40, 48).
+        (235, (True, True, 34, 56, 135)),
+        (122, (True, True, 24, 41, 47)),
     ],
 )
 def test_media_items_column_grows_once_the_reader_is_comfortable(
@@ -520,6 +536,33 @@ def test_media_items_column_grows_once_the_reader_is_comfortable(
     layout = resolve_media_reader_layout(width, MediaReaderLayoutPreferences())
 
     assert _pane_widths(layout) == expected
+
+
+@pytest.mark.parametrize("custom_items_width", [32, 34, 48])
+@pytest.mark.parametrize("width", [160, 235])
+def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
+    width: int, custom_items_width: int
+) -> None:
+    """Settings > Appearance > Custom widths is a hand-typed number.
+
+    "Automatic" adapts; "Custom" obeys. Without the gate the typed value was
+    silently overridden above ~130 columns (review Important 1).
+    """
+    custom = MediaReaderLayoutPreferences(
+        custom_widths_enabled=True,
+        library_width=31,
+        items_width=custom_items_width,
+    )
+
+    grown = resolve_media_reader_layout(width, custom)
+    ungrown = resolve_adaptive_reader_layout(
+        width,
+        custom,
+        AdaptiveReaderLayoutProfile(work_min_width=46),
+    )
+
+    assert grown.items_width == custom_items_width
+    assert grown == ungrown
 
 
 def test_media_items_column_is_wider_at_235_than_at_100() -> None:
@@ -544,7 +587,13 @@ def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
     grown = resolve_media_reader_layout(width, preferences)
 
     assert grown.items_width >= ungrown.items_width
-    assert grown.items_width <= MEDIA_READER_LAYOUT_PROFILE.list_max_width
+    assert grown.items_width <= max(
+        min(
+            MEDIA_READER_LAYOUT_PROFILE.list_comfort_width,
+            MEDIA_READER_LAYOUT_PROFILE.list_max_width,
+        ),
+        ungrown.items_width,
+    )
     assert (grown.library_open, grown.items_open) == (
         ungrown.library_open,
         ungrown.items_open,
