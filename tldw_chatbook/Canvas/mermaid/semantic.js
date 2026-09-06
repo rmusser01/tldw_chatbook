@@ -25,7 +25,7 @@ function cleanComments(source, budget) {
 function plainLabel(value, budget) {
   if (typeof value !== "string") budget.fail("unsupported-label");
   if (/<\/?[A-Za-z!][^>]*>|`|\*\*|__|~~|\[[^\]]*\]\s*\(/u.test(value)) budget.fail("unsupported-label");
-  if (/\*(?=\S)(?:[^*\n]*\S)?\*|(^|[\s\p{P}])_(?=\S)(?:[^_\n]*\S)?_(?=$|[\s\p{P}])/u.test(value)) budget.fail("unsupported-label");
+  if (/\*(?=\S)(?:[^*\n]*\S)?\*|(^|[\s\p{P}\p{S}])_(?=\S)(?:[^_\n]*\S)?_(?=$|[\s\p{P}\p{S}])/u.test(value)) budget.fail("unsupported-label");
   if (/[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) budget.fail("invalid-text");
   return value;
 }

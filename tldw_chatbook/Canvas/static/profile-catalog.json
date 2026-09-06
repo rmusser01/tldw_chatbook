@@ -1,5 +1,5 @@
 {
-  "build_id": "89499fdd6e8488044a130f0a3e79a87e54f6ebdbe4394ed4c8c462357e862875",
+  "build_id": "8aed3a505a1a269cfc15272aa22f11eff1afad93e664965d1407c2fac71159f9",
   "default_diagram_profile": null,
   "policy_id": "15430aedabd3179e8f0764611b8f6ed129f6b381a9469d5f20109f3b133d22d2",
   "profiles": [
@@ -17,20 +17,20 @@
     {
       "executable": false,
       "library": {
-        "bytes": 160542,
+        "bytes": 160554,
         "files": {
           "MERMAID_THIRD_PARTY_LICENSES.txt": {
             "bytes": 3226,
             "sha256": "257167adcdcc8ec7235943ff2edab23a16aa2437454ceacc4d4525583938d21e"
           },
           "mermaid-subset.json": {
-            "bytes": 157316,
-            "sha256": "0724b461c3fde061b14f0d279de025153c6b7d0595a24d9e6912c6ad579b1113"
+            "bytes": 157328,
+            "sha256": "04d5382a0bc7c3ffa20894f52bdfb64d2bfa8fe7be502f6bf3dd368b64ccca93"
           }
         }
       },
       "manifest": "mermaid-runtime-manifest.json",
-      "manifest_sha256": "5016ad2e7416a8052bc9245ee5d2e3fb36ffe6ca3cfc21c3c095774024bdc6d3",
+      "manifest_sha256": "91e10f75f24471b30de0d010806318fbe2df79dfac8266c7ece4efd4217f4a75",
       "profile_id": "canvas-v2-mermaid-1",
       "reason": "profile-unavailable"
     }
