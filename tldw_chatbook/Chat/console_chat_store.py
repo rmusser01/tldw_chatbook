@@ -7772,6 +7772,7 @@ class ConsoleChatStore:
             raise
         return session
 
+    @_fork_session_transition
     def publish_first_persisted_conversation(
         self,
         session_id: str,
@@ -7791,6 +7792,7 @@ class ConsoleChatStore:
         )
         return session
 
+    @_fork_session_transition
     def rebind_persisted_conversation(
         self,
         session_id: str,
