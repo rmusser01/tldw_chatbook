@@ -71,6 +71,14 @@ RAIL_CONTENT_WIDTH_MIN = 30
 #: of the Button's width styles to this).
 SECTION_TOGGLE_WIDTH = 3
 
+#: TASK-31664 AC#3: label the "view all" tail button flips to while a
+#: caller-driven refresh is in flight. Pressing "Refresh" could go ~12
+#: measured seconds with zero visible change when the landed data matched
+#: what was already painted -- ``sync_state``'s own equality guard treats
+#: that landing as a no-op BY DESIGN (it only patches on a content change),
+#: so this acknowledgment has to live outside it. See ``set_view_all_busy``.
+VIEW_ALL_BUSY_LABEL = "Refreshing…"
+
 #: Columns a row's own text gets at ``RAIL_CONTENT_WIDTH_MIN``: the section
 #: body indents by 1 (``.console-inspector-section-body`` padding) and the
 #: row spends 2 more on its own ``padding: 0 1``.
@@ -484,6 +492,28 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                         "none" if self._summary_is_suppressed() else "block"
                     )
         self.post_message(self.CollapseToggled(self.section_id, open))
+
+    def set_view_all_busy(self, busy: bool) -> None:
+        """Flip the "view all" tail button to a transient acknowledgment.
+
+        TASK-31664 AC#3. Deliberately bypasses ``sync_state``'s rows/summary
+        equality guard (see ``VIEW_ALL_BUSY_LABEL``'s module comment): this
+        sets the mounted ``Button.label`` directly, so it works even when
+        the landed state is byte-identical to what is already painted --
+        exactly the case that left Refresh looking dead. A no-op when this
+        section has no tail (``view_all_label == ""``) or isn't mounted.
+
+        Args:
+            busy: ``True`` shows ``VIEW_ALL_BUSY_LABEL``; ``False`` restores
+                ``view_all_label``. Idempotent either way.
+        """
+        if not self.view_all_label or not self.is_mounted:
+            return
+        try:
+            button = self.query_one(f"#{self._view_all_id}", Button)
+        except (NoMatches, QueryError):
+            return
+        button.label = VIEW_ALL_BUSY_LABEL if busy else self.view_all_label
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route the chevron toggle and the "View all" tail button."""

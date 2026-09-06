@@ -63,6 +63,13 @@ _EXPECTED_DECLARATIONS = {
         "$ds-status-error-readable",
     ),
     ".console-workspace-conversation-row-subagent-unseen": ("color", "$ds-status-info"),
+    # TASK-31664 AC#4: this row's text must be READ (a failing-check name,
+    # the "Environment unavailable" row) -- the readable token, not the
+    # decorative $ds-status-error a "stale" row still carries.
+    ".console-inspector-section-row-error .console-inspector-section-row-primary": (
+        "color",
+        "$ds-status-error-readable",
+    ),
 }
 
 

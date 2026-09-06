@@ -3421,11 +3421,21 @@ class ChangeReviewScreen(Screen):
         """
         if self._workspace_roots:
             return "No file changes recorded for this conversation."
+        # TASK-31664 AC#5: `self._workspace_roots` empty does not mean ONLY
+        # "no folder is bound" -- the identical signal also occurs when
+        # Change Review's consent is not ENABLED for an otherwise-bound
+        # folder (the common default) or when the consent service is
+        # absent/raises (see `console_environment_state.py`'s matching
+        # rewording for the full reasoning). Cause-agnostic for the same
+        # reason: naming "no folder is bound" was confidently wrong in
+        # those cases. The remediation also used to name only the BIND
+        # half of the fix; restored the ENABLE half here too, since binding
+        # alone does not turn tracking on.
         return (
-            "No folder is bound to this conversation's workspace, so file "
-            "changes are not tracked here — this is not a report that "
-            "nothing changed. Chats still work in private scratch. To track "
-            "an external folder, bind it in Settings ▸ Workspaces and use a "
+            "Changes aren't tracked for this workspace — this is not a "
+            "report that nothing changed. Chats still work in private "
+            "scratch. To track an external folder, bind it and enable "
+            "Change Review for it in Settings ▸ Workspaces, then use a "
             "chat in that named Workspace."
         )
 

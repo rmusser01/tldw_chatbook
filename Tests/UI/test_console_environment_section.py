@@ -103,6 +103,55 @@ async def test_environment_section_renders_rows_and_refresh_slot():
         assert app.view_all_events == ["environment"]
 
 
+@pytest.mark.asyncio
+async def test_view_all_busy_flips_the_tail_label_and_restores_it():
+    """TASK-31664 AC#3, widget seam: the "Refresh" tail can show a
+    transient acknowledgment independent of ``sync_state`` -- which is the
+    point, since ``sync_state`` treats a content-identical landing as a
+    no-op by design and never touches the tail button itself."""
+    from textual.widgets import Button
+
+    app = _EnvironmentSectionHarness()
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        section = app.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        button = app.query_one(
+            "#console-inspector-section-environment-view-all", Button
+        )
+        assert str(button.label) == "Refresh"
+
+        section.set_view_all_busy(True)
+        await pilot.pause()
+        assert str(button.label) == "Refreshing…"
+
+        section.set_view_all_busy(False)
+        await pilot.pause()
+        assert str(button.label) == "Refresh"
+
+
+@pytest.mark.asyncio
+async def test_view_all_busy_is_a_no_op_without_a_tail():
+    """A section with no ``view_all_label`` has no button to flip -- must
+    not raise."""
+    class _NoTailHarness(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield ConsoleInspectorSection(
+                title="Environment", section_id="environment",
+                id="console-environment-section",
+            )
+
+    app = _NoTailHarness()
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        section = app.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        section.set_view_all_busy(True)  # must not raise
+        section.set_view_all_busy(False)  # must not raise
+
+
 class _RailWidthHarness(ConsolidatedCSSApp):
     """Host that pins the section to the Inspect rail's real content width.
 

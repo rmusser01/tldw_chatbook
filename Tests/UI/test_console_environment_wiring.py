@@ -916,6 +916,65 @@ async def test_refresh_view_all_forces_net_tier():
         assert captured == [{"include_net": True, "force_net": True}]
 
 
+@pytest.mark.asyncio
+async def test_refresh_shows_a_transient_acknowledgment_and_clears_on_landing():
+    """TASK-31664 AC#3, wiring seam.
+
+    Pressing Refresh used to give zero visible feedback for as long as the
+    `gh` fetch it triggers takes (measured ~12s when the data comes back
+    unchanged) -- `sync_state`'s own equality guard is a no-op on a
+    content-identical landing BY DESIGN, so nothing painted. The "Refresh"
+    tail must flip to an acknowledgment the instant the request is made,
+    and the real landing path (`_land_console_environment`, wired as the
+    controller's `on_snapshot`) must clear it again -- proven here by
+    stubbing `request_refresh` to do nothing (so the button would stay
+    "Refreshing…" forever if nothing else ever cleared it) and then
+    driving a real landing by hand.
+    """
+    async with _console_screen() as (pilot, screen):
+        # Stub the dispatch so nothing else could possibly clear the busy
+        # label -- isolates this test to the screen's own two seams (set on
+        # request, cleared on landing).
+        screen._console_environment.request_refresh = lambda **kw: None
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        button = section.query_one(
+            "#console-inspector-section-environment-view-all", Button
+        )
+        assert str(button.label) == "Refresh"
+
+        section.post_message(ConsoleInspectorSection.ViewAllRequested("environment"))
+        await pilot.pause()
+        assert str(button.label) == "Refreshing…"
+
+        snapshot = _snapshot()
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)
+        await pilot.pause()
+        assert str(button.label) == "Refresh"
+
+
+@pytest.mark.asyncio
+async def test_the_10s_poll_never_shows_the_refresh_acknowledgment():
+    """Negative control: only the explicit Refresh tail arms the busy
+    label -- an automatic poll landing must never flicker it."""
+    async with _console_screen() as (pilot, screen):
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        button = section.query_one(
+            "#console-inspector-section-environment-view-all", Button
+        )
+        assert str(button.label) == "Refresh"
+
+        snapshot = _snapshot()
+        screen._console_environment.snapshot = snapshot
+        screen._land_console_environment(snapshot)  # the poll-tick landing path
+        await pilot.pause()
+        assert str(button.label) == "Refresh"
+
+
 # ---------------------------------------------------------------------------
 # Landing / degradation
 # ---------------------------------------------------------------------------
@@ -998,10 +1057,11 @@ async def test_unbound_landing_replaces_the_previous_repos_paint():
             str(static.renderable)
             for static in section.query(".console-inspector-section-row-primary")
         )
-        assert "No folder is bound to this conversation's workspace" in painted
+        assert "Changes aren't tracked for this workspace" in painted
         assert "not a report that nothing changed" in painted
         assert "feat/previous-repo" not in painted
         assert "Commit or push" not in painted
+        assert "Review & commit" not in painted
         # The Tasks card goes with it -- it described the other repo's backlog.
         assert tasks_section.rows == ()
         assert tasks_section.styles.display == "none"

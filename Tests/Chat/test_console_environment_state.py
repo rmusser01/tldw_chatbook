@@ -190,15 +190,20 @@ def test_pending_tasks_tier_hides_the_tasks_card():
 
 
 def test_unbound_git_tier_carries_change_reviews_copy():
-    """AC #1: the copy is Change Review's, adapted to the rail as two rows."""
+    """AC #5 (TASK-31664): cause-agnostic -- ``workspace_roots == ()`` is
+    NOT only "no folder is bound" (it also fires when Change Review
+    consent is off for a bound folder, or the consent service is
+    absent/raises), so the copy asserts only what stays true regardless of
+    cause and names both remediation steps (bind AND enable)."""
     state = project_environment_section(unbound_snapshot(), frozenset(), now=_NOW)
     assert [r.row_id for r in state.rows] == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
     assert state.rows[0].primary_text == ENV_UNBOUND_TEXT
     assert state.rows[1].primary_text == ENV_UNBOUND_NOTE_TEXT
     joined = " ".join(r.primary_text for r in state.rows)
-    assert "No folder is bound to this conversation's workspace" in joined
-    assert "changes are not tracked here" in joined
+    assert "No folder is bound" not in joined
+    assert "aren't tracked" in joined
     assert "not a report that nothing changed" in joined
+    assert "bind" in joined.lower() and "enable" in joined.lower()
     assert not any(r.clickable for r in state.rows)
     assert state.summary == ""
 
@@ -305,6 +310,38 @@ def test_changes_row_shows_signed_totals_and_branch_row_shows_divergence():
     assert by_id[ENV_ROW_CHANGES].clickable and by_id[ENV_ROW_BRANCH].clickable
 
 
+def test_branch_row_marker_survives_ellipsis_on_a_long_branch_name():
+    """AC #1: the marker is appended AFTER truncation, never before.
+
+    A branch name long enough to overflow the rail's real content region
+    (`RAIL_CONTENT_WIDTH_MIN`) must still end in the chevron -- if the
+    marker were appended before ellipsizing, the terminal's own CSS
+    `text-overflow: ellipsis` could cut it off along with the tail of the
+    label, silently losing the one thing that marks this row as
+    expandable.
+    """
+    long_branch = _git_state(
+        branch="feat/task-31450-console-inspector-environment-redesign-with-a-very-long-name"
+    )
+    snapshot = EnvironmentSnapshot(git=long_branch)
+    by_id = {
+        r.row_id: r
+        for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows
+    }
+    branch_row = by_id[ENV_ROW_BRANCH]
+    assert branch_row.primary_text.endswith(" ▸"), branch_row.primary_text
+    assert "…" in branch_row.primary_text
+    assert len(branch_row.primary_text) <= 30  # RAIL_CONTENT_WIDTH_MIN
+
+    expanded_row = {
+        r.row_id: r
+        for r in project_environment_section(
+            snapshot, frozenset({ENV_ROW_BRANCH}), now=_NOW
+        ).rows
+    }[ENV_ROW_BRANCH]
+    assert expanded_row.primary_text.endswith(" ▾")
+
+
 def test_commit_or_push_row_hidden_when_clean_and_synced_shown_when_dirty():
     clean = EnvironmentSnapshot(git=_git_state(adds=0, dels=0, files=()))
     dirty = EnvironmentSnapshot(git=_git_state())
@@ -315,29 +352,41 @@ def test_commit_or_push_row_hidden_when_clean_and_synced_shown_when_dirty():
 
 
 def test_commit_or_push_label_pluralizes_the_file_count():
+    """AC #2 (TASK-31664): renamed to name what it does, and to carry the
+    same "…" Change Review's own destination uses (``Commit…``/``Push…``)."""
     one = EnvironmentSnapshot(git=_git_state(
         files=(ChangedFile(path="a.py", status="M", adds=1, dels=0),)))
     two = EnvironmentSnapshot(git=_git_state())
     one_by_id = {r.row_id: r for r in project_environment_section(one, frozenset(), now=_NOW).rows}
     two_by_id = {r.row_id: r for r in project_environment_section(two, frozenset(), now=_NOW).rows}
-    assert one_by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Commit or push · 1 file"
-    assert two_by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Commit or push · 2 files"
+    assert one_by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Review & commit… · 1 file"
+    assert two_by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Review & commit… · 2 files"
+    assert "Commit or push" not in one_by_id[ENV_ROW_COMMIT_PUSH].primary_text
 
 
 def test_push_only_variant_when_tree_clean_but_ahead():
+    """AC #1: this row also navigates to Change Review, so it carries the
+    same "opens another surface" marker as the dirty variant above."""
     snapshot = EnvironmentSnapshot(git=_git_state(adds=0, dels=0, files=(), ahead=2))
     by_id = {r.row_id: r for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows}
-    assert by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Push ↑2"
+    assert by_id[ENV_ROW_COMMIT_PUSH].primary_text == "Push ↑2…"
 
 
 def test_changes_expansion_lists_files_with_per_file_counts():
     snapshot = EnvironmentSnapshot(git=_git_state())
     state = project_environment_section(snapshot, frozenset({ENV_ROW_CHANGES}), now=_NOW)
-    ids = [r.row_id for r in state.rows]
+    by_id = {r.row_id: r for r in state.rows}
+    ids = list(by_id)
     assert "env-file-0" in ids and "env-file-1" in ids
-    file_row = next(r for r in state.rows if r.row_id == "env-file-0")
+    file_row = by_id["env-file-0"]
     assert file_row.primary_text == "M a.py"
     assert file_row.secondary_text == "+1,200 −80"
+    # AC #1: file rows are inert (Enter does nothing) and carry no marker;
+    # "Changes" flips to the open chevron; "Review in Change Review"
+    # navigates elsewhere and carries the "…" marker.
+    assert not file_row.clickable
+    assert by_id[ENV_ROW_CHANGES].primary_text == "Changes ▾"
+    assert by_id["env-changes-review"].primary_text == "Review in Change Review …"
 
 
 def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
@@ -352,19 +401,29 @@ def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
     snapshot = EnvironmentSnapshot(git=_git_state(), pr=pr)
     collapsed = project_environment_section(snapshot, frozenset(), now=_NOW)
     by_id = {r.row_id: r for r in collapsed.rows}
-    assert by_id[ENV_ROW_PR].primary_text == "PR #2281 · Open"
-    assert by_id[ENV_ROW_CHECKS].primary_text == "1 failing check"
+    assert by_id[ENV_ROW_PR].primary_text == "PR #2281 · Open ▸"
+    assert by_id[ENV_ROW_CHECKS].primary_text == "1 failing check ▸"
     expanded = project_environment_section(
         snapshot, frozenset({ENV_ROW_PR, ENV_ROW_CHECKS}), now=_NOW)
-    expanded_ids = [r.row_id for r in expanded.rows]
+    by_id_expanded = {r.row_id: r for r in expanded.rows}
+    expanded_ids = list(by_id_expanded)
     assert ENV_ROW_PR_OPEN in expanded_ids and ENV_ROW_PR_ADD in expanded_ids
     assert ENV_ROW_CHECKS_FIX in expanded_ids
+    # AC #1: expanded rows flip the chevron, and the composer-insert rows
+    # carry the "+ " marker, distinct from the "…" navigation marker.
+    assert by_id_expanded[ENV_ROW_PR].primary_text == "PR #2281 · Open ▾"
+    assert by_id_expanded[ENV_ROW_CHECKS].primary_text == "1 failing check ▾"
+    assert by_id_expanded[ENV_ROW_PR_OPEN].primary_text == "Open in browser …"
+    assert by_id_expanded[ENV_ROW_PR_ADD].primary_text == "+ Add to chat"
+    assert by_id_expanded[ENV_ROW_CHECKS_FIX].primary_text == (
+        "+ Fix — add failure summary to chat"
+    )
 
 
 def test_detached_head_labels_and_skipped_pr():
     snapshot = EnvironmentSnapshot(git=_git_state(branch=None, detached=True, head_short="abc1234"))
     by_id = {r.row_id: r for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows}
-    assert by_id[ENV_ROW_BRANCH].primary_text == "detached @ abc1234"
+    assert by_id[ENV_ROW_BRANCH].primary_text == "detached @ abc1234 ▸"
 
 
 def test_stale_marker_survives_on_error_with_prior_data():
@@ -373,11 +432,50 @@ def test_stale_marker_survives_on_error_with_prior_data():
     assert by_id[ENV_ROW_CHANGES].status == "blocked"
 
 
+def test_stale_carries_a_text_marker_alongside_color():
+    """AC #4: color alone made "stale" indistinguishable from an error in
+    the identical hue; the projection now also carries a text marker."""
+    stale_with_secondary = EnvironmentSnapshot(git=_git_state(stale=True))
+    by_id = {
+        r.row_id: r
+        for r in project_environment_section(stale_with_secondary, frozenset(), now=_NOW).rows
+    }
+    assert by_id[ENV_ROW_CHANGES].status == "blocked"
+    assert "(stale)" in by_id[ENV_ROW_CHANGES].secondary_text
+    assert "(stale)" in by_id[ENV_ROW_BRANCH].secondary_text
+
+    fresh = EnvironmentSnapshot(git=_git_state(stale=False))
+    fresh_by_id = {
+        r.row_id: r
+        for r in project_environment_section(fresh, frozenset(), now=_NOW).rows
+    }
+    assert "(stale)" not in fresh_by_id[ENV_ROW_CHANGES].secondary_text
+    assert "(stale)" not in fresh_by_id[ENV_ROW_BRANCH].secondary_text
+
+
+def test_stale_pr_row_also_carries_the_text_marker():
+    pr = PrEnvState(
+        availability=EnvSourceAvailability.OK, number=7, title="T",
+        state="OPEN", url="https://x/pull/7", stale=True,
+    )
+    snapshot = EnvironmentSnapshot(git=_git_state(), pr=pr)
+    by_id = {
+        r.row_id: r
+        for r in project_environment_section(snapshot, frozenset(), now=_NOW).rows
+    }
+    assert by_id[ENV_ROW_PR].status == "blocked"
+    assert "(stale)" in by_id[ENV_ROW_PR].secondary_text
+
+
 def test_local_row_expansion_shows_remote_placeholder():
     snapshot = EnvironmentSnapshot(git=_git_state())
     state = project_environment_section(snapshot, frozenset({ENV_ROW_LOCAL}), now=_NOW)
+    by_id = {r.row_id: r for r in state.rows}
     texts = [r.primary_text for r in state.rows]
     assert any("Remote tldw_server" in t for t in texts)
+    assert by_id[ENV_ROW_LOCAL].primary_text == "Local ▾"
+    # AC #1: "Local instance ✓" is inert (Enter does nothing on it).
+    assert not by_id["env-local-current"].clickable
 
 
 def test_composer_payload_builders():
@@ -422,9 +520,11 @@ def test_branch_task_headline_with_ac_progress():
     snapshot = EnvironmentSnapshot(tasks=_tasks_state())
     head = project_tasks_section(snapshot, frozenset()).rows[0]
     assert head.row_id == TASKS_ROW_HEAD
-    assert head.primary_text == "task-3401 · In Progress"
+    assert head.primary_text == "task-3401 · In Progress ▸"
     assert head.secondary_text == "3/6 ACs · Video gen foundation"
     assert head.clickable
+    expanded_head = project_tasks_section(snapshot, frozenset({TASKS_ROW_HEAD})).rows[0]
+    assert expanded_head.primary_text == "task-3401 · In Progress ▾"
 
 
 def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
@@ -437,7 +537,7 @@ def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
     head = state.rows[0]
     assert head.row_id == TASKS_ROW_HEAD  # still the expand/collapse handle
     assert head.clickable
-    assert head.primary_text == "Backlog"
+    assert head.primary_text == "Backlog ▸"
     assert head.secondary_text == "2 tasks"
     assert state.summary == "3 doing · 12 todo"
     assert "in progress" not in head.primary_text
@@ -471,8 +571,12 @@ def test_tasks_summary_is_budgeted_for_the_shorter_tasks_title():
 def test_expansion_lists_entries_in_progress_first_and_add_action():
     snapshot = EnvironmentSnapshot(tasks=_tasks_state())
     rows = project_tasks_section(snapshot, frozenset({TASKS_ROW_HEAD})).rows
-    ids = [r.row_id for r in rows]
-    assert TASKS_ROW_ADD in ids
+    by_id = {r.row_id: r for r in rows}
+    assert TASKS_ROW_ADD in by_id
+    # AC #1: composer-insert marker, distinct from the expand chevron and
+    # the navigation "…"; entry rows are inert and carry no marker at all.
+    assert by_id[TASKS_ROW_ADD].primary_text == "+ Add task to chat"
+    assert by_id[TASKS_ROW_HEAD].primary_text.endswith(" ▾")
     entry_rows = [r for r in rows if r.row_id.startswith("task-entry-")]
     assert entry_rows[0].primary_text.startswith("task-3401")
     assert entry_rows[0].status == "running"

@@ -212,6 +212,7 @@ def relative_age(then: datetime | None, now: datetime) -> str:
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     RAIL_CONTENT_WIDTH_MIN,
     SECTION_TOGGLE_WIDTH,
+    SINGLE_LINE_ROW_BUDGET,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
@@ -272,22 +273,116 @@ TASKS_SUMMARY_BUDGET = (
     RAIL_CONTENT_WIDTH_MIN - len("Tasks") - SECTION_TOGGLE_WIDTH - 1
 )
 
-# TASK-31660 copy. PENDING is progress, not a claim; UNBOUND is Change
-# Review's own unbound-workspace sentence (`change_review_screen.py`'s
-# empty-state copy), split across two rail rows because the rail's body is
-# ~30-36 columns and one row's Static would wrap into an unreadable slab.
-# The second row is the load-bearing half: the whole point of the copy is
-# that an empty panel here is NOT evidence that nothing changed.
+# TASK-31660 copy, REWORDED by TASK-31664 AC#5: `git.availability is
+# UNBOUND` does not mean ONLY "no folder is bound" -- the identical
+# `workspace_roots == ()` also lands when Change Review's consent is not
+# ENABLED for an otherwise-bound folder (the common default), when the
+# consent service is absent or raises, or when every bound root got
+# skipped. "No folder is bound…" was a confident, specific, and WRONG
+# claim in the first three of those.
+#
+# Investigated whether the true cause can be told apart cheaply at the
+# seam this panel reads (`ChatScreen._console_environment_root` ->
+# `resolve_turn_execution_context(...).workspace_roots`): it cannot, for
+# the common cases. `ChangeReviewConsentService.admit_turn` returns the
+# SAME empty `ChangeReviewAdmission()` -- no ready roots, no
+# `skipped_roots` entries -- whether consent is off, the capability is
+# unavailable, or nothing is bound at all; the one sub-case that DOES
+# leave a distinguishing trace (`skipped_roots` non-empty: a bound root
+# that is still preparing/failed) is the least common of the four and is
+# not currently plumbed up to this projection. Shipping the AC-sanctioned
+# cause-agnostic fallback: name the one thing that is ALWAYS true (changes
+# are not tracked here) and point at both remediation steps -- bind AND
+# enable -- rather than asserting a cause that is wrong most of the time.
 ENV_PENDING_TEXT = "Checking workspace…"
-ENV_UNBOUND_TEXT = (
-    "No folder is bound to this conversation's workspace, "
-    "so changes are not tracked here."
+ENV_UNBOUND_TEXT = "Changes aren't tracked for this workspace."
+ENV_UNBOUND_NOTE_TEXT = (
+    "Bind a folder and enable Change Review in Settings ▸ Workspaces — "
+    "this is not a report that nothing changed."
 )
-ENV_UNBOUND_NOTE_TEXT = "This is not a report that nothing changed."
 
 
 def _git_status_class(stale: bool) -> str:
     return "blocked" if stale else ""
+
+
+# TASK-31664: trailing-marker convention. Enter on a rail row used to have
+# FIVE outcome classes that read identically -- expand-in-place, navigate
+# to another surface (in-app or the OS browser), insert text into the
+# composer draft, and no-op. `▸`/`▾` reuse the section header's own
+# collapse/expand chevron vocabulary (`GLYPH_COLLAPSED`/`GLYPH_EXPANDED` in
+# `console_inspector_section.py`), so a row's own expand affordance reads
+# in the same language the section-level chevron already does. "…" mirrors
+# Change Review's own `Commit…`/`Push…`/`Narrow…` precedent for "activating
+# this opens something else": in-app navigation and leaving to the OS
+# browser are the SAME promise from the row's point of view (this isn't
+# staying here), so both share the one marker. "+ " marks an
+# insert-into-composer action and shares nothing with the other two, so it
+# can never be mistaken for navigation. Inert rows (file rows, task
+# entries, "Local instance ✓", every expanded detail row) carry none of
+# these -- their absence IS the fourth, inert state.
+ENV_MARKER_EXPAND_COLLAPSED = "▸"
+ENV_MARKER_EXPAND_OPEN = "▾"
+ENV_MARKER_OPENS_SURFACE = "…"
+ENV_MARKER_COMPOSER_INSERT = "+ "
+
+
+def _with_expand_marker(
+    label: str,
+    row_id: str,
+    expanded: frozenset[str],
+    *,
+    budget: int = SINGLE_LINE_ROW_BUDGET,
+) -> str:
+    """Append the row-level expand/collapse chevron, ellipsizing FIRST.
+
+    The branch name is the only unbounded label among the expand-in-place
+    rows; ellipsizing here and appending the marker AFTER means the
+    terminal's own CSS `text-overflow: ellipsis` never gets a chance to
+    swallow the marker along with an overflowing label -- a marker that
+    can silently disappear on a long branch name is worse than none.
+
+    Args:
+        label: The row's own text, pre-marker.
+        row_id: This row's stable id, checked against ``expanded``.
+        expanded: Currently expanded row ids for this section.
+        budget: Columns available to the row's own text.
+
+    Returns:
+        ``label`` (ellipsized if needed) plus a trailing space and the
+        chevron matching this row's current expand state.
+    """
+    marker = ENV_MARKER_EXPAND_OPEN if row_id in expanded else ENV_MARKER_EXPAND_COLLAPSED
+    room = budget - len(marker) - 1
+    if room <= 0:
+        return marker
+    return f"{_ellipsize(label, room)} {marker}"
+
+
+def _with_surface_marker(label: str, *, budget: int = SINGLE_LINE_ROW_BUDGET) -> str:
+    """Append the "opens another surface" marker (in-app nav or the browser)."""
+    room = budget - len(ENV_MARKER_OPENS_SURFACE) - 1
+    if room <= 0:
+        return ENV_MARKER_OPENS_SURFACE
+    return f"{_ellipsize(label, room)} {ENV_MARKER_OPENS_SURFACE}"
+
+
+def _with_insert_marker(label: str) -> str:
+    """Prefix the composer-insert marker onto a fixed, short row label."""
+    return f"{ENV_MARKER_COMPOSER_INSERT}{label}"
+
+
+def _with_stale_marker(secondary_text: str, stale: bool) -> str:
+    """Give "stale" a text carrier alongside its color (TASK-31664 AC#4).
+
+    Color alone left "stale" indistinguishable from an error: it painted
+    in the identical hue ($ds-status-blocked aliases $ds-status-error).
+    """
+    if not stale:
+        return secondary_text
+    if not secondary_text:
+        return "(stale)"
+    return f"{secondary_text} (stale)"
 
 
 def _ellipsize(text: str, limit: int) -> str:
@@ -416,8 +511,11 @@ def project_environment_section(
     rows: list[InspectorSectionRow] = []
 
     rows.append(InspectorSectionRow(
-        row_id=ENV_ROW_CHANGES, primary_text="Changes",
-        secondary_text=signed_change_counts(git.adds, git.dels),
+        row_id=ENV_ROW_CHANGES,
+        primary_text=_with_expand_marker("Changes", ENV_ROW_CHANGES, expanded),
+        secondary_text=_with_stale_marker(
+            signed_change_counts(git.adds, git.dels), git.stale
+        ),
         status=status, clickable=True,
     ))
     if ENV_ROW_CHANGES in expanded:
@@ -433,12 +531,15 @@ def project_environment_section(
                 primary_text=f"… {len(git.files) - _MAX_FILE_ROWS} more — Review opens all",
             ))
         rows.append(InspectorSectionRow(
-            row_id="env-changes-review", primary_text="Review in Change Review",
+            row_id="env-changes-review",
+            primary_text=_with_surface_marker("Review in Change Review"),
             clickable=True,
         ))
 
     rows.append(InspectorSectionRow(
-        row_id=ENV_ROW_LOCAL, primary_text="Local", clickable=True,
+        row_id=ENV_ROW_LOCAL,
+        primary_text=_with_expand_marker("Local", ENV_ROW_LOCAL, expanded),
+        clickable=True,
     ))
     if ENV_ROW_LOCAL in expanded:
         rows.append(InspectorSectionRow(
@@ -450,8 +551,12 @@ def project_environment_section(
         ))
 
     rows.append(InspectorSectionRow(
-        row_id=ENV_ROW_BRANCH, primary_text=_branch_primary(git),
-        secondary_text=_branch_secondary(git), status=status, clickable=True,
+        row_id=ENV_ROW_BRANCH,
+        primary_text=_with_expand_marker(
+            _branch_primary(git), ENV_ROW_BRANCH, expanded
+        ),
+        secondary_text=_with_stale_marker(_branch_secondary(git), git.stale),
+        status=status, clickable=True,
     ))
     if ENV_ROW_BRANCH in expanded:
         rows.append(InspectorSectionRow(
@@ -470,11 +575,19 @@ def project_environment_section(
             ))
 
     if git.dirty or git.ahead:
+        # TASK-31664 AC#2: "Commit or push" performed navigation to Change
+        # Review but omitted the "…" Change Review's own destination uses
+        # (`Commit…`/`Push…`). Both variants navigate there, so both carry
+        # the marker; the dirty variant's rename bakes it in right after
+        # the verb phrase (matching this AC's own example), rather than at
+        # the very end after "· N files" -- `_with_surface_marker` is not
+        # used here because it would double the ellipsis on the dirty
+        # label.
         if git.dirty:
             count = len(git.files)
-            label = f"Commit or push · {count} file" + ("s" if count != 1 else "")
+            label = f"Review & commit… · {count} file" + ("s" if count != 1 else "")
         else:
-            label = f"Push ↑{git.ahead}"
+            label = f"Push ↑{git.ahead}…"
         rows.append(InspectorSectionRow(
             row_id=ENV_ROW_COMMIT_PUSH, primary_text=label, clickable=True,
         ))
@@ -487,8 +600,10 @@ def project_environment_section(
             secondary = f"Merged {relative_age(pr.merged_at, now)}"
         rows.append(InspectorSectionRow(
             row_id=ENV_ROW_PR,
-            primary_text=f"PR #{pr.number} · {state_label}",
-            secondary_text=secondary,
+            primary_text=_with_expand_marker(
+                f"PR #{pr.number} · {state_label}", ENV_ROW_PR, expanded
+            ),
+            secondary_text=_with_stale_marker(secondary, pr.stale),
             status="blocked" if pr.stale else "",
             clickable=True,
         ))
@@ -498,10 +613,14 @@ def project_environment_section(
                 secondary_text=signed_change_counts(pr.adds, pr.dels),
             ))
             rows.append(InspectorSectionRow(
-                row_id=ENV_ROW_PR_OPEN, primary_text="Open in browser", clickable=True,
+                row_id=ENV_ROW_PR_OPEN,
+                primary_text=_with_surface_marker("Open in browser"),
+                clickable=True,
             ))
             rows.append(InspectorSectionRow(
-                row_id=ENV_ROW_PR_ADD, primary_text="Add to chat", clickable=True,
+                row_id=ENV_ROW_PR_ADD,
+                primary_text=_with_insert_marker("Add to chat"),
+                clickable=True,
             ))
         if pr.checks:
             failing = len(pr.failing_checks)
@@ -516,7 +635,10 @@ def project_environment_section(
                 checks_primary = f"{pr.passing_count} checks passed"
                 checks_status = "done"
             rows.append(InspectorSectionRow(
-                row_id=ENV_ROW_CHECKS, primary_text=checks_primary,
+                row_id=ENV_ROW_CHECKS,
+                primary_text=_with_expand_marker(
+                    checks_primary, ENV_ROW_CHECKS, expanded
+                ),
                 secondary_text=(
                     f"{pr.passing_count} passed · {pending} pending" if failing else ""
                 ),
@@ -531,7 +653,9 @@ def project_environment_section(
                 if failing:
                     rows.append(InspectorSectionRow(
                         row_id=ENV_ROW_CHECKS_FIX,
-                        primary_text="Fix — add failure summary to chat",
+                        primary_text=_with_insert_marker(
+                            "Fix — add failure summary to chat"
+                        ),
                         clickable=True,
                     ))
 
@@ -591,7 +715,9 @@ def project_tasks_section(
         ac = f"{bt.ac_done}/{bt.ac_total} ACs · " if bt.ac_total else ""
         rows.append(InspectorSectionRow(
             row_id=TASKS_ROW_HEAD,
-            primary_text=f"task-{bt.task_id} · {bt.status}",
+            primary_text=_with_expand_marker(
+                f"task-{bt.task_id} · {bt.status}", TASKS_ROW_HEAD, expanded
+            ),
             secondary_text=f"{ac}{bt.title}",
             status=_STATUS_ROW_CLASS.get(bt.status, ""),
             clickable=True,
@@ -610,7 +736,7 @@ def project_tasks_section(
         count = len(tasks.entries)
         rows.append(InspectorSectionRow(
             row_id=TASKS_ROW_HEAD,
-            primary_text="Backlog",
+            primary_text=_with_expand_marker("Backlog", TASKS_ROW_HEAD, expanded),
             secondary_text=f"{count} task" + ("s" if count != 1 else ""),
             clickable=True,
         ))
@@ -633,7 +759,9 @@ def project_tasks_section(
             ))
         if tasks.branch_task is not None:
             rows.append(InspectorSectionRow(
-                row_id=TASKS_ROW_ADD, primary_text="Add task to chat", clickable=True,
+                row_id=TASKS_ROW_ADD,
+                primary_text=_with_insert_marker("Add task to chat"),
+                clickable=True,
             ))
     summary = (
         f"task-{tasks.branch_task.task_id} · {tasks.branch_task.status}"

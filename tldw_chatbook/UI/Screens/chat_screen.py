@@ -2346,11 +2346,32 @@ class ChatScreen(BaseAppScreen):
         Only the Environment section mounts a tail today, and its label is
         "Refresh" (task-9), so this is the panel's explicit re-fetch: it
         busts the 60s ``gh`` TTL, which is the entire point of pressing it.
+
+        TASK-31664 AC#3: the button flips to "Refreshing…" immediately, so
+        the ~12 measured seconds a fresh `gh` fetch can take are never
+        indistinguishable from a dead control. `_land_console_environment`
+        (the controller's `on_snapshot`, which fires on EVERY landing,
+        changed or not) clears it -- never armed here by the 10s automatic
+        poll, so that cadence never flickers it.
         """
         if message.section_id != ENVIRONMENT_SECTION_ID:
             return
         message.stop()
+        self._set_console_environment_refresh_busy(True)
         self._console_environment.request_refresh(include_net=True, force_net=True)
+
+    def _set_console_environment_refresh_busy(self, busy: bool) -> None:
+        """Flip the Environment section's Refresh tail to a transient
+        acknowledgment, or restore it. See ``ConsoleInspectorSection.
+        set_view_all_busy`` for why this bypasses the ordinary sync path.
+        """
+        try:
+            section = self.query_one(
+                "#console-environment-section", ConsoleInspectorSection
+            )
+        except (NoMatches, QueryError):
+            return
+        section.set_view_all_busy(busy)
 
     @on(ConsoleInspectorSection.CollapseToggled)
     def on_console_inspector_section_collapse_toggled(
@@ -8182,6 +8203,13 @@ class ChatScreen(BaseAppScreen):
                 row_id,
                 previous_row_ids,
             )
+
+        # TASK-31664 AC#3: clear any transient "Refreshing…" acknowledgment
+        # unconditionally -- this runs on EVERY landing (the controller's
+        # `on_snapshot` callback fires whether or not anything above just
+        # changed), which is exactly what makes it a truthful "a landing
+        # arrived" signal rather than a guess about which landing.
+        environment_section.set_view_all_busy(False)
 
     def _console_environment_focused_row_in_section(
         self, section_id: str
