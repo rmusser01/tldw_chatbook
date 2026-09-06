@@ -331,7 +331,7 @@ def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
     kinds: list[str] = []
     form = LibraryIngestFormState()
     screen = SimpleNamespace(
-        _library_ingest_form=form,
+        _ingest_state=SimpleNamespace(form=form),
         _invalidate_library_external_submission=Mock(),
         _disarm_library_ingest_start_confirm=Mock(),
         _disarm_library_ingest_retry_confirm=Mock(),
@@ -363,7 +363,7 @@ async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
+        (), form=screen._ingest_state.form, ingest_backend=backend["value"],
         runtime_source="server", server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})

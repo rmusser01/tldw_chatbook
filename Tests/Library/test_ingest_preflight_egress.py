@@ -326,8 +326,10 @@ def test_the_typing_debounce_forbids_probing_even_when_it_is_enabled() -> None:
 
     calls: list[tuple[str, dict]] = []
     stand_in = SimpleNamespace(
-        _library_ingest_path_debounce_timer=object(),
-        _library_ingest_form=SimpleNamespace(path="  http://10.255.255.1:8080/x  "),
+        _ingest_state=SimpleNamespace(
+            path_debounce_timer=object(),
+            form=SimpleNamespace(path="  http://10.255.255.1:8080/x  "),
+        ),
         _library_selected_row_id=LIBRARY_ROW_INGEST_MEDIA,
         _trigger_library_ingest_preflight=(
             lambda path, **kwargs: calls.append((path, kwargs))

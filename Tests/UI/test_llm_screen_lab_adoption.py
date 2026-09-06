@@ -86,6 +86,28 @@ async def _models_screen(pilot_app, *, populate_all: bool = True):
     return screen
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (140, 45)])
+async def test_snapshot_extension_keeps_launcher_primary_controls_above_fold(size):
+    app = _build_test_app()
+    async with app.run_test(size=size) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        pane = screen.query_one("#llm-view-llama-cpp")
+        for selector in (
+            "#llamacpp-start-server-button",
+            "#llamacpp-stop-server-button",
+        ):
+            button = screen.query_one(selector, Button)
+            _assert_painted_inside(app, button, pane)
+        manager = screen.query_one("#llamacpp-snapshot-manager")
+        assert manager.parent is pane
+        assert (
+            manager.region.y
+            > screen.query_one("#llamacpp-start-server-button").region.bottom
+        )
+
+
 def _app():
     """Build the test app.
 
@@ -365,6 +387,9 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
         )
         await app.push_screen(screen)
         assert await _wait_for(lambda: bool(screen.query(LLMManagementWindow)), pilot)
+        assert await _wait_for(
+            lambda: screen.query_one(LLMManagementWindow).is_mounted, pilot
+        )
         screen.query_one(LLMManagementWindow).active_view = "remote"
         assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
         accepted = _machine_snapshot(total_gib=32)
@@ -393,7 +418,8 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
         await screen.recompose()
         assert await _wait_for(
             lambda: bool(screen.query(LLMManagementWindow))
-            and screen.query_one(LLMManagementWindow) is not old_window,
+            and screen.query_one(LLMManagementWindow) is not old_window
+            and screen.query_one(LLMManagementWindow).is_mounted,
             pilot,
             attempts=500,
         )
@@ -6321,7 +6347,13 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         picker = app.screen
         picker.query_one(DirectoryNavigation).location = tmp_path
         picker.query_one("#select", Button).press()
-        assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
+        assert await _wait_for(
+            lambda: (
+                isinstance(app.screen, ModelInstallModal)
+                and bool(app.screen.query("#model-install-cancel"))
+            ),
+            pilot,
+        )
 
         modal = app.screen
         assert await _wait_for(
@@ -6345,7 +6377,13 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         picker = app.screen
         picker.query_one(DirectoryNavigation).location = tmp_path
         picker.query_one("#select", Button).press()
-        assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
+        assert await _wait_for(
+            lambda: (
+                isinstance(app.screen, ModelInstallModal)
+                and bool(app.screen.query("#model-install-confirm"))
+            ),
+            pilot,
+        )
         app.screen.query_one("#model-install-confirm", Button).press()
         assert await _wait_for(
             lambda: "4 / 8 bytes" in screen._external_operation_status,

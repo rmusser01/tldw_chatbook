@@ -58,6 +58,12 @@ class ServerClientConfig:
     retry_delay: float = 1.0
 
 
+#: Sentinel distinguishing "capabilities never probed this connection"
+#: from a probed-and-absent (``None``) result -- `get_capabilities`'s
+#: caching discipline (task-3, schedules UAT remediation ruling 5).
+_CAPABILITIES_UNSET = object()
+
+
 class SchedulingServerClient:
     """Async client that delegates scheduling operations to a notifications service.
 
@@ -82,6 +88,9 @@ class SchedulingServerClient:
         """
         self.notifications_service = notifications_service
         self.config = config or ServerClientConfig()
+        self._capabilities_cache: dict[str, Any] | None | object = (
+            _CAPABILITIES_UNSET
+        )
 
     def set_notifications_service(self, notifications_service: Any | None) -> None:
         """Inject or refresh the underlying notifications service.
@@ -91,6 +100,62 @@ class SchedulingServerClient:
                 operations, or ``None`` to disconnect the server.
         """
         self.notifications_service = notifications_service
+        # A reconnect (or a switch to a different server) may answer the
+        # capabilities probe differently -- never carry a stale verdict
+        # across it (task-3 handshake caching discipline).
+        self._capabilities_cache = _CAPABILITIES_UNSET
+
+    async def get_capabilities(self, *, force: bool = False) -> dict[str, Any] | None:
+        """Probe Scheduled Tasks automation capabilities, cached per connection.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities handshake
+        -- the PROBE construction mirrors `client.py`'s `/sync/
+        capabilities` route (`get_sync_v2_capabilities`), but that method
+        itself does not cache (it's a plain probe, called fresh each time
+        by `Sync_Interop/server_sync_service.py`). The per-connection
+        CACHING shape here instead mirrors `Prompt_Management/prompt_
+        scope_service.py`'s `_server_capabilities_cache` (fix round 1,
+        finding 3 -- corrected citation): fetched at most once per
+        connection (reset by `set_notifications_service`), so repeated
+        callers (every sync cycle) don't re-probe.
+
+        Qodo fix round (finding 1, HIGH): the cache is permanent for the
+        life of a connection, which is right for affordance-gating reads
+        but wrong for an explicit reachability probe -- a server that
+        died after a successful first probe would otherwise answer every
+        later probe from the stale cached verdict forever. ``force=True``
+        bypasses the cache READ (still writing a successful result back
+        to it, so ordinary callers keep benefiting) so
+        `SchedulingService.refresh_server_reachability` always makes a
+        real network attempt.
+
+        Args:
+            force: Skip the cached verdict and re-probe the server. Used
+                by explicit reachability checks; affordance-gating reads
+                should leave this ``False``.
+
+        Returns:
+            The parsed capabilities dict once fetched successfully (cached
+            from then on), or ``None`` when the server does not expose the
+            capabilities route at all -- a server old enough to predate
+            Scheduled Tasks automation entirely, degraded honestly here
+            instead of raised (root-causes.md #7). A transient failure
+            (timeout/5xx/other) is deliberately NOT cached and re-raises
+            (same error-mapping contract as every other method on this
+            class) -- a blip must never be permanently misread as "this
+            server is too old".
+        """
+        if not force and self._capabilities_cache is not _CAPABILITIES_UNSET:
+            return self._capabilities_cache  # type: ignore[return-value]
+        try:
+            result = await self._call_with_retry(
+                "get_scheduled_automation_capabilities", is_read=True
+            )
+        except ServerClientNotFoundError:
+            self._capabilities_cache = None
+            return None
+        self._capabilities_cache = result
+        return result
 
     @staticmethod
     def _strip_local_only_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:

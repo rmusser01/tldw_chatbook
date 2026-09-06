@@ -476,6 +476,36 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-character-portrait", Select).value,
         )
 
+    def discard_unsaved_form(self) -> None:
+        """Restore the loaded form without changing its saved identity/version."""
+
+        if self._loaded_snapshot is None:
+            return
+        fields = (
+            ("name", Input, "value"),
+            ("description", TextArea, "text"),
+            ("system-prompt", TextArea, "text"),
+            ("personality-traits", TextArea, "text"),
+            ("mode", Select, "value"),
+            ("enabled", Switch, "value"),
+            ("character-portrait", Select, "value"),
+        )
+        self._loading = True
+        try:
+            for (name, widget_type, attribute), value in zip(
+                fields, self._loaded_snapshot, strict=True
+            ):
+                setattr(
+                    self.query_one(f"#personas-editor-{name}", widget_type), attribute, value
+                )
+        finally:
+            self._loading = False
+        self._dirty_posted = False
+        self._user_touched = False
+        self.query_one("#personas-editor-validation", Static).update("")
+        for fid in self._validated_field_ids():
+            self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
+
     @on(Input.Changed)
     @on(TextArea.Changed)
     @on(Select.Changed)

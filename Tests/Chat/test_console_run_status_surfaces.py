@@ -67,6 +67,7 @@ def test_inspector_live_work_and_status_reflect_active_run():
     assert "No active work" not in rows["Live work"].value
     assert "Generating" in rows["Live work"].value
 
+
 def test_inspector_returns_to_ready_when_run_inactive():
     idle = ConsoleInspectorState.from_values(
         provider_label="llama_cpp",

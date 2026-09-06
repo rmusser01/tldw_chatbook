@@ -25,12 +25,11 @@ def test_effective_name_prefers_override_then_global_then_user():
 
 
 def test_name_validation_uses_terminal_cells_and_rejects_controls():
-    assert normalize_chat_display_name(
-        "  海の人  ", blank_means_none=False
-    ) == "海の人"
-    assert normalize_chat_display_name(
-        "👩‍🚀 Rowan", blank_means_none=False
-    ) == "👩‍🚀 Rowan"
+    assert normalize_chat_display_name("  海の人  ", blank_means_none=False) == "海の人"
+    assert (
+        normalize_chat_display_name("👩‍🚀 Rowan", blank_means_none=False)
+        == "👩‍🚀 Rowan"
+    )
     with pytest.raises(ChatDisplayNameError, match="48 terminal cells"):
         normalize_chat_display_name("界" * 25, blank_means_none=False)
     with pytest.raises(ChatDisplayNameError, match="control"):
@@ -56,15 +55,19 @@ def test_user_aliases_expand_only_once(token):
 
 def test_character_aliases_share_the_loaded_name():
     source = "{{char}}/{{character}}/{{persona}}/<CHAR> greets {{user}}"
-    assert expand_character_template(
-        source, user_name="Rowan", character_name="Alraune"
-    ) == "Alraune/Alraune/Alraune/Alraune greets Rowan"
+    assert (
+        expand_character_template(source, user_name="Rowan", character_name="Alraune")
+        == "Alraune/Alraune/Alraune/Alraune greets Rowan"
+    )
 
 
 def test_case_and_unknown_tokens_stay_literal():
-    assert expand_character_template(
-        "{{User}} {{unknown}}", user_name="Rowan", character_name="Alraune"
-    ) == "{{User}} {{unknown}}"
+    assert (
+        expand_character_template(
+            "{{User}} {{unknown}}", user_name="Rowan", character_name="Alraune"
+        )
+        == "{{User}} {{unknown}}"
+    )
 
 
 @dataclass(frozen=True)

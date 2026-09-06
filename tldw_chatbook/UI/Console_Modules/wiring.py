@@ -696,6 +696,7 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
+        notify_character_navigation=lambda message, severity: screen._notify(message, severity),
         app_instance=screen.app_instance,
         # Late-binding lambdas, not the bound methods directly -- same
         # staleness reason as `ConsoleDictationController`'s own wiring

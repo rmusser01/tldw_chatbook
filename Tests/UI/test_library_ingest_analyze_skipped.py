@@ -644,7 +644,10 @@ async def test_clear_finished_prunes_the_stale_outcome_for_a_reused_media_id(
         # Clear finished: arm, then confirm past the double-click dead zone.
         screen.query_one("#library-ingest-clear-finished", Button).press()
         await pilot.pause()
-        screen._library_ingest_clear_finished_armed_at -= 1.0
+        # (wave-5 merge) The armed-at stamp is a `LibraryIngestState` field
+        # now, not a flat screen attribute -- the screen's generated shim
+        # block was deleted in the ingest cleanup PR.
+        screen._ingest_state.clear_finished_armed_at -= 1.0
         screen.query_one("#library-ingest-clear-finished", Button).press()
         await pilot.pause()
 

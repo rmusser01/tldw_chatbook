@@ -509,6 +509,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "watchlists_collections": "WatchlistsCollectionsScreen",
         "schedules": "SchedulesWorkbench",
         "workflows": "WorkflowsScreen",
+        "meetings": "MeetingsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
         "llm": "LLMScreen",
@@ -4093,6 +4094,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-watchlists_collections", "\u23036 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
+        ("nav-meetings", "F11 Meetings"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F7 Lab"),
@@ -5474,7 +5476,7 @@ async def test_generic_reentry_returns_to_library_landing():
 
 @pytest.mark.asyncio
 async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
-    """Fourteen destinations keep full labels through the overflow control."""
+    """All destinations keep full labels through the overflow control."""
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     class TestApp(ConsolidatedCSSApp):

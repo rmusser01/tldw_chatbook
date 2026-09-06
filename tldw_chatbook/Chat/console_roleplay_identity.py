@@ -109,6 +109,7 @@ def expand_character_template(
     source: str, *, user_name: str, character_name: str
 ) -> str:
     """Expand trusted character template aliases in one non-recursive pass."""
+
     def replacement(match: re.Match[str]) -> str:
         return user_name if match.group(0) in _USER_TOKENS else character_name
 
@@ -147,8 +148,8 @@ def resolve_console_message_presentation(
         if isinstance(context.character_name, str)
         else ""
     )
-    is_character_session = (
-        context.assistant_kind == "character" and bool(raw_character_name)
+    is_character_session = context.assistant_kind == "character" and bool(
+        raw_character_name
     )
     character_display_name = sanitize_character_display_label(
         raw_character_name,

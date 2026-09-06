@@ -238,7 +238,10 @@ def _acceptance(
         queue_entry_id=None,
         frozen_authority=authority,
         resolved_destination=ConsoleResolvedDestination(
-            "openai", "model", "https://api.example.test:443", ConsoleEgressClass.UNKNOWN
+            "openai",
+            "model",
+            "https://api.example.test:443",
+            ConsoleEgressClass.UNKNOWN,
         ),
         reconstructability=ConsoleDispatchReconstructability(True, True, True, None),
         contributions=(contribution,),
@@ -331,9 +334,13 @@ def test_generic_contribution_receives_only_writer_and_committed_id_map(
         "user": "user",
         "assistant": "assistant",
     }
-    row = service.db.get_connection().execute(
-        "SELECT conversation_id, user_id, assistant_id FROM contribution_probe"
-    ).fetchone()
+    row = (
+        service.db.get_connection()
+        .execute(
+            "SELECT conversation_id, user_id, assistant_id FROM contribution_probe"
+        )
+        .fetchone()
+    )
     assert tuple(row) == (conversation_id, "user", "assistant")
     with pytest.raises(RuntimeError, match="active contribution"):
         contribution.seen_writer.execute(
@@ -349,10 +356,14 @@ def test_current_schema_trajectory_contribution_allocates_after_existing_sequenc
     tmp_path: Path,
 ) -> None:
     service, conversation_id = _service(tmp_path / "trajectory-next.sqlite")
-    schema_version = service.db.get_connection().execute(
-        "SELECT version FROM db_schema_version "
-        "WHERE schema_name = 'rag_char_chat_schema'"
-    ).fetchone()[0]
+    schema_version = (
+        service.db.get_connection()
+        .execute(
+            "SELECT version FROM db_schema_version "
+            "WHERE schema_name = 'rag_char_chat_schema'"
+        )
+        .fetchone()[0]
+    )
     assert schema_version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     _seed_trajectory_sequence(service, conversation_id, 7)
     contribution = TrajectoryContributionFixture(("library_preparation",))
@@ -364,13 +375,15 @@ def test_current_schema_trajectory_contribution_allocates_after_existing_sequenc
         )
 
     assert contribution.allocated_sequences == (8,)
-    rows = service.db.get_connection().execute(
-        "SELECT seq, event_kind, payload_json "
-        "FROM message_trajectory_metadata WHERE event_kind != 'existing'"
-    ).fetchall()
-    assert [tuple(row) for row in rows] == [
-        (8, "library_preparation", '{"version":1}')
-    ]
+    rows = (
+        service.db.get_connection()
+        .execute(
+            "SELECT seq, event_kind, payload_json "
+            "FROM message_trajectory_metadata WHERE event_kind != 'existing'"
+        )
+        .fetchall()
+    )
+    assert [tuple(row) for row in rows] == [(8, "library_preparation", '{"version":1}')]
 
 
 def test_trajectory_allocator_uses_only_the_accepted_conversation_maximum(
@@ -429,9 +442,11 @@ def test_activity_like_batch_allocates_ordered_consecutive_sequences(
             _acceptance(conversation_id, contribution),
         )
 
-    rows = service.db.get_connection().execute(
-        "SELECT seq, event_kind FROM message_trajectory_metadata ORDER BY seq"
-    ).fetchall()
+    rows = (
+        service.db.get_connection()
+        .execute("SELECT seq, event_kind FROM message_trajectory_metadata ORDER BY seq")
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         (1, "library_activity_first"),
         (2, "library_activity_second"),
@@ -460,9 +475,12 @@ def test_trajectory_allocation_rolls_back_and_next_transaction_reuses_max_plus_o
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
     rows = connection.execute(
         "SELECT seq FROM message_trajectory_metadata ORDER BY seq"
     ).fetchall()
@@ -498,9 +516,12 @@ def test_trajectory_allocator_rejects_corrupt_or_out_of_range_maxima(
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_trajectory_allocator_cannot_request_another_conversation(
@@ -515,9 +536,12 @@ def test_trajectory_allocator_cannot_request_another_conversation(
                 _acceptance(conversation_id, WrongConversationAllocatorContribution()),
             )
 
-    assert service.db.get_connection().execute(
-        "SELECT COUNT(*) FROM messages"
-    ).fetchone()[0] == 0
+    assert (
+        service.db.get_connection()
+        .execute("SELECT COUNT(*) FROM messages")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_concurrent_repositories_serialize_and_reject_second_active_owner(
@@ -581,17 +605,22 @@ def test_concurrent_repositories_serialize_and_reject_second_active_owner(
     assert isinstance(errors[0], RuntimeError)
     assert "active dispatch checkpoint" in str(errors[0])
     assert sorted(
-        first_contribution.allocated_sequences
-        + second_contribution.allocated_sequences
+        first_contribution.allocated_sequences + second_contribution.allocated_sequences
     ) == [31]
-    rows = first_service.db.get_connection().execute(
-        "SELECT seq FROM message_trajectory_metadata "
-        "WHERE event_kind LIKE 'library_activity_%' ORDER BY seq"
-    ).fetchall()
+    rows = (
+        first_service.db.get_connection()
+        .execute(
+            "SELECT seq FROM message_trajectory_metadata "
+            "WHERE event_kind LIKE 'library_activity_%' ORDER BY seq"
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [(31,)]
 
 
-def test_contribution_error_propagates_and_rolls_back_every_write(tmp_path: Path) -> None:
+def test_contribution_error_propagates_and_rolls_back_every_write(
+    tmp_path: Path,
+) -> None:
     service, conversation_id = _service(tmp_path / "rollback.sqlite")
     contribution = RecordingContribution(fail=True)
 
@@ -603,12 +632,15 @@ def test_contribution_error_propagates_and_rolls_back_every_write(tmp_path: Path
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM contribution_probe"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM contribution_probe").fetchone()[0] == 0
+    )
 
 
 def test_later_contribution_failure_rolls_back_normal_parameterized_writes(
@@ -631,12 +663,15 @@ def test_later_contribution_failure_rolls_back_normal_parameterized_writes(
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM contribution_probe"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM contribution_probe").fetchone()[0] == 0
+    )
 
 
 def test_writer_executes_parameterized_insert_many_without_exposing_a_cursor(
@@ -650,12 +685,17 @@ def test_writer_executes_parameterized_insert_many_without_exposing_a_cursor(
             _acceptance(conversation_id, BatchContribution()),
         )
 
-    assert service.db.get_connection().execute(
-        "SELECT COUNT(*) FROM contribution_probe"
-    ).fetchone()[0] == 2
+    assert (
+        service.db.get_connection()
+        .execute("SELECT COUNT(*) FROM contribution_probe")
+        .fetchone()[0]
+        == 2
+    )
 
 
-def test_contribution_protocol_exposes_no_repository_or_publication_capability() -> None:
+def test_contribution_protocol_exposes_no_repository_or_publication_capability() -> (
+    None
+):
     annotations = ConsoleTransactionContribution.write.__annotations__
 
     assert tuple(annotations) == (
@@ -698,12 +738,15 @@ def test_contribution_cannot_escape_the_caller_owned_transaction(
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM contribution_probe"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM contribution_probe").fetchone()[0] == 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -766,9 +809,12 @@ def test_writer_rejects_every_statement_outside_the_exact_insert_values_grammar(
 
     connection = service.db.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -848,7 +894,9 @@ def test_writer_accepts_exact_insert_values_grammar_with_ordinary_whitespace(
             _acceptance(conversation_id, contribution),
         )
 
-    row = service.db.get_connection().execute(
-        "SELECT value, other FROM writer_probe"
-    ).fetchone()
+    row = (
+        service.db.get_connection()
+        .execute("SELECT value, other FROM writer_probe")
+        .fetchone()
+    )
     assert tuple(row) == ("first", "second")

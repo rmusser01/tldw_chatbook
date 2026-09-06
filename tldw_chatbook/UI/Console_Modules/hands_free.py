@@ -573,6 +573,13 @@ class ConsoleHandsFreeController:
         if self._console_realtime is not None:
             self._console_realtime.controller.on_exit_request()
             return
+        owner = getattr(self.app_instance, "meeting_session_owner", None)
+        if owner is not None and getattr(owner, "is_active", False):
+            self.app_instance.notify(
+                "Meeting in progress: stop it in Meetings before using hands-free.",
+                severity="warning",
+            )
+            return
         self._enter_console_hands_free_loop(
             capture_live=self._console_dictation_state == "recording"
         )

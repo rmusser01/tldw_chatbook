@@ -92,12 +92,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: module docstring before touching any of the three constants below.
 MAX_PASS_ADDED_MODULES = 500
 
-#: Total LOC of those modules. Measured 365,692 on 2026-08-25. Headroom
-#: ~14k LOC -- deliberately under the +30k the AC requires to land in review.
-MAX_PASS_ADDED_LOC = 380_000
+#: TASK-31552: 363,740 measured after Library/Settings runtime deferral,
+#: plus ADR-097's 15,000 LOC standard slack (tightened from 380,000).
+MAX_PASS_ADDED_LOC = 378_740
 
-#: Marginal LOC cap for any single route. Measured max: library 133,517.
-MAX_SINGLE_ROUTE_ADDED_LOC = 145_000
+#: TASK-31552: Library 113,319 plus 10,000 LOC standard slack; was 145,000.
+MAX_SINGLE_ROUTE_ADDED_LOC = 123_319
 
 _CENSUS_SCRIPT = """
 import json

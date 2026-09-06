@@ -18,6 +18,7 @@ not invented.
 never ``:memory:`` -- the V1 thread-affinity lesson (Task 1's own test
 suite, carried forward here).
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -73,9 +74,7 @@ def _bridge_with_gateway(tmp_path, gateway, *, db=None):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     return bridge, db, store, session, assistant.id
 
 
@@ -116,7 +115,9 @@ def _spy_run_turn(captured):
     return spy
 
 
-def _add_note(db, run_id, *, path="a.py", header="@@ -1,1 +1,1 @@", excerpt="+x", note="n"):
+def _add_note(
+    db, run_id, *, path="a.py", header="@@ -1,1 +1,1 @@", excerpt="+x", note="n"
+):
     return db.add_change_note(
         run_id=run_id,
         root="/workspace",
@@ -472,13 +473,17 @@ def test_note_created_mid_run_is_not_stamped_at_that_runs_completion(tmp_path):
 def test_over_cap_only_included_stamped_and_second_run_delivers_the_rest(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    small_id = _add_note(db, earlier_run, path="a.py", excerpt="+small", note="small note")
+    small_id = _add_note(
+        db, earlier_run, path="a.py", excerpt="+small", note="small note"
+    )
     # Sized so its OWN entry fits comfortably under the 16 KiB default cap
     # alone (so it must deliver on a second, uncontested run), but combined
     # with the first note's entry it pushes the block over the cap (so it
     # must be excluded -- and NOT stamped -- on this run).
     big_excerpt = "x" * 16_200
-    big_id = _add_note(db, earlier_run, path="b.py", excerpt=big_excerpt, note="big note")
+    big_id = _add_note(
+        db, earlier_run, path="b.py", excerpt=big_excerpt, note="big note"
+    )
 
     # Self-check the fixture actually exercises the cap branch (this is
     # the SAME function production calls -- not a re-implementation).
@@ -513,7 +518,9 @@ def test_over_cap_only_included_stamped_and_second_run_delivers_the_rest(tmp_pat
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     ).id
     gateway2 = _ChunkGateway([["ack two."]])
-    bridge2 = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway2)
+    bridge2 = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway2
+    )
     run_id2, outcome2 = bridge2.run_reply(**_run_kwargs(session, aid2))
 
     assert outcome2.status == "done"
@@ -565,16 +572,12 @@ def test_pending_notes_participate_in_first_request_fit(tmp_path, monkeypatch):
     """A review-note rider can move the exact first request to discovery."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
-    bridge, _db, _store, session, aid = _bridge_with_gateway(
-        tmp_path, gateway, db=db
-    )
+    bridge, _db, _store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
     earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
     _add_note(db, earlier_run, note="review feedback pushes this request over")
 
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
-    monkeypatch.setattr(
-        agent_service, "catalog_schema_tokens", lambda *_a, **_k: 1
-    )
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 1)
 
     def count_messages(messages, *_args, **_kwargs):
         rendered = "\n".join(str(row.get("content", "")) for row in messages)
@@ -589,9 +592,10 @@ def test_pending_notes_participate_in_first_request_fit(tmp_path, monkeypatch):
         _run_id, outcome = bridge.run_reply(**_run_kwargs(session, aid))
 
     assert outcome.status == "done"
-    assert "## Diff feedback from the user" in captured["messages_by_call"][-1][-1][
-        "content"
-    ]
+    assert (
+        "## Diff feedback from the user"
+        in captured["messages_by_call"][-1][-1]["content"]
+    )
     assert captured["plans_by_call"][-1].offer_find_load is True
 
 
@@ -871,9 +875,7 @@ def test_mixed_kind_batch_attaches_one_block_stamps_and_discloses_all_three_kind
     file_id = _add_file_note(
         db, earlier_run, path="c.py", note="please clean this whole file"
     )
-    line_id = _add_diff_line_note(
-        db, earlier_run, path="b.py", note="fix this line"
-    )
+    line_id = _add_diff_line_note(db, earlier_run, path="b.py", note="fix this line")
 
     original_user_message = {"role": "user", "content": "hi"}
     agent_messages = [original_user_message]

@@ -155,9 +155,9 @@ def normalize_policy_read(raw_policy: object) -> ConsoleLibraryPolicyReadResult:
         A durable snapshot for a valid row, otherwise a safe Never/Blocked
         snapshot with bounded error information.
     """
-    if isinstance(raw_policy, ConsoleConversationLibraryPolicy) and _is_valid_durable_policy(
-        raw_policy
-    ):
+    if isinstance(
+        raw_policy, ConsoleConversationLibraryPolicy
+    ) and _is_valid_durable_policy(raw_policy):
         policy = raw_policy
         return ConsoleLibraryPolicyReadResult(
             snapshot=ConsoleLibraryPolicySnapshot(

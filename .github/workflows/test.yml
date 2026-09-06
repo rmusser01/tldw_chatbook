@@ -206,6 +206,13 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report
+        # The vendored tldw_profile_core package (packages/tldw_profile_core/
+        # src, mapped via pyproject package-dir) is importable only when the
+        # distribution is installed; requirements.txt alone leaves every UI
+        # shard dead at collection (ModuleNotFoundError via
+        # Sync_Interop/sync_readiness.py) — the other jobs already install
+        # the project.
+        pip install -e .
         # Install textual dev tools for better debugging
         pip install textual-dev
 

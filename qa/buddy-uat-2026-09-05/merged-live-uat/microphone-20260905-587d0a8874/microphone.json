@@ -1,0 +1,36 @@
+{
+  "run_id": "microphone-20260905-587d0a8874",
+  "child_pid": 61188,
+  "wrapper_pid": 61180,
+  "microphone_authorized": true,
+  "transcript_to_deepseek_authorized": true,
+  "audio_saved": false,
+  "audio_sent_to_provider": false,
+  "transcription_provider": "faster-whisper",
+  "source_root": "/private/tmp/chatbook-migu-dragging-20260905",
+  "recording_started": true,
+  "stop_requested_seconds": 20.02,
+  "captured_bytes": 123520,
+  "known_words_recognized": {
+    "blue": true,
+    "notebook": true,
+    "ready": true
+  },
+  "transcript_characters": 38,
+  "final_dictation_state": "idle",
+  "dictation_session_released": false,
+  "buddy_capture_states": [
+    "listening"
+  ],
+  "provider_send_accepted": true,
+  "provider_status": "completed",
+  "provider_reply_nonempty": true,
+  "sink": {
+    "outcome": "drained",
+    "bytes_fed": 68608,
+    "terminal_reason": "drained"
+  },
+  "final_buddy_state": "idle",
+  "app_exception": null,
+  "normal_config_unchanged": true
+}

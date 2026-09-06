@@ -39,7 +39,9 @@ class NotReadyGateway:
             },
         )()
 
-    async def stream_chat(self, resolution, messages, **kwargs):  # pragma: no cover - unreachable
+    async def stream_chat(
+        self, resolution, messages, **kwargs
+    ):  # pragma: no cover - unreachable
         yield ""
 
 
@@ -98,7 +100,10 @@ async def test_edit_and_resend_forks_user_sibling_and_streams_reply():
         session.id, role=ConsoleMessageRole.USER, content="original", persist=True
     )
     a1 = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="original-reply", persist=True
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original-reply",
+        persist=True,
     )
     persistence.created_messages.clear()
 
@@ -256,9 +261,7 @@ async def test_edit_and_resend_blocks_off_active_path_anchor():
     # No third sibling was forked, and no pending assistant node anywhere.
     _siblings, _index, count_after = store.siblings_at(u1.id)
     assert count_after == count_before
-    assert all(
-        m.status != "pending" for m in store.messages_for_session(session.id)
-    )
+    assert all(m.status != "pending" for m in store.messages_for_session(session.id))
     # u1 itself is untouched, and neither u1 nor the sibling gained a new
     # USER/ASSISTANT child -- `_block` only appends a SYSTEM notice under
     # the (unrelated) active leaf, same as every other block gate.
@@ -285,7 +288,9 @@ async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
-    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="original")
+    u1 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="original"
+    )
 
     async def _refuse(provider_messages):
         # 5-tuple contract: (messages, refuse, notes, skill_bindings,
@@ -306,9 +311,7 @@ async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
 
     # No pending assistant node anywhere on the active path (or off it --
     # nothing was ever created).
-    assert all(
-        m.status != "pending" for m in store.messages_for_session(session.id)
-    )
+    assert all(m.status != "pending" for m in store.messages_for_session(session.id))
 
 
 class _RecordingStreamingGateway(StreamingGateway):
@@ -410,9 +413,7 @@ async def test_edit_and_resend_blocks_attachments_on_non_vision_model(monkeypatc
     assert count == 1
     # The block appends only the SYSTEM block-row (standard _block behavior);
     # no forked USER sibling and no stuck "pending" assistant node exist.
-    assert all(
-        m.status != "pending" for m in store.messages_for_session(session.id)
-    )
+    assert all(m.status != "pending" for m in store.messages_for_session(session.id))
     active_leaf = store.get_message(store.active_leaf(session.id))
     assert active_leaf.role is ConsoleMessageRole.SYSTEM
     assert a1.id in store.active_path_message_ids(session.id)

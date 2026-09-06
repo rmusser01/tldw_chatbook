@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationCapabilities,
     ScheduledTaskAutomationDefinition,
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
@@ -643,3 +644,92 @@ async def test_reopen_forwards_target_lifecycle_and_reason(monkeypatch):
         "target_lifecycle": "configured",
         "reason": "False positive",
     }
+
+
+# -- capabilities handshake (task-3, schedules UAT remediation ruling 5) ---
+# Mirrors client.py:16269's `/sync/capabilities` precedent
+# (`get_sync_v2_capabilities`): a per-session probe whose response this
+# client must parse without crashing regardless of which automation
+# families/actions a given server happens to advertise.
+
+
+@pytest.mark.asyncio
+async def test_get_capabilities_routes_and_parses_a_realistic_response(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    # Shape mirrors the server's own `ScheduledTaskAutomationCapabilitiesResponse`
+    # (tldw_Server_API/app/api/v1/schemas/scheduled_tasks_automation_schemas.py).
+    mocked = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "family": "recurring_question",
+                    "family_availability": "available",
+                    "actions": {
+                        "run_now": {"status": "available"},
+                        "execute_tools": {
+                            "status": "planned",
+                            "reason": "recurring_question has no tool surface",
+                        },
+                    },
+                    "missing_dependencies": [],
+                    "related_capabilities": {"rag": {"status": "not_checked"}},
+                },
+                {
+                    "family": "agent_task",
+                    "family_availability": "unavailable",
+                    "actions": {
+                        "run_now": {
+                            "status": "unavailable",
+                            "reason": "agent_execution_requires_certification",
+                        },
+                    },
+                    "reason": "agent_execution_requires_certification",
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.get_scheduled_task_automation_capabilities()
+
+    assert mocked.await_args.args[:2] == (
+        "GET",
+        "/api/v1/scheduled-tasks/capabilities",
+    )
+    assert isinstance(result, ScheduledTaskAutomationCapabilities)
+    assert len(result.items) == 2
+    recurring, agent = result.items
+    assert recurring.family == "recurring_question"
+    assert recurring.family_availability == "available"
+    assert recurring.actions["run_now"].status == "available"
+    assert recurring.actions["execute_tools"].status == "planned"
+    assert agent.family_availability == "unavailable"
+    assert agent.reason == "agent_execution_requires_certification"
+
+
+def test_capabilities_schema_tolerates_an_unknown_family_and_missing_fields():
+    """The server owns the family/action vocabularies (same forward-compat
+    contract `test_definition_schema_tolerates_unknown_enum_values_and_
+    missing_policies` pins for definitions) -- a future family or a bare
+    minimum response must not break this client."""
+    capabilities = ScheduledTaskAutomationCapabilities.model_validate(
+        {
+            "items": [
+                {
+                    "family": "some_future_family",
+                    "family_availability": "degraded",
+                    "actions": {},
+                }
+            ]
+        }
+    )
+    assert capabilities.items[0].family == "some_future_family"
+    assert capabilities.items[0].actions == {}
+    assert capabilities.items[0].reason is None
+
+
+def test_capabilities_schema_defaults_to_an_empty_item_list():
+    """An empty ``{}`` response (or one missing ``items`` entirely) is a
+    valid, if useless, answer -- must not raise."""
+    capabilities = ScheduledTaskAutomationCapabilities.model_validate({})
+    assert capabilities.items == []

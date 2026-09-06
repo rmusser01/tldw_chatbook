@@ -185,6 +185,7 @@ from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
+    validate_bounded_integer,
     validate_number_range,
     validate_text_input,
     validate_url,
@@ -265,29 +266,8 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
 from ...Widgets.Settings_Widgets.tool_profiles_panel import ToolProfilesPanel
-from ...Widgets.Settings_Widgets.tool_pack_import_review import (
-    ToolPackExportReviewModal,
-    ToolPackImportOptions,
-    ToolPackImportOptionsModal,
-    ToolPackImportReviewModal,
-    ToolProfileFirstBindReviewModal,
-)
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 from ...Third_Party.textual_fspicker import Filters
-from ...Tool_Packs.activation import ToolPackActivationResult
-from ...Tool_Packs.binding import (
-    ToolProfileBindingReview,
-    ToolProfileConfirmationRequired,
-)
-from ...Tool_Packs.contracts import ToolPackError
-from ...Tool_Packs.export import ToolPackExportReview
-from ...Tool_Packs.importer import ToolPackImportReview
-from ...Tool_Packs.publication import (
-    CapturedToolPackDestination,
-    ToolPackPublicationResult,
-)
-from ...Tool_Packs.removal import ToolProfileRemovalResult
-from ...Tool_Packs.service import ToolProfileListing
 from ...Model_Artifacts.service import ArtifactRef
 from ...Model_Artifacts.store import managed_service
 from ...TTS.audio_cpp_guided_config import (
@@ -355,21 +335,6 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
-from .settings_rag_profile_adapter import (
-    activate_profile,
-    active_profile_info,
-    clone_profile_as,
-    delete_user_profile,
-    fetch_index_status,
-    get_profile_defaults,
-    index_change_pending,
-    is_first_run_state,
-    list_profiles_grouped,
-    load_rag_defaults_from_active_profile,
-    rename_user_profile,
-    save_rag_defaults_to_active_profile,
-    soft_config_warnings,
-)
 from ...RAG_Search.ingestion_indexing import (
     backfill_semantic_index,
     get_shared_rag_service,
@@ -430,12 +395,15 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
-    # Type-only: the create dialog is a shared modal imported locally at its
-    # one call site (handle_workspace_create) to avoid a real import cycle.
-    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ...Tool_Packs.contracts import ToolPackError
+    from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
+
+    # Type-only: the create dialog is a shared modal imported locally at its
+    # one call site (handle_workspace_create) to avoid a real import cycle.
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_network_defaults import SettingsNetworkTLS
 
@@ -467,6 +435,189 @@ def reset_image_generation_runtime() -> None:
     from ...Image_Generation.config import reset_image_generation_runtime as reset
 
     reset()
+
+
+# ADR-097: the adapter imports the RAG engine's package. Resolve it only
+# when its Settings category is used; these named seams remain patchable
+# by the profile-region tests and other existing consumers.
+def activate_profile(profile_id: str) -> tuple[bool, str]:
+    """Activate a RAG profile when the user requests a profile change.
+
+    Args:
+        profile_id: Identifier of the profile to activate.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import activate_profile as activate
+
+    return activate(profile_id)
+
+
+def active_profile_info() -> dict:
+    """Read the active RAG profile for its Settings presentation.
+
+    Returns:
+        Profile identifier, name, read-only state, and description.
+    """
+    from .settings_rag_profile_adapter import active_profile_info as read
+
+    return read()
+
+
+def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
+    """Clone a RAG profile after an explicit Settings action.
+
+    Args:
+        source_id: Identifier of the profile to clone.
+        new_name: Display name for the writable copy.
+
+    Returns:
+        Success flag and the new profile identifier or failure reason.
+    """
+    from .settings_rag_profile_adapter import clone_profile_as as clone
+
+    return clone(source_id, new_name)
+
+
+def delete_user_profile(profile_id: str) -> tuple[bool, str]:
+    """Delete a user RAG profile through its existing adapter.
+
+    Args:
+        profile_id: Identifier of the user profile to delete.
+
+    Returns:
+        Success flag and any fallback notice or failure reason.
+    """
+    from .settings_rag_profile_adapter import delete_user_profile as delete
+
+    return delete(profile_id)
+
+
+def fetch_index_status() -> dict:
+    """Read RAG index status only when the category requests it.
+
+    Returns:
+        Index state, document count, and provenance for the active profile.
+    """
+    from .settings_rag_profile_adapter import fetch_index_status as fetch
+
+    return fetch()
+
+
+def get_profile_defaults(profile_id: str) -> SettingsLibraryRagDefaults | None:
+    """Read defaults for the RAG profile selected in Settings.
+
+    Args:
+        profile_id: Identifier of the profile whose defaults are requested.
+
+    Returns:
+        Profile defaults, or None when the profile is missing.
+    """
+    from .settings_rag_profile_adapter import get_profile_defaults as read
+
+    return read(profile_id)
+
+
+def index_change_pending(values: SettingsLibraryRagDefaults) -> bool:
+    """Check whether staged RAG settings require reindexing.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Whether saving would change the active collection fingerprint.
+    """
+    from .settings_rag_profile_adapter import index_change_pending as pending
+
+    return pending(values)
+
+
+def is_first_run_state(info: dict, grouped: dict, index_state: str) -> bool:
+    """Resolve the RAG category's first-run presentation on demand.
+
+    Args:
+        info: Active-profile presentation facts.
+        grouped: Built-in and user profile groups.
+        index_state: Previously fetched index state for the active profile.
+
+    Returns:
+        Whether the profile and index facts describe a fresh installation.
+    """
+    from .settings_rag_profile_adapter import is_first_run_state as first_run
+
+    return first_run(info, grouped, index_state)
+
+
+def list_profiles_grouped() -> dict:
+    """List RAG profiles for their Settings picker.
+
+    Returns:
+        Name-sorted built-in and user groups plus the active profile identifier.
+    """
+    from .settings_rag_profile_adapter import list_profiles_grouped as list_profiles
+
+    return list_profiles()
+
+
+def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
+    """Load active-profile defaults when the RAG category needs them.
+
+    Returns:
+        Active-profile defaults with the current global Console settings.
+    """
+    from .settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile as load,
+    )
+
+    return load()
+
+
+def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
+    """Rename a user RAG profile after an explicit Settings action.
+
+    Args:
+        profile_id: Identifier of the user profile to rename.
+        new_name: Replacement display name.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import rename_user_profile as rename
+
+    return rename(profile_id, new_name)
+
+
+def save_rag_defaults_to_active_profile(
+    values: SettingsLibraryRagDefaults,
+) -> tuple[bool, str]:
+    """Persist RAG defaults through the existing active-profile owner.
+
+    Args:
+        values: Candidate Library/RAG defaults to persist.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import (
+        save_rag_defaults_to_active_profile as save,
+    )
+
+    return save(values)
+
+
+def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Read advisory warnings for the current RAG settings draft.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Advisory messages that do not prevent saving.
+    """
+    from .settings_rag_profile_adapter import soft_config_warnings as warnings
+
+    return warnings(values)
 
 
 class _AudioCppResultTransactionError(RuntimeError):
@@ -2623,6 +2774,8 @@ class SettingsScreen(BaseAppScreen):
     )
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
+        from ...Tool_Packs.service import ToolProfileListing
+
         super().__init__(app_instance, "settings", **kwargs)
         self._console_capture_policy = runtime_capture_policy()
         self._console_capture_status = "Global exchange capture settings are active."
@@ -2644,6 +2797,10 @@ class SettingsScreen(BaseAppScreen):
         # (GUIDED_SETTINGS_MUTATION_CATEGORIES) with a self-contained save
         # branch in action_settings_save_category.
         self._network_pending: dict[str, object] = {}
+        self._snapshot_preferences_loaded = None
+        self._snapshot_preferences_raw = None
+        self._snapshot_preferences_saving = False
+        self._snapshot_preferences_unavailable = False
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -3985,6 +4142,8 @@ class SettingsScreen(BaseAppScreen):
     )
     def _load_tool_profiles_worker(self, generation: int) -> None:
         """Capture one complete profile listing without blocking Settings."""
+        from ...Tool_Packs.service import ToolProfileListing
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             listing = ToolProfileListing(unavailable_category="service_unavailable")
@@ -4009,7 +4168,7 @@ class SettingsScreen(BaseAppScreen):
     def _apply_tool_profiles_listing(
         self,
         generation: int,
-        listing: ToolProfileListing,
+        listing: "ToolProfileListing",
     ) -> None:
         """Apply only the newest listing to the currently mounted category."""
         if generation != self._tool_profiles_listing_generation:
@@ -4058,7 +4217,7 @@ class SettingsScreen(BaseAppScreen):
         return False
 
     @staticmethod
-    def _tool_pack_failure_copy(operation: str, error: ToolPackError) -> str:
+    def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
         if operation == "export" and error.category == "publication_unsupported":
             if os.name == "nt":
@@ -4088,6 +4247,15 @@ class SettingsScreen(BaseAppScreen):
     )
     async def _tool_profile_import_flow(self) -> None:
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
+        from ...Tool_Packs.activation import ToolPackActivationResult
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.importer import ToolPackImportReview
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackImportOptions,
+            ToolPackImportOptionsModal,
+            ToolPackImportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Import failed · service_unavailable")
@@ -4187,6 +4355,16 @@ class SettingsScreen(BaseAppScreen):
         policy_digest: str | None,
     ) -> None:
         """Capture, review, and safely publish one immutable Tool Pack."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.export import ToolPackExportReview
+        from ...Tool_Packs.publication import (
+            CapturedToolPackDestination,
+            ToolPackPublicationResult,
+        )
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackExportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Export failed · service_unavailable")
@@ -4284,6 +4462,9 @@ class SettingsScreen(BaseAppScreen):
         revision: int,
     ) -> None:
         """Confirm and replace one eligible profile with its permanent tombstone."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.removal import ToolProfileRemovalResult
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Remove failed · service_unavailable")
@@ -4650,6 +4831,8 @@ class SettingsScreen(BaseAppScreen):
                     "api_settings.<provider>.api_mode",
                     "api_settings.<provider>.model_defaults.<model>",
                     "model_capabilities.models.<model>.context_window",
+                    "llamacpp_snapshots.enabled",
+                    "llamacpp_snapshots.keep_count",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
@@ -6765,7 +6948,147 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
-        return bool(draft and draft.is_dirty)
+        return bool(draft and draft.is_dirty) or (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_dirty()
+        )
+
+    _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
+        "Snapshot preferences unavailable. In Advanced Config, correct "
+        "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Revert."
+    )
+
+    def _snapshot_preferences_dirty(self) -> bool:
+        loaded = getattr(self, "_snapshot_preferences_loaded", None)
+        return loaded is not None and self._snapshot_preferences_raw != (
+            loaded.enabled,
+            str(loaded.keep_count),
+        )
+
+    @on(Input.Changed, "#settings-snapshot-keep")
+    @on(Checkbox.Changed, "#settings-snapshot-enabled")
+    def _snapshot_preferences_changed(self, event) -> None:
+        event.stop()
+        self._snapshot_preferences_raw = (
+            self.query_one("#settings-snapshot-enabled", Checkbox).value,
+            self.query_one("#settings-snapshot-keep", Input).value,
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _save_snapshot_preferences_draft(
+        self, raw, expected, provider_dirty
+    ) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        try:
+            value = snapshot_preferences.SnapshotPreferences(
+                enabled=raw[0],
+                keep_count=validate_bounded_integer(raw[1], minimum=1, maximum=1000),
+            )
+            saved = await asyncio.to_thread(
+                snapshot_preferences.save_snapshot_preferences, value, expected=expected
+            )
+            if not saved:
+                raise ValueError("save failed")
+            self._snapshot_preferences_loaded = value
+            unchanged = self._snapshot_preferences_raw == raw
+            if self.is_mounted:
+                # Input.Changed may still be queued after the visible value changed.
+                unchanged = (
+                    unchanged
+                    and all(
+                        widget.value == raw[1]
+                        for widget in self.query("#settings-snapshot-keep")
+                    )
+                    and all(
+                        widget.value == raw[0]
+                        for widget in self.query("#settings-snapshot-enabled")
+                    )
+                )
+            if unchanged:
+                self._snapshot_preferences_raw = (value.enabled, str(value.keep_count))
+                if self.is_mounted:
+                    with self.prevent(Input.Changed, Checkbox.Changed):
+                        for widget in self.query("#settings-snapshot-keep"):
+                            widget.value = str(value.keep_count)
+                        for widget in self.query("#settings-snapshot-enabled"):
+                            widget.value = value.enabled
+            message = (
+                "Snapshot preferences saved. Enable/disable applies on next launch."
+            )
+            if provider_dirty:
+                message = "Snapshot preferences saved separately. Provider changes have their own Save result."
+            self._set_static_text("#settings-snapshot-result", message)
+            if (
+                provider_dirty
+                and self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                # Resume the existing provider workflow only when this pair settled.
+                self._snapshot_preferences_saving = False
+                if unchanged:
+                    self.action_settings_save_category(allow_text_entry_focus=True)
+            self.app.notify(message, severity="information")
+        except snapshot_preferences.SnapshotPreferencesConflict:
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Preferences changed elsewhere. Use Revert to reload before Save.",
+            )
+            self.app.notify(
+                "Snapshot preferences changed elsewhere; Revert before Save.",
+                severity="warning",
+            )
+        except (ValueError, OSError):
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Not saved. Keep count must be 1–1000; check config access.",
+            )
+        finally:
+            self._snapshot_preferences_saving = False
+            if self.is_mounted:
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _revert_snapshot_preferences(self) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        try:
+            loaded = await asyncio.to_thread(
+                snapshot_preferences.load_snapshot_preferences
+            )
+        except (ValueError, OSError):
+            loaded = None
+        self._snapshot_preferences_loaded = loaded
+        self._snapshot_preferences_unavailable = loaded is None
+        self._snapshot_preferences_raw = (
+            (loaded.enabled, str(loaded.keep_count)) if loaded else (False, "")
+        )
+        if self.is_mounted:
+            try:
+                with self.prevent(Input.Changed, Checkbox.Changed):
+                    self.query_one(
+                        "#settings-snapshot-enabled", Checkbox
+                    ).value = self._snapshot_preferences_raw[0]
+                    self.query_one(
+                        "#settings-snapshot-keep", Input
+                    ).value = self._snapshot_preferences_raw[1]
+                self.query_one("#settings-snapshot-enabled", Checkbox).disabled = (
+                    loaded is None
+                )
+                self.query_one("#settings-snapshot-keep", Input).disabled = (
+                    loaded is None
+                )
+                self._set_static_text(
+                    "#settings-snapshot-result",
+                    "Snapshot preferences reloaded."
+                    if loaded
+                    else self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY,
+                )
+            except QueryError:
+                pass
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     # ------------------------------------------------------------------
     # Video Gen (task-3401.12): draft/dirty editing + Save/Revert, mirroring
@@ -7304,6 +7627,13 @@ class SettingsScreen(BaseAppScreen):
                 continue
             button.disabled = not actions_enabled
             button.label = self._guided_action_label(base, dirty=dirty)
+            if (
+                selector == "#settings-revert-category"
+                and category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+            ):
+                button.disabled = False
+                button.label = "Revert (r) — reload preferences"
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -14063,6 +14393,30 @@ class SettingsScreen(BaseAppScreen):
             else "api_settings.<provider>"
         )
         field_id = self._active_settings_field_id
+        if field_id in {"settings-snapshot-enabled", "settings-snapshot-keep"}:
+            enabled = field_id == "settings-snapshot-enabled"
+            return (
+                (
+                    "Focused setting",
+                    "Prompt-cache snapshots" if enabled else "Snapshot keep count",
+                ),
+                (
+                    "Purpose",
+                    "Enable/disable applies on next launch."
+                    if enabled
+                    else "Keep the newest snapshots across all models; lower counts apply after the next successful Save.",
+                ),
+                (
+                    "Saved as",
+                    "llamacpp_snapshots.enabled"
+                    if enabled
+                    else "llamacpp_snapshots.keep_count",
+                ),
+                (
+                    "Validation",
+                    "On or Off" if enabled else "whole number from 1 to 1000",
+                ),
+            )
         if field_id == "settings-provider-value":
             return (
                 ("Focused setting", "Provider"),
@@ -15034,6 +15388,29 @@ class SettingsScreen(BaseAppScreen):
                     yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        if self._snapshot_preferences_loaded is None:
+            try:
+                self._snapshot_preferences_loaded = (
+                    snapshot_preferences.load_snapshot_preferences()
+                )
+            except (ValueError, OSError):
+                self._snapshot_preferences_loaded = None
+            self._snapshot_preferences_unavailable = (
+                self._snapshot_preferences_loaded is None
+            )
+            self._snapshot_preferences_raw = (
+                (
+                    self._snapshot_preferences_loaded.enabled,
+                    str(self._snapshot_preferences_loaded.keep_count),
+                )
+                if self._snapshot_preferences_loaded
+                else (False, "")
+            )
+            self.call_after_refresh(self._update_guided_action_widgets)
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_display_setting_values()
         provider = str(values["provider"])
@@ -15048,6 +15425,43 @@ class SettingsScreen(BaseAppScreen):
         )
         provider_card.disabled = self._vllm_default_recovery() is not None
         with provider_card:
+            with Collapsible(
+                title="Prompt-cache snapshots",
+                collapsed=True,
+                id="settings-snapshot-controls",
+            ):
+                yield Static(
+                    "Save processed context to reuse later. Restoring does not change your conversations.",
+                    classes="settings-help-copy",
+                )
+                yield Static(
+                    "Enable/disable applies on next launch.",
+                    id="settings-snapshot-launch-scope",
+                    classes="settings-help-copy",
+                )
+                yield Checkbox(
+                    "Enable snapshots",
+                    value=self._snapshot_preferences_raw[0],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-enabled",
+                )
+                yield Static(
+                    "Keep count (1–1000, across all models)",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    self._snapshot_preferences_raw[1],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-keep",
+                    type="integer",
+                )
+                yield Static(
+                    self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
+                    if self._snapshot_preferences_unavailable
+                    else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
+                    id="settings-snapshot-result",
+                    classes="settings-help-copy",
+                )
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -19504,6 +19918,13 @@ class SettingsScreen(BaseAppScreen):
                 summary.category is SettingsCategoryId.PROVIDERS_MODELS
                 and self._vllm_default_recovery() is not None
             )
+            if (
+                summary.category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+                and self._vllm_default_recovery() is None
+            ):
+                revert_button.disabled = False
+                revert_button.label = "Revert (r) — reload preferences"
             yield revert_button
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
@@ -22873,6 +23294,16 @@ class SettingsScreen(BaseAppScreen):
         profile_id: str | None,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
+        from ...Tool_Packs.binding import (
+            ToolProfileBindingReview,
+            ToolProfileConfirmationRequired,
+        )
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.service import ToolProfileListing
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolProfileFirstBindReviewModal,
+        )
+
         intended = WorkspaceAssistantDefaults(
             assistant_kind="persona",
             assistant_id=persona_id,
@@ -26045,6 +26476,22 @@ class SettingsScreen(BaseAppScreen):
             panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
+            if self._snapshot_preferences_saving:
+                return
+            if self._snapshot_preferences_dirty():
+                self._snapshot_preferences_saving = True
+                draft = self._settings_drafts.get(category)
+                self.run_worker(
+                    self._save_snapshot_preferences_draft(
+                        self._snapshot_preferences_raw,
+                        self._snapshot_preferences_loaded,
+                        bool(draft and draft.is_dirty),
+                    ),
+                    group="settings-snapshot-save",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
             current_provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
@@ -26850,6 +27297,18 @@ class SettingsScreen(BaseAppScreen):
                 "Raw CLI unlock save is still in progress.", severity="warning"
             )
             return
+        if (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_unavailable
+            and not self._category_has_unsaved_changes(category)
+        ):
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(
@@ -26967,6 +27426,12 @@ class SettingsScreen(BaseAppScreen):
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
             values = self._provider_setting_values()
             try:
                 provider = str(values["provider"])

@@ -361,6 +361,105 @@ class SchedulingService:
         #: the periodic ~30-minute reload (task-18937). Kept optional and
         #: exception-guarded: a broken callback must never fail the mutation.
         self.on_queue_changed = on_queue_changed
+        #: task-3 (schedules UAT remediation ruling 4): whether the last
+        #: `refresh_server_reachability` probe actually reached the
+        #: configured server. Tri-state: `None` (never probed yet) is
+        #: NOT the same as `False` (a probe ran and failed) -- final
+        #: review finding 2: the workbench header used to read the old
+        #: two-state default (`False`) as "confirmed unreachable" during
+        #: the on-mount probe's still-pending window and asserted a
+        #: negative network fact nothing had established, the same class
+        #: of dishonesty ruling 4 targeted, inverted. `_server_available`
+        #: (`bool(...)`-wrapped, so `None` still reads as unavailable --
+        #: "until a probe has succeeded, the option must not be offered",
+        #: root-causes.md #5) and `transfer_refusal` both still refuse on
+        #: anything falsy; only the HEADER'S DISPLAY COPY needs to tell
+        #: "haven't checked" apart from "checked and failed".
+        self._server_reachable: bool | None = None
+        #: Whether the LAST `refresh_server_reachability` probe hit a
+        #: policy denial or a genuine 401/403 from the server -- final
+        #: review finding 7: distinct from `server_reachable` itself, so
+        #: a caller can say "permission denied", not "not reachable".
+        self._server_permission_denied = False
+
+    async def refresh_server_reachability(self) -> bool:
+        """Probe the configured server for actual reachability.
+
+        task-3 (schedules UAT remediation ruling 4): reuses the
+        capabilities handshake's own round trip (`SchedulingServerClient.
+        get_capabilities`, ruling 5) as the reachability probe rather than
+        a second one -- any response (capabilities present, a clean
+        "route absent" answer, OR a 4xx refusal) proves the server is
+        actually there; only an exception that never got an HTTP answer
+        at all (timeout, connection refused, 5xx, or no client configured)
+        means it is not. The probe always bypasses the capabilities cache
+        (`force=True`) so a server that dies after an earlier successful
+        probe is caught on the next explicit check instead of answering
+        forever from a stale cached verdict (Qodo fix round, finding 1
+        pin (a)).
+
+        Qodo fix round (finding 1, HIGH -- ruling reversal over the prior
+        "final review finding 7" text below): `get_capabilities` is
+        `_enforce`-gated on the AUTOMATIONS list permission (`scheduler.
+        automations.list.server`), a permission unrelated to reminder
+        transfer. Two distinct failure shapes hit this gate differently:
+
+        * `ServerClientPolicyError` -- a local runtime-policy gate that
+          refuses BEFORE any network attempt. No round trip happened, so
+          this establishes nothing new either way; `server_reachable` is
+          left AT WHATEVER IT ALREADY WAS.
+        * `ServerClientValidationError` (a genuine 401/403/4xx) -- the
+          server ACTUALLY ANSWERED and refused. That answer IS proof of
+          network reachability (a reminder transfer needs no
+          automations-list permission at all -- the scenario that
+          reversed this call), so `server_reachable` is set `True`
+          outright, even overriding a prior `False`/`None` (pin (b)).
+
+        Either way `server_permission_denied` records the distinct
+        signal, so per-action copy can refuse with permission wording
+        instead of misreporting "server not reachable".
+
+        Returns:
+            The freshly probed reachability, also cached on ``self`` for
+            `_server_available`/`transfer_refusal` (sync callers) to read.
+        """
+        if (
+            self.server_client is None
+            or getattr(self.server_client, "notifications_service", None) is None
+        ):
+            self._server_reachable = False
+            self._server_permission_denied = False
+            return False
+        try:
+            await self.server_client.get_capabilities(force=True)
+        except ServerClientPolicyError:
+            self._server_permission_denied = True
+            return bool(self._server_reachable)
+        except ServerClientValidationError:
+            self._server_reachable = True
+            self._server_permission_denied = True
+            return True
+        except Exception:  # noqa: BLE001
+            self._server_reachable = False
+            self._server_permission_denied = False
+            return False
+        self._server_reachable = True
+        self._server_permission_denied = False
+        return True
+
+    @property
+    def server_reachable(self) -> bool | None:
+        """The last `refresh_server_reachability` probe's answer, or
+        `None` when no probe has run yet (final review finding 2)."""
+        return self._server_reachable
+
+    @property
+    def server_permission_denied(self) -> bool:
+        """Whether the last `refresh_server_reachability` probe hit a
+        policy denial or a 401/403 (final review finding 7) -- read this
+        BEFORE treating a falsy `server_reachable` as "not reachable";
+        when this is `True` the honest copy names permissions instead."""
+        return self._server_permission_denied
 
     def _notify_queue_changed(self) -> None:
         """Invoke the queue-changed callback, tolerating a broken one.
@@ -1114,6 +1213,25 @@ class SchedulingService:
             or getattr(self.server_client, "notifications_service", None) is None
         ):
             return "No server connection is configured."
+        # task-3 (schedules UAT remediation ruling 4): the check above is
+        # CONFIGUREDNESS, not connectivity -- it passes for any
+        # syntactically valid server profile whether or not anything ever
+        # answered it (root-causes.md #5's exact bug). `server_reachable`
+        # is the actual probe's answer (`refresh_server_reachability`);
+        # a configured-but-unreachable server gets its OWN reason, distinct
+        # from "not configured at all" (ruling 4's UX-grammar note).
+        if not self.server_reachable:
+            # Final review finding 7: a policy denial / 401 / 403 on the
+            # reachability probe is a PERMISSION problem, not a network
+            # one -- the copy must not tell the user "not reachable" when
+            # the server (or the local policy gate) is right there and
+            # simply refused this specific request.
+            if self.server_permission_denied:
+                return (
+                    "Permission denied while checking the server -- ask "
+                    "an admin about the automations permission."
+                )
+            return "The configured server is not reachable right now."
 
         owner_id = str(row.get("owner_id") or "")
         if direction == "to_server":

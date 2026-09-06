@@ -11155,7 +11155,25 @@ class TestCommandPaletteReentry:
         # path (app.py's _push_first_run_wizard) already do -- without it,
         # a truthy exit_route off the Summary step's "Start chatting" button is
         # silently dropped instead of navigating anywhere.
-        assert callback == screen.app.handle_first_run_wizard_result
+        # TASK-31226: the re-run wires a cancel-stays-put adapter around
+        # that same handler, so cancelling a re-run returns to Settings
+        # instead of routing to the Console (the boot wizard's cancel now
+        # lands there).
+        assert callable(callback)
+        probe = MagicMock()
+        screen.app._handle_first_run_wizard_result.reset_mock()
+        callback(None)
+        screen.app._handle_first_run_wizard_result.assert_called_once_with(
+            None, cancel_to_console=False
+        )
+        # Dict results flow through the shared handler unchanged.
+        screen.app._handle_first_run_wizard_result.reset_mock()
+        from tldw_chatbook.Constants import TAB_CHAT as _TAB_CHAT
+
+        callback({"completed": True, "exit_route": _TAB_CHAT})
+        screen.app._handle_first_run_wizard_result.assert_called_once_with(
+            {"completed": True, "exit_route": _TAB_CHAT}, cancel_to_console=False
+        )
 
     def test_unknown_action_id_is_a_no_op(self):
         from tldw_chatbook.app import SetupWizardProvider

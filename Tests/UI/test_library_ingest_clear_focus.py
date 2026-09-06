@@ -106,7 +106,7 @@ async def _stage_warning_preflight(screen, pilot) -> None:
     """Put the canvas in the live walk's pre-Clear shape and settle it."""
     path_input = screen.query_one("#library-ingest-path", Input)
     path_input.value = _STAGED_PATH
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = _STAGED_PATH
     form.preflight = _staged_preflight(_STAGED_PATH)
     form.preflight_checking = False
@@ -161,7 +161,7 @@ async def test_clear_then_slash_lands_in_the_path_field_looped(monkeypatch):
 
             # Reset for the next pass without leaving Ingest mode.
             path_input.value = ""
-            screen._library_ingest_form.path = ""
+            screen._ingest_state.form.path = ""
             await pilot.pause()
 
 
@@ -257,12 +257,12 @@ async def test_typing_into_the_pre_recompose_field_after_clear_survives(
                 f"Clear were swallowed by the recompose "
                 f"(field={path_input.value!r})"
             )
-            assert screen._library_ingest_form.path == "/e", (
+            assert screen._ingest_state.form.path == "/e", (
                 f"iteration {iteration}: the form echo lost the typed text"
             )
 
             path_input.value = ""
-            screen._library_ingest_form.path = ""
+            screen._ingest_state.form.path = ""
             await pilot.pause()
 
 
@@ -291,7 +291,7 @@ async def test_clear_keeps_generic_options_reachable_for_next_generic_path(
         await pilot.pause()
 
         generic_path = "/tmp/next-note.txt"
-        form = screen._library_ingest_form
+        form = screen._ingest_state.form
         form.path = generic_path
         form.preflight = PreflightResult(
             type_groups={"generic": [generic_path]},

@@ -132,3 +132,11 @@ Live provider/playback records above predate these review-only follow-ups and
 retain their original source digests. TASK-31585 remains In Progress for the
 explicit native-dragging and OpenAI realtime UAT gaps; the user authorized
 review and merge of the verified fixes with those follow-ups recorded.
+
+## Fresh current-branch voice/provider follow-up
+
+[The 2026-09-05 follow-up](live-voice-followup/README.md) records fresh DeepSeek
+completion and Stop after response text, plus real Kokoro drain and terminal
+ownership cleanup at `64ce47a04f8b541818270c10c1a6f93b83a18080`. Launch/exit
+receipts bind source revision and dirty state to wrapper/child PIDs. Physical
+microphone and OpenAI realtime were not exercised; AC9 remains open.

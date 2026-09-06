@@ -1114,11 +1114,7 @@ def test_console_readiness_rejects_invalid_structured_states(overrides):
                 model=None,
                 base_url="http://127.0.0.1:11434",
             ),
-            {
-                "api_settings": {
-                    "ollama": {"api_url": "http://127.0.0.1:11434"}
-                }
-            },
+            {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
             {},
             ProviderTestEvidence(
                 _readiness_identity(), "unreachable", (), "connection_refused"
@@ -1133,11 +1129,7 @@ def test_console_readiness_rejects_invalid_structured_states(overrides):
                 model="model",
                 base_url="http://127.0.0.1:11434",
             ),
-            {
-                "api_settings": {
-                    "ollama": {"api_url": "http://127.0.0.1:11434"}
-                }
-            },
+            {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
             {},
             ProviderTestEvidence(
                 _readiness_identity(), "unreachable", (), "connection_refused"
@@ -1161,11 +1153,7 @@ def test_console_readiness_rejects_invalid_structured_states(overrides):
                 model="model",
                 base_url="http://127.0.0.1:11434",
             ),
-            {
-                "api_settings": {
-                    "ollama": {"api_url": "http://127.0.0.1:11434"}
-                }
-            },
+            {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
             {},
             None,
             None,
@@ -1259,9 +1247,7 @@ def test_canonical_missing_credential_wins_over_exact_identity_evidence():
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(provider="openai", model="gpt-test"),
         app_config={
-            "api_settings": {
-                "openai": {"api_key_env_var": "ABSENT_OPENAI_TEST_KEY"}
-            }
+            "api_settings": {"openai": {"api_key_env_var": "ABSENT_OPENAI_TEST_KEY"}}
         },
         environ={},
         evidence=evidence,
@@ -1293,9 +1279,7 @@ def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
             model="model",
             base_url="http://127.0.0.1:11434",
         ),
-        app_config={
-            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
-        },
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
         evidence=evidence,
         current_identity=identity,
@@ -1328,9 +1312,7 @@ def test_stale_verification_is_typed_without_echoing_old_endpoint():
             model="model",
             base_url="http://127.0.0.1:11434",
         ),
-        app_config={
-            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
-        },
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
         evidence=evidence,
         current_identity=current,
@@ -1357,9 +1339,7 @@ def test_stale_endpoint_only_evidence_does_not_claim_a_generation_test_changed()
             model="model",
             base_url="http://127.0.0.1:11434",
         ),
-        app_config={
-            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
-        },
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
         evidence=evidence,
         current_identity=current,
@@ -1429,9 +1409,7 @@ def test_active_run_blocks_otherwise_ready_settings():
             model="model",
             base_url="http://127.0.0.1:11434",
         ),
-        app_config={
-            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
-        },
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
         active_run=True,
     )
@@ -2797,7 +2775,9 @@ async def test_settings_active_compaction_return_preserves_progress_and_focus() 
 
 
 @pytest.mark.asyncio
-async def test_settings_compaction_updates_completion_blocker_for_full_lifecycle() -> None:
+async def test_settings_compaction_updates_completion_blocker_for_full_lifecycle() -> (
+    None
+):
     """Completion is blocked as soon as compaction starts and restored when settled."""
     app = _SettingsCloseHarness()
     entered = asyncio.Event()
@@ -3093,6 +3073,7 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 
             async def _resolved_thinking_policy() -> str:
                 return "auto"
+
             production_opener = SimpleNamespace(
                 app=app,
                 _session=SimpleNamespace(

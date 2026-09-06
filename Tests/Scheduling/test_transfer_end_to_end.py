@@ -197,6 +197,10 @@ async def test_local_reminder_transfer_to_server(tmp_path):
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     row_id = db.create_reminder_task(
         owner_id="local",
@@ -253,6 +257,10 @@ async def test_local_definition_transfer_to_server_uses_server_vocabulary(tmp_pa
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     def_id = db.create_automation_definition(
         "local",
@@ -312,6 +320,10 @@ async def test_server_definition_release_to_local(tmp_path, monkeypatch):
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     mirror_id = db.create_automation_definition(
         "server:1",
@@ -366,6 +378,10 @@ async def test_crash_recovery_reminder_ambiguous_timeout(tmp_path):
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     row_id = db.create_reminder_task(
         owner_id="local",
@@ -417,6 +433,10 @@ async def test_failed_definition_transfer_retries_and_succeeds(tmp_path):
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     def_id = db.create_automation_definition(
         "local",
@@ -479,6 +499,10 @@ async def test_offline_cancel_of_a_release_reaches_the_server_never(tmp_path):
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     mirror_id = db.create_reminder_task(
         owner_id="server:1",
@@ -520,6 +544,10 @@ async def test_offline_cancel_of_a_to_server_move_reaches_the_server_never(tmp_p
     svc = SchedulingService(
         db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
     )
+    # task-3 (ruling 4): pre-seed the reachability probe verdict this
+    # always-connected fake implies -- see test_scheduling_service.py's
+    # `_transfer_service` for the same precedent.
+    svc._server_reachable = True
 
     row_id = db.create_reminder_task(
         owner_id="local",

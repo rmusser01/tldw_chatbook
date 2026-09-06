@@ -150,6 +150,13 @@ jobs:
         id: check
         env:
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          # `python Packaging/check_pypi_release.py` puts Packaging/ (not the
+          # repo root) at sys.path[0], and the job never installs the package,
+          # so the script's `from tldw_chatbook.Utils...` import needs the repo
+          # root on PYTHONPATH. Broke main's first two publish runs on
+          # 2026-09-04; hotfixed there as 943a0ef1f4 — this is that same line,
+          # backported so the dev→main merge hunk resolves without losing it.
+          PYTHONPATH: ${{ github.workspace }}
         run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"
 
   publish-pypi:

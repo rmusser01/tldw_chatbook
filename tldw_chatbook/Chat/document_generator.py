@@ -167,9 +167,7 @@ class DocumentGenerator:
                 "role": msg.get("role") or msg.get("sender", "unknown"),
                 "content": msg.get("content", ""),
                 "timestamp": msg.get("timestamp", ""),
-                "assistant_generation_state": msg.get(
-                    "assistant_generation_state"
-                ),
+                "assistant_generation_state": msg.get("assistant_generation_state"),
             }
             for msg in messages
         ]
@@ -250,9 +248,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.timeline_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:
@@ -348,9 +344,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.study_guide_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:
@@ -446,9 +440,7 @@ class DocumentGenerator:
 
         # Build prompt
         system_prompt = get_internal_prompt("document_generation.briefing_system")
-        user_prompt = (
-            f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
-        )
+        user_prompt = f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
 
         # Call LLM
         try:

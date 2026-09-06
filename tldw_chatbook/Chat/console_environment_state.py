@@ -11,7 +11,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from tldw_chatbook.Chat import console_rail_state
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+# Preserve callers of the original display-state exports without making the
+# lightweight rail identifiers depend on this first-open projection module.
+ENVIRONMENT_SECTION_ID = console_rail_state.ENVIRONMENT_SECTION_ID
+TASKS_SECTION_ID = console_rail_state.TASKS_SECTION_ID
 
 
 class EnvSourceAvailability(str, Enum):
@@ -162,9 +168,6 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
-
-ENVIRONMENT_SECTION_ID = "environment"
-TASKS_SECTION_ID = "tasks"
 
 ENV_ROW_CHANGES = "env-changes"
 ENV_ROW_ERROR = "env-error"

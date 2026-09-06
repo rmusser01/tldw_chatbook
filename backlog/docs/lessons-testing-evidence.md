@@ -9,6 +9,48 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Index-plan guards must accept the names the DDL actually uses
+
+**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
+no-statistics query-plan assertions passed for the Keyword indexes, but the
+index census guard rejected every pin because its evidence extractor only
+recognized `idx_` and `uq_` names. The schema used descriptive
+`character_conversation_search_*` names. A synthetic positive/negative pair
+reproduced the missing positive pin while preserving rejection of `not in`.
+Accepting standalone identifier literals fixed the guard without changing the
+DDL or labeling new indexes as pre-convention. The same qualification found
+that the schema allowlist scanner omitted the new dedicated DDL module; the
+live-schema parity test caught all five missing tables.
+
+**What to do.** Run both live-schema parity and index-plan inventory checks
+when moving DDL into a dedicated module. Register its source explicitly, keep
+real query-plan assertions, and verify a guard's name recognition before
+discarding evidence or weakening its inventory policy.
+
+## CSS ratchet paydown must preserve inherited subjects and specificity
+
+**PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a
+277-versus-274 bare-type selector breach, but the first narrowed selectors
+regressed the 80-column Models and F9 paint checks. A plain button ID lost to
+the launcher disabled-border rule and clipped Restore. Checkbox and
+CollapsibleTitle both inherit Static; excluding them lost height/wrapping
+behavior and left the focused checkbox text outside the painted viewport.
+Preserving button ancestor specificity and explicitly targeting those inherited
+subjects restored the checks without raising the boot budget.
+
+**What to do.** Pair parsed-selector census checks with actual small-terminal
+paint checks. When replacing a type selector, inspect its subclasses and preserve
+the relevant cascade precedence, not just the obvious direct widget instances.
+
+The same PR then inherited TASK-31450's 976/972 startup breach. A controller's
+closed-rail dispatch guard did not prevent its constructor and module imports
+from loading four Environment modules. First-use owner/projection construction
+restored 972/972, but required explicit first-open painting for a workspace-less
+panel (there is no worker result to paint it). Measure imports as well as I/O,
+and pair lazy-owner guards with a no-result first-use UI test.
+
+---
+
 ## Spend forecasts must test admitted media and durable recovery IDs
 
 **PR #2397, 2026-09-04.** The next-send estimate scanned every transcript
@@ -2106,14 +2148,40 @@ actually works: add the override to a `CSS_PATH`-bundled source file (`_navigati
 tcss` here), in the SAME tier as the rule being overridden, where ordinary
 specificity resolves it without needing `!important` at all.
 
-**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+**Sixth instance (TASK-31551 task 13, 2026-09-04, whole-screen collapse this time, not
+a single rule).** The Meetings screen's task-11 brief composed its workbench Horizontal
+with `classes="ds-panel destination-workbench"` — the identical two-class combination
+nine sibling screens (Artifacts, Personas, Watchlists, Workflows, MCP, ACP, Skills,
+Settings, Evals) already use, each paired with an `#<id>-workbench { height: 1fr; ... }`
+ID-scoped override in `css/components/_agentic_terminal.tcss` that beats `.ds-panel`'s
+own `height: auto; min-height: 3`. Task 11's brief never asked for that override for
+`#meetings-workbench`, and every one of its mounted `Tests/UI/test_meetings_screen.py`
+pilots (`_build_test_app`, no real `CSS_PATH`) stayed green through Tasks 8-11 and
+review, including tests that `pilot.click("#meetings-start")` at a hard-coded
+coordinate. Live-driving the real app under tmux for task 13 showed why: with the real
+bundle loaded, `.ds-panel`'s `height: auto` won outright (no priority inversion needed,
+just an entirely absent override), collapsing the workbench AND both its panes to
+zero visible rows — no Select, Button, Static, or RichLog painted anywhere on screen,
+confirmed with `tmux capture-pane` showing two adjacent empty bordered boxes. The fix
+was the same one-line pattern as the other nine screens: add `#meetings-workbench` to
+the existing ID list. This is not a single missing/mis-tiered rule (instances 1-5) but
+the SAME root cause at the scale of an entire screen: a harness with no `CSS_PATH`
+cannot fail a geometry assertion that a required per-screen CSS override was never
+written, because it never applied the class-level rule that override exists to beat in
+the first place.
+
+**What to do (all six instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
 color/opacity or geometry as proof of live behavior — it can miss a rule entirely
-(instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
+(instances 1-4, 6) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
 regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
 (`color == background`, opacity-to-zero, etc.), grep for prior art
 (`Button:disabled`, `:disabled` opacity overrides already exist for MCP inspector)
 and verify with `button.styles.opacity`/`get_visual_style()` under a REAL-bundle
-harness or live tmux, not just a bare widget construction.
+harness or live tmux, not just a bare widget construction. When a new screen reuses a
+shared "workbench" class combination (`ds-panel destination-workbench` or similar),
+grep for the sibling screens' matching ID-scoped override in the same pass that adds
+the class names — the class alone renders a screen with, at best, three rows of
+content no matter how many widgets it composes.
 
 ---
 
@@ -3175,6 +3243,15 @@ or Textual will reject the duplicate even when the route signature matches.
 ---
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
+
+**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+pixel-migu seed, resource, and installed-distribution checks passed after a
+rebase, but the required generated-artifact job still failed: two new startup
+diagnostics in `app.py` and `config.py` were absent from the production
+diagnostic inventory. The missing local inventory check cost another complete
+CI cycle. Inspect added logger statements with the checker's `--statements`
+mode, regenerate the reviewed inventory, and run the derived-artifact checks
+before pushing; passing feature and packaging tests does not cover that pin.
 
 **Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
 keyword sub-legs opened SQLite directly:
@@ -11199,6 +11276,44 @@ contract, not a comparison against old ordinal data: recapture the structural
 baseline before reformatting. Fail closed for ambiguous exception headers, never
 discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
 or decorator boundary for every non-header directive.
+
+---
+
+## A hand-written JSON fixture that omits one real field can hide a 100%-reproducible crash (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** `Audio/meeting_owner.py::recover_folder()` reads a crashed meeting's
+`meeting.json`, updates a few fields, and calls
+`update_meeting_json(folder, **payload)` — a function whose first parameter is
+also named `folder`. Every meeting.json the app's own writer ever produces
+(`MeetingSession`/`meeting_owner.start()`/`stop()`) includes a `"folder"` key, so
+in production this call *always* raises
+`TypeError: update_meeting_json() got multiple values for argument 'folder'`.
+The recover button's worker is `@work(thread=True)` with Textual's default
+`exit_on_error=True`, so this single `TypeError` did not just fail the recovery —
+it took the entire app down. Both of the feature's existing `recover_folder` unit
+tests (`test_scan_and_recover_unfinished_folder`,
+`test_recover_folder_survives_missing_mixed_wav`) hand-write their own
+`meeting.json` fixture from scratch, and both happen to omit the one key
+(`"folder"`) that the real writer always includes and that triggers the crash —
+so a fully reviewed, 100%-passing feature crashed on the very first live
+recovery attempt (reproduced by `kill -9` on the running app mid-meeting,
+relaunching, and pressing Recover). It was found only by live-driving the actual
+crash → relaunch → Recover cycle in the real app under tmux, not by reading the
+diff or the passing suite.
+
+**What to do.** When a test constructs a JSON/dict fixture by hand to feed a
+function that reads a file your OWN code also writes elsewhere, do not write the
+fixture from what the function's logic *seems* to need — grep for every call
+site that actually produces that file/payload in production and copy its real
+shape (or better, round-trip through the real writer function itself) into the
+fixture. A hand-typed fixture that "looks about right" is a guessed contract,
+and the field most likely to be missing is exactly the one the code path
+under test never gets to touch precisely because the guess omitted it. For any
+`@work(thread=True)`-decorated callback that can reach unvalidated on-disk
+data (recovery, import, migration), also check whether Textual's default
+`exit_on_error=True` means a single unhandled exception there takes down the
+whole app, not just the feature — that raises the cost of an untested edge case
+from "one broken button" to "total data-loss-adjacent crash."
 ---
 
 ## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
@@ -11377,3 +11492,88 @@ the shared authority does not repair local hosts that continue to bypass it.
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
 
 **What to do.** When a change flips what an existing pin asserts (a gate, a disabled state, a focus target), the gate for that change is the WHOLE files that pin the gate — here `test_library_shell.py` and `test_library_media_side_by_side.py` — compared as failing-name sets against the base, not a `-k` subset named after the action. The 80-minute whole-file shell run is the price; run it once per PR at the review boundary, not per task. `-k` stays fine for iterating, never for the parity claim.
+
+## Covered reusable screens can still report visible
+
+PR2419 reuse integration (2026-09-05): after Console became reusable, Environment
+collectors still dispatched while covered because Textual suspension preserves
+widget `display`. A mounted regression proved four unwanted dispatches. Its first
+attempt also exposed that `Screen.is_current` includes background screens. Use
+`app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
+exercise real cover/return and retained-owner refresh, not a visibility mock.
+## Stop must drain an offloaded dispatch CAS before terminal settlement
+
+**TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the
+Console reported streaming, before the first token. The UI ended BLOCKED; its
+retained isolated SQLite database still held an empty `dispatch_started`
+assistant and checkpoint revision 2 after the matching child exited. A later
+after-text Stop passed, but that did not resolve the earlier user-facing race.
+The worker-thread CAS outlived cancellation before its result was published;
+the terminal guard mistook the accepted in-memory checkpoint for a previous
+settlement failure. Gate both before and after the real file-backed CAS, drain
+its publication before settling Stop, and verify the persisted terminal owner
+and checkpoint deletion through another connection after the worker finishes.
+Cover both direct-provider and agent pre-worker paths, repeated Stop, and
+another live session. A transcript marker read from the store is only in-memory
+evidence unless the database is checked separately.
+
+PR2428 review exposed a second instance through the real generic synchronous
+gateway: `run_coroutine_threadsafe` detached the dispatch callback from the
+cancelled stream. Shielding only the callback did not make the stream wait.
+The regression now uses that actual gateway and waits for its worker's terminal
+acknowledgement; both callback and stream drain the same assistant-owned task
+before terminal settlement.
+
+## Trace integration tests must use the production boundary factory (TASK-31714, 2026-09-05)
+
+During mounted snapshot UAT, ordinary second sends failed even without any
+snapshot operations. Existing controller tests used a hand-built append-only
+trace boundary; lower-level factory tests supplied already-correct descriptors.
+Both missed private persisted-ID annotations surviving in semantic history but
+being removed from the wire, which caused saved descriptors to become artifacts
+at the real agent boundary. A real SQLite/controller/agent/gateway test using
+`ConsoleTraceBoundaryFactory` reproduced the failure before the correction.
+The same UAT then exposed a separate tool-loop `trace_turn_unavailable` rejection
+that the custom test boundary also bypasses.
+
+Use the production factory for at least one multi-turn and tool-loop integration
+test; fake only inference. Compare native-reader reconstruction before/after a
+later turn, and keep a changed-history negative control. A completed call row or
+a mocked append boundary alone does not prove historical request reconstruction.
+
+Follow-up, TASK-31737: the real production-boundary tool test also exposed that
+response settlement is queued when the next model call begins; requiring a
+terminal `complete` row incorrectly blocked a valid `response_started` chain.
+Independent review then reproduced an old chain being admitted after a newer
+chain dispatched the identical prompt. Surface equality did not prove current
+call ownership. A failing same-surface/new-run test led to an atomic ordered
+call-boundary event and latest-call check. Use durable call order for supersession,
+not surface identity or timestamps, and exercise deferred settlement in the real
+agent path rather than forcing it synchronous in the test.
+
+
+## Built-in asset cleanup must distinguish failed return from failed commit (pixel-migu, 2026-09-05)
+
+During pixel-migu first-install review, a coordinator wrapper that committed the
+Persona and SQLite graph and then raised `RuntimeError` exposed a cleanup bug:
+the caller deleted the graph's newly published PNGs even though restart treated
+the Persona as already installed. The focused regression also exercises
+`KeyboardInterrupt` and `SystemExit`. Cleanup now checks durable graph ownership
+and retains assets when that ownership cannot be determined. A separate
+interleaved-service regression found that a losing caller needed to refresh its
+Persona JSON cache before the winning installation became selectable. A green
+rollback-only test did not cover either postcommit behavior.
+
+## A screen's own recovery dialog suspends it too (TASK-31756, 2026-09-05)
+
+The mounted Parakeet Retry/Keep draft tests reproduced a composer stuck on
+`Dictate…` even though the dialog completed. Tracing showed that opening the
+retry dialog invoked Console's suspend cleanup, discarding retained audio and
+clearing the originating session before its completion handler resumed. Tests
+that replaced `push_screen_wait` with a returned boolean never exercised this
+suspend transition.
+
+Keep recovery retention scoped to the exact owned dialog; actual navigation and
+unmount still need unconditional cleanup. Verify both choices through a mounted
+dialog, plus teardown before a late affirmative answer. The latter regression
+failed with an unwanted replay when the post-dialog session fence was removed.

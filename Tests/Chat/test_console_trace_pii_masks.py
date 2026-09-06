@@ -451,7 +451,6 @@ def test_retired_revision_uses_registered_custom_rules_then_needs_no_pattern() -
 def test_trace_artifact_runs_custom_worker_once_and_persists_only_spans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tldw_chatbook.Chat.console_trace_custom_pii as custom_pii
 
     database = CharactersRAGDB(":memory:", "trace-custom-pii-artifact-test")
     repository = ConsoleTraceRepository()
@@ -483,14 +482,16 @@ def test_trace_artifact_runs_custom_worker_once_and_persists_only_spans(
         pii_ruleset_revision_id=revision_id,
     )
     calls = 0
-    real_run = custom_pii.run_custom_pii_batch
+    from tldw_chatbook.Chat import console_trace_regex_worker as regex_worker
+
+    real_run = regex_worker.run_custom_pii_batch
 
     def counted_run(*args: object, **kwargs: object):
         nonlocal calls
         calls += 1
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(custom_pii, "run_custom_pii_batch", counted_run)
+    monkeypatch.setattr(regex_worker, "run_custom_pii_batch", counted_run)
     try:
         with database.transaction(immediate=True) as cursor:
             repository.ensure_policy(cursor, policy)

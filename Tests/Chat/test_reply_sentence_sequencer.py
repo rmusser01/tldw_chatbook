@@ -56,8 +56,8 @@ def test_flush_clears_queue_and_stops_inflight():
     seq.feed("A one. A two. A three. ")
     seq.flush()
     assert stops == [1]
-    seq.utterance_finished(ok=False)   # late completion of the stopped utterance
-    assert spoken == ["A one."]        # nothing further spoken
+    seq.utterance_finished(ok=False)  # late completion of the stopped utterance
+    assert spoken == ["A one."]  # nothing further spoken
 
 
 def test_reply_completed_flushes_final_partial_and_drains():
@@ -174,7 +174,7 @@ def test_ellipsis_is_not_a_boundary_mid_thought():
 def test_fence_delimiter_split_across_deltas_still_skips_the_fence():
     spoken = []
     seq = SentenceSequencer(speak=spoken.append, stop_speech=lambda: None)
-    seq.feed("Before.\n``")       # opening fence marker split mid-backtick-run
+    seq.feed("Before.\n``")  # opening fence marker split mid-backtick-run
     assert spoken == ["Before."]
     seq.feed("`python\nx = 1. Yes.\n``")  # closing fence marker split too
     seq.feed("`\nAfter now. ")

@@ -138,6 +138,84 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
+    # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
+    # 37-parameter constructor (self + screen + 35 named dependencies; see
+    # the module's own docstring for the full 78-candidate/21-exclusion
+    # derivation, including 6 instance-attribute-monkeypatch exclusions
+    # found only by running the battery) pinned at its exact measured line
+    # count.
+    # Task 2 fix round 1 (post-review): `_resolve_ingest_source` excluded
+    # (module-globals coupling on `validate_path_simple`/`validate_url`,
+    # found by the mechanical module-globals census, not the battery --
+    # see the screen ratchet's own comment above for the full incident);
+    # 56 moved methods, one named dependency added for its mover caller.
+    # Constructor arity verified with `inspect.signature(LibraryIngest
+    # Controller.__init__)` rather than hand-counted: 37 -> 38 params excl.
+    # `self` (1 positional `screen` + 36 -> 37 keyword-only named
+    # dependencies), a clean +1 matching the one new dependency. Dead
+    # imports removed (`logger`, `validate_path_simple`, `validate_url` --
+    # all now unused in this file). 2510 -> 2536 lines.
+    #
+    # 2026-09-05, wave-5 task 3 (ingest cleanup, series 3/3): comment-only
+    # growth, no method body touched (56 movers unchanged -- cleanup prunes
+    # the SCREEN's delegators, not the controller's own methods, per the
+    # collections/search+RAG/skills precedent). Four moved-docstring-
+    # adjacent module/constructor docstring corrections: two stray "63"
+    # counts (should be 56 -- an arithmetic slip inherited from an earlier
+    # draft, never 78-22 or any other real derivation), the "LibraryScreen
+    # keeps one-line delegators under every one of these 56 original names"
+    # claim (now false for 6 of the 56, this task's own screen-side prune),
+    # and the `_apply_library_ingest_backend_save`/`_sync_library_canvas`
+    # module-globals census evidence (corrected from 7 files/~20 sites to
+    # the true 10 files/38 sites -- 3 files missed by task 2's own grep
+    # because their patch sites used a variable name other than
+    # `library_screen`/`library_screen_module`; see the recipe's §3 for the
+    # full correction) -- all fixed in this task, +22 lines. 2536 -> 2558.
+    #
+    # 2026-09-05, wave-5 task 3 fix round 1 (post-review, counts only):
+    # comment-only growth, no method body touched. The `_sync_library_
+    # canvas` census's own "site" definition (one match/line of the
+    # 3-shape pattern set, deduplicated per file) and its reproducible
+    # 10-file breakdown summing to 38 were added to this module's own
+    # docstring so a reviewer can re-derive the number without re-running
+    # the census script. 2558 -> 2569.
+    #
+    # 2026-09-05, wave-5 final review: `origin/dev` merge (89 commits since
+    # this branch's merge-base 68f9d865f). Dev edited one ALREADY-MOVED body
+    # after the move landed -- `handle_library_ingest_clear_finished` gained
+    # a 13-line stale-outcome prune (task-28007's Qodo review round) -- so
+    # the edit follows the body here rather than resurrecting the screen's
+    # copy: +13 ported lines, +5 for the `library_ingest_analyze_outcomes_
+    # accessor` constructor parameter and its 4-line comment, +3 for storing
+    # it, +12 for the same-named property that lets the ported lines stay
+    # byte-for-byte with dev's, and +21 of module docstring recording the
+    # divergence, the new group-(b) binding, and the follow-up task
+    # (task-31651) that folds the field into `LibraryIngestState` proper.
+    # No other body touched; 56 movers unchanged. 2569 -> 2623.
+    #
+    # 2026-09-05, wave-5 ROUND-2 `origin/dev` merge (72 commits since the
+    # previous reconciliation's merge-base 93388ba69). Dev edited TWO more
+    # already-moved bodies, both with TASK-31521 suspend gates (the Library
+    # route became reusable, so navigation suspends the screen instead of
+    # unmounting it): `_handle_library_ingest_registry_changed` defers its
+    # dynamic-region rebuild, footer re-registration, source-snapshot
+    # re-read and landing-attention sync while hidden, and `_handle_library_
+    # ingest_progress_changed` skips pure DOM patching. Same rule as last
+    # round -- the edit follows the body, the screen keeps its one-line
+    # delegators: +20 ported lines (exactly dev's own delta on those two
+    # bodies, so both port byte-for-byte), +15 for three new constructor
+    # parameters and their comments (`library_screen_suspended_accessor`,
+    # `library_ingest_suspended_activity_accessor`, `set_library_ingest_
+    # suspended_activity`), +7 for storing them, +32 for the two same-named
+    # properties (one getter-only, one getter/setter) that keep the ported
+    # lines byte-for-byte, and +24 of module docstring (group (b) 8 -> 10,
+    # and the divergence paragraph rewritten from one body to three).
+    # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
+    # total including `self` and `screen`). No other body touched; 56 movers
+    # unchanged. 2623 -> 2721.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,

@@ -188,6 +188,21 @@ def test_a_positive_plan_assertion_is_a_pin(repo):
     }
 
 
+@pytest.mark.parametrize("operator, expected", [("in", True), ("not in", False)])
+def test_literal_index_names_without_conventional_prefix_are_recognized(
+    repo, operator, expected
+):
+    repo.write_test(
+        "test_nonprefixed.py",
+        PLAN_HEADER
+        + "\ndef test_plan(conn):\n"
+        + f"    assert 'zz_character_search_revision' {operator} _plan(conn, 'SELECT 1')\n",
+    )
+    assert (
+        "zz_character_search_revision" in repo.module.plan_pinning_files()
+    ) is expected
+
+
 def test_a_positive_unique_plan_assertion_is_a_pin(repo):
     repo.write_test(
         "test_unique.py",

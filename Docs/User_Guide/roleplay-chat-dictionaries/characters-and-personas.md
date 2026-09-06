@@ -35,6 +35,28 @@ and **"World Books (copied into this character)"**. The rail's **New**,
 **Attach to Console**, **Start Chat**, **Export JSON**, **Export PNG** and
 **Delete** act on the current selection.
 
+## Included pixel-migu character and Buddy
+
+![pixel-migu expression palette](../images/roleplay/pixel-migu-expressions.png)
+
+A fresh local profile includes **pixel-migu** in both **Characters** and
+**Personas**. No art import or image-generation setup is required.
+
+- For character chat, select **pixel-migu** in Characters and choose **Start
+  Chat**. Its avatar follows the idle, thinking, speaking, and error states.
+  The Console reaction picker offers all 18 expressions, including happy,
+  surprised, confused, wave, celebrate, and love.
+- For the animated companion, select **pixel-migu** in Personas and choose
+  **Use for Buddy** in the Inspector. Its animation pack includes listening,
+  thinking, speaking, typing during tool work, approval, error, and offline
+  states.
+
+These are optional selections. Installing or upgrading does not replace your
+current assistant or enable Buddy. Your edits, renamed entries, deleted entries,
+and customized visual packs survive restarts. Character reactions and Buddy
+animations use their respective existing controls; automatic sentiment-based
+expression selection is not added by this bundle.
+
 ## Features & controls
 
 ### The character card

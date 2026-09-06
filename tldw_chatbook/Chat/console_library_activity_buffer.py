@@ -76,9 +76,7 @@ class ConsoleLibraryActivityBuffer:
         self._flushing: set[str] = set()
         self._final_results: dict[str, LibraryActivityFlushResult] = {}
 
-    def admit(
-        self, session_id: str, turn_id: str, event: LibraryActivityEvent
-    ) -> None:
+    def admit(self, session_id: str, turn_id: str, event: LibraryActivityEvent) -> None:
         """Retain one already-minimized event under the owning session/turn.
 
         Args:
@@ -128,9 +126,7 @@ class ConsoleLibraryActivityBuffer:
         """
         with self._lock:
             return tuple(
-                item
-                for key, item in self._pending.items()
-                if key[0] == session_id
+                item for key, item in self._pending.items() if key[0] == session_id
             )
 
     def state(self, session_id: str) -> LibraryActivityFlushResult:
@@ -278,11 +274,9 @@ class ConsoleLibraryActivityBuffer:
                 return LibraryActivityFlushResult("pending", 0, pending_count)
             keys = self._retry_batches.get(session_id)
             if keys is None:
-                keys = tuple(
-                    key
-                    for key in self._pending
-                    if key[0] == session_id
-                )[: self._batch_size]
+                keys = tuple(key for key in self._pending if key[0] == session_id)[
+                    : self._batch_size
+                ]
             selected = tuple(
                 (key, self._pending[key]) for key in keys if key in self._pending
             )

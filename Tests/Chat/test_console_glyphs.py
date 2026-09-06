@@ -112,7 +112,9 @@ def test_resolve_glyph_is_identity_in_default_mode():
     assert ascii_glyph_mode() is False
     for glyph in _VOCABULARY:
         assert resolve_glyph(glyph) == glyph
-    assert resolve_glyph_text("◌ scratch ◐ Transcribing…") == "◌ scratch ◐ Transcribing…"
+    assert (
+        resolve_glyph_text("◌ scratch ◐ Transcribing…") == "◌ scratch ◐ Transcribing…"
+    )
 
 
 def test_resolve_glyph_substitutes_in_ascii_mode(ascii_mode):

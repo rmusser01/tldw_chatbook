@@ -179,9 +179,28 @@ MAX_UTTERANCE_LENGTH = 200
 #: not merge into one utterance).
 _ABBREVIATIONS = frozenset(
     {
-        "dr", "mr", "mrs", "ms", "prof", "sr", "jr",
-        "vs", "etc", "inc", "ltd", "fig", "approx",
-        "capt", "col", "gov", "sgt", "ave", "blvd", "dept", "univ", "assn",
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "prof",
+        "sr",
+        "jr",
+        "vs",
+        "etc",
+        "inc",
+        "ltd",
+        "fig",
+        "approx",
+        "capt",
+        "col",
+        "gov",
+        "sgt",
+        "ave",
+        "blvd",
+        "dept",
+        "univ",
+        "assn",
     }
 )
 
@@ -296,7 +315,9 @@ class SentenceSequencer:
             flight (barge-in abandon signal).
     """
 
-    def __init__(self, speak: Callable[[str], None], stop_speech: Callable[[], None]) -> None:
+    def __init__(
+        self, speak: Callable[[str], None], stop_speech: Callable[[], None]
+    ) -> None:
         self._speak = speak
         self._stop_speech = stop_speech
 
@@ -442,8 +463,10 @@ class SentenceSequencer:
             nl_idx = self._pending_line.find("\n")
             if nl_idx != -1:
                 line = self._pending_line[:nl_idx]
-                self._pending_line = self._pending_line[nl_idx + 1:]
-                self._resolve_line(line, had_newline=True, at_line_start=self._at_line_start)
+                self._pending_line = self._pending_line[nl_idx + 1 :]
+                self._resolve_line(
+                    line, had_newline=True, at_line_start=self._at_line_start
+                )
                 self._at_line_start = True  # whatever follows starts a fresh line
                 continue
 
@@ -451,7 +474,9 @@ class SentenceSequencer:
             if final:
                 self._pending_line = ""
                 if tail:
-                    self._resolve_line(tail, had_newline=False, at_line_start=self._at_line_start)
+                    self._resolve_line(
+                        tail, had_newline=False, at_line_start=self._at_line_start
+                    )
                     self._at_line_start = False
                 return
 
@@ -501,7 +526,7 @@ class SentenceSequencer:
             idx = _find_confirmed_boundary(self._content)
             if idx is not None:
                 raw = self._content[: idx + 1]
-                self._content = self._content[idx + 1:]
+                self._content = self._content[idx + 1 :]
                 self._emit(_normalize(raw))
                 continue
             if len(self._content) > MAX_UTTERANCE_LENGTH:
@@ -528,7 +553,9 @@ class SentenceSequencer:
             return  # barge-in latch: nothing queues for this reply again
         if not normalized:
             return
-        if len(normalized) < MIN_SENTENCE_LENGTH and not any(c.isalnum() for c in normalized):
+        if len(normalized) < MIN_SENTENCE_LENGTH and not any(
+            c.isalnum() for c in normalized
+        ):
             return  # pure punctuation noise below the floor; see module docstring
         self._queue.append(normalized)
 
@@ -541,7 +568,12 @@ class SentenceSequencer:
         self._speak(text)
 
     def _check_drained(self) -> None:
-        if self._completed and not self._queue and not self._inflight and not self._drained_fired:
+        if (
+            self._completed
+            and not self._queue
+            and not self._inflight
+            and not self._drained_fired
+        ):
             self._drained_fired = True
             if self.on_drained:
                 self.on_drained()

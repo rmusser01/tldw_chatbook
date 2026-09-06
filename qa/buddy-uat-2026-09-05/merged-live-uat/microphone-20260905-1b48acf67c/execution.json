@@ -1,0 +1,23 @@
+{
+  "run_id": "microphone-20260905-1b48acf67c",
+  "mode": "microphone",
+  "wrapper_pid": 97278,
+  "source_root": "/private/tmp/chatbook-migu-dragging-20260905",
+  "source_revision": "969043daff64a0e30aaa8fe4d4c23f7e7bdcccce",
+  "source_branch": "codex/migu-merged-live-uat",
+  "source_status_at_launch": "",
+  "controller_sha256": "aea69b2b7ec5a938cbb05c1b66f95f6ad2950e50ae5706bf2335fe8ef1be54a0",
+  "runtime_root": "/private/tmp/migu-merged-live-runset/microphone-20260905-1b48acf67c",
+  "profile_root": "/private/tmp/migu-merged-live-runset/microphone-20260905-1b48acf67c/profile",
+  "harness_sha256": "dc7ca8c19a546fd18ac924968abf231dc7a985943a304a8e6ced25643994f467",
+  "launched_at": "2026-09-05T21:42:41.278774+00:00",
+  "microphone_authorized": true,
+  "normal_config_unchanged": true,
+  "child_pid": 97284,
+  "exited_at": "2026-09-05T21:43:24.776049+00:00",
+  "child_returncode": 1,
+  "source_revision_at_exit": "969043daff64a0e30aaa8fe4d4c23f7e7bdcccce",
+  "source_status_at_exit": "",
+  "controller_sha256_at_exit": "aea69b2b7ec5a938cbb05c1b66f95f6ad2950e50ae5706bf2335fe8ef1be54a0",
+  "child_receipt_identity_matches": false
+}

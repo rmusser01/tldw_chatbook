@@ -34,6 +34,7 @@ from Tests.UI.schedules_test_helpers import (
 )
 from tldw_chatbook.Scheduling.events import ViewDefinitionResultsRequested
 from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientNotFoundError,
     ServerClientValidationError,
 )
 from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
@@ -64,6 +65,12 @@ class AutomationsServerClient:
 
     def __init__(self, notifications_service=None) -> None:
         self.notifications_service = notifications_service or object()
+        # task-3 (schedules UAT remediation ruling 5): the capabilities
+        # handshake -- defaults to "present" so every OTHER test in this
+        # file (which predate the handshake) keeps exercising the real
+        # audit call unhindered; the two `get_capabilities`-specific
+        # tests below override this per case.
+        self.get_capabilities = AsyncMock(return_value={"items": []})
         self.list_automation_definitions = AsyncMock(
             return_value={
                 "items": [
@@ -520,6 +527,56 @@ async def test_audit_view_shows_empty_state_without_events():
         notice = overlay.query_one("#scheduling-audit-view-notice")
         assert table.row_count == 0
         assert "No recorded events" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_audit_view_shows_notice_when_capabilities_absent():
+    """task-3 handshake, shape 1: the capabilities probe itself comes
+    back absent (`get_capabilities` returns `None`, root-causes.md #7's
+    "server predates Scheduled Tasks automation entirely") -- an honest
+    notice, and the real audit call is never even attempted."""
+    server_client = AutomationsServerClient()
+    server_client.get_capabilities = AsyncMock(return_value=None)
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await _settled_workbench(pilot)
+
+        overlay = await _push_audit_view(
+            pilot,
+            service,
+            {"id": "def-1", "name": "Morning brief", "owner_id": "server:server-1"},
+        )
+
+        server_client.list_automation_definition_audit.assert_not_awaited()
+        notice = overlay.query_one("#scheduling-audit-view-notice")
+        assert "does not support scheduled task automation" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_audit_view_shows_notice_when_audit_route_missing_despite_capabilities():
+    """task-3 handshake, shape 2 (the actual UAT repro): capabilities are
+    PRESENT (a mid-rollout server, new enough for the handshake, too old
+    for this one route) -- a probe alone can't predict this, so the
+    honest degrade comes from the real call's own 404 instead of a raw
+    `scheduled_task_not_found` (UAT Minor 24)."""
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definition_audit = AsyncMock(
+        side_effect=ServerClientNotFoundError("scheduled_task_not_found")
+    )
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await _settled_workbench(pilot)
+
+        overlay = await _push_audit_view(
+            pilot,
+            service,
+            {"id": "def-1", "name": "Morning brief", "owner_id": "server:server-1"},
+        )
+
+        notice = overlay.query_one("#scheduling-audit-view-notice")
+        assert "does not provide run history" in str(notice.content)
 
 
 @pytest.mark.asyncio

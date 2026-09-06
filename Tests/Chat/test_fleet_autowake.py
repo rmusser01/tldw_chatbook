@@ -8,10 +8,10 @@ USER transcript row, the composer untouched, a SYSTEM-class notice row
 marked ``origin="agent_wake"``, and the model payload carrying the fenced
 results as an explicitly-labelled not-user-input injection.
 """
+
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 
 import pytest
@@ -44,12 +44,12 @@ class _WakeStreamingGateway:
 
     async def resolve_for_send(self, selection):
         return provider_resolution(
-                   ready=True,
-                   provider="llama_cpp",
-                   model="test-model",
-                   base_url="http://127.0.0.1:9099",
-                   visible_copy="",
-               )
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            visible_copy="",
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.messages_seen.append(list(messages))

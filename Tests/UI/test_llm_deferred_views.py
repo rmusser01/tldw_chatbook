@@ -78,6 +78,8 @@ async def test_initial_load_populates_only_llamacpp_body():
         assert window.active_view == "llama-cpp"
         assert screen.query_one("#llm-view-llama-cpp").has_class("-active")
         assert screen.query_one("#llamacpp-start-server-button").is_mounted
+        manager = window.query_one("#llamacpp-snapshot-manager")
+        assert manager.parent.id == "llm-view-llama-cpp"
 
         inactive_body_selectors = (
             "#ollama-exec-path",

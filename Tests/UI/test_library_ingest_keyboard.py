@@ -148,7 +148,7 @@ async def test_narrow_ingest_collapses_rail_and_keeps_source_contract_visible():
             f"screen={screen.size.width}, shell="
             f"{screen.query_one('#library-shell-grid').region.width}, "
             f"collapsed={screen._library_rail_collapsed}, "
-            f"auto={screen._library_ingest_auto_collapsed_rail}"
+            f"auto={screen._ingest_state.auto_collapsed_rail}"
         )
         assert screen.query_one("#library-rail-handle").display is True
         canvas = screen.query_one("#library-ingest-canvas")

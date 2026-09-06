@@ -94,7 +94,9 @@ def test_library_policy_display_state_pins_the_four_fixed_order_combinations(
     assert "ready" not in state.chip_label.lower()
 
 
-def test_library_policy_display_state_fails_closed_when_authority_is_unavailable() -> None:
+def test_library_policy_display_state_fails_closed_when_authority_is_unavailable() -> (
+    None
+):
     state = ConsoleLibraryPolicyDisplayState.from_snapshot(
         ConsoleLibraryPolicySnapshot(
             auto_retrieve=ConsoleAutoRetrieve.NEVER,
@@ -507,9 +509,7 @@ def test_chip_and_inspector_report_the_same_tool_count():
     control = ConsoleControlState.from_values(
         provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=12
     )
-    inspector = ConsoleInspectorState.from_values(
-        tool_count=0, mcp_tool_count=12
-    )
+    inspector = ConsoleInspectorState.from_values(tool_count=0, mcp_tool_count=12)
 
     tools_rows = [r for r in inspector.rows if r.label == "Tools"]
     assert tools_rows, "inspector has no Tools row"
@@ -593,12 +593,8 @@ def test_next_send_estimate_does_not_double_count_duplicated_system_row():
     """The payload's `system` field duplicates the leading system row in
     `messages` (by design, so the viewer can show it at a glance) -- the
     estimate must not count it twice."""
-    system_rows = [
-        {"role": "system", "content": _FIRST_SEND_MESSAGES[0]["content"]}
-    ]
-    plain = estimate_console_next_send_tokens(
-        payload_messages=_FIRST_SEND_MESSAGES
-    )
+    system_rows = [{"role": "system", "content": _FIRST_SEND_MESSAGES[0]["content"]}]
+    plain = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
     duplicated = estimate_console_next_send_tokens(
         payload_messages=_FIRST_SEND_MESSAGES,
         payload_system=system_rows,
@@ -629,9 +625,7 @@ def test_next_send_estimate_counts_fallback_system_when_messages_have_none():
 def test_next_send_estimate_folds_extra_texts_and_skips_blank_ones():
     """Staged evidence text rides along as an extra text (the preview payload
     lists staged sources as label-only metadata); blank texts add nothing."""
-    base = estimate_console_next_send_tokens(
-        payload_messages=_FIRST_SEND_MESSAGES
-    )
+    base = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
     with_staged = estimate_console_next_send_tokens(
         payload_messages=_FIRST_SEND_MESSAGES,
         extra_texts=["", "   ", "staged evidence snippet " * 10],
@@ -653,9 +647,7 @@ def test_next_send_estimate_ignores_tools_info_without_schemas():
             "preview_note": "No native tools are configured for preview.",
         },
     )
-    without = estimate_console_next_send_tokens(
-        payload_messages=_FIRST_SEND_MESSAGES
-    )
+    without = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
 
     assert with_notes == without
 
@@ -704,8 +696,6 @@ def test_next_send_estimate_skips_schemas_that_cannot_serialize():
         payload_messages=_FIRST_SEND_MESSAGES,
         tools_info={"native_schemas": [{"name": _Unserializable()}]},
     )
-    without = estimate_console_next_send_tokens(
-        payload_messages=_FIRST_SEND_MESSAGES
-    )
+    without = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
 
     assert total == without

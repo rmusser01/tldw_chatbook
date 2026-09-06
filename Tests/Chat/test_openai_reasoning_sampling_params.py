@@ -132,9 +132,7 @@ def test_non_reasoning_model_keeps_default_sampling(captured_payloads):
 
 
 @pytest.mark.parametrize("model", ["gpt-5", "o3", "o4-mini", "gpt-5.1"])
-def test_no_effort_modern_model_uses_max_completion_tokens(
-    captured_payloads, model
-):
+def test_no_effort_modern_model_uses_max_completion_tokens(captured_payloads, model):
     """TASK-18803 headline: with NO reasoning effort configured these models
     fall through to chat-completions, where the classic ``max_tokens`` cap is
     HTTP 400 ``unsupported_parameter`` (probe-verified with the exact built
