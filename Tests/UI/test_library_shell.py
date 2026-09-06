@@ -418,14 +418,14 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
             screen._library_media_reader_preferences,
             screen._conversations_state.reader_preferences,
             screen._library_notes_reader_preferences,
-            screen._library_prompts_reader_preferences,
+            screen._prompts_state.reader_preferences,
         )
     }
     assert shared == {(False, True, 35)}
     assert screen._library_media_reader_preferences.items_open is False
     assert screen._conversations_state.reader_preferences.items_open is True
     assert screen._library_notes_reader_preferences.items_open is False
-    assert screen._library_prompts_reader_preferences.items_open is True
+    assert screen._prompts_state.reader_preferences.items_open is True
 
 
 @pytest.mark.asyncio
@@ -794,8 +794,8 @@ def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     """Cross-search Prompt selection never enters Library restore state."""
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_prompt_select_mode = True
-    screen._library_prompt_selection = PromptSelectionBasket(
+    screen._prompts_state.select_mode = True
+    screen._prompts_state.selection = PromptSelectionBasket(
         (PromptSelectionEntry(7, 4, "Literal [name] 🌐", "prompt"),),
         generation=1,
     )
@@ -805,8 +805,8 @@ def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     restored.restore_state(saved)
 
     assert not any("prompt_selection" in key for key in saved)
-    assert restored._library_prompt_select_mode is False
-    assert restored._library_prompt_selection == PromptSelectionBasket()
+    assert restored._prompts_state.select_mode is False
+    assert restored._prompts_state.selection == PromptSelectionBasket()
 
 
 def test_library_conversation_applied_scope_save_restore_excludes_transients() -> None:
@@ -4609,7 +4609,7 @@ async def test_library_retained_prompt_editor_keeps_back_authoritative() -> None
         assert screen._library_emergency_stage is None
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_prompts_view == "editor"
+        assert screen._prompts_state.view == "editor"
         assert screen._library_emergency_stage is None
 
 
@@ -5304,7 +5304,7 @@ async def test_library_retained_prompt_conflict_keeps_specific_action_authoritat
         assert screen._library_emergency_stage is None
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_prompt_conflict_snapshot is None
+        assert screen._prompts_state.conflict_snapshot is None
         assert screen._library_emergency_stage is None
 
 
@@ -24079,8 +24079,8 @@ async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path)
             await _wait_for_selector(screen, pilot, "#library-prompt-name")
             for _ in range(120):
                 if (
-                    screen._selected_prompt_id == prompt_id
-                    and screen._library_prompts_view == "editor"
+                    screen._prompts_state.selected_prompt_id == prompt_id
+                    and screen._prompts_state.view == "editor"
                 ):
                     break
                 await pilot.pause(0.02)

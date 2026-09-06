@@ -356,6 +356,52 @@ is the default method for any baseline comparison expected to run
 unattended for more than a couple of minutes**, regardless of which
 subsystem's task is running it.
 
+**RULED at the wave-6 close: the "short foreground run" carve-out is
+DROPPED, not written down. The isolated worktree is now UNCONDITIONAL for
+every baseline comparison, of any length.** The rule above said "expected
+to run unattended for more than a couple of minutes", and TWO tasks read
+the gap in it as a licence, three times between them: wave-6 task 1
+overlaid the tree for a 2m40s prompts-file baseline, and wave-6 task 2 did
+it twice more (§9.3/§9.4 of its own report, ~2m20s and ~1m50s). All three
+completed intact and their evidence stands — and wave-6 task 3, next in
+the same series, went isolated for every one of its own paired checks
+without being told to, naming the editable-finder trap as its reason. The
+practice was already converging on isolation; only the written rule
+lagged. But task 2 ALSO recorded that it then hit a session usage
+limit mid-task — the exact interruption class that produced wave-5's
+incident — and escaped losing anything only because by then its long
+sweeps were already isolated. The failure mode is live in this
+environment, not historical, and it is silent: an overlay clobbered
+mid-run produces no error of its own, just numbers that mean nothing.
+
+**Why DROP rather than write the carve-out down with a bound.** The wave-6
+close measured what the "expensive" alternative actually costs, rather
+than assuming it: a `git worktree add` of this repo (12,866 files) plus
+`uv venv` plus `uv pip install -e ".[dev]"` provisions a fully usable
+isolated baseline in **5 seconds end to end (3s checkout, 2s venv + install), measured at this close**, of which uv's own share is 2.2s
+(1.00s resolve, 1.01s prepare, 177ms install — 101 packages, warm cache);
+disk cost is 535 MB. More decisive than the absolute number: **a task
+creates ONE baseline worktree and reuses it for every check it runs**, so
+the MARGINAL cost of the rule after the first check is zero. The carve-out
+was therefore buying nothing that needed buying. Against that, a
+five-condition exception ("≤5 minutes, foreground, targeted selection,
+no session-limit exposure, verified clean after") is itself a judgement
+call in every task's head — and the evidence is that an unwritten version
+of exactly that judgement already drifted across two consecutive tasks
+without anyone flagging it. A flat rule with no exception is cheaper to
+follow than a bounded one, and here it is also nearly free.
+
+**The rule, restated with no exception:** any baseline comparison — a
+whole-root sweep, a nine-file paired battery, or a single node id — runs
+against an isolated `git worktree add <scratch-path> <base-commit>` with
+its own `uv venv`/`uv pip install -e ".[dev]"`. Verify the isolated venv
+resolves its OWN tree (`python -c "import tldw_chatbook; print(tldw_
+chatbook.__file__)"` must print a path under the scratch worktree — the
+editable-finder trap makes a shared venv resolve the wrong tree), create
+it once per task, reuse it, and remove it at task close. `git stash -u`
+and `git checkout <base> -- <paths>` are no longer baseline methods at any
+duration.
+
 **An eighth bypass shape, found by a coordinator review of the ingest
 controller PR (wave-5 task 2, fix round 1) rather than by the task's own
 battery: a moved body's bare MODULE GLOBAL (an ordinary
@@ -489,6 +535,92 @@ green battery proves nothing about this shape's absence, precisely
 because a green-but-vacuous test is indistinguishable from a genuinely
 passing one without reading it.**
 
+**A census SPELLING the `monkeypatch.setattr`-anchored search misses: the
+patch-target TABLE row.** This is not a ninth bypass shape — the shape
+catalogue above stands at eight — it is a fourth SPELLING that every one
+of those censuses has to search for, and the one an obvious regex cannot
+see. A test can hold its patch targets in a data structure and apply them
+at a distance:
+
+```python
+for target, name, key in (
+    (screen, "_load_library_reader_preference_snapshot", "snapshot"),
+    (screen, "_request_library_prompts_browse", "load"),
+    (rail, "refresh", "rail_refresh"),
+):
+    monkeypatch.setattr(target, name, probes[key])
+```
+
+The exemplar is `Tests/UI/test_library_shell.py:5146`. The method name
+appears **only** as a bare string literal inside a tuple, many lines above
+the single `monkeypatch.setattr(` that consumes it — so a search anchored
+on `monkeypatch.setattr` (or on `patch.object`, or on `setattr(screen,`)
+scores it ZERO, and so does a `<name>\s*\(` call-shaped regex. The three
+spellings §3 already enumerates (direct-attribute, fully-qualified string,
+two-argument `monkeypatch.setattr`) all assume the name sits on the same
+line as the call. This one does not.
+
+**The rule:** every census in this section — the monkeypatch-routing check,
+the module-globals census, and the cleanup PR's delegator-prune census
+alike — must search for each candidate name as a **bare quoted string
+anywhere in the file**, independent of what call surrounds it, then read
+the hits to see whether a distant `setattr`/`patch` consumes them. The
+prompts series ran it and got a real hit
+(`_request_library_prompts_browse`) which happened to already be one of
+its 22 exclusions, so nothing changed — a clean result from a census that
+was actually run, not a census that was skipped because the obvious
+spelling came back empty.
+
+**A cleanup-PR census this section did NOT previously require: the deleted
+FIELD names' own prose sweep.** Every cleanup PR to date censused the
+PRUNED METHOD names for stale prose. None censused the DELETED FIELD
+names, even though the shim-block deletion makes all of them dead in
+exactly the same way and at exactly the same commit. The gap produced a
+review finding in the prompts series: `library_export_controller.py:375`'s
+constructor docstring still said the accessor "Reads
+``LibraryScreen._library_prompts_mutation_in_flight``" — an attribute that
+no longer exists on any object — in a file belonging to a DIFFERENT
+subsystem, which is why no prompts-scoped file sweep could reach it. This
+class is invisible to every automated guard in the battery: nothing
+imports or executes a docstring.
+
+**The census, and the one distinction that makes it usable:** tokenize the
+tree (COMMENT and STRING tokens only, so a live attribute access cannot
+masquerade as prose), search for every deleted flat field name AND every
+pruned method name, over `tldw_chatbook/`, all of `Tests/`, `Docs/`,
+`backlog/`, `scripts/` and `Helper_Scripts/`. The prompts series' run
+returned 54 field-name occurrences; almost all were legitimate. **A raw
+count is useless without separating three classes**, and only the third is
+a defect:
+
+1. **Self-labeled relocated references** — the prose names the old flat
+   spelling but immediately says so ("``_library_prompt_detail`` and
+   ``_library_prompt_block_state`` ... two of the moved
+   ``LibraryPromptsState`` fields", `test_library_prompts_
+   characterization.py:268-269`). Correct as written; leave alone.
+2. **Past-tense incident narrative, comparative prose from other
+   subsystems, and the wiring test's own literal-string pins** — all
+   correct by construction; leave alone.
+3. **Present-tense mis-attributions** — prose that says the name lives on
+   `LibraryScreen`/`library_screen` today. These are the defects, and the
+   fix is always one phrase, always line-neutral.
+
+A bare name-count cannot tell class 1 from class 3 — the two spell the
+identical name — so the sweep must read each hit. Narrowing to hits with a
+screen attribution within ±3 lines is what makes that reading tractable:
+the wave-close run over BOTH name sets (43 fields + 39 pruned methods, vs.
+the cleanup task's own field-only pass that returned the 54 above) cut
+**145 raw prose lines to 8 candidates, of which 6 were real defects**.
+Four of those 6 were disclosed by the cleanup task's
+own review (two in-scope, two forward-noted as out-of-scope); the other
+**two were found only by the wave-close sweep, in files no task's ruled
+file scope had ever covered** (`tldw_chatbook/Library/library_shell_
+state.py:44` and its mirror `Tests/Library/test_library_shell_state.py:371`,
+both "the screen distinguishes ... by view state (`_library_prompts_view`)").
+That is the argument for making this a standing census rather than a
+review's incidental catch: two of six defects lived outside every file
+scope any task in the series had reason to open.
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:
@@ -501,8 +633,10 @@ An extraction PR may contain **only**:
   state fields (same generator shape as the state-PR shim generator, §1
   step 1, applied to the controller instead of the screen).
 - Screen-side delegator one-liners for externally-referenced names
-  (`@on`/`action_*`/anything a test reaches directly) — the `@on(...)`
-  decorator line stays on the screen, copied verbatim.
+  (`@on`-decorated / `action_*` / `on_<message-handler-name>` / anything a
+  test reaches directly) — the `@on(...)` decorator line stays on the
+  screen, copied verbatim. The three framework-dispatched classes are
+  enumerated below; they are the ones a reference census cannot see.
 
 Nothing else. No renames, no logic edits, no cleanups, no "while I'm here"
 fixes — those land as separate, attributable changes. Receiver
@@ -518,6 +652,51 @@ dictation extraction (§1) demonstrated: bodies unedited, names rebound only
 in the constructor. See the spec's "Relationship to the parent doctrine —
 deltas, declared" section for the full list of drafting ideas that lost to
 doctrine precedent.
+
+### The delegator-prune whitelist — THREE members, not two
+
+Every cleanup PR prunes the screen delegators whose names have zero
+references anywhere in the repo. A **whitelist of framework-dispatched
+names is exempt from that census outright**, because the framework calls
+them and no source line ever spells them. Through the ingest series that
+whitelist had two members. **It has three.**
+
+1. **`@on`-decorated handlers.** The decorator registers the method in
+   `cls.__dict__["_decorated_handlers"]`; nothing names it.
+2. **`action_*` handlers.** Textual resolves these from binding/link
+   strings, not from Python call sites.
+3. **`on_<message-handler-name>` NAME-dispatched handlers.** *(New in the
+   prompts series; this is the one that will bite media and notes.)*
+   Textual computes `Message.handler_name` as `f"on_{name}"` at class
+   creation (`textual/message.py:86`) and `MessagePump._get_dispatch_
+   methods` walks `self.__class__.__mro__` looking that exact string up
+   (`textual/message_pump.py:743-758`; measured against the installed
+   Textual 8.2.8). Such a handler carries **no decorator at all**, so a
+   decorator-driven whitelist misses it, and **no source line anywhere
+   spells `screen.on_<...>`**, so a reference-count census reports it as
+   zero-referenced and marks it PRUNE.
+
+**The incident.** The prompts cleanup's census marked all six
+`on_prompt_block_editor_*` handlers PRUNE on a genuine zero-reference
+count. Deleting them would have silently unhooked `LibraryScreen` from six
+live messages — and, worse, **the deletion would have stayed GREEN**: the
+`PromptBlockEditor` canvas widget defines its own two same-named handlers
+one level down and keeps handling those two messages, and a harness in
+`Tests/UI/test_prompt_block_editor.py` defines one for each of the six. A
+naive census that counts "the name appears in the repo" therefore finds
+hits — 8 same-named `def`s across the two files — but every one is a `def`
+in a DIFFERENT class, which is the exact opposite of a caller. Neither the
+presence nor the absence of hits told the truth here.
+
+**The rule:** before pruning any moved name matching `on_[a-z]`, resolve it
+against the framework's NAME-based dispatch, not against the reference
+census — construct the `Message` subclass it would receive and confirm
+`handler_name` matches, or confirm no `Message` in the subsystem's own
+widgets produces that string. Treat a same-named `def` in another class as
+evidence of NOTHING; a caller is a call site, not a definition. The
+symmetric question is worth asking too: the class is not Textual-specific
+— any framework that dispatches by computed name (a `visit_<Node>` walker,
+a `handle_<verb>` router) defeats a reference census the same way.
 
 ## 5. Rollback, not fix-forward
 
@@ -541,6 +720,57 @@ rebase and lowered *in the landing PR itself*, never in a follow-up. Console
 wave 3 landed red twice from stale-base numbers before this rule was
 adopted — see that file's own module docstring for the incident this
 mechanism exists to prevent.
+
+**A re-pin has THREE places the number lives INSIDE the guard file, and a
+passing guard proves only ONE of them — plus a fourth, outside it, that can
+never be corrected.** The enforced `_BUDGETS` row, the arithmetic
+derivation in the comment above it, and the narrative prose line at the top
+of that same comment block are three independent copies of the same figure;
+nothing in the battery reads the last two. The fourth is the commit
+message. Wave-6 got two of the four wrong, in two consecutive commits.
+
+*Incident (wave-6 task 2).* A late fix — a 4-line function-local import
+added to a static-method delegator — moved the screen's measured line count
+from a first draft's 37718 to the true 37722. The row was corrected. The
+`-4061 + 333 + 3 + 88 = -3637` derivation in the same comment was
+corrected. The narrative line three lines above that derivation
+(`test_screen_size_ratchet.py:503`, "Fresh `_measure()`: 41359/1321 ->
+37718/1321") was NOT, and shipped stale eighteen lines above a row pinned
+at 37722, with the guard green the whole time. Review caught it, not the
+battery. **When a measurement changes mid-task, `grep` the guard file for
+the OLD number before committing** — correcting two of three sites and
+assuming the third feels identical to correcting all three.
+
+*Same wave, one commit later:* `6fd2b753a`'s COMMIT MESSAGE states
+"37722/1321 -> 37576/1282 … line delta -146" for a commit whose row, whose
+comment, whose report and whose live `_measure()` all say **37574/1282,
+delta −148**. It was written against an intermediate measurement taken
+before the commit's own final edit and never re-derived. It is deliberately
+NOT amended: `.git-blame-ignore-revs` records that literal hash, and
+amending would orphan the entry (§10). **A commit message is a fourth place
+the number lives, it is immutable once pushed, and it is the one place a
+correction cannot be applied — so re-derive it LAST, after the final edit,
+not from the draft you started the commit with.** The correction of record
+lives in the task report and the PR body instead.
+
+**The same discipline applies to LINE RANGES, and a "re-verified" claim
+that overrides a correct value is worse than no claim at all.** *Incident
+(wave-6 task 2, fix round):* a review note cited
+`test_library_modal_dismissal.py:520-526` for the `_SUPPORTED_OWNER_SCOPES`
+tuple; the fix round's own "re-verification" replaced it with `:518-524`,
+a range that spans two blank lines, misses the fifth `_OwnerScope` entry
+and misses the closing paren. The original was right. Two independent
+readers had to re-check the live file to overturn the correction. A range
+is a measurement — read it off the file at the moment you write it, and
+never on the strength of having "just looked."
+
+**And a range is only ever true of a stated revision.** That same tuple
+sits at `:528-535` TODAY, because the prompts cleanup added a sixth
+`_OwnerScope` and shifted the block. Both `:520-526` and `:528-535` are
+correct; neither is correct without saying which tree it was read from. A
+line range written without its revision is a number with a silent
+expiry date — cite the commit, or cite the symbol and let the reader find
+it.
 
 ## 7. Sweep evidence — xdist + paired baseline, not the literal CI command
 
@@ -566,9 +796,9 @@ worksteal` is already available in the worktree venv). Procedure:
 
 1. Run that command on your branch; capture the pass/fail counts and the
    set of failing test names.
-2. Run the **identical** command against the pristine merge base (e.g.
-   `git stash -u` back to a clean tree at the base commit, or check out
-   `origin/dev` in a scratch worktree) — same `-n`/`--dist` config, so any
+2. Run the **identical** command against the pristine merge base in §3's
+   isolated baseline worktree (`git worktree add <scratch-path>
+   <base-commit>` with its own `uv venv`) — same `-n`/`--dist` config, so any
    parallelization-only flakiness is present in both runs equally.
 3. Diff the two failure-name sets. `pytest-xdist` itself introduces
    real, non-deterministic ordering/parallelization flakiness in this
@@ -597,8 +827,9 @@ required per-task.
 ### Documented pre-existing failures (do not re-derive these)
 
 Tests confirmed, by at least one Library-decomposition task, to fail
-identically on a pristine baseline (`git stash -u` to the pre-task tree)
-and therefore not attributable to any extraction/cleanup PR. Check this
+identically on a pristine baseline (§3's isolated worktree at the pre-task
+tree; older entries below record the `git stash -u` method §3 has since
+retired) and therefore not attributable to any extraction/cleanup PR. Check this
 list before spending time re-proving one of these is pre-existing; add to
 it (with the task that found it) rather than letting the next series
 rediscover the same red from scratch.
@@ -625,6 +856,20 @@ rediscover the same red from scratch.
   unrelated `chat_screen.py` growth from other work on `dev`; reconfirmed
   pre-existing by every task in this series via the same `git stash -u`
   method.
+- `Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_
+  does_not_grow_past_its_budget[library_media_browse_controller.py]` — the
+  file is 410 lines against a 371 pin. Found by wave 6's `origin/dev`
+  reconciliation merge and confirmed pre-existing in §3's isolated baseline
+  worktree at `origin/dev` (`dfe45fbe6`): the SAME 410-line file and the
+  SAME 371 pin exist on both sides, and the stale pin already predates this
+  wave's merge-base (`7aa048790`), so no Library task introduced it. It is
+  dev-side creep, and this test's own guidance forbids re-pinning it to
+  green from a passing branch — leave it red and fix it where it was
+  written. The sibling failure the same merge surfaced,
+  `test_every_controller_file_has_a_budget_row` (dev landed `library_
+  navigation_controller.py` and `library_character_repair_controller.py`
+  with no `_BUDGETS` rows), IS fixed at that merge, because governing a new
+  file at its exact measured size is what that check asks for.
 - Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
   (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
   tree via a direct node-id rerun (not the xdist sweep):
@@ -949,6 +1194,125 @@ rediscover the same red from scratch.
   doc-only (recipe, a `.git-blame-ignore-revs` addition, a backlog
   filing); it touches neither Ingest nor Notes code. **Zero real
   regressions across the whole wave-5 span.**
+- **A standing row this list should have carried since task-31203 and did
+  not**, named here rather than left for a seventh series to re-derive:
+  `Tests/Architecture/test_library_modules_size_ratchet.py::
+  test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_
+  Modules/library_media_browse_controller.py]`. It is the controller-ratchet
+  twin of the two `chat_screen.py` screen-ratchet rows already listed above
+  — concurrent, unrelated growth in a file no Library extraction series
+  touches — and every wave-6 task dismissed it as "the documented
+  pre-existing row" while §7 in fact documented only the `chat_screen.py`
+  pair. Proven pre-existing by construction, the same way those two are:
+  no Library extraction PR has ever edited that controller or its budget
+  row.
+- **Wave-6 Task 1 (prompts state PR) found 17 more, all in prompt-named
+  test files, all reconfirmed byte-identically on a pristine baseline at
+  the wave-6 RED commit (`a41cbe8c6`, screen untouched — 18 shared
+  failures of which the 18th, `test_library_choice_strips.py::
+  test_media_type_strip_works_in_both_layouts`, was already documented
+  above at wave-2 task 4).** They are a dev-state backdrop the wave
+  inherited, in four clusters:
+  - **5 CSS-bundle-parity `_css_block` assertions** reading
+    `tldw_chatbook/css/tldw_cli_modular.tcss` + `_agentic_terminal.tcss`
+    for `#library-prompts-*`/`.library-prompt-row` blocks that now live in
+    the per-screen bundle `screen_agentic_library.tcss`:
+    `test_library_prompt_row_class_matches_notes_row_visual_parity`,
+    `test_library_prompts_header_filter_empty_have_css_blocks`,
+    `test_library_prompt_editor_field_css_blocks_match_notes_editor_parity`,
+    `test_library_prompt_field_hint_css_block_matches_field_label_parity`,
+    `test_library_prompts_import_row_css_blocks_match_filter_status_parity`.
+    (The CSS moved; the assertions still read the old bundles. Not a
+    Library-decomposition concern.)
+  - **4 `test_library_prompt_history_geometry_uses_only_the_outer_editor_
+    scroll[dirty-size0..3]`** — CSS-geometry parametrizations.
+  - **4 `test_library_prompt_bulk_delete_focus_and_refresh_are_exactly_
+    once[…]`.**
+  - **4 others**:
+    `test_library_prompts_unmount_revokes_late_apply_before_workspace_
+    shutdown`, `test_library_shell_create_prompt_save_creates_and_
+    increments_count`, `test_library_prompt_import_blocks_undo_until_
+    import_settles`, `test_cancelled_prompt_import_retains_writer_
+    ownership_until_commit`.
+- **Wave-6 Task 1 also proved 15 `Tests/Architecture/` failures
+  pre-existing NAME-FOR-NAME at the wave-6 base**, by re-running the
+  identical 15 node-ids at `a41cbe8c6` (15 failed / 166 passed / 1 skipped)
+  — worth listing because three of them key on `(file, line)` tuples and
+  are therefore the shape a pure move is most likely to break, so a future
+  series will otherwise spend the same time re-deriving them:
+  `test_console_realtime_controller_boundary` (1),
+  `test_console_review_selection_controller_boundary` (1),
+  `test_console_wave6_closeout_inventory` (1),
+  `test_console_wave6_inventory` (3), `test_default_timeout_session_guard`
+  (1), `test_persistent_diagnostic_inventory` (2),
+  `test_progress_widget_clock_guard` (1),
+  **`test_timer_path_static_update_inventory` (3 — the `(file, line)`-keyed
+  `CLASSIFIED_SITES` census)**, `test_worker_exclusive_group_inventory` (2).
+  Independently: neither `test_timer_path_static_update_inventory.py` nor
+  `test_worker_exclusive_group_inventory.py` contains a single reference to
+  `library_screen`, so no `(file, line)` key of theirs could have gone
+  stale from a Library move at all. Wave-6 task 2 re-ran the same 15 (plus
+  the 3 ratchet rows = 18) at ITS parent and `diff`ed the sorted name lists
+  to **IDENTICAL**.
+- **`Tests/UI/test_library_modal_dismissal.py` is a standing 1-red at every
+  wave tip, and it is a BLOCKED guard rather than a failing assertion.**
+  `test_library_modal_inventory_matches_declared_edges_bidirectionally`
+  raises on an unresolved modal constructor for the skills-era
+  `LibraryScreen._present_library_skills_import_choice_if_needed`, which
+  aborts `_discover_library_modal_edges` **before** the bidirectional
+  comparison runs — so the file currently proves nothing about ANY
+  subsystem's rows, including rows a task has just repointed. Measured
+  identically on both trees throughout wave 6 (**1 failed / 169 passed**).
+  A task whose own work touches this inventory therefore cannot prove it
+  green end-to-end and must prove the retarget **by construction** instead
+  (run the file's own `_discover_library_modal_edges` against the new
+  `_OwnerScope` alone and compare to the declared rows, matching each
+  modal's concrete type — the prompts series' worked example, §21). Filed
+  for repair as **TASK-31815**, together with the three other equally-stale
+  rows (`handle_library_ingest_browse` and the two skill-trust passphrase
+  presenters); remove this entry when that lands.
+- **`Tests/Performance/test_ui_ready_module_census.py` flaps against a
+  ZERO-headroom pin, identically on trees that do not contain the change.**
+  The pin is 972 and the warm-boot measurement IS 972; under load it
+  measures **974** and fails with byte-identical assertion text on the
+  branch and on an ISOLATED baseline worktree at the parent. Wave-6 task 3
+  characterized the flap properly rather than by a single lucky run: **8
+  passed / 2 failed over 10 isolated single-node runs on a quiet machine**
+  (3 competing processes) — so it is NOT purely load-gated. Zero of the 25
+  modules the failure names is a Library module (14 are
+  `tldw_chatbook.Chat.console_*`; the rest are DB, LLM_Calls, Scheduling,
+  Navigation, Console_Modules and Widgets), and the Library work only ever
+  REMOVES modules from the first-paint window via the born-lazy controller
+  import. **Report this one as a red when it fires** — an earlier draft of
+  the wave-6 task-3 battery reported only the lucky 46/3 outcome as if it
+  were "the" result, which is the failure mode a flapping guard invites.
+
+  **Read the guard's own policy before proposing a fix, because it forbids
+  the obvious one.** Its module docstring states: "RATCHET (TASK-23029 /
+  ADR-097, `backlog/decisions/097-boot-budget-ratchets.md`):
+  `MAX_TLDW_MODULES_AT_UI_READY` **never rises**. On a breach, defer the
+  new mount-leg cost or shed equivalent cost elsewhere in the same PR; the
+  only other path is an explicit owner exception recorded in the ADR's
+  exception ledger." So "raise the pin with some headroom" is not a
+  conforming resolution at all. And the same docstring documents the
+  tolerated run-to-run wobble as **±1 module** — the observed breach is
+  **+2**, which is outside it. This is therefore a genuine ADR-097 breach
+  owned by whatever work added those residents, not a guard that merely
+  needs slack. Filed as **TASK-31816** (dev-owned; dev's own `06acf148f`,
+  "perf: defer Library and Settings runtime pre-import payload", is the
+  precedent for the paydown direction); remove this entry when that lands.
+- **Wave-6 Task 4 (wave close) found 2 more in `Tests/Library/`**, surfaced
+  by widening the paired sweep to that whole root and confirmed by the
+  pairing itself — both fail on an ISOLATED worktree at the wave-6 start
+  commit with byte-identical node names, in the same run that produced 22
+  shared / 0 branch-unique / 0 baseline-unique:
+  `Tests/Library/test_agent_chunk_student_story.py::test_student_story_
+  chapter_notes_from_stored_chunks_only` and
+  `Tests/Library/test_library_skills_state.py::test_shadow_name_set_stays_
+  in_sync_with_real_sources`. Neither touches Prompts code. They are listed
+  here because `Tests/Library/` had only ever been swept in narrow,
+  subsystem-filtered slices before — the first unfiltered run of the whole
+  root is what made them visible.
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -965,7 +1329,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
-| 4 | prompts | 41 | |
+| 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
 | 4 | media | 55 | |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
@@ -1005,6 +1369,20 @@ the PR's "a pure move must not move these numbers outside noise" evidence.
 A pure move changing *where* code lives must not change the click-latency
 numbers; a checkpoint that drifts is a signal the move was not pure and is
 grounds to stop and investigate before merging, not to update the recipe.
+
+**Run it as a PAIR on the same machine, and run the pair TWICE with the tree
+order swapped** (added at the wave-6 close, §21, which was the first close to
+actually do it). "Before" means the isolated baseline worktree the sweep
+already requires, probed minutes apart from the branch — not a comparison
+against a band some earlier close recorded on a different machine under a
+different load, which is what §16/§19/§20 each fell back to and which cannot
+separate a code effect from a machine effect. The order swap is not
+optional: wave-6's round 1 showed the branch slower on all sixteen
+wall-clock measurements, and reversing the order moved the whole penalty
+onto the baseline — a first-run warm-up artifact that a single pair would
+have reported as a uniform regression. Read the load-INDEPENDENT columns
+(`recompose`, `full-update`, `nodes`) as the verdict and the wall-clock
+columns as context; a real per-frame regression shows up in the former.
 
 ## 10. `.git-blame-ignore-revs` — one-time setup and the per-PR rule
 
@@ -3768,6 +4146,26 @@ dead-import candidate against `_SURFACE` individually, every task — a
 clean run of intervening series is not evidence the NEXT series' own
 candidate set is also clean.**
 
+**How to run that check, added at the wave-6 close because the prompts
+series nearly failed it a second way.** "Individually" means an
+**exact-name lookup of each candidate against `_SURFACE`'s own contents**
+— never a subsystem-word grep. The prompts cleanup's first `_SURFACE`
+check was a case-sensitive `grep prompt` over that file, which returned
+**zero matches** and would have cleared all 30 of its candidates for
+deletion — five of them wrongly, sending
+`test_screen_still_re_exports_every_moved_name` red (loudly, not silently:
+this shape costs a debugging round, not a shipped regression). The five
+that are actually pinned all spell it `PROMPT`
+(`LIBRARY_PROMPT_DIRTY_VETO_COPY`,
+`LIBRARY_PROMPT_SAVE_STATUS_COPY`,
+`_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP`,
+`_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS`,
+`_LIBRARY_PROMPT_WRITE_WORKER_GROUPS`). Screaming-snake constants are
+exactly what a re-export contract is most likely to pin, so the
+lowercase-word grep is wrong precisely where it matters most. That run
+also produced **the largest save yet — 5 of 30**, against ingest's 1 of 9,
+so the shape is not decaying with repetition.
+
 ### Moved-docstring / module-docstring corrections
 
 Four inaccuracies in `library_ingest_controller.py`'s own MODULE and
@@ -4164,3 +4562,673 @@ unrelated feature work landing on `dev` in between.
    the recipe doing its job — recorded here as confirmation, not a new
    finding.
 
+## 21. The prompts series, as landed — the sixth rehearsal, and the largest single move of this program
+
+Wave-6 Tasks 1–3 (`.superpowers/sdd/2026-09-05-library-decomposition-wave6-prompts`)
+extracted the Prompts subsystem. At 161 method candidates and 46 prompt-named
+`__init__` attributes it is the biggest cluster the recipe has processed —
+skills' 127/36 was the prior high — and the first to need a delegator-prune
+census that a plain reference count gets WRONG (see the `on_<Message>`
+finding below).
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 1 | State | 43 of 46 prompt-named `__init__` attributes → `LibraryPromptsState`; a THREE-way prefix split (31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`), resolved by one `prompt_state_shim_attr()` rather than two independent frozensets (the skills precedent). The other 3 are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed plain screen attributes. 4 fields keep their ORIGINAL `__init__` line (`reader_preferences`, `reader_layout`, `reader_persistence_locks`, `editor_mode`) because `self._prompts_state` must be constructed before the shared reader-preference tuple-unpack | 41393 → 41359 lines, 1321 methods (unchanged) |
+| 2 | Controller | 139 of 161 "prompt"-named method candidates → `LibraryPromptsController` (44 `@on` + 6 `on_<message>` naming-convention + 1 `action_*` + 1 `@staticmethod` + 87 plain; 22 exclusions: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller `@property`). Single controller, not split — an import-graph component analysis over all 161 candidates found one connected component of 145 names, so no clean seam existed | 41359 → 37722 lines, 1321 methods (unchanged: 139 `FunctionDef`s out, 139 delegators in). Controller born-governed at 4956, review fix round → 4991 |
+| 3 | Cleanup | Shim block (43 properties, three prefixes) deleted; 128 screen-side literal `self.<flat>` retargets to `self._prompts_state.<field>` plus 4 dynamic-dispatch string retargets and 1 `getattr` RECEIVER fix; 465 test-side attribute-path retargets across 11 files spanning `Tests/UI` and `Tests/ProductionApp`, plus 13 `SimpleNamespace` fixture restructurings (27 flat kwargs → nested `_prompts_state=SimpleNamespace(...)`) and one fake-harness CLASS-ATTRIBUTE restructuring covering 5 more construction sites; 39 of 139 screen delegators pruned; 25 dead imports removed (5 further candidates SAVED by the `_SURFACE` check); the 4 stale `test_library_modal_dismissal.py` inventory rows repointed at the controller behind a new `_OwnerScope`; 10 stale docstring/comment corrections across the screen (3), the controller (2) and the state module (5) | 37722 → 37574 lines, 1321 → 1282 methods (39 fewer `FunctionDef`s — exactly the 39 pruned delegators). Controller: 4991 → 4998 (comment-only) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`41393/1321 → 41359/1321 → 37722/1321 → 37574/1282` (final).
+
+**Controller-file governance pin** (§17): `library_prompts_controller.py`
+born-governed the moment it existed (Task 2): `4956 → 4991` (Task 2's own
+review fix round) `→ 4998` (this cleanup task, comment-only).
+
+### Delegator census — 100 KEEP, 39 PRUNED (~28%), and a genuinely new hazard
+
+Of the 139 moved names, **51 KEEP unconditionally** per the transform
+whitelist (§4) — but the whitelist needed a THIRD member this series, not
+the two prior series used:
+
+- **44 `@on` handlers** and **1 `action_*`** — the established two.
+- **6 `on_<Message>` NAME-dispatched handlers** (`on_prompt_block_editor_
+  back_requested` and its five siblings). **This is the new one.** Textual
+  dispatches these purely by name: `Message.handler_name` is
+  `f"on_{name}"` (`textual/message.py`), and `MessagePump._get_dispatch_
+  methods` walks `self.__class__.__mro__` looking that name up
+  (`textual/message_pump.py`). They carry no decorator, so a
+  decorator-driven whitelist misses them; and no code anywhere spells
+  `screen.on_prompt_block_editor_back_requested`, so a **reference-count
+  census reports them as zero-referenced and marks all six PRUNE**. Deleting
+  them would have silently unhooked `LibraryScreen` from six messages.
+  **The rule this generalises to: before pruning any moved name matching
+  `on_[a-z]`, check it against Textual's name-based dispatch, not just
+  against the reference census.** (The 6 do appear to have "code
+  references" in a naive census — but every hit is a `def` of the SAME name
+  in a DIFFERENT class, which is the opposite of a caller: **8 such `def`s
+  in all** — 2 in `Widgets/Library/library_prompts_canvas.py` (only
+  `block_field_changed` and `block_action_requested`) and one for EACH of
+  the six in a `Tests/UI/test_prompt_block_editor.py` harness. *(Corrected
+  at the wave-6 close, re-derived by `grep -rn "def on_prompt_block_
+  editor_"` over `tldw_chatbook/` + `Tests/` + `Docs/` + `Helper_Scripts/`
+  + `scripts/`: this section's first draft said "4 more in a … harness",
+  undercounting the harness by 2 — the harness carries 7, of which 6 match
+  the moved names and the 7th, `apply_requested`, matches the one
+  `on_prompt_block_editor_*` handler that is an EXCLUSION and never
+  moved.)* That coincidence is also why the deletion would have stayed
+  green — the canvas keeps handling its own two one level down.)
+
+Of the remaining 88 candidates (1 staticmethod + 87 plain), **49 have a
+genuine external caller** and **39 have none**. Every verdict was derived
+from a tokenize-based census (NAME tokens only, so a docstring mention
+cannot masquerade as a call) over `tldw_chatbook/` + all of `Tests/`,
+excluding only the controller module and each name's own delegator body,
+then re-checked against a broader "name appears anywhere on the line" pass.
+The broad pass is what earns its keep: it caught three names
+(`_arm_library_prompt_editor`, `_restore_library_prompts_focus`,
+`_sync_library_prompt_memberships`) whose only callers pass them as **bare
+callables** — `self.call_after_refresh(self._arm_library_prompt_editor)`,
+`sync_memberships=lambda: self._sync_library_prompt_memberships`, and one
+passed as a positional argument on its own line — which a `<name>\s*\(`
+call-shaped regex scores as zero, marking all three PRUNE. That is the
+skills series' own lesson-2 sanity check (§19) firing for real rather than
+passing vacuously.
+
+**A second novel census finding: an uncollected-but-executable script under
+`Docs/`.** `_library_prompt_can_update_original` has zero references in
+`tldw_chatbook/` and `Tests/` — but
+`Docs/superpowers/reviews/evidence/task-22033/task22033_live_matrix_runner.py:262`
+calls `screen._library_prompt_can_update_original()` on a real screen.
+`pyproject.toml` sets `testpaths = ["Tests"]`, so that file is never
+collected, and prior series established that frozen `Docs/` evidence
+scripts are NOT retargeted (`task23019_scenarios.py` still spells
+`screen._library_skill_editor_state` two waves after the skills cleanup).
+Nonetheless the prune rule is "zero references **anywhere in the repo**",
+and this is a reference in executable form, so the delegator was KEPT — the
+first time a `Docs/` hit has changed a prune verdict. Prune fraction: 39 of
+139 = **28.06%**, at the high end of the recorded range. Sorted by the
+computed fraction, not by eye — an earlier draft of this line put prompts
+AFTER search+RAG on a `~28%` vs `~29%` rounding, which reverses the true
+order: export 1/22 = 4.55% < ingest 6/56 = 10.71% < skills 16/86 = 18.60%
+< collections 14/64 = 21.88% < **prompts 39/139 = 28.06%** < search+RAG
+12/42 = 28.57% < conversations 18/61 = 29.51%.
+
+### Dynamic-dispatch census — four spellings, six real screen-side sites
+
+Run over the 43 state fields AND the 139 mover names, in all four spellings
+(attribute, quoted-string, bare-assignment/kwarg, patch-target table). The
+**mover** names came back clean in every non-attribute spelling: the only
+string-literal occurrences anywhere are the wiring test's own pin tuple and
+the four `test_library_modal_dismissal.py` inventory rows (below). The
+patch-target-table shape (`(target, "<name>", key)` rows consumed by a
+distant `monkeypatch.setattr`, whose exemplar is
+`Tests/UI/test_library_shell.py:5146`) DOES name a prompt method there —
+but `_request_library_prompts_browse`, which is one of the 22 EXCLUSIONS,
+so it never moved and needed nothing.
+
+The **field** names produced six screen-side sites, each matching a shape a
+prior series already solved:
+
+- **The shared reader-preference dispatcher, twice**
+  (`_replace_library_reader_preference` / `_persist_library_reader_
+  preference`): the `"prompts"` entry's value string became
+  `"_prompts_state.reader_preferences"`. Zero consumption-site changes —
+  both dicts are already read through `operator.attrgetter` and written
+  through `_assign_library_reader_preferences_attribute`, the dotted-path
+  helper the conversations exemplar added and every series since has
+  reused rather than re-derived.
+- **The choice-strip visibility/canvas-kind pair**: same treatment,
+  `"_prompts_state.sort_choices_visible"`, sitting directly beside the
+  skills entry that already reads that way.
+- **One `getattr(self, "_library_prompts_view", "list")`** needing the
+  skills series' RECEIVER fix, not a string swap:
+  `getattr(self._prompts_state, "view", "list")`. Task 1's census recorded
+  four such sites; task 2's move took three of them into the controller,
+  where they resolve through the controller's own permanent shim loop and
+  correctly stay untouched.
+- **`on_screen_suspend`'s flat-name timer loop**: the prompts
+  search-debounce timer left the string tuple for its own explicit
+  `_prompts_state` block — the ingest path-debounce timer's precedent,
+  three lines above it in the same method, complete with the same
+  "a `getattr` for the old flat name silently returns None" warning. Both
+  of that loop's test pins (`test_library_screen_reuse.py`) got the
+  matching treatment.
+
+Test-side: `test_library_adaptive_reader_closeout.py`'s
+`DESTINATION_CONTRACT` needed its two `"prompts"` strings dotted (the sixth
+consecutive subsystem to need that one entry), and
+`test_screen_navigation.py:3253`'s `setattr(screen, "_library_prompts_
+view", "list")` needed the receiver fix.
+
+### Import verification — the `_SURFACE` check saved 5 of 30
+
+30 imports were left dead in `library_screen.py` by this wave, derived as a
+DIFFERENCE (AST-unused set at the wave-6 start commit vs. at this commit)
+rather than as an absolute unused-name list — 38 further names are unused at
+BOTH ends and belong to prior series or to `__future__`/`_SURFACE`
+bookkeeping, and deleting those would have been out of scope.
+
+Each of the 30 was then checked individually against
+`Tests/Architecture/test_library_support_layer_surface.py`'s `_SURFACE`
+re-export contract, and **5 came back pinned**:
+`LIBRARY_PROMPT_DIRTY_VETO_COPY`, `LIBRARY_PROMPT_SAVE_STATUS_COPY`,
+`_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP`,
+`_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS`,
+`_LIBRARY_PROMPT_WRITE_WORKER_GROUPS`. All five stayed;
+`test_screen_still_re_exports_every_moved_name` asserts the MODULE surface,
+not live usage. **This is the shape's third series in a row and the largest
+hit yet** (ingest saved 1 of 9; this saved 5 of 30) — and it was nearly
+missed a second way: the first `_SURFACE` check was a case-sensitive grep
+for `prompt`, which returned zero because all five names spell it `PROMPT`.
+**Do the `_SURFACE` check by exact-name lookup, not by a lowercase
+subsystem-word grep.** The remaining 25 were deleted, each independently
+confirmed already re-imported and live inside the controller (23 of them)
+or genuinely unnecessary anywhere (`PromptSourceCapabilities`,
+`local_prompt_capabilities` — both now live only in
+`library_prompts_state.py`, which owns the field whose default calls them).
+
+### The deferred modal inventory — repointed, proven by construction
+
+`Tests/UI/test_library_modal_dismissal.py` maintains a hand-declared
+`(file, class, presenter, modal-type)` inventory and rediscovers it by
+AST-parsing only the files named in `_SUPPORTED_OWNER_SCOPES`. Task 2's move
+made four rows stale. Repointing them required adding an
+`_OwnerScope("tldw_chatbook/UI/Library_Modules/library_prompts_controller.
+py", "LibraryPromptsController")` FIRST — without it a repointed edge is
+never discovered and the bidirectional assertion fails the other way.
+
+That test **cannot be proven green end-to-end**: it is pre-RED at this
+task's parent for an unrelated skills-era failure
+(`unresolved modal constructor … LibraryScreen._present_library_skills_
+import_choice_if_needed`), which aborts discovery before the comparison.
+Measured identically on both trees: **1 failed / 169 passed**. The retarget
+was therefore proven by CONSTRUCTION instead — running the file's own
+`_discover_library_modal_edges` against the new scope alone and comparing
+to the four declared rows: 4 discovered, 4 declared, zero undeclared, zero
+missing, exact match including each modal's concrete type. The fifth prompt
+row, `_stage_library_prompt_for_console`, is one of the 22 exclusions, is
+still screen-resident, and was correctly left alone. The cross-wave repair
+(the skills blocker, plus `handle_library_ingest_browse` and the two skill-
+trust passphrase presenters, all equally stale delegators) is filed
+separately at wave close — it is not prompts-only work.
+
+### Wiring test finalization
+
+`Tests/Architecture/test_library_prompts_wiring.py`:
+`test_state_object_fields_match_the_shim_surface` narrowed to
+`test_state_object_declares_the_censused_field_count` (the half that never
+depended on the screen);
+`test_every_shim_reads_and_writes_its_own_state_field` **re-aimed at the
+controller** rather than deleted, since `LibraryPromptsController`'s own
+permanent shim loop is generated by the identical `dataclasses.fields` loop
+and carries the identical closure-binding trap, and the surviving
+`test_prompts_controller_exposes_every_state_field` is exactly the weaker
+`isinstance(..., property)` check it exists to strengthen (a
+deviation from the prior series' delete-it precedent, taken deliberately —
+prior series had no equivalent second test to lose);
+`test_the_screen_no_longer_carries_a_prompt_state_shim` added, asserting
+ABSENCE; `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` filled with the 39
+names, with both `test_screen_delegates_prompt_handlers` and
+`test_prompts_cluster_staticmethods_forward_to_the_controller_class`
+already wired (by task 2) to skip them and assert genuine absence instead.
+13 tests, all green.
+
+### Wave-6 close
+
+Wave-6 (`.superpowers/sdd/2026-09-05-library-decomposition-wave6-prompts`,
+branch `refactor/library-decomp-wave6-prompts`) scoped itself to prompts
+alone — at 161 method candidates and 46 prompt-named `__init__` attributes,
+the largest single cluster of the program, and the plan's own judgement that
+"one subsystem in flight at a time" beats rushing media and notes alongside
+it. The prompts series (Tasks 1-3, above) is complete. This section is Task
+4's own wave-level pin-trajectory re-derivation, verification battery, sweep
+evidence and lessons. Media and notes remain, in that order (§8).
+
+#### Pin trajectory — full wave-6 chain
+
+Re-derived by `git show <commit>:<path>` reads of the `_BUDGETS` row in
+`Tests/Architecture/test_screen_size_ratchet.py` and the
+`library_prompts_controller.py` row in
+`Tests/Architecture/test_library_modules_size_ratchet.py` at every commit in
+the wave — not carried over from any report — in true chronological order
+(`git log` lists newest-first; this table is oldest-first):
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-6 start) | `e5e03846a` | 41393 / 1321 | — (file does not exist yet) |
+| 1 | Prompts state (RED — wiring + characterization pins; screen untouched) | `a41cbe8c6` | 41393 / 1321 (unchanged) | — |
+| 1 | Prompts state (GREEN — 43 of 46 fields → `LibraryPromptsState`) | `f59db7c94` | 41359 / 1321 | — |
+| 1 | (blame-ignore, no functional change) | `1e3e0b6ef` | 41359 / 1321 (unchanged) | — |
+| 1 | Fix round 1 — coverage-classification correction, wiring pin hardened (series complete) | `4ada1c55d` | 41359 / 1321 (unchanged) | — |
+| 2 | Prompts controller (RED — full-cluster wiring pins only) | `8ae30f490` | 41359 / 1321 (unchanged) | — |
+| 2 | Prompts controller (GREEN, born-governed — 139 of 161 movers) | `d0ec95b16` | 37722 / 1321 | **4956 (born)** |
+| 2 | (blame-ignore, no functional change) | `926b0431c` | 37722 / 1321 (unchanged) | 4956 (unchanged) |
+| 2 | Fix round 1 — one stale line reference, comment-only | `52268ea42` | 37722 / 1321 (unchanged) | 4956 (unchanged) |
+| 2 | Fix round 2 — census-count corrections incl. the stale ratchet-comment narrative line (series complete) | `31b7d4754` | 37722 / 1321 (unchanged) | 4991 |
+| 3 | Prompts cleanup (GREEN — shim deleted, 39 delegators pruned) | `6fd2b753a` | 37574 / 1282 | 4998 |
+| 3 | (blame-ignore, no functional change) | `d838b7d63` | 37574 / 1282 (unchanged) | 4998 (unchanged) |
+| 3 | Fix round 1 — doc accuracy only (series complete) | `d010b65a1` | 37574 / 1282 (unchanged) | 4998 (unchanged) |
+| 4 | Stale-prose sweep (comment-only, line-neutral) | `33cffc4a4` | **37574 / 1282 (wave-6 final)** | **4998 (wave-6 final)** |
+
+*(Six further commits in the wave are SDD ledger/report writes only —
+`471813f21`, `9a9fa02a2`, `bcf0631f7`, `770a47736`, `3eba0592f` and this
+close's own `3cf89dbe9` backlog filing — and are omitted from the table
+because they move neither pin. Each was read anyway to confirm that: the
+`git show` sweep above covers all 19 commits in `e5e03846a..HEAD` plus the
+base itself (20 refs), not just the 14 rows listed.)*
+
+Full chain, screen: `41393/1321 → 41359/1321 → 37722/1321 → 37574/1282`
+(final). Full chain, controller: born `4956` at its very first commit (Task
+2's own GREEN) `→ 4991` (Task 2's own fix round 2 — comment growth from the
+census documentation added alongside the count corrections) `→ 4998` (Task
+3, comment-only: two controller docstring corrections).
+
+**Net wave-6 shrink: 3,819 screen lines and 39 methods** — the largest
+single-wave reduction this recipe has recorded, by a wide margin and from a
+single subsystem: wave-2 (export + collections, two subsystems) took 1,554,
+wave-3 (search+RAG) 1,037, wave-4 (skills) 2,070, wave-5 (ingest) 1,480.
+Prompts alone is **1.85× the prior best**. The 39 methods are exactly the 39
+pruned delegators; a pure move is always net-zero on the screen's method
+count, and only a delegator prune moves it.
+
+Task 4's own fresh `_measure()` call (each ratchet file's own semantics — an
+`ast`-walked line count plus a `LibraryScreen` method count, not `wc -l`)
+gives **37574 lines / 1282 methods** for the screen and **4998 lines** for
+the controller: EXACT matches to both recorded pins, zero drift, nothing to
+lower. This close's own commits touch neither governed file (the
+stale-prose sweep's six edits are all line-neutral and land in
+`Tests/`, `tldw_chatbook/Library/`, `tldw_chatbook/Widgets/Library/` and
+`tldw_chatbook/UI/Console_Modules/`), so no same-commit re-pin was needed.
+
+#### Verification battery (Task 4, this close)
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`, `-p no:randomly`; `timeout` is unavailable in this
+environment, so long runs are bounded with `perl -e 'alarm N; exec @ARGV'`.
+Machine load at battery time: **16.90, 17.43, 15.99** (`uptime`) — a
+substantially BUSIER machine than wave-5 close's own ~3.0, worth naming
+alongside the numbers per wave-4 close's own lesson 3.
+
+- **Fresh `_measure()` on both ratchet files**: 37574/1282 (screen), 4998
+  (controller) — exact match to both recorded pins, zero drift.
+- **All SEVEN wiring suites** (`test_library_collections_wiring.py`,
+  `test_library_conversations_wiring.py`, `test_library_export_wiring.py`,
+  `test_library_ingest_wiring.py`, `test_library_prompts_wiring.py`,
+  `test_library_search_rag_wiring.py`, `test_library_skills_wiring.py`)
+  **+ the support-layer surface suite + both size ratchets + the recompose
+  census + the pre-import closure + the `_ui_ready` module census + all
+  FIVE characterization files + the modal-dismissal file + the screen-reuse
+  file, one combined invocation**: **301 passed, 4 failed** in 253.50s.
+  Every red is on §7's documented list as updated by this close: the two
+  `chat_screen.py` ratchet rows, the `library_media_browse_controller.py`
+  controller-ratchet row (added to §7 by this close — see below), and the
+  modal-dismissal discovery blocker. **Zero `library_screen.py`- or
+  `library_prompts_controller.py`-scoped failures.** The `_ui_ready` census
+  passed on this run; it is a flapping guard and §7 now says so.
+- **preflight**: `./scripts/preflight.sh` — all six derived-artifact checks
+  pass (CSS bundle + 9 per-screen stylesheets, profile-owned-path census
+  48/18/46, production diagnostic inventory 581 owners, backlog task-id
+  sweep across 3,317 task files including this close's own two new filings,
+  chachanotes table allowlist 105/105, index plan pins 270/270/57).
+
+#### Full sequential xdist paired-baseline sweep — whole-wave span
+
+Branch = wave-6 tip plus this close's own commits (a comment-only
+line-neutral prose sweep, two backlog filings, this recipe's own edits and
+the close report). Baseline = an ISOLATED `git worktree add` at the wave-6
+START commit (`e5e03846a`) with its own `uv venv`/`uv pip install -e
+".[dev]"`, verified to resolve its OWN tree
+(`tldw_chatbook.__file__` prints under `.worktrees/wave6-close-baseline/`).
+No stash overlay was used anywhere in this task — per the ruling this close
+itself wrote into §3. Run SEQUENTIALLY, never concurrently, per §7's own
+"concurrent runs amplify flakiness" lesson.
+
+**Scope, and a deliberate deviation from this task's own brief, recorded
+with the measurement that forced it.** The brief called for "the full
+`Tests/UI` + `Tests/Library` + `Tests/Architecture` roots (the established
+sweep scope)". That is not this recipe's established scope, and the two
+differ by more than 5×: measured at this close, those three roots collect
+**23,898** tests where §7's actual established net,
+`Tests/UI -k "library"`, collects **4,477**. At the ~25 min/side the
+established net costs on this machine, the literal reading is ~4.5 hours of
+paired sweeping, 15,742 of whose tests are non-Library `Tests/UI` cases with
+no relationship to a wave whose entire remaining diff is eight comment
+lines — and §7 already rules the exhaustive net "CI's job, not this
+recipe's per-task evidence requirement". Resolved as **two paired sweeps**
+that together cover the brief's intent at a defensible cost: **Sweep A** =
+`Tests/UI -k "library"` (4,477 — the established, directly wave-comparable
+net) and **Sweep B** = the full `Tests/Library` + `Tests/Architecture` roots
+with no filter (3,679 — the widening the brief was actually after, and the
+roots §7's own list has historically under-covered).
+
+**Machine load, recorded at the start of each half** (per wave-4 close's own
+lesson 3 — a probe or sweep number without its load average is not
+comparable to any other run):
+
+| sweep half | started | load average (1 / 5 / 15 min) | wall |
+|---|---|---|---|
+| A — branch | 21:52 | 12.44 / 14.72 / 15.28 | 30:35 |
+| A — baseline | 22:22 | 6.92 / 9.03 / 13.65 | 24:13 |
+| B — branch | 22:47 | 5.61 / 7.40 / 9.37 | 3:27 |
+| B — baseline | 22:57 | 3.41 / 6.15 / 8.30 | 3:21 |
+
+**Sweep A's two halves were NOT run under comparable load**, and this is
+stated up front rather than buried: the branch half ran at roughly twice the
+baseline half's load average and took 26% longer in wall clock (30:35 vs
+24:13). That biases the raw counts toward MORE branch failures and therefore
+toward MORE spurious branch-unique names — the conservative direction for a
+regression hunt, but it means the count comparison is worth nothing on its
+own here and every branch-unique name had to be resolved individually. It
+was.
+
+| | Failed | Passed | Skipped | Wall |
+|---|---|---|---|---|
+| A — branch (`3cf89dbe9` + this close's doc edits) | 373 (+1 error) | 4104 | — | 1835.90s |
+| A — baseline (`e5e03846a`) | 370 | 4103 | — | 1453.35s |
+| B — branch | 22 | 3652 | 5 | 207.75s |
+| B — baseline | 22 | 3637 | 5 | 201.10s |
+
+**Both collection-count asymmetries reconcile exactly**, which is the first
+thing to check before reading any failure diff:
+
+* Sweep A: branch collects 4 more than baseline — exactly the 4 tests in
+  `Tests/UI/test_library_prompts_characterization.py`, added by task 1.
+* Sweep B: branch collects 15 more — exactly the 13 tests in
+  `Tests/Architecture/test_library_prompts_wiring.py` plus the 2
+  parametrizations the controller ratchet's own `sorted(_BUDGETS)` gains
+  from the new `library_prompts_controller.py` row.
+
+**Sweep B: 22 failed on BOTH trees, name-set IDENTICAL — zero branch-unique,
+zero baseline-unique.** All 22 are documented: the 18 `Tests/Architecture/`
+rows task 1 proved name-for-name at the wave-6 base (the 15 inventory reds
+plus the 3 ratchet rows), and 4 in `Tests/Library/` — two already on the list
+above (`test_library_export_roundtrip.py::test_library_export_success_
+records_a_durable_receipt_with_the_real_path`, wave-2 task 3;
+`test_ingest_preflight_egress.py::test_the_probe_reports_a_redirect_as_an_
+answered_status_not_an_error`, wave-5 task 3) and two NEW names, added to the
+documented list above by this close on the strength of failing byte-
+identically on a tree that does not contain the change:
+`Tests/Library/test_agent_chunk_student_story.py::test_student_story_chapter_
+notes_from_stored_chunks_only` and `Tests/Library/test_library_skills_state.py::
+test_shadow_name_set_stays_in_sync_with_real_sources`.
+
+**Sweep A: 363 shared, 10 branch-unique, 7 baseline-unique** (baseline-unique
+not investigated, per this section's own established precedent — though it is
+worth noting that three of the seven are Prompts-named
+(`test_library_prompt_undo_refreshes_applied_page_and_preserves_basket`,
+`test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_
+selected`, `test_prompts_route_lands_on_library_with_prompts_row_selected`),
+i.e. the subsystem this wave moved failed MORE often on the tree that does
+not contain the move).
+
+**Not one of the 10 branch-unique names is a Prompts test.** All 10 were
+resolved, none dismissed by name:
+
+1. **Combined single-process re-run of all 10 together: 10 passed** (14.45s).
+2. **True isolation, one process per node, on the BRANCH: 9 of 10 passed.**
+3. **True isolation, same 10, on the isolated BASELINE worktree: 10 of 10
+   passed.**
+
+Five of the ten are already documented above (`test_focus_traversal_builds_
+zero_bodies_for_pass_through_rows`, wave-5 task 3; `test_library_media_
+durable_mutation_gates_and_refreshes_applied_scope[True]`, wave-5 task 2;
+`test_library_media_initial_error_is_unknown_and_retry_is_unique`, wave-5
+task 1; both `test_library_starter_production_geometry_and_focus_order`
+parametrizations, wave-4 close). The other five passed on every re-run in
+both modes and are ordinary xdist noise, not added to the list, per this
+section's own precedent for a name that passes on rerun.
+
+**The one that reproduced, and the process lesson it produced.**
+`Tests/UI/test_library_media_reader_traversal_t22207.py::test_focus_
+traversal_builds_zero_bodies_for_pass_through_rows` failed its isolated
+branch run while passing its isolated baseline run — a one-sample asymmetry
+pointing the wrong way, and the only result in this whole close that could
+have been a regression. It was NOT dismissed on the citation that it is
+already a documented flaky name. Instead: **matched batches of 10 isolated
+single-node runs on each tree, back to back on a quiet machine (load ~4-6)
+— branch 5 failed / 10, baseline 4 failed / 10.** Indistinguishable. The
+failure itself is a wait-loop `TimeoutError` from
+`test_library_media_reader_flow.py:141` ("Detail call for backing id 23 did
+not start"), not a behavioural assertion, in a Media-reader test this wave's
+diff does not touch.
+
+**The lesson worth carrying forward is about the BASELINE half of that
+check, not the branch half:** the baseline passed this name 6 times out of 6
+across the first-pass isolated runs, which reads exactly like "green on the
+baseline, red on the branch" — and it took a deliberate 10-run batch to show
+it fails 4 times in 10 there too. **For a timing-sensitive test, a single
+clean isolated run on the baseline is not a disposition; it is one sample of
+a coin flip.** Wave-5 close made the converse observation (a combined-run
+pass overturned by a true-isolation rerun); this is the same failure one
+level further in, and the fix is the same — batch it.
+
+**Zero real regressions across the whole wave-6 span.**
+
+#### Probe run
+
+Run after both sweeps completed, on a quiet machine (load average 6.61,
+5.86, 7.17 at the first run; 5.26, 5.67, 6.99 at the last).
+
+```
+perl -e 'alarm 300; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_probe.py
+```
+
+**This close ran the probe as a genuine same-machine BEFORE/AFTER pair — the
+first close in this program to do so.** §9 has asked for a before/after pair
+around a controller move since the recipe was written; every close to date
+(§16, §19, §20) instead compared a single branch run against wave-2 close's
+*recorded band*, which cannot separate a code effect from a machine effect.
+The isolated baseline worktree built for the sweep made the honest version
+free: the identical script, from the identical commit
+(`Helper_Scripts/library_click_probe.py` is byte-identical across the wave —
+`git diff e5e03846a HEAD --` on it is empty), on the same machine, minutes
+apart.
+
+**Round 1 — branch first, then baseline:**
+
+| interaction | settle (ms) br / base | max gap (ms) br / base | recompose | full-update | mounts br / base | nodes br / base |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 564 / 503 | 183 / 158 | 0 / 0 | 2 / 2 | 177 / 177 | 119 / 119 |
+| media (re-click same) | 386 / 312 | 75 / 51 | 0 / 0 | 2 / 2 | 89 / 85 | 119 / 119 |
+| media (re-click same, 2nd) | 388 / 317 | 79 / 51 | 0 / 0 | 2 / 2 | 89 / 89 | 119 / 119 |
+| notes (switch) | 425 / 354 | 183 / 147 | 0 / 0 | 1 / 1 | 114 / 114 | 114 / 114 |
+| notes (re-click same) | 284 / 245 | 63 / 47 | 0 / 0 | 1 / 1 | 38 / 38 | 114 / 114 |
+| media (switch-back) | 439 / 404 | 113 / 100 | 0 / 0 | 1 / 1 | 179 / 175 | 119 / 119 |
+| notes (switch, 2nd) | 418 / 367 | 189 / 163 | 0 / 0 | 1 / 1 | 114 / 114 | 114 / 114 |
+| media (switch-back, 2nd) | 455 / 401 | 111 / 91 | 0 / 0 | 1 / 1 | 179 / 179 | 119 / 119 |
+
+Round 1 shows the branch slower on **all sixteen** wall-clock measurements
+(settle +35 to +74 ms, max gap +13 to +36 ms). A uniform one-directional
+shift across every row is not something to wave away as noise, so it was
+tested rather than argued.
+
+**Round 2 — the SAME two probes with the tree order REVERSED (baseline
+first, branch second):**
+
+| interaction | settle (ms) base / br | max gap (ms) base / br |
+|---|---|---|
+| media (switch-in) | 508 / **493** | 173 / **130** |
+| media (re-click same) | 315 / **310** | 50 / **48** |
+| media (re-click same, 2nd) | 311 / **310** | 50 / 51 |
+| notes (switch) | 355 / **354** | 148 / **147** |
+| notes (re-click same) | 246 / **245** | 46 / **42** |
+| media (switch-back) | 403 / 427 | 101 / 113 |
+| notes (switch, 2nd) | 390 / 396 | 175 / 179 |
+| media (switch-back, 2nd) | 401 / 403 | 90 / 95 |
+
+**The penalty followed the RUN ORDER, not the tree.** Whichever tree probed
+FIRST paid it; in round 2 that was the baseline, and the branch came back at
+or below it on five of eight rows and within a few ms on the rest. The round-1
+gap was a first-run warm-up artifact (its own `waitms` column says so: the
+delta sat almost entirely in IDLE-WAIT, +25 to +50 ms per row, while
+`busyms` — actual main-thread work — was unchanged). **A single before/after
+probe pair cannot distinguish a code effect from an order effect; swapping
+the order is a two-minute experiment that can.**
+
+The load-independent columns are the real verdict and they are exact:
+`recompose` is **0 on every row of all four runs**; `full-update` follows the
+identical `2/2/2/1/1/1/1/1` pattern on both trees and matches every close
+back to wave-2; and **`nodes` is identical row-for-row between the two trees**
+(119 media / 114 notes). That last one also retires a loose end from prior
+closes: the mount/node counts have drifted upward across waves (wave-4 and
+wave-5 both recorded media 173-175 / 115 and notes 110 / 110), and each close
+attributed the drift to ordinary Media/Notes feature churn on `dev` without
+being able to prove it. Here the wave-6 BASE tree already reads 177-179 / 119
+and 114 / 114 — **the drift is demonstrably present before this wave's first
+commit**, so the attribution is now measured rather than assumed. `mounts`
+wobbles by 4 run-to-run *within* each tree (the baseline's own two identical
+re-click rows read 85 then 89), which is why the 85-vs-89 cells above are not
+a difference.
+
+Round-2 branch figures sit inside wave-2 close's recorded band on every row
+(settle 245-493 against 264-485, with the low end FASTER than anything wave-2
+recorded; max gap 42-179 against 54-195). This wave's diff does touch the
+probed path — five of the six probed-path methods changed — but every change
+was proven mechanical: `ast.unparse`-ing `compose_content`,
+`_select_library_rail_row_after_source_admission`,
+`_toggle_library_media_reader_pane`, `restore_state` and
+`_persist_library_reader_preference` at both ends and applying the 43-name
+flat→`_prompts_state.<field>` rewrite to the old text makes all five
+**byte-identical**. The sixth, `on_screen_suspend`, carries the one real
+structural change (the prompts debounce timer lifted out of the flat-name
+string loop into its own explicit block, because a plain `getattr` cannot
+follow a dotted path) and is not on the probe's click path at all — the probe
+clicks rail modes and never suspends the screen. That is a stronger version
+of the honesty wave-4 close had to add in review, derived mechanically
+instead of by reading diffs.
+
+#### Lessons
+
+1. **The wave's headline structural finding is a THIRD member of a
+   whitelist that had been stable for five series — and the census that
+   should have caught it reported the exact OPPOSITE of the truth, in both
+   of its obvious forms.** The mechanism is in §4 and is not relitigated
+   here; what generalises is the epistemics. The six
+   `on_prompt_block_editor_*` handlers were marked PRUNE on a *genuine*
+   zero-reference count — no source line anywhere spells
+   `screen.on_prompt_block_editor_back_requested`, so the census was not
+   buggy, it was answering the wrong question. And the obvious widening
+   ("does this name appear anywhere in the repo?") would have marked them
+   KEEP for entirely the wrong reason: all 8 hits are `def`s of the same
+   name in a DIFFERENT class (the canvas widget's own two, plus one per
+   moved name in a test harness), which is the opposite of a caller. A
+   narrow census and
+   its natural widening produced a wrong answer and a right-for-the-wrong-
+   reason answer respectively. **The generalization: when a name is
+   resolved by a FRAMEWORK rather than by a call site, no refinement of a
+   reference census fixes it — you have to model the framework's own
+   dispatch. Read `textual/message_pump.py`, not more of `Tests/`.**
+2. **Number-verification discipline failed for a third consecutive wave —
+   but the failures MIGRATED, from the counts themselves to the satellite
+   copies of a number that nothing automated ever reads.** Wave-4's lesson
+   1 and wave-5's lesson 2 both already state the rule, and this wave's
+   reviewers plainly HAD internalised it: task 2's own errata table
+   re-derived ten separate disputed figures from scratch (E1-E10), and
+   task 3's report opens with a self-corrected count. What still got
+   through were three copies with no reader: a ratchet comment's
+   *narrative* line (`test_screen_size_ratchet.py:503`, "37718", shipped
+   eighteen lines above a row pinned at 37722, caught by review); a
+   *commit message* (`6fd2b753a`: "37576 … -146" for a commit whose row,
+   comment, report and live `_measure()` all say 37574/−148 — shipped, and
+   deliberately unamendable because `.git-blame-ignore-revs` holds that
+   literal hash); and a *line range* inside a claim that explicitly said
+   "re-verified" (`:518-524` overriding a correct `:520-526`). **The
+   generalization, now written into §6: "verify every number" is understood
+   — what is not is that a number has COPIES, and the copies with no
+   automated reader are precisely the ones that survive review. Enumerate
+   them (row, arithmetic, prose, commit message) and grep the old value
+   before committing.** A corollary the third incident earns on its own: a
+   claim carrying the word "re-verified" that overrides a correct value is
+   worse than no claim, because it costs two independent readers a trip to
+   the live file to undo.
+3. **An unwritten process exception survived two more tasks, and was
+   killed by a MEASUREMENT rather than by an argument.** §3's
+   isolated-baseline rule said "expected to run unattended for more than a
+   couple of minutes", and two tasks read the gap as a licence for short
+   foreground stash overlays, three times between them; all three
+   completed intact, and task 2 then hit the exact session-limit
+   interruption the rule exists to prevent (losing nothing only because
+   its long sweeps were already isolated). Two waves of "it's only two minutes" was never going to
+   settle itself. What settled it in one step was pricing the alternative
+   instead of debating it: uv's own share of provisioning an isolated
+   baseline is **2.2s**, the tree costs 535 MB, and — decisively — a task
+   creates ONE and reuses it, so the marginal cost after the first check is
+   zero. The carve-out was buying nothing. **The generalization: when a
+   process rule has an unwritten exception that keeps getting used, measure
+   the cost the exception exists to avoid before writing a bound for it.
+   Here the measurement did not justify a bound; it removed the need for
+   one.**
+4. **A guard that raises during DISCOVERY proves nothing about anything —
+   and in a battery it is indistinguishable from a guard that failed one
+   assertion.** `Tests/UI/test_library_modal_dismissal.py` reports "1
+   failed / 169 passed", which reads like one bad row out of 170 checks.
+   It is not: the single failure IS the bidirectional inventory
+   comparison, aborted by an unresolved modal constructor before it
+   compares anything, so the file's actual coverage of every subsystem's
+   modal rows has been ZERO since the skills series. Five consecutive
+   waves read that line, correctly concluded "pre-existing, not mine", and
+   moved on. Nobody asked what the failure was BLOCKING — which is why
+   wave-6 task 3 had to prove its own four repointed rows by construction
+   instead. **The generalization: when triaging a pre-existing red,
+   separate "an assertion that fails" from "a discovery or collection step
+   that raises". The second silently voids every assertion downstream of
+   it, and the passing count printed beside it is meaningless.** Filed as
+   TASK-31815.
+5. **A shared documented-reds list only works if WRITING to it is part of
+   dismissing a red.** Three consecutive wave-6 tasks dismissed
+   `test_library_modules_size_ratchet.py`'s `library_media_browse_
+   controller.py` row as "the documented pre-existing row" — while §7
+   documented only the two `chat_screen.py` rows and had never mentioned
+   that one. The habit of CHECKING the list had been learned across five
+   waves; the habit of ADDING to it had not, for a row uncontroversial
+   enough that nobody looked it up. Fixed at this close, along with the
+   wave's own 17 prompt-file reds and its 15 `(file, line)`-keyed
+   Architecture inventory reds (both proven name-for-name at the wave-6
+   base). **The generalization: the phrase "the documented X" in a report
+   is worth grepping the document for. The cost of it being false is that
+   the next series re-derives the same red from scratch — exactly what §7
+   exists to prevent.**
+6. **Two of six stale-prose defects lived outside every file scope any
+   task in the series had reason to open — and the census that found them
+   first returned a confident, wrong ZERO.** The four in-scope defects were
+   disclosed by task 3's own review; the other two sat in
+   `tldw_chatbook/Library/library_shell_state.py` and its own test, files
+   no prompts task ever needed to touch. That asymmetry is the argument for
+   §3's new deleted-FIELD-name prose census being a standing wave-close
+   step rather than a per-task file-scoped sweep. **And the instrument
+   itself nearly hid them:** the census's first run reported 0 hits repo-
+   wide, because its skip-list (`.worktrees`, `.venv`, …) was matched
+   against absolute `path.parts` and this worktree's own path CONTAINS
+   `.worktrees` — so it skipped every file in the repository and reported a
+   clean sweep over nothing, which looks identical to a clean sweep over
+   3,000 files. It was caught by asserting a known-positive (a file that
+   demonstrably contains one of the names) rather than by reading the
+   output. **The generalization: a census that returns zero must be proven
+   capable of returning non-zero before the zero is believed — the same
+   "prove the instrument fires" discipline this recipe already demands of
+   mutation evidence, applied to a grep.**
+
+7. **The probe has been run as a single-tree measurement for four closes,
+   and running it as a real PAIR — same machine, minutes apart — changed
+   what it could conclude.** §9 has specified a before/after pair since the
+   recipe was written; §16, §19 and §20 each ran ONE probe and compared it
+   to wave-2 close's *recorded band*, a comparison that cannot separate a
+   code effect from a machine effect, which is exactly why wave-4 close had
+   to spend a paragraph arguing that its elevated numbers were ambient
+   load. The isolated baseline worktree that the sweep already requires
+   makes the honest version free: two runs, two minutes. **And the pair
+   immediately produced a result no single run could have**: round 1 showed
+   the branch slower on all sixteen wall-clock measurements — a uniform,
+   one-directional shift that looks like a regression — and reversing the
+   tree ORDER in round 2 moved the penalty onto the baseline. It was a
+   first-run warm-up artifact, and its own `waitms` column said so (the
+   delta sat in IDLE-WAIT, not in `busyms`). **The generalization: when a
+   paired measurement shows a consistent directional difference, re-run it
+   with the order swapped before believing the direction.** The pairing
+   also retired a loose end three closes carried on assumption — the
+   mount/node growth each of them attributed to "ordinary Media/Notes churn
+   on dev" is now MEASURED, because the wave-6 base tree already reads the
+   higher counts.

@@ -494,7 +494,76 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # debounce_timer` silently no-ops on this branch -- that field lives in
     # `LibraryIngestState` now -- so the name leaves the tuple and the timer
     # gets an explicit state-object stop).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41393, 1321),
+    #
+    # 2026-09-05, wave-6 task 2 (prompts controller PR, prompts series 2/3):
+    # 139 prompt-cluster methods moved to `LibraryPromptsController`
+    # (`UI/Library_Modules/library_prompts_controller.py`, born governed by
+    # `test_library_modules_size_ratchet.py`'s glob), each replaced by a
+    # one-line screen delegator -- the largest single move of this program.
+    # Fresh `_measure()`: 41359/1321 -> 37722/1321. The METHOD count is
+    # unchanged, as every pure controller move's must be: 139 `FunctionDef`s
+    # left, 139 delegators arrived. Line delta -3637 reconciles EXACTLY, each
+    # term measured rather than estimated: -4061 moved lines (each mover's
+    # first decorator through its `end_lineno`, plus `_save_library_prompt`'s
+    # 6 trailing comment lines, which sit outside its own AST range and were
+    # moved with the body rather than orphaned behind a delegator), +333
+    # delegator lines (2-6 each: every `@on`/`@staticmethod` decorator line
+    # copied verbatim, one reconstructed signature, one forwarding `return`
+    # -- plus, for the cluster's single `@staticmethod`
+    # (`_restore_library_prompts_scope`), its own 4-line function-local
+    # import of the controller class, since a static delegator forwards to
+    # the CLASS and the class is deliberately NOT a module-level name here;
+    # the `_restore_library_skills_scope`/`_restore_library_collections_page`
+    # delegators immediately below it in the source have the identical
+    # shape), +3 for the born-lazy `LibraryPromptsController` import inside
+    # `__init__`'s existing lazy-import block (NEVER module level --
+    # `Tests/Packaging/test_library_preimport_closure.py` and the `_ui_ready`
+    # module census both enforce this), and +88 for the construction site
+    # (`self._prompts_controller = LibraryPromptsController(...)`, 31 named
+    # dependencies). -4061 + 333 + 3 + 88 = -3637.
+    #
+    # 2026-09-05, wave-6 task 3 (prompts cleanup PR, prompts series 3/3):
+    # fresh `_measure()`: 37722/1321 -> 37574/1282. The METHOD count drops by
+    # exactly 39 -- the delegator-prune count, a pure deletion with no
+    # replacement (39 of 139 moved names had ZERO references outside their
+    # own body anywhere in the repo, across all four census spellings).
+    # Line delta -148 reconciles EXACTLY, each term measured rather than
+    # estimated: -117 pruned delegator lines (3 each: `def` + forwarding
+    # `return` + the blank separator; none of the 39 is decorated, so no
+    # decorator lines are involved), -29 dead-import lines (25 names left
+    # dead by task 2's move, each first checked individually against
+    # `test_library_support_layer_surface.py`'s `_SURFACE` re-export
+    # contract -- that check saved 5 MORE candidates from deletion; two of
+    # the lines are whole single-name `from ... import X` statements, and
+    # two more come from collapsing the now-single-name
+    # `library_prompts_state` import back to one line),
+    # -10 net for the generated prompts-state shim block (20 lines out, a
+    # 10-line "deleted here, and why" comment in, matching the
+    # collections/search+RAG/skills/ingest markers stacked above it), +6 for
+    # lifting the prompts search-debounce timer out of `on_screen_suspend`'s
+    # flat-name string loop into its own explicit `_prompts_state` block
+    # (the ingest path-debounce timer's own precedent, three lines above
+    # it), and +2 for the two stale comments that grew a line each when
+    # their corrected text was re-wrapped. -117 - 29 - 10 + 6 + 2 = -148.
+    #
+    # 2026-09-05, wave-6 final review: `origin/dev` reconciliation merge (266
+    # commits since this branch's merge-base 7aa048790). Fresh `_measure()`:
+    # 37574/1282 -> 37537/1282. The line delta is EXACTLY dev's own delta on
+    # this file over the same range (41393 -> 41356 = -37), carried through
+    # the merge unchanged -- the branch contributed zero lines here, because
+    # the one conflict took dev's side verbatim. Dev's -37 reconciles, each
+    # term read off its own hunk: +15 for the `_navigation_controller`
+    # construction in `__init__` (kept alongside this branch's own
+    # `_prompts_state` construction 26 lines below it), +1 each for two
+    # `call_after_refresh(self._navigation_controller.present_pending_repair)`
+    # dispatches (`on_screen_resume`, `on_mount`), +1 for a blank separator,
+    # and -55 for `apply_navigation_context`'s body becoming a delegator to
+    # `library_navigation_controller.py` (63 lines -> 8). 15 + 1 + 1 + 1 - 55
+    # = -37. The METHOD count is unchanged because dev moved BODIES only: the
+    # AST method-name set on `LibraryScreen` is identical at the merge-base
+    # and at `origin/dev` (measured, not assumed -- both directions of the set
+    # difference are empty), so dev's extraction added and removed no name.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

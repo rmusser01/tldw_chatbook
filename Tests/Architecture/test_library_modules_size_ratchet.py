@@ -133,6 +133,18 @@ _CONTROLLER_GLOB = "*_controller.py"
 #: glob in `test_every_controller_file_has_a_budget_row` the moment they
 #: exist, and get their own row at that point).
 _BUDGETS: dict[str, int] = {
+    # 2026-09-05, wave-6 final review (`origin/dev` reconciliation merge):
+    # BOTH rows below are dev-side controllers, not this wave's work. Dev
+    # created `library_character_repair_controller.py` and `library_
+    # navigation_controller.py` without adding either to this table, so
+    # `test_every_controller_file_has_a_budget_row` -- the self-defending
+    # property this file exists for -- named them the moment the merge
+    # landed them here. That is the glob doing its job on someone else's
+    # miss; they are governed at this merge rather than left to whichever
+    # branch next trips the check. Pinned at their exact measured line
+    # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
+    # file's own `_measure` expression), no headroom.
+    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
@@ -217,10 +229,67 @@ _BUDGETS: dict[str, int] = {
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # See the dev-side-controller note above the character-repair row. Dev
+    # landed this file at 195 lines; the +3 is this merge's own port -- the
+    # `apply_navigation_context` gate read the flat `_library_prompts_
+    # mutation_in_flight` attribute the wave-6 prompts cleanup deleted, and
+    # was retargeted to `_prompts_state.mutation_in_flight` with a one-line
+    # comment naming the retarget (3 comment lines, the gate line itself
+    # replaced in place).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+    # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 139 moved methods (byte-for-byte; the
+    # largest single move of this program, past skills' own 86) plus the
+    # constructor/property scaffolding the canon requires, pinned at its
+    # exact measured line count. Constructor arity MEASURED with
+    # `inspect.signature(LibraryPromptsController.__init__)`, never
+    # hand-counted: 33 parameters including `self` -- 1 positional
+    # (`screen`) + 31 keyword-only named dependencies (1 state accessor +
+    # 12 shell helpers + 4 shared-shell-state accessors + 3 prompt-wiring-
+    # controller accessors + 1 merely-delegate-property accessor + 10
+    # late-binding callables for the exclusions). 85 class-level
+    # `property` objects: 42 hand-written bindings + the 43 generated
+    # flat-name state shims. See the module's own docstring for the full
+    # 161-candidate / 22-exclusion derivation and the single-controller
+    # decision (one connected component of 145 names, no seam to split on).
+    #
+    # 2026-09-05, wave-6 task 2 fix round 2 (post-review, counts only):
+    # comment-only growth, no method body touched (139 movers unchanged, all
+    # still byte-for-byte). Three census figures in this module's own
+    # docstring were wrong and were corrected in place: "Three MORE names"
+    # reach the unbound-fake-self shape by indirection -> FIVE (the sentence
+    # was counting the three SHAPES as if they were names; the bullets always
+    # listed 1 + 2 + 2, and 10 direct + 5 indirect = the 15 rows the same
+    # paragraph enumerates); "11 movers" forward bare `self` into `_sync_
+    # library_canvas` -> 7 movers + 4 exclusions (AST re-scan: 11 methods
+    # total, `set & movers` = 7); and the `_sync_library_canvas` LATENT
+    # verdict's supporting evidence, which claimed only one test function
+    # mentions a mover -- false, `test_library_entry_compose_once.py` INVOKES
+    # `_sync_library_prompts_browse_result` at :1014/:1044. The VERDICT is
+    # unchanged and now rests on the correct argument (monkeypatch is
+    # function-scoped; that file's four patch pairs live in four OTHER test
+    # functions, zero overlap, verified by mapping every census line and both
+    # invocation lines to their enclosing FunctionDef). The "site" definition
+    # and the alternative un-deduplicated count (42) are now stated inline so
+    # a reviewer can re-derive 33 without re-running the census.
+    # 4956 -> 4991.
+    # 2026-09-05, wave-6 task 3 (prompts cleanup PR, prompts series 3/3):
+    # comment-only growth, 4991 -> 4998. Two now-false present-tense claims
+    # about the screen's delegators ("keeps one-line delegators under every
+    # one of these 139 original names", module docstring, and the same claim
+    # again in `LibraryPromptsController`'s own class docstring) were
+    # corrected to the post-prune 100-of-139 count and pointed at
+    # `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` -- the identical shape the
+    # skills and ingest cleanups each had to fix in their own controllers.
+    # No moved body was touched (byte-for-byte canon intact); this is the
+    # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
+    # 4998.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4998,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
