@@ -943,6 +943,45 @@ dimensions and focus outcomes, then commit only Task 4 files with message
 
 ### Task 5: Add Character Chats to the Ctrl+K Switcher — TASK-31245
 
+#### Approved I4 correction — exact Library admission (2026-09-06)
+
+ADR required: yes, amendment to existing ADR120.
+ADR path: `backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`.
+Reason: define exact Library admission and precommit cancellation across the
+existing Library, app navigation, and switcher owners; no new repair origin.
+
+- [ ] Add event-held real-SQLite regressions for cold/retained Library exact
+  inspection, save veto, missing/malformed target, changed authority/service,
+  cancellation and stale visit. Assert source query/highlight/scroll and old
+  Library display state survive rejection; do not substitute a mocked acceptance
+  Boolean for the real Library admission consumer.
+- [ ] In the existing Library navigation owner, implement
+  `prepare_character_inspection(context, *, is_current)` and
+  `commit_character_inspection(prepared) -> bool`. Preparation uses the existing
+  local bounded locator, strict envelope validator and retained save guards;
+  commit installs its single-use exact route/page/reader-selection snapshot.
+  Keep preparation display-neutral and release only its owned transition lease.
+- [ ] Add optional process-local `require_character_inspection_admission`,
+  `is_current`, and `on_commit_started` controls to `NavigateToScreen`. Defaults
+  preserve existing callers. The existing app coordinator prepares before
+  overlay dismissal, rejects stale/cancelled/unsupported admission, then commits
+  synchronously and uses its incumbent screen transfer/completion path.
+- [ ] Forward those controls through existing Console wiring. Run Library
+  recovery as one switcher-owned task so input remains responsive; capture the
+  immutable failed row and visit. Cancel before commit restores that visit;
+  commit-first disables cancellation/retargeting and permits app-owned teardown.
+- [ ] Make cold and retained Library entry consume the prepared exact selection
+  without a second admission lookup. Keep subsequent transcript rendering in
+  the existing reader and preserve its exact ID on rendering failure.
+- [ ] Run the new RED/GREEN selectors, then one bounded affected navigation,
+  Library entry/save-guard, switcher and existing origin test set. Check changed
+  file lint/format deltas, startup closure if imports change, and whitespace;
+  do not repeat the full programme aggregate or raise budgets.
+- [ ] Update the user guide and Task31245 evidence notes, commit the scoped
+  correction, and re-review I4 plus new breakage in this fix only. The previously
+  documented late synchronous screen-switch failure remains an explicit global
+  limitation, not an admission-rejection or cancellation exception.
+
 **Files:**
 
 - Modify: `tldw_chatbook/Chat/console_switcher_state.py`
@@ -1017,9 +1056,15 @@ def test_character_f2_is_a_noop_with_truthful_hint(): ...
 - [ ] **Step 3: Extend pure switcher state without semantic concepts**
 
 Add the third enum member and result type. Preserve section-first ordering for
-Active. Character rows sort by last activity descending with stable identity as
-the final tie. Validate query through the existing length/control-character
-boundary before calling Task 2.
+Active. Character result projection preserves the repository-provided page
+order after stable deduplication: Keyword pages retain relevance rank and its
+date/identity tie-breaks rather than being re-sorted by the presentation layer.
+This clarifies the original recent-first wording under the spec's ranked-query
+and rank-aware pagination contract (PR2469 review). Date-browse order remains
+owned by its repository; this correction does not add blank Keyword browsing.
+Validate query through the existing length/control-character boundary before
+calling Task 2. Rejected Character edits restore the prior accepted query and
+preserve its committed or pending ownership without issuing a replacement read.
 
 - [ ] **Step 4: Write failing activation and pointer-stability tests**
 

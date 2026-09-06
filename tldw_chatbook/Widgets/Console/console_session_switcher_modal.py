@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha1
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 from rich.markup import escape as escape_markup
@@ -15,24 +17,40 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import DescendantFocus, Resize
+from textual.events import DescendantFocus, MouseDown, MouseUp, Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    CharacterConversationPage,
+    CharacterConversationRow,
+    CharacterKeywordIndexStatus,
+    UnavailableCharacterReason,
+)
+from tldw_chatbook.Chat.console_conversation_activation import (
+    CharacterConversationActivationRequest,
+    ConsoleActivationPhase,
+    ConsoleActivationResultKind,
+    ConsoleConversationActivationResult,
+)
 from tldw_chatbook.Chat.console_switcher_state import (
     CONSOLE_SWITCHER_PAGE_LIMIT,
     ActivityGroup,
     ConsoleSwitcherActiveResult,
+    ConsoleSwitcherCharacterResult,
     ConsoleSwitcherHistoryPage,
     SwitcherMode,
     UnavailableSessionNotice,
+    build_console_character_results,
     build_console_switcher_entries,
     filter_console_active_results,
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    validate_console_character_query,
     validate_console_switcher_query,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -58,6 +76,15 @@ RESULT_DISAPPEARED_COPY = (
 )
 
 HistoryLoader = Callable[..., Awaitable[ConsoleSwitcherHistoryPage]]
+CharacterLoader = Callable[..., Awaitable[CharacterConversationPage]]
+CharacterActivator = Callable[
+    [CharacterConversationActivationRequest, asyncio.Event],
+    Awaitable[ConsoleConversationActivationResult],
+]
+CharacterCommitWaiter = Callable[
+    [CharacterConversationActivationRequest], Awaitable[None]
+]
+CharacterRecovery = Callable[..., Awaitable[bool]]
 AuthoritySnapshot = Callable[[], tuple[str, str, int]]
 ActiveProjectionLoader = Callable[
     [],
@@ -79,17 +106,41 @@ class ConsoleSwitcherChoice:
     entry: ConsoleSwitcherActiveResult
 
 
+ConsoleSwitcherResult = ConsoleSwitcherActiveResult | ConsoleSwitcherCharacterResult
+
+
+@dataclass(frozen=True)
+class _CommittedResultPayload:
+    """One immutable row bound to an exact committed query presentation."""
+
+    entry: ConsoleSwitcherResult
+    generation: int
+    mode: SwitcherMode
+    query: str
+
+
+@dataclass
+class _ModeVisitState:
+    """Transient per-open position for one switcher mode."""
+
+    page_offset: int = 0
+    selected_key: str = ""
+    scroll_y: float = 0.0
+    focused_result: bool = False
+    explicit_navigation: bool = False
+
+
 class ConsoleSessionSwitcherModal(
     SafeModalDismissMixin, ModalScreen["ConsoleSwitcherChoice | None"]
 ):
-    """Switch among live agents or bounded local conversation History."""
+    """Switch among Active, History, and local Character conversations."""
 
     DEFAULT_CSS = """
     ConsoleSessionSwitcherModal { align: center middle; }
     #console-switcher-modal {
         width: 76; max-width: 100%; height: auto; max-height: 35;
         border: tall $surface-lighten-1;
-        background: $panel; color: $text; padding: 1 2;
+        background: $panel; color: $text; padding: 1 1;
     }
     #console-switcher-mode-controls { height: 1; min-height: 1; }
     .console-switcher-mode {
@@ -99,29 +150,44 @@ class ConsoleSessionSwitcherModal(
     .console-switcher-mode-current {
         background: $surface; color: $text; text-style: bold;
     }
-    #console-switcher-mode-divider { width: 1; height: 1; }
+    #console-switcher-character-mode { width: 19; min-width: 19; }
+    .console-switcher-mode-divider { width: 1; height: 1; }
+    #console-switcher-query {
+        width: 100%; height: 1; min-height: 1; border: none; padding: 0;
+    }
+    #console-switcher-scope, #console-switcher-divider {
+        width: 100%; height: 1; min-height: 1; overflow: hidden;
+    }
     #console-switcher-results {
-        height: auto; min-height: 3; max-height: 19; margin: 1 0 0 0;
+        height: auto; min-height: 2; max-height: 22; margin: 0;
         scrollbar-background: $panel; scrollbar-color: $text-muted;
     }
     .console-switcher-section {
         height: 1; color: $text-muted; text-style: bold;
     }
-    #console-switcher-status { height: 1; color: $text; overflow: hidden; }
+    #console-switcher-status { display: none; }
     #console-switcher-receipt-state {
         display: none; height: 1; color: $warning;
     }
     #console-switcher-feedback { display: none; }
-    #console-switcher-page-controls { height: 3; min-height: 3; }
+    #console-switcher-selected-detail {
+        height: 2; min-height: 2; max-height: 2; overflow: hidden;
+        color: $text-muted;
+    }
+    #console-switcher-page-controls { height: 1; min-height: 1; }
     #console-switcher-page-status {
         width: 1fr; height: 1; content-align: center middle; color: $text-muted;
     }
     #console-switcher-previous-page, #console-switcher-next-page,
-    #console-switcher-confirm-mark-seen, #console-switcher-cancel {
-        width: 10; min-width: 10; height: 3; min-height: 3;
+    #console-switcher-recovery, #console-switcher-confirm-mark-seen,
+    #console-switcher-cancel {
+        width: 10; min-width: 8; height: 1; min-height: 1;
+        border: none; padding: 0 1;
     }
     #console-switcher-confirm-mark-seen { display: none; }
-    #console-switcher-hints { height: auto; max-height: 2; color: $text-muted; }
+    #console-switcher-recovery { display: none; width: 19; }
+    #console-switcher-footer { height: 1; min-height: 1; }
+    #console-switcher-hints { width: 1fr; height: 1; color: $text-muted; overflow: hidden; }
     .console-switcher-result {
         width: 100%; height: 2; min-height: 2; margin: 0;
         content-align: left middle; text-align: left;
@@ -139,10 +205,10 @@ class ConsoleSessionSwitcherModal(
     """
 
     SAFE_MODAL_CONTENT = "#console-switcher-modal"
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str] | Binding]] = [
         ("escape", "request_safe_cancel", "Cancel"),
         ("f2", "rename_entry", "Rename"),
-        ("f3", "toggle_mode", "Active / History"),
+        ("f3", "toggle_mode", "Next mode"),
         Binding("down", "switcher_cursor_down", "Next result", priority=True),
         Binding("up", "switcher_cursor_up", "Previous result", priority=True),
         Binding("home", "switcher_cursor_home", "First result", priority=True),
@@ -157,6 +223,12 @@ class ConsoleSessionSwitcherModal(
         rows: tuple[ConsoleConversationBrowserInputRow, ...] = (),
         active_results: tuple[ConsoleSwitcherActiveResult, ...] | None = None,
         history_loader: HistoryLoader | None = None,
+        character_loader: CharacterLoader | None = None,
+        character_activate: CharacterActivator | None = None,
+        character_commit_waiter: CharacterCommitWaiter | None = None,
+        character_open_library: CharacterRecovery | None = None,
+        initial_mode: SwitcherMode = SwitcherMode.ACTIVE,
+        initial_character_query: str = "",
         preferred_native_session_id: str | None = None,
         profile_authority: str = "",
         authority_token: str = "",
@@ -176,6 +248,10 @@ class ConsoleSessionSwitcherModal(
             else tuple(active_results)
         )
         self._history_loader = history_loader
+        self._character_loader = character_loader
+        self._character_activate = character_activate
+        self._character_commit_waiter = character_commit_waiter
+        self._character_open_library = character_open_library
         self._preferred_native_session_id = str(
             preferred_native_session_id or ""
         ).strip()
@@ -185,9 +261,18 @@ class ConsoleSessionSwitcherModal(
         self._authority_snapshot = authority_snapshot
         self._active_projection_loader = active_projection_loader
         self._activity_receipt_state = str(activity_receipt_state or "ready")
-        self._mode = SwitcherMode.ACTIVE
-        self._entries: tuple[ConsoleSwitcherActiveResult, ...] = ()
-        self._payload_by_widget_id: dict[str, ConsoleSwitcherActiveResult] = {}
+        self._mode = initial_mode
+        self._operational_query = ""
+        self._character_query = self._validated_initial_character_query(
+            initial_character_query
+        )
+        self._entries: tuple[ConsoleSwitcherResult, ...] = ()
+        self._payload_by_widget_id: dict[str, ConsoleSwitcherResult] = {}
+        self._committed_payload_by_widget_id: dict[str, _CommittedResultPayload] = {}
+        self._committed_result_generation = 0
+        self._mode_visits = {mode: _ModeVisitState() for mode in SwitcherMode}
+        self._restoring_mode: SwitcherMode | None = initial_mode
+        self._character_rows_by_key: dict[str, CharacterConversationRow] = {}
         self._candidate_index = 0
         self._rendered_query = ""
         self._page_offset = 0
@@ -195,10 +280,25 @@ class ConsoleSessionSwitcherModal(
         self._request_generation = 0
         self._instance_token = uuid4().hex
         self._query_pending = False
+        self._pending_retained_key = ""
+        self._pending_retained_index: int | None = None
         self._explicit_navigation = False
         self._selection_feedback = ""
         self._armed_mark_seen_key = ""
         self._widened_to_history = False
+        self._character_data_revision = 0
+        self._character_search_error = ""
+        self._activation_phase = ConsoleActivationPhase.IDLE
+        self._activation_cancellation: asyncio.Event | None = None
+        self._activation_task: asyncio.Task[None] | None = None
+        self._activation_failure_kind: ConsoleActivationResultKind | None = None
+        self._committed_character_result: ConsoleSwitcherCharacterResult | None = None
+        self._pointer_result_key = ""
+        self._pointer_result: ConsoleSwitcherResult | None = None
+        self._pointer_payload: _CommittedResultPayload | None = None
+        self._ignore_next_result_pressed = False
+        self._suppress_query_change = False
+        self._compact_layout = False
         self._closed = False
         self._query_debounce_timer: Timer | None = None
         self._active_projection_timer: Timer | None = None
@@ -206,7 +306,6 @@ class ConsoleSessionSwitcherModal(
     def compose(self) -> ComposeResult:
         """Build the bounded switchboard structure."""
         with Vertical(id="console-switcher-modal"):
-            yield Static("Switch Session", classes="console-modal-header")
             with Horizontal(id="console-switcher-mode-controls"):
                 yield Button(
                     "Active (0)",
@@ -214,41 +313,71 @@ class ConsoleSessionSwitcherModal(
                     classes="console-switcher-mode",
                     compact=True,
                 )
-                yield Static("|", id="console-switcher-mode-divider", markup=False)
+                yield Static(
+                    "|",
+                    id="console-switcher-mode-divider",
+                    classes="console-switcher-mode-divider",
+                    markup=False,
+                )
                 yield Button(
                     "History",
                     id="console-switcher-history-mode",
                     classes="console-switcher-mode",
                     compact=True,
                 )
+                yield Static("|", classes="console-switcher-mode-divider", markup=False)
+                yield Button(
+                    "Character chats",
+                    id="console-switcher-character-mode",
+                    classes="console-switcher-mode",
+                    compact=True,
+                )
             yield Input(
+                value=(
+                    self._character_query
+                    if self._mode is SwitcherMode.CHARACTER_CHATS
+                    else self._operational_query
+                ),
                 placeholder="Search sessions, workspaces, waiting, running, or finished…",
                 id="console-switcher-query",
                 max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
             )
+            yield Static("", id="console-switcher-scope", markup=False)
+            yield Static("─" * 48, id="console-switcher-divider", markup=False)
             yield VerticalScroll(id="console-switcher-results")
             yield Static("", id="console-switcher-receipt-state", markup=False)
             yield Static("", id="console-switcher-status", markup=False)
             yield Static("", id="console-switcher-feedback", markup=False)
-            yield Button("Mark seen", id="console-switcher-confirm-mark-seen")
+            yield Static("", id="console-switcher-selected-detail", markup=False)
             with Horizontal(id="console-switcher-page-controls"):
                 yield Button("Previous", id="console-switcher-previous-page")
                 yield Static("", id="console-switcher-page-status", markup=False)
+                yield Button("Refresh results", id="console-switcher-recovery")
+                yield Button("Mark seen", id="console-switcher-confirm-mark-seen")
                 yield Button("Next", id="console-switcher-next-page")
-            yield Static(
-                "Enter: switch  ·  ↑↓: move  ·  F3: History  ·  Esc: close",
-                id="console-switcher-hints",
-                markup=False,
-            )
-            yield Button("Cancel", id="console-switcher-cancel")
+            with Horizontal(id="console-switcher-footer"):
+                yield Static(
+                    "Enter: switch · F3: History",
+                    id="console-switcher-hints",
+                    markup=False,
+                )
+                yield Button("Cancel", id="console-switcher-cancel")
 
     async def on_mount(self) -> None:  # type: ignore[override]
         """Paint Active immediately and leave History cold."""
         super().on_mount()
+        self.query_one(
+            "#console-switcher-modal", Vertical
+        ).border_title = "Switch or resume"
         self._sync_modal_max_height()
         self._update_receipt_status()
         self.query_one("#console-switcher-query", Input).focus()
-        await self._refresh_results("")
+        initial_query = (
+            self._character_query
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else self._operational_query
+        )
+        await self._refresh_results(initial_query)
         if self._active_projection_loader is not None:
             self._active_projection_timer = self.set_interval(
                 ACTIVE_PROJECTION_POLL_SECONDS,
@@ -259,6 +388,7 @@ class ConsoleSessionSwitcherModal(
         """Keep the content-sized modal inside the live terminal viewport."""
         del event
         self._sync_modal_max_height()
+        self.call_after_refresh(self._sync_candidate_labels)
 
     def _sync_modal_max_height(self) -> None:
         try:
@@ -266,30 +396,76 @@ class ConsoleSessionSwitcherModal(
             results = self.query_one("#console-switcher-results", VerticalScroll)
         except NoMatches:
             return
-        viewport_cap = min(35, self.app.size.height)
-        section_count = len(
-            {str(getattr(entry, "section", "") or "") for entry in self._entries}
-        )
-        page_rows = 3 if self._page_total > len(self._entries) else 0
-        receipt_rows = 1 if self._activity_receipt_state == "degraded" else 0
-        confirm_rows = 3 if self._armed_mark_seen_key else 0
-        estimated_rows = (
-            15
-            + receipt_rows
-            + confirm_rows
-            + page_rows
-            + section_count
-            + (2 * len(self._entries))
-        )
-        bounded = estimated_rows >= viewport_cap
-        modal.styles.max_height = viewport_cap
-        modal.styles.height = "100%" if bounded else "auto"
-        results.styles.height = "1fr" if bounded else "auto"
+        viewport_height = self.app.size.height
+        viewport_width = self.app.size.width
+        self._compact_layout = viewport_height <= 20 or viewport_width <= 52
+        modal.styles.max_height = min(35, viewport_height)
+        if self._compact_layout:
+            modal.styles.width = min(52, viewport_width)
+            modal.styles.height = viewport_height
+            results.styles.height = max(2, viewport_height - 12)
+            results.styles.max_height = max(2, viewport_height - 12)
+        else:
+            modal.styles.width = min(76, viewport_width)
+            section_count = len(
+                {str(getattr(entry, "section", "") or "") for entry in self._entries}
+            )
+            result_rows = min(22, (2 * len(self._entries)) + section_count)
+            estimated_rows = 12 + result_rows
+            modal_height = min(35, viewport_height, max(14, estimated_rows))
+            modal.styles.height = modal_height
+            visible_result_rows = max(2, min(22, result_rows, modal_height - 12))
+            results.styles.height = visible_result_rows
+            results.styles.max_height = visible_result_rows
+        self._update_receipt_status()
+
+    @staticmethod
+    def _validated_initial_character_query(value: object) -> str:
+        return validate_console_character_query(value)
+
+    def _set_results_pending(
+        self,
+        message: str,
+        *,
+        clear_pointer: bool = False,
+        preserve_position: bool = True,
+    ) -> None:
+        """Remove the prior generation from the action surface immediately."""
+
+        self._clear_character_failure()
+        if preserve_position and not self._query_pending:
+            self._pending_retained_key = self._focused_result_key()
+            self._pending_retained_index = self._focused_result_index()
+        elif not preserve_position:
+            self._pending_retained_key = ""
+            self._pending_retained_index = None
+        self._query_pending = True
+        if clear_pointer:
+            self._pointer_payload = None
+            self._pointer_result = None
+            self._pointer_result_key = ""
+        self._clear_mark_seen_confirmation()
+        for button in self._result_buttons():
+            button.disabled = True
+        try:
+            self.query_one(
+                "#console-switcher-results", VerticalScroll
+            ).styles.visibility = "hidden"
+        except NoMatches:
+            pass
+        self._set_status(message)
+        self._update_hints(None)
+        self._update_selected_detail()
 
     def on_unmount(self) -> None:
         """Invalidate late work without remounting into a closed screen."""
         self._closed = True
         self._request_generation += 1
+        if (
+            self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE
+            and self._activation_cancellation is not None
+        ):
+            self._activation_cancellation.set()
         if self._query_debounce_timer is not None:
             self._query_debounce_timer.stop()
             self._query_debounce_timer = None
@@ -356,6 +532,10 @@ class ConsoleSessionSwitcherModal(
         if activity_receipt_state is not None:
             self._activity_receipt_state = str(activity_receipt_state or "ready")
             self._update_receipt_status()
+        # Live Active data may advance, but a frozen Character open owns its
+        # query, selection, and request generation until that attempt settles.
+        if self._activation_in_flight:
+            return
         try:
             query = self.query_one("#console-switcher-query", Input).value
         except NoMatches:
@@ -386,6 +566,9 @@ class ConsoleSessionSwitcherModal(
 
     async def _refresh_results(self, query: str, *, reset_page: bool = False) -> bool:
         """Resolve one view and commit only when all captured fences match."""
+        # A reconcile worker may have been queued just before activation began.
+        if self._activation_in_flight:
+            return False
         query = self._validated_query(query)
         if query is None:
             return False
@@ -401,10 +584,26 @@ class ConsoleSessionSwitcherModal(
             self._authority_token,
             self._active_projection_generation,
         )
-        self._query_pending = True
+        self._set_results_pending(
+            "Searching local chats…"
+            if self._mode is SwitcherMode.CHARACTER_CHATS and query.strip()
+            else "Loading local chats…"
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else "Searching…"
+            if query.strip()
+            else "Loading…"
+        )
         self._widened_to_history = False
+        self._character_search_error = ""
+        try:
+            self.query_one("#console-switcher-recovery", Button).display = False
+        except NoMatches:
+            pass
 
         page: ConsoleSwitcherHistoryPage | None = None
+        character_page: CharacterConversationPage | None = None
+        character_error = ""
+        character_rows: tuple[CharacterConversationRow, ...] = ()
         widened_to_history = False
         if self._mode is SwitcherMode.ACTIVE:
             filtered = (
@@ -431,21 +630,69 @@ class ConsoleSessionSwitcherModal(
                     CONSOLE_SWITCHER_PAGE_LIMIT,
                     len(filtered),
                 )
-        else:
+        elif self._mode is SwitcherMode.HISTORY:
             self._set_status(
                 "Searching History…" if query.strip() else "Loading History…"
             )
             page = await self._load_history(query=query, offset=self._page_offset)
             entries = tuple(page.entries)
+        else:
+            self._set_status(
+                "Searching local chats…" if query.strip() else "Loading local chats…"
+            )
+            character_page = await self._load_character(
+                query=query, offset=self._page_offset
+            )
+            character_error = self._character_keyword_error(character_page)
+            character_rows = tuple(character_page.rows)
+            entries = (
+                ()
+                if character_error
+                else build_console_character_results(
+                    character_page.rows,
+                    now=datetime.now(UTC),
+                    limit=CONSOLE_SWITCHER_PAGE_LIMIT,
+                )
+            )
 
         if not self._request_is_current(generation, captured, query):
             return False
         self._query_pending = False
         self._widened_to_history = widened_to_history
-        self._page_total = page.total if page is not None else len(entries)
+        self._character_search_error = character_error
+        if character_page is not None:
+            self._character_data_revision = character_page.data_revision
+            self._character_rows_by_key = {
+                row.row_key: row for row in character_rows if row.row_key
+            }
+        self._page_total = (
+            character_page.total
+            if character_page is not None
+            else page.total
+            if page is not None
+            else len(entries)
+        )
         self._rendered_query = query
-        await self._commit_entries(entries, page=page)
+        await self._commit_entries(
+            entries,
+            page=page,
+            character_page=character_page,
+        )
+        if self._character_search_error:
+            self._set_status(self._character_search_error)
+            recovery = self.query_one("#console-switcher-recovery", Button)
+            recovery.label = "Refresh results"
+            recovery.display = True
+            self._update_selected_detail()
         return True
+
+    @staticmethod
+    def _character_keyword_error(page: CharacterConversationPage) -> str:
+        return {
+            CharacterKeywordIndexStatus.ABSENT: "Character source changed",
+            CharacterKeywordIndexStatus.BUILDING: "Keyword search rebuilding",
+            CharacterKeywordIndexStatus.FAILED: "Keyword search unavailable",
+        }.get(page.keyword_status, "")
 
     async def _load_history(
         self, *, query: str, offset: int
@@ -470,6 +717,22 @@ class ConsoleSessionSwitcherModal(
                     "History is temporarily unavailable. "
                     "Active agents are still usable."
                 ),
+            )
+
+    async def _load_character(
+        self, *, query: str, offset: int
+    ) -> CharacterConversationPage:
+        if self._character_loader is None:
+            return CharacterConversationPage((), 0, None, 0)
+        try:
+            return await self._character_loader(
+                query=query,
+                offset=offset,
+                limit=CONSOLE_SWITCHER_PAGE_LIMIT,
+            )
+        except Exception:  # noqa: BLE001 - local search failure stays recoverable
+            return CharacterConversationPage(
+                (), 0, None, 0, CharacterKeywordIndexStatus.FAILED
             )
 
     def _request_is_current(
@@ -506,17 +769,33 @@ class ConsoleSessionSwitcherModal(
 
     async def _commit_entries(
         self,
-        entries: tuple[ConsoleSwitcherActiveResult, ...],
+        entries: tuple[ConsoleSwitcherResult, ...],
         *,
         page: ConsoleSwitcherHistoryPage | None,
+        character_page: CharacterConversationPage | None = None,
     ) -> None:
         self._clear_mark_seen_confirmation()
-        previous_key = self._candidate_key()
-        focused_key = self._focused_result_key()
-        retained_key = focused_key or previous_key
-        previous_index = (
-            self._focused_result_index() if focused_key else self._candidate_index
+        restore_visit = (
+            self._mode_visits[self._mode]
+            if self._restoring_mode is self._mode
+            else None
         )
+        previous_key = self._candidate_key()
+        focused_key = self._pending_retained_key or self._focused_result_key()
+        retained_key = (
+            restore_visit.selected_key
+            if restore_visit is not None
+            else focused_key or previous_key
+        )
+        previous_index = (
+            self._pending_retained_index
+            if self._pending_retained_index is not None
+            else self._focused_result_index()
+            if focused_key
+            else self._candidate_index
+        )
+        self._pending_retained_key = ""
+        self._pending_retained_index = None
         had_previous_entries = bool(self._entries)
         self._entries = entries[:CONSOLE_SWITCHER_PAGE_LIMIT]
         retained_disappeared = bool(
@@ -527,6 +806,9 @@ class ConsoleSessionSwitcherModal(
         results = self.query_one("#console-switcher-results", VerticalScroll)
         await results.remove_children()
         self._payload_by_widget_id.clear()
+        self._committed_payload_by_widget_id.clear()
+        self._committed_result_generation += 1
+        committed_generation = self._committed_result_generation
 
         if not self._entries:
             await results.mount(
@@ -538,7 +820,10 @@ class ConsoleSessionSwitcherModal(
             )
             self._candidate_index = 0
         else:
-            if retained_disappeared:
+            if restore_visit is not None and retained_key:
+                restored_index = self._index_for_key(retained_key)
+                self._candidate_index = restored_index or 0
+            elif retained_disappeared:
                 self._candidate_index = min(previous_index, len(self._entries) - 1)
             else:
                 self._candidate_index = self._choose_candidate(retained_key)
@@ -546,7 +831,12 @@ class ConsoleSessionSwitcherModal(
             previous_section = ""
             for index, entry in enumerate(self._entries):
                 section = str(getattr(entry, "section", "") or "")
-                if section != previous_section:
+                if (
+                    section
+                    and section != previous_section
+                    and not self._compact_layout
+                    and self._mode is not SwitcherMode.CHARACTER_CHATS
+                ):
                     widgets.append(
                         Static(
                             _GROUP_LABELS.get(section, section.upper()),
@@ -571,24 +861,30 @@ class ConsoleSessionSwitcherModal(
                     index == self._candidate_index,
                     "console-switcher-result-candidate",
                 )
-                verb = (
-                    "Mark seen"
-                    if isinstance(entry, UnavailableSessionNotice)
-                    else "Open"
-                )
-                button.tooltip = escape_markup(f"{verb}: {entry.title}")
+                button.tooltip = self._entry_tooltip(entry)
                 self._payload_by_widget_id[widget_id] = entry
+                self._committed_payload_by_widget_id[widget_id] = (
+                    _CommittedResultPayload(
+                        entry,
+                        committed_generation,
+                        self._mode,
+                        self._rendered_query,
+                    )
+                )
                 widgets.append(button)
             await results.mount_all(widgets)
+        results.styles.visibility = "visible"
 
         self._update_mode_controls()
-        self._update_page_controls(page)
+        self._update_page_controls(page, character_page=character_page)
         if page is not None and page.error:
             self._set_status(page.error)
         elif self._widened_to_history:
-            self._update_selection_status(prefix="History matches")
+            self._update_selection_status(prefix="Active · showing History matches")
         else:
             self._update_selection_status()
+
+        self._update_selected_detail()
 
         if retained_disappeared:
             self._selection_feedback = RESULT_DISAPPEARED_COPY
@@ -599,16 +895,44 @@ class ConsoleSessionSwitcherModal(
                 self.query_one("#console-switcher-query", Input).focus()
             self._set_status(self._selection_feedback)
             self.notify(RESULT_DISAPPEARED_COPY, severity="warning")
+        elif restore_visit is not None:
+            if restore_visit.focused_result:
+                restored = self._button_for_key(retained_key)
+                if restored is not None:
+                    restored.focus()
+            results.scroll_to(
+                y=restore_visit.scroll_y,
+                animate=False,
+                immediate=True,
+                force=True,
+            )
+            self.call_after_refresh(
+                results.scroll_to,
+                y=restore_visit.scroll_y,
+                animate=False,
+                immediate=True,
+                force=True,
+            )
         elif focused_key:
             focused = self._button_for_key(focused_key)
             if focused is not None:
                 focused.focus()
+        self._restoring_mode = None
         self._sync_modal_max_height()
+        self.call_after_refresh(self._sync_candidate_labels)
 
     def _empty_copy(self, page: ConsoleSwitcherHistoryPage | None) -> str:
         query = self._rendered_query.strip()
         if page is not None and page.error:
             return page.error
+        if self._mode is SwitcherMode.CHARACTER_CHATS:
+            if self._character_search_error:
+                return self._character_search_error
+            return (
+                "No Keyword matches"
+                if query
+                else "Type a Keyword to search local Character chats"
+            )
         if self._mode is SwitcherMode.ACTIVE and not query and not self._active_results:
             return (
                 "No active agents yet. Ctrl+T creates an agent tab. Use F3 for "
@@ -667,23 +991,116 @@ class ConsoleSessionSwitcherModal(
         retained = self._index_for_key(retained_key)
         return retained if retained is not None else 0
 
-    def _result_widget_id(self, index: int, entry: ConsoleSwitcherActiveResult) -> str:
+    def _result_widget_id(self, index: int, entry: ConsoleSwitcherResult) -> str:
         if self._legacy_rows:
             return f"console-switcher-result-{index}"
         digest = sha1(entry.stable_result_key.encode("utf-8")).hexdigest()[:16]
         return f"console-switcher-result-{digest}"
 
-    def _entry_label(self, index: int, entry: ConsoleSwitcherActiveResult) -> Text:
-        available_width = max(20, min(70, self.app.size.width - 8))
+    def _character_state(self, entry: ConsoleSwitcherCharacterResult) -> str:
+        """Derive truthful UI state without widening the frozen result contract."""
+
+        committed = self._committed_character_result
+        if (
+            committed is not None
+            and committed.stable_result_key == entry.stable_result_key
+        ):
+            if self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
+                return "OPENING"
+            if self._activation_phase is ConsoleActivationPhase.COMMITTING:
+                return "FINISHING"
+            if (
+                self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE
+                and self._activation_failure_kind
+                is ConsoleActivationResultKind.CHARACTER_UNAVAILABLE
+            ):
+                return "CHARACTER UNAVAILABLE"
+        row = self._character_rows_by_key.get(entry.row_key)
+        if entry.target is None:
+            reason = row.unavailable_reason if row is not None else None
+            return {
+                UnavailableCharacterReason.DELETED_CARD: "DELETED CARD",
+                UnavailableCharacterReason.MISSING_CHARACTER_AUTHORITY_LINK: (
+                    "CHARACTER SOURCE CHANGED"
+                ),
+                UnavailableCharacterReason.AMBIGUOUS_LEGACY_LINK: (
+                    "CHARACTER SOURCE CHANGED"
+                ),
+                UnavailableCharacterReason.MISSING_CARD: "CHARACTER UNAVAILABLE",
+            }.get(reason, "CHARACTER UNAVAILABLE")
+        matching_open = next(
+            (
+                active
+                for active in self._active_results
+                if (active_target := getattr(active, "target", None)) is not None
+                and getattr(active, "native_session_id", None)
+                and active_target.profile_authority == self._profile_authority
+                and active_target.authority_token == self._authority_token
+                and active_target.session_id
+                == getattr(active, "native_session_id", None)
+                and active_target.conversation_id == entry.target.conversation_id
+                and getattr(active, "conversation_id", None)
+                == entry.target.conversation_id
+            ),
+            None,
+        )
+        if bool(matching_open and getattr(matching_open, "is_active", False)):
+            return "CURRENT TAB"
+        if matching_open is not None:
+            return "OPEN TAB"
+        return "RESUME CHAT"
+
+    def _entry_action(self, entry: ConsoleSwitcherResult) -> str:
+        if isinstance(entry, UnavailableSessionNotice):
+            return "MARK SEEN"
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            state = self._character_state(entry)
+            if state in {"OPENING", "FINISHING"}:
+                return state
+            if entry.target is None or state == "CHARACTER UNAVAILABLE":
+                return "VIEW DETAILS"
+            if state in {"CURRENT TAB", "OPEN TAB"}:
+                return "OPEN TAB"
+            return "RESUME CHAT"
+        return "OPEN TAB" if getattr(entry, "native_session_id", None) else "OPEN"
+
+    def _entry_tooltip(self, entry: ConsoleSwitcherResult) -> str:
+        return escape_markup(f"{self._entry_action(entry)}: {entry.title}")
+
+    def _entry_label(
+        self,
+        index: int,
+        entry: ConsoleSwitcherResult,
+        *,
+        available_width: int | None = None,
+    ) -> Text:
+        if available_width is None:
+            available_width = max(20, min(70, self.app.size.width - 4))
+        marker = "▸" if index == self._candidate_index else " "
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            state = self._character_state(entry)
+            title = (
+                sanitize_character_display_label(
+                    entry.title, max_characters=_TITLE_LIMIT * 2
+                )
+                or "Untitled conversation"
+            )
+            first = Text(f"{marker} [{state}] {title}")
+            first.truncate(available_width, overflow="ellipsis", pad=False)
+            character = (
+                sanitize_character_display_label(
+                    entry.character_label, max_characters=_TITLE_LIMIT
+                )
+                or "Unavailable character"
+            )
+            second = Text(f"  {character} · Local · {entry.relative_time}")
+            second.truncate(available_width, overflow="ellipsis", pad=False)
+            return Text.assemble(first, "\n", second)
         title_limit = max(8, min(_TITLE_LIMIT, available_width - 22))
         display_title = (
-            sanitize_character_display_label(
-                entry.title,
-                max_characters=title_limit,
-            )
+            sanitize_character_display_label(entry.title, max_characters=title_limit)
             or "Untitled conversation"
         )
-        marker = "▸" if index == self._candidate_index else " "
         state = sanitize_character_display_label(
             str(getattr(entry, "state_label", "") or self._fallback_state(entry)),
             max_characters=18,
@@ -697,7 +1114,7 @@ class ConsoleSessionSwitcherModal(
         return Text(label)
 
     @staticmethod
-    def _fallback_state(entry: ConsoleSwitcherActiveResult) -> str:
+    def _fallback_state(entry: ConsoleSwitcherResult) -> str:
         if isinstance(entry, UnavailableSessionNotice):
             return entry.primary_status.upper()
         if getattr(entry, "native_session_id", None):
@@ -705,7 +1122,7 @@ class ConsoleSessionSwitcherModal(
         return "SAVED CHAT"
 
     @staticmethod
-    def _entry_metadata(entry: ConsoleSwitcherActiveResult) -> str:
+    def _entry_metadata(entry: ConsoleSwitcherResult) -> str:
         if isinstance(entry, UnavailableSessionNotice):
             count = len(entry.receipts)
             return f"{count} unseen {'update' if count == 1 else 'updates'}"
@@ -743,8 +1160,12 @@ class ConsoleSessionSwitcherModal(
         return " · ".join(parts)
 
     @staticmethod
-    def _result_classes(entry: ConsoleSwitcherActiveResult) -> tuple[str, ...]:
+    def _result_classes(entry: ConsoleSwitcherResult) -> tuple[str, ...]:
         classes = ["console-switcher-result"]
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            if entry.target is None:
+                classes.append("console-switcher-result-error")
+            return tuple(classes)
         state = str(
             getattr(entry, "activity_state", "") or getattr(entry, "primary_status", "")
         ).casefold()
@@ -766,10 +1187,42 @@ class ConsoleSessionSwitcherModal(
     @on(Input.Changed, "#console-switcher-query")
     def _query_changed(self, event: Input.Changed) -> None:
         event.stop()
+        if self._suppress_query_change:
+            return
+        if self._activation_phase in {
+            ConsoleActivationPhase.OPENING_CANCELLABLE,
+            ConsoleActivationPhase.COMMITTING,
+        }:
+            self._restore_owned_query()
+            return
+        if not self._query_pending and event.value == self._rendered_query:
+            return
+        if self._mode is SwitcherMode.CHARACTER_CHATS:
+            try:
+                validate_console_character_query(event.value)
+            except ValueError:
+                # Reject before changing a committed page or an in-flight query.
+                # Suppress the restoration event, including its queued delivery.
+                with event.input.prevent(Input.Changed):
+                    self._restore_owned_query()
+                self._set_feedback("Previous search kept. Max 200; no controls.")
+                self.query_one("#console-switcher-selected-detail", Static).update(
+                    "Previous search kept.\nMax 200 characters; no control characters."
+                )
+                return
+            self._character_query = event.value
+        else:
+            self._operational_query = event.value
         self._selection_feedback = ""
         self._clear_mark_seen_confirmation()
         self._cancel_query_debounce()
-        self._query_pending = True
+        self._set_results_pending(
+            "Searching local chats…"
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else "Searching…",
+            clear_pointer=True,
+            preserve_position=False,
+        )
         query = self._validated_query(event.value)
         if query is None:
             return
@@ -790,9 +1243,17 @@ class ConsoleSessionSwitcherModal(
     def _validated_query(self, value: object) -> str | None:
         """Validate one UI query and expose bounded recovery copy."""
         try:
+            if self._mode is SwitcherMode.CHARACTER_CHATS:
+                return validate_console_character_query(value)
             return validate_console_switcher_query(value)
-        except ValueError:
+        except ValueError as error:
             self._query_pending = False
+            if self._mode is SwitcherMode.CHARACTER_CHATS:
+                self._set_feedback(str(error))
+                self.query_one("#console-switcher-selected-detail", Static).update(
+                    str(error)
+                )
+                return None
             self._set_feedback(
                 f"Search is limited to {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
             )
@@ -820,6 +1281,12 @@ class ConsoleSessionSwitcherModal(
         if not 0 <= index < len(self._entries):
             return
         entry = self._entries[index]
+        payload = self._committed_payload_for_key(entry.stable_result_key)
+        if payload is None or not self._payload_is_current(payload):
+            return
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            self._begin_character_activation(entry)
+            return
         if isinstance(entry, UnavailableSessionNotice):
             button = self._button_for_key(entry.stable_result_key)
             if button is not None:
@@ -874,7 +1341,60 @@ class ConsoleSessionSwitcherModal(
                 return button
         return None
 
+    def _entry_for_key(self, key: str) -> ConsoleSwitcherResult | None:
+        index = self._index_for_key(key)
+        return self._entries[index] if index is not None else None
+
+    def _committed_payload_for_key(self, key: str) -> _CommittedResultPayload | None:
+        return next(
+            (
+                payload
+                for payload in self._committed_payload_by_widget_id.values()
+                if payload.entry.stable_result_key == key
+            ),
+            None,
+        )
+
+    def _payload_is_current(self, payload: _CommittedResultPayload) -> bool:
+        """Require the exact row to belong to the visible committed query."""
+
+        if (
+            self._closed
+            or self._query_pending
+            or payload.generation != self._committed_result_generation
+            or payload.mode is not self._mode
+            or payload.query != self._rendered_query
+        ):
+            return False
+        try:
+            visible_query = self.query_one("#console-switcher-query", Input).value
+        except NoMatches:
+            return False
+        current = self._committed_payload_for_key(payload.entry.stable_result_key)
+        return (
+            visible_query == payload.query
+            and current is not None
+            and current.generation == payload.generation
+        )
+
+    def _pointer_payload_can_activate(self, payload: _CommittedResultPayload) -> bool:
+        """Preserve same-query pointer identity while rejecting query churn."""
+
+        current = self._committed_payload_for_key(payload.entry.stable_result_key)
+        if current is None or not self._payload_is_current(current):
+            return False
+        return current.mode is payload.mode and current.query == payload.query
+
+    @property
+    def _activation_in_flight(self) -> bool:
+        return self._activation_phase in {
+            ConsoleActivationPhase.OPENING_CANCELLABLE,
+            ConsoleActivationPhase.COMMITTING,
+        }
+
     def action_switcher_cursor_down(self) -> None:
+        if self._activation_in_flight or self._query_pending:
+            return
         buttons = self._result_buttons()
         if not buttons:
             return
@@ -891,6 +1411,8 @@ class ConsoleSessionSwitcherModal(
         self._focus_candidate(buttons)
 
     def action_switcher_cursor_up(self) -> None:
+        if self._activation_in_flight or self._query_pending:
+            return
         buttons = self._result_buttons()
         index = self._focused_result_index()
         if index is None or index == 0:
@@ -933,6 +1455,8 @@ class ConsoleSessionSwitcherModal(
     def _move_candidate(
         self, index: int, *, buttons: list[Button] | None = None
     ) -> None:
+        if self._activation_in_flight or self._query_pending:
+            return
         mounted = buttons if buttons is not None else self._result_buttons()
         if not mounted:
             return
@@ -961,7 +1485,17 @@ class ConsoleSessionSwitcherModal(
                 index == self._candidate_index,
                 "console-switcher-result-candidate",
             )
-            button.label = self._entry_label(index, entry)
+            button.label = self._entry_label(
+                index,
+                entry,
+                available_width=(
+                    max(1, button.content_size.width - 2 * button.styles.line_pad)
+                    if isinstance(entry, ConsoleSwitcherCharacterResult)
+                    else None
+                ),
+            )
+            button.tooltip = self._entry_tooltip(entry)
+        self._update_selected_detail()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         widget = event.widget
@@ -971,8 +1505,17 @@ class ConsoleSessionSwitcherModal(
             or widget is not self.app.focused
         ):
             return
+        if self._query_pending:
+            return
         entry = self._payload_by_widget_id.get(widget.id or "")
         if entry is None:
+            return
+        if self._activation_in_flight:
+            committed = self._committed_character_result
+            if committed is not None:
+                button = self._button_for_key(committed.stable_result_key)
+                if button is not None and button is not widget:
+                    self.call_after_refresh(button.focus)
             return
         index = self._index_for_key(entry.stable_result_key)
         if index is None:
@@ -984,17 +1527,97 @@ class ConsoleSessionSwitcherModal(
             self._clear_mark_seen_confirmation()
         self._explicit_navigation = True
         self._candidate_index = index
+        self._sync_candidate_labels()
         self._update_selection_status()
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Freeze the payload identity at pointer press, before any await."""
+        widget = event.widget
+        if not isinstance(widget, Button) or not widget.has_class(
+            "console-switcher-result"
+        ):
+            self._pointer_result_key = ""
+            self._pointer_result = None
+            self._pointer_payload = None
+            return
+        payload = self._committed_payload_by_widget_id.get(widget.id or "")
+        if payload is None or not self._payload_is_current(payload):
+            self._pointer_payload = None
+            return
+        entry = payload.entry if payload is not None else None
+        self._pointer_payload = payload
+        self._pointer_result = entry
+        self._pointer_result_key = entry.stable_result_key if entry is not None else ""
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Honor the immutable press payload if a refresh repainted the row."""
+        pressed_payload = self._pointer_payload
+        widget = event.widget
+        current_payload = (
+            self._committed_payload_by_widget_id.get(widget.id or "")
+            if isinstance(widget, Button)
+            and widget.has_class("console-switcher-result")
+            else None
+        )
+        if (
+            pressed_payload is None
+            or current_payload is None
+            or (
+                pressed_payload.generation == current_payload.generation
+                and pressed_payload.entry.stable_result_key
+                == current_payload.entry.stable_result_key
+            )
+        ):
+            return
+        pressed = pressed_payload.entry
+        self._pointer_payload = None
+        self._pointer_result = None
+        self._pointer_result_key = ""
+        self._ignore_next_result_pressed = True
+        if not self._pointer_payload_can_activate(pressed_payload):
+            self._selection_feedback = RESULT_DISAPPEARED_COPY
+            self._set_status(RESULT_DISAPPEARED_COPY)
+            return
+        self._apply_result_activation(pressed, input_name="click")
 
     @on(Button.Pressed, ".console-switcher-result")
     def _result_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        entry = self._payload_by_widget_id.get(event.button.id or "")
-        if entry is None:
+        if self._ignore_next_result_pressed:
+            self._ignore_next_result_pressed = False
+            return
+        if self._activation_in_flight:
+            return
+        pointer_payload = self._pointer_payload
+        payload = pointer_payload or self._committed_payload_by_widget_id.get(
+            event.button.id or ""
+        )
+        self._pointer_payload = None
+        self._pointer_result = None
+        self._pointer_result_key = ""
+        if payload is None or not self._payload_is_current(payload):
+            return
+        entry = payload.entry
+        self._apply_result_activation(entry, input_name="click", button=event.button)
+
+    def _apply_result_activation(
+        self,
+        entry: ConsoleSwitcherResult,
+        *,
+        input_name: str,
+        button: Button | None = None,
+    ) -> None:
+        """Apply one already-authorized committed result interaction."""
+
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            self._clear_mark_seen_confirmation()
+            self._begin_character_activation(entry)
             return
         if isinstance(entry, UnavailableSessionNotice):
             if self._armed_mark_seen_key != entry.stable_result_key:
-                self._arm_mark_seen(entry, event.button, input_name="click")
+                target_button = button or self._button_for_key(entry.stable_result_key)
+                if target_button is not None:
+                    self._arm_mark_seen(entry, target_button, input_name=input_name)
                 return
             kind = "mark_seen"
         else:
@@ -1038,6 +1661,10 @@ class ConsoleSessionSwitcherModal(
     @on(Button.Pressed, "#console-switcher-confirm-mark-seen")
     def _confirm_mark_seen(self, event: Button.Pressed) -> None:
         event.stop()
+        payload = self._committed_payload_for_key(self._armed_mark_seen_key)
+        if payload is None or not self._payload_is_current(payload):
+            self._clear_mark_seen_confirmation()
+            return
         index = self._index_for_key(self._armed_mark_seen_key)
         if index is None:
             self._clear_mark_seen_confirmation()
@@ -1049,7 +1676,11 @@ class ConsoleSessionSwitcherModal(
             return
         self._activate_choice("mark_seen", entry)
 
-    def _activate_choice(self, kind: str, entry: ConsoleSwitcherActiveResult) -> None:
+    def _activate_choice(self, kind: str, entry: ConsoleSwitcherResult) -> None:
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            if kind == "activate":
+                self._begin_character_activation(entry)
+            return
         if kind == "activate" and not bool(getattr(entry, "openable", False)):
             self._set_feedback("This conversation is unavailable and cannot be opened.")
             return
@@ -1067,26 +1698,89 @@ class ConsoleSessionSwitcherModal(
         event.stop()
         self._set_mode(SwitcherMode.HISTORY)
 
+    @on(Button.Pressed, "#console-switcher-character-mode")
+    def _character_mode_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_mode(SwitcherMode.CHARACTER_CHATS)
+
     def action_toggle_mode(self) -> None:
-        target = (
-            SwitcherMode.HISTORY
-            if self._mode is SwitcherMode.ACTIVE
-            else SwitcherMode.ACTIVE
-        )
+        if self._activation_phase in {
+            ConsoleActivationPhase.OPENING_CANCELLABLE,
+            ConsoleActivationPhase.COMMITTING,
+        }:
+            return
+        target = {
+            SwitcherMode.ACTIVE: SwitcherMode.HISTORY,
+            SwitcherMode.HISTORY: SwitcherMode.CHARACTER_CHATS,
+            SwitcherMode.CHARACTER_CHATS: SwitcherMode.ACTIVE,
+        }[self._mode]
         self._set_mode(target)
 
-    def _set_mode(self, mode: SwitcherMode) -> None:
-        if self._closed or mode is self._mode:
+    def _snapshot_mode_visit(self) -> None:
+        """Capture stable position only from this mode's committed generation."""
+
+        payload = self._committed_payload_for_key(self._candidate_key())
+        if self._query_pending:
             return
+        if payload is not None and payload.mode is not self._mode:
+            return
+        try:
+            visible_query = self.query_one("#console-switcher-query", Input).value
+        except NoMatches:
+            return
+        if visible_query != self._rendered_query:
+            return
+        try:
+            results = self.query_one("#console-switcher-results", VerticalScroll)
+        except NoMatches:
+            scroll_y = 0.0
+        else:
+            scroll_y = float(results.scroll_y)
+        self._mode_visits[self._mode] = _ModeVisitState(
+            page_offset=self._page_offset,
+            selected_key=self._candidate_key(),
+            scroll_y=scroll_y,
+            focused_result=self._focused_result_index() is not None,
+            explicit_navigation=self._explicit_navigation,
+        )
+
+    def _set_mode(self, mode: SwitcherMode) -> None:
+        if (
+            self._closed
+            or mode is self._mode
+            or self._activation_phase
+            in {
+                ConsoleActivationPhase.OPENING_CANCELLABLE,
+                ConsoleActivationPhase.COMMITTING,
+            }
+        ):
+            return
+        self._snapshot_mode_visit()
+        current_query = self.query_one("#console-switcher-query", Input).value
+        if self._mode is SwitcherMode.CHARACTER_CHATS:
+            self._character_query = current_query
+        else:
+            self._operational_query = current_query
         self._mode = mode
-        self._page_offset = 0
-        self._explicit_navigation = False
+        visit = self._mode_visits[mode]
+        self._page_offset = visit.page_offset
+        self._explicit_navigation = visit.explicit_navigation
+        self._restoring_mode = mode
         self._selection_feedback = ""
         self._clear_mark_seen_confirmation()
-        query = self.query_one("#console-switcher-query", Input).value
+        query = (
+            self._character_query
+            if mode is SwitcherMode.CHARACTER_CHATS
+            else self._operational_query
+        )
+        input_widget = self.query_one("#console-switcher-query", Input)
+        self._cancel_query_debounce()
+        self._suppress_query_change = True
+        input_widget.value = query
+        self._suppress_query_change = False
         self._update_mode_controls()
         self.run_worker(
-            self._refresh_results(query, reset_page=True),
+            self._refresh_results(query),
             exclusive=True,
             group="console-session-switcher-mode",
         )
@@ -1108,6 +1802,11 @@ class ConsoleSessionSwitcherModal(
         self._load_current_page()
 
     def _load_current_page(self) -> None:
+        if self._activation_phase in {
+            ConsoleActivationPhase.OPENING_CANCELLABLE,
+            ConsoleActivationPhase.COMMITTING,
+        }:
+            return
         query = self.query_one("#console-switcher-query", Input).value
         self._explicit_navigation = False
         self.run_worker(
@@ -1120,18 +1819,43 @@ class ConsoleSessionSwitcherModal(
         try:
             active = self.query_one("#console-switcher-active-mode", Button)
             history = self.query_one("#console-switcher-history-mode", Button)
+            character = self.query_one("#console-switcher-character-mode", Button)
         except NoMatches:
             return
         count = len(self._active_results)
         active.label = f"Active ({count})"
         history.label = "History"
+        character.label = "Character chats"
+        try:
+            query = self.query_one("#console-switcher-query", Input)
+            query.placeholder = (
+                "Search local Character chats by Keyword…"
+                if self._mode is SwitcherMode.CHARACTER_CHATS
+                else ("Search sessions, workspaces, waiting, running, or finished…")
+            )
+        except NoMatches:
+            pass
         history_is_current = (
             self._mode is SwitcherMode.HISTORY or self._widened_to_history
         )
-        active.set_class(not history_is_current, "console-switcher-mode-current")
+        active.set_class(
+            self._mode is SwitcherMode.ACTIVE and not history_is_current,
+            "console-switcher-mode-current",
+        )
         history.set_class(history_is_current, "console-switcher-mode-current")
+        character.set_class(
+            self._mode is SwitcherMode.CHARACTER_CHATS,
+            "console-switcher-mode-current",
+        )
+        for control in (active, history, character):
+            control.disabled = self._activation_in_flight
 
-    def _update_page_controls(self, page: ConsoleSwitcherHistoryPage | None) -> None:
+    def _update_page_controls(
+        self,
+        page: ConsoleSwitcherHistoryPage | None,
+        *,
+        character_page: CharacterConversationPage | None = None,
+    ) -> None:
         try:
             controls = self.query_one("#console-switcher-page-controls", Horizontal)
             previous = self.query_one("#console-switcher-previous-page", Button)
@@ -1139,16 +1863,34 @@ class ConsoleSessionSwitcherModal(
             status = self.query_one("#console-switcher-page-status", Static)
         except NoMatches:
             return
-        visible = page is not None and (page.total > page.limit or page.offset > 0)
-        controls.display = visible
+        source = character_page if character_page is not None else page
+        offset = (
+            self._page_offset
+            if character_page is not None
+            else page.offset
+            if page
+            else 0
+        )
+        visible = source is not None and (
+            source.total > CONSOLE_SWITCHER_PAGE_LIMIT or offset > 0
+        )
+        controls.display = True
+        previous.display = visible
+        following.display = visible
         if not visible:
             status.update("")
             return
-        previous.disabled = page.offset <= 0
-        following.disabled = not page.has_more
-        first = page.offset + 1 if page.entries else 0
-        last = page.offset + len(page.entries)
-        status.update(f"{first}–{last} of {page.total}")
+        assert source is not None
+        previous.disabled = offset <= 0
+        item_count = (
+            len(source.rows)
+            if isinstance(source, CharacterConversationPage)
+            else len(source.entries)
+        )
+        following.disabled = offset + item_count >= source.total
+        first = offset + 1 if item_count else 0
+        last = offset + item_count
+        status.update(f"{first}–{last} of {source.total}")
 
     def _update_receipt_status(self) -> None:
         """Expose only content-free local activity storage readiness."""
@@ -1157,7 +1899,7 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             return
         degraded = self._activity_receipt_state == "degraded"
-        status.display = degraded
+        status.display = degraded and not self._compact_layout
         status.update(
             "Local activity updates unavailable — retrying; switching and "
             "History still work."
@@ -1166,12 +1908,26 @@ class ConsoleSessionSwitcherModal(
         )
 
     def _update_selection_status(self, *, prefix: str = "") -> None:
+        if self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE:
+            owner = self._committed_character_result
+            if owner is not None and owner.stable_result_key == self._candidate_key():
+                self._update_hints(owner)
+                self._update_selected_detail()
+                return
+            self._clear_character_failure()
+            self._sync_candidate_labels()
         if self._selection_feedback:
             self._set_status(self._selection_feedback)
             return
         if not self._entries:
-            mode = "Active" if self._mode is SwitcherMode.ACTIVE else "History"
+            mode = {
+                SwitcherMode.ACTIVE: "Active",
+                SwitcherMode.HISTORY: "History",
+                SwitcherMode.CHARACTER_CHATS: "Character chats",
+            }[self._mode]
             self._set_status(f"{mode}: no results")
+            self._update_hints(None)
+            self._update_selected_detail()
             return
         index = min(self._candidate_index, len(self._entries) - 1)
         title = sanitize_character_display_label(
@@ -1179,7 +1935,9 @@ class ConsoleSessionSwitcherModal(
             max_characters=_TITLE_LIMIT,
         )
         entry = self._entries[index]
-        if isinstance(entry, UnavailableSessionNotice):
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            consequence = self._entry_action(entry)
+        elif isinstance(entry, UnavailableSessionNotice):
             consequence = "Enter marks seen"
         elif getattr(entry, "native_session_id", None):
             consequence = "Enter switches to"
@@ -1190,31 +1948,402 @@ class ConsoleSessionSwitcherModal(
             message = f"{prefix} · {message}"
         self._set_status(message)
         self._update_hints(entry)
+        self._update_selected_detail()
 
-    def _update_hints(self, entry: ConsoleSwitcherActiveResult | None) -> None:
+    def _update_hints(self, entry: ConsoleSwitcherResult | None) -> None:
         try:
             hints = self.query_one("#console-switcher-hints", Static)
         except NoMatches:
             return
-        target_mode = (
-            "Active"
-            if self._mode is SwitcherMode.HISTORY or self._widened_to_history
-            else "History"
-        )
-        if isinstance(entry, UnavailableSessionNotice):
-            primary = "Enter: mark seen"
+        if isinstance(entry, ConsoleSwitcherCharacterResult):
+            primary = f"Enter:{self._entry_action(entry)}"
+        elif isinstance(entry, UnavailableSessionNotice):
+            primary = "Enter:mark seen"
         elif entry is not None and getattr(entry, "native_session_id", None):
-            primary = "Enter: switch  ·  F2: rename"
+            primary = (
+                "Enter:switch" if self._compact_layout else "Enter:switch F2: rename"
+            )
         elif entry is not None:
-            primary = "Enter: open"
+            primary = "Enter:open"
         else:
             primary = "No result selected"
-        hints.update(
-            f"{primary}  ·  ↑↓/Home/End/Pg: move  ·  F3: {target_mode}  ·  Esc: close"
+        if self._query_pending:
+            hints.update("Waiting for results · Esc:close")
+        elif self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
+            hints.update("Opening…  ·  Esc: cancel")
+        elif self._activation_phase is ConsoleActivationPhase.COMMITTING:
+            hints.update("Finishing…")
+        else:
+            hints.update(
+                f"{primary} F3:mode Esc:close"
+                if self._compact_layout
+                else f"{primary} · ↑↓:move · F3:mode · Esc:close"
+            )
+
+    async def action_show_workbench_help(self) -> None:
+        """Expose full selected identity without shadowing app-global F1."""
+
+        entry: ConsoleSwitcherResult | None = (
+            self._committed_character_result if self._activation_in_flight else None
         )
+        if entry is None and self._entries and not self._query_pending:
+            index = min(self._candidate_index, len(self._entries) - 1)
+            entry = self._entries[index]
+        selected = (
+            (
+                (
+                    "Selected result",
+                    (
+                        ("Title", entry.title),
+                        ("Action", self._entry_action(entry)),
+                    ),
+                ),
+            )
+            if entry is not None
+            else ()
+        )
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id="console-session-switcher",
+                    title="Switch or resume",
+                    shortcut_groups=(
+                        *selected,
+                        (
+                            "Keyboard",
+                            (
+                                ("Enter", "apply selected action"),
+                                ("F2", "rename eligible open Console tab"),
+                                ("F3", "next mode"),
+                                ("Esc", "close or cancel precommit open"),
+                                (
+                                    "Library Back",
+                                    "returns to Console Context Character",
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+
+    def _update_selected_detail(self) -> None:
+        try:
+            detail = self.query_one("#console-switcher-selected-detail", Static)
+        except NoMatches:
+            return
+        if self._query_pending:
+            detail.update("")
+            return
+        if self._mode is SwitcherMode.CHARACTER_CHATS and self._character_search_error:
+            detail.update(
+                f"{self._character_search_error}\nRefresh results · This profile · Local chats"
+            )
+            return
+        if self._mode is not SwitcherMode.CHARACTER_CHATS or not self._entries:
+            detail.update("")
+            return
+        entry = self._committed_character_result if self._activation_in_flight else None
+        if entry is None:
+            index = min(self._candidate_index, len(self._entries) - 1)
+            candidate = self._entries[index]
+            entry = (
+                candidate
+                if isinstance(candidate, ConsoleSwitcherCharacterResult)
+                else None
+            )
+        if entry is None:
+            detail.update("")
+            return
+        excerpt = sanitize_character_display_label(
+            entry.selected_excerpt, max_characters=_SUBTITLE_LIMIT * 2
+        )
+        state = self._character_state(entry)
+        if self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
+            state = "Opening…"
+        elif self._activation_phase is ConsoleActivationPhase.COMMITTING:
+            state = "Finishing…"
+        elif self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE:
+            state = str(self.query_one("#console-switcher-status", Static).renderable)
+        first = Text(excerpt or "No matching excerpt")
+        width = max(1, detail.content_size.width)
+        first.truncate(width, overflow="ellipsis")
+        second = Text(
+            f"{entry.absolute_time} · {state}"
+            if self._activation_phase is ConsoleActivationPhase.IDLE
+            else state
+        )
+        second.truncate(width, overflow="ellipsis")
+        detail.update(Text.assemble(first, "\n", second))
+
+    def _restore_owned_query(self) -> None:
+        try:
+            query = self.query_one("#console-switcher-query", Input)
+        except NoMatches:
+            return
+        expected = (
+            self._character_query
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else self._operational_query
+        )
+        self._suppress_query_change = True
+        query.value = expected
+        self._suppress_query_change = False
+
+    def _begin_character_activation(
+        self, entry: ConsoleSwitcherCharacterResult
+    ) -> None:
+        if self._activation_in_flight:
+            return
+        self._committed_character_result = entry
+        if entry.target is None:
+            self._show_activation_failure(
+                ConsoleActivationResultKind.CHARACTER_UNAVAILABLE
+            )
+            return
+        if self._character_activate is None:
+            self._show_activation_failure(ConsoleActivationResultKind.FAILED)
+            return
+        request = CharacterConversationActivationRequest(
+            target=entry.target,
+            data_authority_id=entry.target.character.data_authority_id,
+            data_revision=self._character_data_revision,
+        )
+        self._activation_cancellation = asyncio.Event()
+        self._activation_failure_kind = None
+        self._activation_phase = ConsoleActivationPhase.OPENING_CANCELLABLE
+        self._set_activation_controls_disabled(True)
+        self._set_status("Opening…")
+        self._sync_candidate_labels()
+        self._update_hints(entry)
+        self._update_selected_detail()
+        self._activation_task = asyncio.create_task(
+            self._run_character_activation(request, self._activation_cancellation)
+        )
+
+    async def _run_character_activation(
+        self,
+        request: CharacterConversationActivationRequest,
+        cancellation: asyncio.Event,
+    ) -> None:
+        activator = self._character_activate
+        if activator is None:
+            self._show_activation_failure(ConsoleActivationResultKind.FAILED)
+            return
+        activation = asyncio.create_task(activator(request, cancellation))
+        commit_waiter: asyncio.Task[None] | None = None
+        if self._character_commit_waiter is not None:
+            commit_waiter = asyncio.create_task(self._character_commit_waiter(request))
+        try:
+            if commit_waiter is not None:
+                done, _ = await asyncio.wait(
+                    {activation, commit_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if commit_waiter in done and not activation.done():
+                    try:
+                        commit_waiter.result()
+                    except Exception:  # noqa: BLE001 - activation result remains authority
+                        commit_signal_received = False
+                    else:
+                        commit_signal_received = True
+                    if commit_signal_received:
+                        self._activation_phase = ConsoleActivationPhase.COMMITTING
+                        self._set_activation_controls_disabled(True)
+                        self._set_status("Finishing…")
+                        self._sync_candidate_labels()
+                        self._update_hints(self._committed_character_result)
+                        self._update_selected_detail()
+            result = await activation
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - adapter failure stays visible in modal
+            self._show_activation_failure(ConsoleActivationResultKind.FAILED)
+            return
+        finally:
+            if commit_waiter is not None and not commit_waiter.done():
+                commit_waiter.cancel()
+
+        if (
+            result.kind is ConsoleActivationResultKind.OPENED
+            and result.target == request.target
+            and result.commit_started
+        ):
+            self._activation_phase = ConsoleActivationPhase.COMMITTING
+            self._set_activation_controls_disabled(True)
+            self._set_status("Finishing…")
+            self._sync_candidate_labels()
+            self._request_generation += 1
+            self._cancel_query_debounce()
+            self.dismiss_safe_once(None)
+            return
+        if result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT:
+            self._activation_phase = ConsoleActivationPhase.IDLE
+            self._activation_cancellation = None
+            self._committed_character_result = None
+            self._set_activation_controls_disabled(False)
+            self._set_status("Open cancelled")
+            self._sync_candidate_labels()
+            self._update_selection_status()
+            return
+        self._show_activation_failure(result.kind)
+
+    def _show_activation_failure(self, kind: ConsoleActivationResultKind) -> None:
+        copy = {
+            ConsoleActivationResultKind.NOT_FOUND: "Conversation no longer exists",
+            ConsoleActivationResultKind.DATA_PROFILE_CHANGED: "Profile changed",
+            ConsoleActivationResultKind.CHARACTER_UNAVAILABLE: "Character unavailable",
+            ConsoleActivationResultKind.FAILED: "Could not open chat",
+            ConsoleActivationResultKind.OPENED: "Could not open chat",
+            ConsoleActivationResultKind.CANCELLED_PRECOMMIT: "Open cancelled",
+        }[kind]
+        action = {
+            ConsoleActivationResultKind.NOT_FOUND: "Refresh results",
+            ConsoleActivationResultKind.DATA_PROFILE_CHANGED: "Refresh results",
+            ConsoleActivationResultKind.CHARACTER_UNAVAILABLE: "Open Library",
+        }.get(kind, "Retry")
+        self._activation_phase = ConsoleActivationPhase.FAILURE_VISIBLE
+        self._activation_failure_kind = kind
+        self._activation_cancellation = None
+        self._set_activation_controls_disabled(False)
+        self._set_status(copy)
+        self._sync_candidate_labels()
+        try:
+            recovery = self.query_one("#console-switcher-recovery", Button)
+            recovery.label = action
+            recovery.display = True
+        except NoMatches:
+            pass
+        self._update_hints(self._committed_character_result)
+        self._update_selected_detail()
+
+    def _clear_character_failure(self) -> None:
+        """Retire recovery when its selected query/row context is left."""
+        if self._activation_phase is not ConsoleActivationPhase.FAILURE_VISIBLE:
+            return
+        self._activation_phase = ConsoleActivationPhase.IDLE
+        self._activation_failure_kind = None
+        self._committed_character_result = None
+        try:
+            self.query_one("#console-switcher-recovery", Button).display = False
+        except NoMatches:
+            pass
+
+    def _set_activation_controls_disabled(self, disabled: bool) -> None:
+        try:
+            self.query_one("#console-switcher-query", Input).disabled = disabled
+        except NoMatches:
+            pass
+        self._update_mode_controls()
+        for selector in (
+            "#console-switcher-previous-page",
+            "#console-switcher-next-page",
+        ):
+            try:
+                self.query_one(selector, Button).disabled = disabled
+            except NoMatches:
+                pass
+        try:
+            cancel = self.query_one("#console-switcher-cancel", Button)
+            committing = self._activation_phase is ConsoleActivationPhase.COMMITTING
+            cancel.disabled = committing
+            cancel.label = "Finishing" if committing else "Cancel"
+        except NoMatches:
+            pass
+
+    @on(Button.Pressed, "#console-switcher-recovery")
+    async def _recover_character_activation(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._activation_in_flight:
+            return
+        recovery = event.button
+        failure = self._activation_failure_kind
+        retry_entry = self._committed_character_result
+        if (
+            failure is ConsoleActivationResultKind.CHARACTER_UNAVAILABLE
+            and self._character_open_library is not None
+            and retry_entry is not None
+        ):
+            recovery.disabled = True
+            self._activation_cancellation = asyncio.Event()
+            self._activation_phase = ConsoleActivationPhase.OPENING_CANCELLABLE
+            self._set_activation_controls_disabled(True)
+            self._set_status("Opening Library…")
+            self._activation_task = asyncio.create_task(
+                self._run_character_library_recovery(
+                    retry_entry, self._activation_cancellation, self._request_generation
+                )
+            )
+            return
+        recovery.display = False
+        self._activation_failure_kind = None
+        self._activation_phase = ConsoleActivationPhase.IDLE
+        self._committed_character_result = None
+        self._set_activation_controls_disabled(False)
+        if (
+            failure is ConsoleActivationResultKind.FAILED
+            and retry_entry is not None
+            and retry_entry.target is not None
+        ):
+            self._begin_character_activation(retry_entry)
+            return
+        self._load_current_page()
+
+    async def _run_character_library_recovery(
+        self,
+        entry: ConsoleSwitcherCharacterResult,
+        cancellation: asyncio.Event,
+        generation: int,
+    ) -> None:
+        """Keep the modal pump live while the app prepares exact inspection."""
+
+        def visit_is_current() -> bool:
+            return bool(
+                not self._closed
+                and self.is_mounted
+                and self._request_generation == generation
+                and self._committed_character_result is entry
+                and self._activation_cancellation is cancellation
+            )
+
+        def is_current() -> bool:
+            return visit_is_current() and not cancellation.is_set()
+
+        def on_commit_started() -> bool:
+            if not is_current():
+                return False
+            self._activation_phase = ConsoleActivationPhase.COMMITTING
+            self._set_activation_controls_disabled(True)
+            self._set_status("Finishing…")
+            self._sync_candidate_labels()
+            self._update_hints(entry)
+            self._update_selected_detail()
+            return True
+
+        try:
+            accepted = await self._character_open_library(
+                entry, is_current=is_current, on_commit_started=on_commit_started
+            )
+        except Exception:  # noqa: BLE001 - rejected inspection preserves this visit
+            accepted = False
+        if not visit_is_current():
+            return
+        if accepted:
+            self.dismiss_safe_once(None)
+            return
+        self.query_one("#console-switcher-recovery", Button).disabled = False
+        self._show_activation_failure(ConsoleActivationResultKind.CHARACTER_UNAVAILABLE)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
+        if self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
+            cancellation = self._activation_cancellation
+            if cancellation is not None:
+                cancellation.set()
+            self._set_status("Cancelling…")
+            return
+        if self._activation_phase is ConsoleActivationPhase.COMMITTING:
+            return
         self._request_generation += 1
         self._cancel_query_debounce()
         self.dismiss_safe_once(None)
@@ -1226,6 +2355,9 @@ class ConsoleSessionSwitcherModal(
 
     def action_rename_entry(self) -> None:
         """F2 acts only on an explicitly focused native result."""
+        if self._mode is SwitcherMode.CHARACTER_CHATS:
+            self._set_feedback("Character chats cannot be renamed here.")
+            return
         focused = self.focused
         if not isinstance(focused, Button) or not focused.has_class(
             "console-switcher-result"
@@ -1233,10 +2365,16 @@ class ConsoleSessionSwitcherModal(
             self._set_feedback("Focus an open agent result to rename it.")
             return
         entry = self._payload_by_widget_id.get(focused.id or "")
-        if entry is None or isinstance(entry, UnavailableSessionNotice):
+        payload = self._committed_payload_by_widget_id.get(focused.id or "")
+        if (
+            entry is None
+            or payload is None
+            or not self._payload_is_current(payload)
+            or isinstance(entry, UnavailableSessionNotice)
+        ):
             self._set_feedback("Focus an open agent result to rename it.")
             return
-        if not entry.native_session_id:
+        if not getattr(entry, "native_session_id", None):
             self._set_feedback("Saved chats cannot be renamed here; open one first.")
             return
         self._activate_choice("rename", entry)
@@ -1246,6 +2384,25 @@ class ConsoleSessionSwitcherModal(
             self.query_one("#console-switcher-status", Static).update(message)
         except NoMatches:
             pass
+        try:
+            scope = self.query_one("#console-switcher-scope", Static)
+        except NoMatches:
+            return
+        if self._mode is SwitcherMode.CHARACTER_CHATS:
+            scope.update("This profile · Local chats")
+            self.query_one("#console-switcher-divider", Static).update(
+                message
+                if self._query_pending
+                or self._activation_phase is not ConsoleActivationPhase.IDLE
+                else "─" * 48
+            )
+        else:
+            self.query_one("#console-switcher-divider", Static).update("─" * 48)
+            scope.update(
+                f"Activity updates unavailable · {message}"
+                if self._compact_layout and self._activity_receipt_state == "degraded"
+                else message
+            )
 
     def _set_feedback(self, message: str) -> None:
         try:

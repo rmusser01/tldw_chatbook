@@ -622,6 +622,19 @@ Library dismisses only after Library accepts the immutable context. Every
 failure/cancellation restores query, stable highlight, scroll, and the specified
 focus. `OPENED` alone dismisses directly to Console.
 
+Task5 admission correction (2026-09-06): Library acceptance means that its
+existing bounded local locator and save guards have prepared the exact
+inspection, not merely that the app owns a Library screen. The source visit
+remains mounted and cancellable during preparation. The existing app navigation
+owner fences cancellation and stale identity before a one-way commit that
+installs the prepared Library route and reader selection, then transfers the
+screen. Cold mount consumes that prepared selection without a second admission
+race. Later transcript rendering remains a separate Library operation. Generic
+late synchronous screen-switch rollback is outside this narrow correction;
+admission rejection and precommit cancellation are not excluded. See ADR-120's
+Task5 admission correction. Repair authority and Context Character return
+origins are unchanged.
+
 User-visible failures say `Conversation no longer exists`, `Profile changed`,
 `Character unavailable`, or `Could not open chat`; technical authority details
 remain in diagnostics. State-specific actions are Retry, Refresh results, Open

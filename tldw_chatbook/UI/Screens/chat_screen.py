@@ -182,6 +182,10 @@ from ...Widgets.Console.console_canvas_card import (
     ConsoleCanvasOpenRetryRequested,
     open_canvas_with_textual,
 )
+from ...Chat.console_switcher_state import (
+    ConsoleSwitcherCharacterResult,
+    SwitcherMode,
+)
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
 )
@@ -494,6 +498,7 @@ from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
 )
+from ...Utils.input_validation import validate_console_character_query
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
@@ -653,9 +658,6 @@ from ...Widgets.Console.console_setup_modal import (
 )
 from ...Widgets.destination_rail import (
     DestinationRailSectionHeader,
-)
-from ...Widgets.Console.console_session_switcher_modal import (
-    ConsoleSessionSwitcherModal,
 )
 from ...Widgets.Console.console_rewind_modal import (
     ConsoleRewindChoice,
@@ -4975,8 +4977,17 @@ class ChatScreen(BaseAppScreen):
         """Clear Console Workbench shortcuts from this screen's own footer."""
         self.clear_footer_shortcuts(source="console")
 
-    async def action_open_console_session_switcher(self) -> None:
+    async def action_open_console_session_switcher(
+        self,
+        *,
+        initial_mode: SwitcherMode = SwitcherMode.ACTIVE,
+        initial_character_query: str = "",
+    ) -> None:
         """Open Ctrl+K immediately from memory and warm receipts off-loop."""
+        from ...Widgets.Console.console_session_switcher_modal import (
+            ConsoleSessionSwitcherModal,
+        )
+
         if self._console_setup_modal_blocking() or self._console_decision_blocking():
             return
         store = self._console_chat_store
@@ -5014,6 +5025,14 @@ class ChatScreen(BaseAppScreen):
         modal = ConsoleSessionSwitcherModal(
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
+            character_loader=self._load_console_character_switcher_page,
+            character_activate=self._workspace.activate_character_conversation,
+            character_commit_waiter=(
+                self._wait_until_character_switcher_commit_started
+            ),
+            character_open_library=self._open_console_character_library,
+            initial_mode=initial_mode,
+            initial_character_query=initial_character_query,
             preferred_native_session_id=(
                 store.most_recent_other_session_id() if store is not None else None
             ),
@@ -5047,6 +5066,113 @@ class ChatScreen(BaseAppScreen):
                 )
 
             hydration.add_done_callback(reconcile_after_hydration)
+
+    async def _load_console_character_switcher_page(self, **kwargs: Any) -> Any:
+        """Delegate a bounded Keyword page to the authority-fenced controller."""
+
+        return await self._character_context.keyword_page(**kwargs)
+
+    async def _wait_until_character_switcher_commit_started(
+        self, request: "CharacterConversationActivationRequest"
+    ) -> None:
+        """Expose Task 3's commit acknowledgement to the mounted switcher."""
+
+        await self._workspace.wait_until_character_conversation_commit_started(
+            request
+        )
+
+    async def _open_console_character_library(
+        self,
+        result: ConsoleSwitcherCharacterResult,
+        *,
+        is_current: Callable[[], bool] | None = None,
+        on_commit_started: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Route an exact inspection and await the app's navigation completion."""
+
+        from ...Character_Chat.character_conversation_navigation import (
+            UnresolvedConversationKey,
+        )
+        from ...Constants import LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION
+        from ..Console_Modules.wiring import _navigate_character_context
+        from ..Navigation.character_conversation_navigation import (
+            LibraryUnavailableConversationInspection,
+            RoleplayReturnTarget,
+        )
+
+        unresolved = result.unresolved
+        if unresolved is None and result.target is not None:
+            unresolved = UnresolvedConversationKey(
+                result.target.character.data_authority_id,
+                result.target.conversation_id,
+            )
+        if unresolved is None:
+            return False
+        controller = self._character_context
+        if is_current is not None and not is_current():
+            return False
+        snapshot = await controller._capture_scope()
+        if (
+            snapshot.database is None
+            or snapshot.fingerprint.data_authority_id != unresolved.data_authority_id
+            or not await controller._scope_is_current(snapshot)
+            or (is_current is not None and not is_current())
+        ):
+            return False
+        completion = asyncio.get_running_loop().create_future()
+
+        def completed(accepted: bool) -> None:
+            if not completion.done():
+                completion.set_result(accepted)
+
+        _navigate_character_context(
+            self,
+            LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
+            LibraryUnavailableConversationInspection(
+                unresolved, RoleplayReturnTarget.console_context_character()
+            ),
+            on_completion=completed,
+            require_character_inspection_admission=True,
+            is_current=is_current,
+            on_commit_started=on_commit_started,
+        )
+        return await completion
+
+    def console_character_switcher_available(self) -> bool:
+        """Report the installed local Character-chats switcher capability.
+
+        Returns:
+            True because this screen provides the Character-chats handoff.
+        """
+
+        return True
+
+    def open_console_character_switcher_query(self, query: str) -> bool:
+        """Dispatch one Context Keyword query into the installed switcher.
+
+        Args:
+            query: Nonblank literal Keyword text within the Character boundary.
+
+        Returns:
+            True after worker dispatch, not completed modal admission; False for
+            invalid or blank input, without dispatching a handoff.
+        """
+
+        try:
+            validated_query = validate_console_character_query(query)
+        except ValueError:
+            return False
+        if not validated_query.strip():
+            return False
+        self.run_worker(
+            self.action_open_console_session_switcher(
+                initial_mode=SwitcherMode.CHARACTER_CHATS,
+                initial_character_query=validated_query,
+            ),
+            exclusive=True,
+            group="console-character-switcher-handoff",
+        )
+        return True
 
     def action_open_trajectory_view(self) -> None:
         """Open Trace for the active Console conversation (``y``)."""

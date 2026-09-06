@@ -4651,6 +4651,48 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: bold underline;
 }
 
+/* TASK-31245: the three-mode switcher shares the Console surface vocabulary.
+   Geometry lives in the widget; the dense search field also overrides the
+   app-wide focused Input border so focus cannot consume its compact budget. */
+#console-switcher-query,
+#console-switcher-query:focus {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+
+#console-switcher-query:focus {
+    border-left: thick $ds-action-focus;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+#console-switcher-modal {
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-switcher-scope,
+#console-switcher-selected-detail,
+#console-switcher-page-status,
+#console-switcher-hints {
+    color: $ds-text-muted;
+}
+
+.console-switcher-result-candidate {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.console-switcher-result-error {
+    border-left: solid $ds-status-error;
+}
+
 /* TASK-31429 (Qodo review on PR #2393): the conversation row IS the Button
    (`_conversation_button`), so the former descendant form
    `.console-workspace-conversation-row Button:focus` matched nothing. Target
@@ -4792,6 +4834,7 @@ ConsoleTerminalWorkspace Button:focus {
 .console-character-group,
 .console-character-row,
 .console-character-action,
+#console-character-query-handoff,
 #console-character-retry,
 #console-character-open-roleplay {
     width: 100%;

@@ -10,7 +10,7 @@ from typing import ClassVar
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationGroup,
@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     build_console_rail_state,
     serialize_console_rail_stored_preferences,
 )
+from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherCharacterResult
 from tldw_chatbook.UI.Console_Modules.character_context import (
     CONSOLE_CHARACTER_GROUP_LIMIT,
     CONSOLE_CHARACTER_ROW_LIMIT,
@@ -56,7 +57,9 @@ from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
     RoleplayReturnTarget,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.Utils.input_validation import CONSOLE_SWITCHER_QUERY_MAX_LENGTH
 from tldw_chatbook.Widgets.Console.console_character_context import (
+    CONSOLE_CHARACTER_SEARCH_ID,
     ConsoleCharacterContext,
 )
 
@@ -771,6 +774,66 @@ async def test_controller_routes_only_typed_activation_roleplay_and_repair() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resolved", [False, True])
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_switcher_recovery_uses_exact_task3_inspection_and_return_anchor(
+    resolved: bool,
+    accepted: bool,
+) -> None:
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION
+    from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+        deserialize_library_unavailable_inspection,
+    )
+
+    controller = _controller()
+    messages = []
+    posted = asyncio.Event()
+
+    def post_message(message):
+        messages.append(message)
+        posted.set()
+        return True
+
+    unresolved = UnresolvedConversationKey("authority", "lost")
+    target = LocalCharacterConversationTarget(
+        ResolvedLocalCharacterKey("authority", 7), "lost"
+    )
+    result = ConsoleSwitcherCharacterResult(
+        row_key="exact-row",
+        target=target if resolved else None,
+        unresolved=None if resolved else unresolved,
+        character_label="Historical Ada",
+        title="Lost chat",
+        relative_time="1d",
+        absolute_time="Updated 2026-09-03 12:00 UTC",
+        selected_excerpt="",
+    )
+    owner = SimpleNamespace(_character_context=controller, post_message=post_message)
+    recovery = asyncio.create_task(
+        chat_screen_module.ChatScreen._open_console_character_library(owner, result)
+    )
+    waiting = asyncio.create_task(posted.wait())
+    try:
+        await asyncio.wait({recovery, waiting}, return_when=asyncio.FIRST_COMPLETED)
+        assert posted.is_set(), "Recovery must dispatch completion-aware navigation"
+        assert not recovery.done(), "Posting does not prove route acceptance"
+        message = messages[0]
+        assert deserialize_library_unavailable_inspection(
+            message.screen_context[LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION]
+        ) == LibraryUnavailableConversationInspection(
+            unresolved, RoleplayReturnTarget.console_context_character()
+        )
+        message.report_completion(accepted)
+        message.report_completion(not accepted)
+        assert await recovery is accepted
+    finally:
+        for task in (recovery, waiting):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(recovery, waiting, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_scope_fingerprint_refreshes_current_profile_revision_and_activation() -> (
     None
 ):
@@ -1340,6 +1403,46 @@ async def test_opening_search_result_escape_preserves_query_rows_and_focus() -> 
         assert getattr(app.screen.focused, "id", None) == row_id
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query", [None, 42, "x" * 201, " " * 201, "bad\x00query", "bad\x7fquery"]
+)
+async def test_switcher_keyword_page_rejects_invalid_query_before_scope_read(query):
+    def forbidden_database_read():
+        pytest.fail("Invalid query must not read the Data Profile")
+
+    controller = _controller(database_accessor=forbidden_database_read)
+    with pytest.raises(ValueError):
+        await controller.keyword_page(query=query, offset=0, limit=50)
+
+
+@pytest.mark.asyncio
+async def test_switcher_keyword_page_preserves_separate_snapshot_and_live_revision():
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        CharacterKeywordSnapshot,
+    )
+
+    snapshot = CharacterKeywordSnapshot("old-corpus", 1, 3, "2026-09-01T00:00:00Z")
+
+    class RetainedSnapshotService(_Service):
+        def keyword_search(self, query, *, offset, limit):
+            assert (query, offset, limit) == ("needle", 0, 50)
+            return CharacterConversationPage(
+                (_resolved(1, "retained"),),
+                1,
+                None,
+                7,
+                CharacterKeywordIndexStatus.READY,
+                snapshot,
+            )
+
+    controller = _controller(service_factory=RetainedSnapshotService)
+    page = await controller.keyword_page(query="needle", offset=0, limit=50)
+    assert page.keyword_snapshot == snapshot
+    assert page.data_revision == 7
+    assert page.rows[0].target.conversation_id == "retained"
+
+
 def test_dormant_typed_query_handoff_is_default_false() -> None:
     handed_off: list[ConsoleCharacterQueryHandoff] = []
     controller = _controller(query_handoff=handed_off.append)
@@ -1352,6 +1455,29 @@ def test_dormant_typed_query_handoff_is_default_false() -> None:
     )
     assert controller.handoff_query("needle") is True
     assert handed_off == [ConsoleCharacterQueryHandoff("needle")]
+
+
+def test_query_handoff_rejects_oversize_without_blank_substitution() -> None:
+    handed_off: list[ConsoleCharacterQueryHandoff] = []
+    controller = _controller(
+        query_handoff_capability=ConsoleCharacterQueryHandoffCapability(True),
+        query_handoff=handed_off.append,
+    )
+
+    assert controller.handoff_query("x" * 201) is False
+    assert handed_off == []
+    assert "200" in controller.state.error
+
+
+@pytest.mark.asyncio
+async def test_context_search_input_matches_switcher_query_limit() -> None:
+    controller = _controller()
+    app = _CharacterApp(controller, ConsoleCharacterContextState())
+
+    async with app.run_test(size=(80, 35)) as pilot:
+        await pilot.pause()
+        search = app.screen.query_one(f"#{CONSOLE_CHARACTER_SEARCH_ID}", Input)
+        assert search.max_length == CONSOLE_SWITCHER_QUERY_MAX_LENGTH
 
 
 @pytest.mark.asyncio

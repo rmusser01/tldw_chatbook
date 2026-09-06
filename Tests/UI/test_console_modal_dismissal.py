@@ -1037,6 +1037,12 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         ("tldw_chatbook/UI/Console_Modules/workspace.py",),
         ("_open_console_workspace_rename",),
     ),
+    _ModalLaunchEdge(
+        ConsoleSessionSwitcherModal,
+        (WorkbenchHelpPanel,),
+        ("tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",),
+        ("action_show_workbench_help",),
+    ),
     # task-18810: the Console workspace browser opens the shared create
     # dialog (`_create_console_workspace`), which itself opens the vendored
     # directory picker. Both were reachable but undeclared, which is what
