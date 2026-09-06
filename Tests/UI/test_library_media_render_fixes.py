@@ -26,10 +26,13 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
 from textual.worker import WorkerState
 
-from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+)
 from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
     LibraryMediaReaderShell,
 )
@@ -2536,3 +2539,191 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
                 meta,
                 lines,
             )
+
+
+# --- PR H2 (Qodo on #2470): every viewer-sync follow-up rides the VIEWER ---
+#
+# ``_sync_library_media_viewer_or_recompose`` rebuilds the Reader on the
+# VIEWER's message pump. A ``screen.call_after_refresh`` follow-up has no
+# ordering against that pump: it focuses the control the recompose is about
+# to detach, Textual re-picks focus for the pruned widget, and task-31567's
+# restore -- whose captured identity went with the same children -- takes
+# its list-entry fallback. Measured on 43b0a7440: Escape from inside the
+# open More disclosure left focus on ``#library-media-row-0``, outside the
+# Reader, so the next Escape acted on the LIST. PR H fixed the More BUTTON;
+# these pin the Escape paths, which took the same shape.
+
+
+async def _open_reader_find(screen, pilot):
+    """Open the Reader's Find bar and wait for its input to take focus."""
+    screen.query_one("#library-media-reader-find", Button).press()
+    search_input = await _wait_for_selector(
+        screen, pilot, "#library-media-content-search"
+    )
+    await _wait_for_condition(
+        pilot,
+        lambda: search_input.has_focus,
+        message=lambda: f"Find never focused its input: {screen.focused!r}.",
+    )
+    return search_input
+
+
+def _focus_report(screen) -> str:
+    focused = screen.focused
+    return (
+        f"{focused!r} (id={getattr(focused, 'id', None)!r}, "
+        f"attached={getattr(focused, 'is_attached', None)!r})"
+    )
+
+
+async def _settle_focus_on(screen, pilot, control_id: str, what: str) -> None:
+    """Wait until ``control_id`` holds focus as a MOUNTED widget."""
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen.focused is not None
+            and screen.focused.id == control_id
+            and screen.focused.is_attached
+        ),
+        message=lambda: f"{what} left focus on {_focus_report(screen)}.",
+    )
+    # The identity check the orphan cannot pass: the focused widget IS the
+    # one a fresh query returns, not a detached same-id predecessor.
+    assert screen.focused is screen.query_one(f"#{control_id}", Button)
+    assert screen.focused.is_attached
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_more_lands_on_the_live_more_button():
+    """Escape closes the disclosure and leaves focus on the NEW More button.
+
+    Qodo High on #2470 ("Readers lose keys after escape"): the follow-up ran
+    on the screen's pump while the viewer rebuilt on its own, so it never
+    held the control it named. The first half passes on 43b0a7440 by
+    coincidence -- the identity task-31567 captured IS the More button, so
+    its restore lands where the follow-up wanted; the second half, from
+    inside the disclosure, is where the two differ and the base fails.
+    Both then press Enter on whatever holds focus: only a live, mounted More
+    button re-opens the row.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_reader_more(screen, pilot)
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Opening More"
+        )
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Escape closing More"
+        )
+
+        # Again from INSIDE the disclosure, where the restore cannot mask the
+        # bug: the focused action is recomposed away, so PR F's captured
+        # identity is gone and its fallback leaves the Reader entirely (on
+        # 43b0a7440 this landed on the media list row). The disclosure's own
+        # target has to survive the rebuild.
+        await _open_reader_more(screen, pilot)
+        screen.query_one("#library-media-edit", Button).focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More from inside it.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-more",
+            "Escape closing More from inside it",
+        )
+
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_find_lands_on_the_live_find_button():
+    """Both Escape-closes-Find branches land on the mounted Find button.
+
+    First from INSIDE the bar (the branch that reads the focused widget's
+    ancestry), then with focus moved out to the content body (the branch
+    that consumes an open bar regardless of where focus sits).
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_find(screen, pilot)
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-find", "Escape closing Find"
+        )
+
+        await _open_reader_find(screen, pilot)
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar from the content body.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "Escape closing Find from the content body",
+        )
+
+        # Keys still work afterwards: Enter on the restored button re-opens.
+        await pilot.press("enter")
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search-controls"
+        )
+
+
+@pytest.mark.asyncio
+async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone():
+    """PR F's restore is CHAINED behind the follow-up, never evicted.
+
+    ``queue_after_recompose`` REPLACES, and the sync queues task-31567's
+    focus restore on that same one slot. The helper captures it and calls it
+    after its own target, so a follow-up whose target is not composed leaves
+    focus where the restore puts it (the captured identity) -- never on the
+    pane grip Textual re-picks when the focused child is recomposed away.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+
+        screen._library_media_reader_session = set_more_open(
+            screen._library_media_reader_session, True
+        )
+        screen._after_library_media_viewer_sync("#library-media-reader-absent")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "An absent follow-up target",
+        )
+        assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)

@@ -32172,19 +32172,13 @@ class LibraryScreen(BaseAppScreen):
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if self._library_media_reader_session.more_open:
             self._library_media_reader_session = set_more_open(
                 self._library_media_reader_session, False
             )
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-more"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-more")
             return
         # task-31272: the Items pane's own type/sort strips open over the
         # three-pane Reader too, and this action owns Escape there (the
@@ -32241,10 +32235,7 @@ class LibraryScreen(BaseAppScreen):
         # never consumes the reader's find state.
         if find_open:
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if layout.items_open:
             self._focus_library_media_items_pane()
@@ -34722,49 +34713,26 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-more")
     def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
-        """Toggle the transient inline secondary-action region."""
+        """Toggle the transient inline secondary-action region.
+
+        Args:
+            event: The More button press. Stopped here so the Reader's own
+                toolbar handling never sees it.
+
+        Returns:
+            None.
+        """
         event.stop()
         session = self._library_media_reader_session
         self._library_media_reader_session = set_more_open(
             session, not session.more_open
         )
-        self._sync_library_media_viewer_or_recompose()
         # task-31633 AC#3: the disclosure owns its own focus target -- PR F's
         # restore seam otherwise leaves focus wherever it already was (the
         # Items row that opened the Reader), so More could not be closed
-        # again without hunting for it.
-        #
-        # Queued on the VIEWER's post-recompose hook, never
-        # ``screen.call_after_refresh``: this rebuild runs on the viewer's
-        # message pump and the two have no ordering. Measured with the
-        # screen-level callback -- it ran BEFORE the new children mounted,
-        # focused the More button that was about to be detached, and left
-        # focus on an orphan with no parent chain, which swallowed every
-        # subsequent key (Escape stopped closing anything at all).
-        #
-        # Read AFTER the sync and CHAINED, never replacing: the sync queues
-        # PR F's focus restore on this same one-slot hook and
-        # ``queue_after_recompose`` replaces (that is how task-31567 lost a
-        # receipt's "land on Undo"). Ours runs first and wins outright; the
-        # restore behind it only acts when nothing claimed focus -- which is
-        # exactly the case where More is not composed at all.
-        viewer = self._mounted_library_media_viewer()
-        if viewer is None:
-            # The whole-screen fallback took the sync: there is no viewer to
-            # hang the hook on, so the screen's own post-refresh seam carries
-            # the target instead.
-            self.call_after_refresh(
-                partial(self._focus_library_control, "#library-media-reader-more")
-            )
-            return
-        pending = viewer._post_recompose_callback
-
-        def focus_more_then_restore() -> None:
-            self._focus_library_control("#library-media-reader-more")
-            if pending is not None:
-                pending()
-
-        viewer.queue_after_recompose(focus_more_then_restore)
+        # again without hunting for it. The shared seam is what orders that
+        # target against the viewer's own rebuild.
+        self._after_library_media_viewer_sync("#library-media-reader-more")
 
     @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:
@@ -34822,13 +34790,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
         )
-        self._sync_library_media_viewer_or_recompose()
-        if mode == "read":
-            loaded_id = self._library_media_reader_session.loaded_id
-            if loaded_id is not None:
-                self.call_after_refresh(
-                    self._restore_library_media_loaded_progress, loaded_id
-                )
+        # The one follow-up here is not a focus move -- the stored reading
+        # position is restored against the rebuilt body, and reading it from
+        # the OLD children (or after they are detached) is the same race.
+        loaded_id = self._library_media_reader_session.loaded_id
+        if mode == "read" and loaded_id is not None:
+            self._after_library_media_viewer_sync(
+                partial(self._restore_library_media_loaded_progress, loaded_id)
+            )
+        else:
+            self._sync_library_media_viewer_or_recompose()
 
     def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
         """Drop the in-item search when the Reader actually changes tab.
@@ -35071,8 +35042,9 @@ class LibraryScreen(BaseAppScreen):
         # token below is what lets its mount take focus -- once.
         self._library_media_find_open = True
         self._library_media_find_focus_pending = True
-        self._sync_library_media_viewer_or_recompose()
-        self.call_after_refresh(self._focus_library_media_content_search_input)
+        self._after_library_media_viewer_sync(
+            self._focus_library_media_content_search_input
+        )
 
     @on(Button.Pressed, "#library-media-open-original")
     def handle_library_media_open_original(self, event: Button.Pressed) -> None:
@@ -35222,6 +35194,72 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
+
+    def _after_library_media_viewer_sync(
+        self, follow_up: str | Callable[[], object]
+    ) -> None:
+        """Sync the media viewer, then run ``follow_up`` against its NEW children.
+
+        task-31633 / Qodo High on #2470 ("Readers lose keys after escape").
+        A viewer-scoped sync rebuilds the Reader on the VIEWER's message pump,
+        and ``screen.call_after_refresh`` queues onto the SCREEN's -- two
+        pumps with no ordering. Measured on 43b0a7440 with the screen seam:
+        Escape from inside the More disclosure focused the control the
+        recompose was about to detach, Textual re-picked focus for the pruned
+        widget, and task-31567's restore (its captured identity gone with the
+        rest of the children) fell back to the media list row -- focus out of
+        the Reader entirely, so the next Escape acted on the list.
+
+        So the follow-up rides the viewer's own post-recompose hook, and is
+        CHAINED behind whatever is already queued there rather than replacing
+        it: ``queue_after_recompose`` replaces, and the sync above just
+        queued task-31567's restore on that same one slot (that is how
+        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
+        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
+        ``app.call_later``), so when the chained restore runs, focus is still
+        wherever the recompose left it and the restore does its own landing
+        (the captured identity, else the list entry); the deferred focus then
+        lands on the target and wins. The transient is benign -- the list
+        entry is focused with ``scroll_visible=False`` and the programmatic
+        marker armed -- and when the target is not composed at all the focus
+        call no-ops and the restore's landing stands.
+
+        Args:
+            follow_up: A Library control selector to focus once the sync has
+                landed (``"#library-media-reader-more"``), or a zero-argument
+                callable to run there instead.
+
+        Returns:
+            None.
+        """
+        self._sync_library_media_viewer_or_recompose()
+        callback = (
+            partial(self._focus_library_control, follow_up)
+            if isinstance(follow_up, str)
+            else follow_up
+        )
+        viewer = self._mounted_library_media_viewer()
+        # ``refresh(recompose=True)`` arms this flag synchronously and only
+        # ``_check_recompose`` (on the viewer's pump) clears it, before
+        # awaiting ``recompose()``; read here with no await in between it is
+        # the honest
+        # answer to "did THIS sync hand the rebuild to the viewer's pump?".
+        # False covers both cases where the hook would swallow the follow-up
+        # instead of ordering it: the no-change short-circuit (nothing is
+        # rebuilt, so nothing ever fires the hook and the target is still
+        # mounted anyway) and the whole-screen fallback (the screen's pump
+        # owns the ordering, and this viewer is the one being torn down).
+        if viewer is None or not getattr(viewer, "_recompose_required", False):
+            self.call_after_refresh(callback)
+            return
+        pending = viewer._post_recompose_callback
+
+        def follow_up_then_pending() -> None:
+            callback()
+            if pending is not None:
+                pending()
+
+        viewer.queue_after_recompose(follow_up_then_pending)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
