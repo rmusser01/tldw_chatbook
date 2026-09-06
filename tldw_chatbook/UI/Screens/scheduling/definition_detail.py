@@ -70,7 +70,10 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
-from ....Scheduling.schedule_input_parsing import parse_forgiving_datetime
+from ....Scheduling.schedule_input_parsing import (
+    example_run_at_text,
+    parse_forgiving_datetime,
+)
 from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
@@ -341,9 +344,18 @@ def automation_name_cell(definition: dict[str, Any]) -> str:
     """Name cell for the merged local+server Automations list (task-5 fix round).
 
     Moved here from `schedules_workbench.py` (Task 4) alongside
-    `_definition_owner_label`, which this now delegates to; behavior is
-    unchanged. `schedules_workbench` re-exports the name for its own
-    DataTable render call site.
+    `_definition_owner_label`, which this now delegates to.
+
+    31713 AC#1: this used to be a bracket PREFIX shown even for a local
+    row (`"[This device] <name>"`), while a reminder row's own queue
+    title (`task_detail._queue_owner_suffix`) shows nothing at all for a
+    local row and only a parenthetical SUFFIX when server-scoped -- two
+    formats, and a local row's own labeling behavior differed between the
+    primitives. Now matches that reminder convention exactly: nothing for
+    a local definition, ``" (server: <id>)"`` for a server-scoped one
+    (the same wording `_queue_owner_suffix` uses, not just the same
+    shape), with `_definition_owner_label`'s own ``"· pending sync"``
+    qualifier folded into the same parenthetical when it applies.
 
     Args:
         definition: One merged row (local DB dict or server API dict --
@@ -351,13 +363,16 @@ def automation_name_cell(definition: dict[str, Any]) -> str:
             server fixture `automation_definition_list.json`).
 
     Returns:
-        `"[This device] <name>"` for a local row, `"[<server id>] <name>"`
-        for a server-scoped one, and `"[<server id> · pending sync]
-        <name>"` for one authored offline that has not reached the server
-        yet.
+        The bare name for a local row, ``"<name> (server: <server id>)"``
+        for a server-scoped one, and ``"<name> (server: <server id> ·
+        pending sync)"`` for one authored offline that has not reached
+        the server yet.
     """
     name = str(definition.get("name") or definition.get("id") or "")
-    return f"[{_definition_owner_label(definition)}] {name}"
+    label = _definition_owner_label(definition)
+    if label == "This device":
+        return name
+    return f"{name} (server: {label})"
 
 
 def _definition_transfer_suffix(definition: dict[str, Any]) -> str:
@@ -604,12 +619,17 @@ class DefinitionDetail(Vertical):
             The static children; value rows are mounted per definition.
         """
         yield Static(
-            "Definition Detail",
+            # task-31710 AC#1: matches this primitive's own form title
+            # ("New/Edit Recurring Question", automation_definition_form.py)
+            # and the Create chooser's "Recurring question…" button --
+            # "Definition"/"Automation" were two more names for the same
+            # thing.
+            "Recurring Question Detail",
             id="scheduling-automation-detail-header",
             classes="scheduling-column-title",
         )
         yield Static(
-            "Select an automation to see its details.",
+            "Select a recurring question to see its details.",
             id="scheduling-automation-detail-empty-state",
         )
         with Vertical(id="scheduling-automation-detail-body"):
@@ -1263,7 +1283,7 @@ class DefinitionDetail(Vertical):
                 return
             initial = str(schedule.get(field) or "")
             placeholder = (
-                "2026-08-28 09:00" if field == "run_at" else DEFAULT_TIME_OF_DAY
+                example_run_at_text() if field == "run_at" else DEFAULT_TIME_OF_DAY
             )
             row.begin_edit(
                 Input(
@@ -1603,7 +1623,9 @@ class DefinitionDetail(Vertical):
                 return
             parsed, _assumed_local = parse_forgiving_datetime(raw)
             if parsed is None:
-                row.show_error("Run at must be a date and time like 2026-08-28 09:00.")
+                row.show_error(
+                    f"Run at must be a date and time like {example_run_at_text()}."
+                )
                 return
             new_value: Any = parsed.isoformat()
         else:

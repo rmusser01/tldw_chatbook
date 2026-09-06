@@ -21,6 +21,7 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Static
 
 from ....Widgets.confirmation_dialog import ConfirmationDialog
+from .unified_rows import _format_local_timestamp
 
 logger = logger.bind(module="ConflictsTab")
 
@@ -47,7 +48,14 @@ class ConflictsTab(Vertical):
         height: 1fr;
     }
     #scheduling-conflicts-table {
-        height: 1fr;
+        /* 31713 AC#4: a `height: 1fr` table left a handful of conflict
+           rows sitting atop a wall of blank DataTable background in a
+           full-height pushed pane. Bounded to a reasonable row count
+           (independently scrollable beyond it, nothing lost) and the
+           freed space goes to the detail pane below, which is the
+           actually content-rich half of this screen. */
+        height: auto;
+        max-height: 15;
     }
     #scheduling-conflicts-empty {
         color: $text-muted;
@@ -58,8 +66,10 @@ class ConflictsTab(Vertical):
         height: auto;
     }
     #scheduling-conflict-detail {
-        height: auto;
-        max-height: 9;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping a version comparison to 9 rows
+           regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;
@@ -136,8 +146,10 @@ class ConflictsTab(Vertical):
             server_state = conflict.get("server_state") or {}
             local_state = conflict.get("local_state") or {}
             local_row = local_state.get("record") or local_state or {}
-            server_updated = server_state.get("updated_at", "—")
-            local_updated = local_row.get("updated_at", "—")
+            # task-31711 AC#3: `updated_at` is a raw ISO-8601 string --
+            # render it as a human-readable local timestamp.
+            server_updated = _format_local_timestamp(server_state.get("updated_at"))
+            local_updated = _format_local_timestamp(local_row.get("updated_at"))
             self._conflicts_by_id[conflict["id"]] = conflict
             # `Text`, not `str`, for everything that came from outside
             # this module (task 6 round 2, D8): `DataTable` runs string
@@ -199,7 +211,9 @@ class ConflictsTab(Vertical):
             return missing_text
         record = state.get("record") or state
         title = record.get("title") or "Untitled"
-        updated = state.get("updated_at") or record.get("updated_at") or "—"
+        updated = _format_local_timestamp(
+            state.get("updated_at") or record.get("updated_at")
+        )
         details: list[str] = []
         schedule = (
             record.get("schedule_kind")

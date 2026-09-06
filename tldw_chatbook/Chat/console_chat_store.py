@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 import hashlib
 import inspect
 import json
@@ -12,7 +10,9 @@ import math
 import threading
 import time
 from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -32,13 +32,12 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
-from tldw_chatbook.Character_Chat.emote_directives import (
-    CharacterEmoteEvent,
-    CharacterEmoteRunSnapshot,
-    CharacterEmoteStreamParser,
-    utf16_length,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.staging import (
+        CanvasPromotionContribution,
+        CanvasStagingOwner,
+    )
+
 from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
     ProviderContinuationEvent,
@@ -47,8 +46,14 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCallFinished,
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteEvent,
+    CharacterEmoteRunSnapshot,
+    CharacterEmoteStreamParser,
+    utf16_length,
+)
 from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, PendingAttachment
-from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     SealedCitationWrite,
@@ -56,26 +61,11 @@ from tldw_chatbook.Chat.citation_trace_models import (
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
 )
-from tldw_chatbook.Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
-    CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
-    DEFAULT_CONSOLE_SESSION_TITLE,
-    ConsoleActivityPresentation,
-    ConsoleChatMessage,
-    ConsoleCitationPresentation,
-    ConsoleMessageFeedback,
-    ConsoleMessageRole,
-    ConsoleMessageStatus,
-    ConsoleDispatchRecoveryActionId,
-    ConsoleDispatchRecoveryKind,
-    ConsoleDispatchRecoveryState,
-    ConsoleVariant,
-    ConsoleVariantSet,
-    ConsoleWorkspaceContext,
-    GenerationVariantMeta,
-    MessageAttachment,
-    RawCliPresentation,
-    console_dispatch_recovery_from_checkpoint,
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadResult,
+    CapturePolicyReadStatus,
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
@@ -96,6 +86,27 @@ from tldw_chatbook.Chat.console_chat_fork import (
     normalize_fork_title,
     validate_console_fork_image_payload,
 )
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleActivityPresentation,
+    ConsoleChatMessage,
+    ConsoleCitationPresentation,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
+    ConsoleMessageFeedback,
+    ConsoleMessageRole,
+    ConsoleMessageStatus,
+    ConsoleVariant,
+    ConsoleVariantSet,
+    ConsoleWorkspaceContext,
+    GenerationVariantMeta,
+    MessageAttachment,
+    RawCliPresentation,
+    console_dispatch_recovery_from_checkpoint,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_context_repository import (
     ContextPolicyWriteResult,
@@ -113,7 +124,19 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
+from tldw_chatbook.Chat.console_library_activity_buffer import (
+    ConsoleLibraryActivityBuffer,
+    LibraryActivityFlushResult,
+)
 from tldw_chatbook.Chat.console_library_destination import (
     ConsoleLibraryDestinationRuntimeState,
     settle_console_library_destination_runtime,
@@ -132,35 +155,12 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
-from tldw_chatbook.Chat.console_library_activity_buffer import (
-    ConsoleLibraryActivityBuffer,
-    LibraryActivityFlushResult,
-)
-from tldw_chatbook.Chat.console_turn_preparation import (
-    ConsolePreparationPauseKind,
-    ConsolePreparationTransition,
-    ConsoleTurnPreparation,
-    ConsoleTurnPreparationState,
-    admit_promoted_temporary_capture,
-    apply_preparation_transition,
-)
-from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
-)
-from tldw_chatbook.Chat.library_activity import (
-    LibraryActivityContribution,
-    LibraryActivityEvent,
-    LibraryActivityView,
-    encode_library_activity_event,
-    project_library_activity,
-)
-from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
-from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
-from tldw_chatbook.Chat.console_capture_policy_repository import (
-    CapturePolicyReadResult,
-    CapturePolicyReadStatus,
-    CapturePolicyWriteStatus,
-    ConsoleCapturePolicyRepository,
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    decode_project_context_json,
+    encode_project_context_json,
+    sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
@@ -172,15 +172,6 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
-)
-from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
-from tldw_chatbook.Chat.console_generation_settings_metadata import (
-    ConsoleGenerationSettingsReadStatus,
-    ConsoleGenerationSettingsSnapshot,
-    ConsoleGenerationSettingsWriteResult,
-    ConsoleGenerationSettingsWriteStatus,
-    merge_console_generation_settings,
-    snapshot_from_session_settings,
 )
 from tldw_chatbook.Chat.console_session_endpoint_policy import (
     ConsoleEndpointAdoptionReceipt,
@@ -196,41 +187,55 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSurface,
     validate_console_settings_origin,
 )
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-    decode_project_context_json,
-    encode_project_context_json,
-    sanitize_fork_project_instruction_state,
-)
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsolePromotionTransactionContribution,
+)
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsolePreparationTransition,
+    ConsoleTurnPreparation,
+    ConsoleTurnPreparationState,
+    admit_promoted_temporary_capture,
+    apply_preparation_transition,
+)
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityContribution,
+    LibraryActivityEvent,
+    LibraryActivityView,
+    encode_library_activity_event,
+    project_library_activity,
+)
 from tldw_chatbook.Chat.message_metadata import (
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.thinking_blocks import (
-    ThinkingHistoryPolicy,
-    ThinkingEnvelope,
-    ThinkingStatus,
-    dump_thinking_blocks_json,
-    normalize_thinking_history_policy,
-    read_thinking_blocks_json,
-)
-from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
     transition_provider_call,
 )
-
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingEnvelope,
+    ThinkingHistoryPolicy,
+    ThinkingStatus,
+    dump_thinking_blocks_json,
+    normalize_thinking_history_policy,
+    read_thinking_blocks_json,
+)
+from tldw_chatbook.Chat.trajectory import contains_local_path
+from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -253,6 +258,54 @@ def _fork_session_transition(method: Callable[..., Any]) -> Callable[..., Any]:
     ) -> Any:
         with self._fork_source_transition(session_id):
             return method(self, session_id, *args, **kwargs)
+
+    return transitioned
+
+
+def _ephemeral_promotion_session_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude exact-session lifecycle changes from a temporary-chat save."""
+
+    @wraps(method)
+    def transitioned(
+        self: "ConsoleChatStore", session_id: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        with self._ephemeral_promotion_lock:
+            if session_id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Temporary chat save is already in progress.")
+            return method(self, session_id, *args, **kwargs)
+
+    return transitioned
+
+
+def _ephemeral_promotion_creation_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude explicit same-ID creation from a temporary-chat save."""
+
+    @wraps(method)
+    def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.get("session_id")
+        with self._ephemeral_promotion_lock:
+            if session_id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Temporary chat save is already in progress.")
+            return method(self, *args, **kwargs)
+
+    return transitioned
+
+
+def _ephemeral_promotion_global_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude whole-store replacement or shutdown from a temporary-chat save."""
+
+    @wraps(method)
+    def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
+        with self._ephemeral_promotion_lock:
+            if self._ephemeral_promotion_reservations:
+                raise RuntimeError("Temporary chat save is already in progress.")
+            return method(self, *args, **kwargs)
 
     return transitioned
 
@@ -361,15 +414,15 @@ def _validate_raw_cli_marker_text(field_name: str, value: object) -> None:
 
 if TYPE_CHECKING:
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (annotation-only in this module)
-    from tldw_chatbook.Chat.console_trace_projection import (
-        ConsoleTraceProjection,
-        ProjectedTraceCall,
-    )
     # Annotation-only: ``from __future__ import annotations`` (top of file)
     # defers evaluation of every type hint below, so this class never needs
     # to exist at runtime here -- only ``capture_to_blob`` (imported above)
     # is actually called.
     from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_trace_projection import (
+        ConsoleTraceProjection,
+        ProjectedTraceCall,
+    )
     from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 
 #: Maximum number of attachments a Console session may stage before send.
@@ -1102,6 +1155,42 @@ class ConsoleChatSyncProducer(Protocol):
         """Project an exact committed tombstone into durable sync state."""
 
 
+class ConsoleCanvasPromotionParticipant(Protocol):
+    """Optional process-local Canvas owner participating in chat promotion."""
+
+    def activate_session(self, session_id: str) -> CanvasStagingOwner:
+        """Create a new exact owner incarnation for a temporary session."""
+
+    def promotion_contribution(
+        self, session_id: str
+    ) -> CanvasPromotionContribution | None:
+        """Freeze the session's current Canvas graph for one transaction."""
+
+    def confirm_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Discard a still-current contribution only after commit."""
+
+    def abort_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Release a failed contribution without discarding staged history."""
+
+    def retire_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Retire only the exact committed contribution owner and lease."""
+
+    def discard_session(self, session_id: str) -> None:
+        """Destroy one session's temporary Canvas state."""
+
+    def discard_all(self) -> None:
+        """Retire all current temporary owners during state replacement."""
+
+    def close_runtime(self) -> None:
+        """Permanently retire all owners at process teardown."""
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuationDurabilityResult:
     """Bounded, private-data-free result for the execution durability barrier."""
@@ -1481,6 +1570,16 @@ def is_untouched_default_session(
     )
 
 
+@dataclass(slots=True, eq=False)
+class _ConsoleEphemeralPromotionReservation:
+    """Exact live Console incarnation fenced across one promotion."""
+
+    session_id: str
+    session: ConsoleChatSession = field(repr=False)
+    committed: bool = False
+    canvas_settled: bool = False
+
+
 class ConsoleChatStore:
     """Manage native Console sessions and messages before UI integration."""
 
@@ -1504,6 +1603,9 @@ class ConsoleChatStore:
         library_policy_coordinator: ConsoleLibraryPolicyCoordinator | None = None,
         trace_projection: ConsoleTraceProjection | None = None,
         settle_provider_traces_off_thread: bool = False,
+        canvas_promotion_participant: ConsoleCanvasPromotionParticipant | None = None,
+        canvas_turn_controller: Any | None = None,
+        on_canvas_context_changed: Callable[[str | None], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1539,8 +1641,17 @@ class ConsoleChatStore:
                 bare/test stores remain database-free when omitted.
             settle_provider_traces_off_thread: Run provider-trace settlement on
                 the app-owned store's single worker instead of the UI thread.
+            canvas_promotion_participant: Optional process-local Canvas staging
+                owner used for atomic temporary-conversation promotion.
+            canvas_turn_controller: Optional run-owned Canvas finalizer whose
+                source-private contribution joins assistant settlement.
+            on_canvas_context_changed: Optional source-free callback invoked after
+                a native session activation or active-branch transition.
         """
         self.persistence = persistence
+        self.canvas_promotion_participant = canvas_promotion_participant
+        self.canvas_turn_controller = canvas_turn_controller
+        self._on_canvas_context_changed = on_canvas_context_changed
         self.trace_projection = trace_projection
         self._provider_trace_settlements: dict[str, dict[str, object]] = {}
         self._provider_trace_settlement_owned_call_ids: set[str] = set()
@@ -1605,6 +1716,10 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._ephemeral_promotion_lock = threading.RLock()
+        self._ephemeral_promotion_reservations: dict[
+            str, _ConsoleEphemeralPromotionReservation
+        ] = {}
         self._capture_policy_revision = 0
         self._capture_policy_lock = threading.RLock()
         self._capture_policy_mutation: object | None = None
@@ -1925,6 +2040,7 @@ class ConsoleChatStore:
             canonical_settings_baseline=canonical_settings_baseline,
         )
 
+    @_ephemeral_promotion_creation_lifecycle
     def create_session(
         self,
         *,
@@ -2028,6 +2144,14 @@ class ConsoleChatStore:
                 )
             ),
         )
+        if ephemeral and self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.activate_session(session.id)
+        if (
+            ephemeral
+            and self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.activate_session(session.id)
         self._record_console_settings_binding_revision(
             session.id,
             session.conversation_binding_revision,
@@ -2062,6 +2186,19 @@ class ConsoleChatStore:
             self._session_mru.appendleft(session_id)
         self.active_session_id = session_id
         self._active_session_epoch += 1
+        self._notify_canvas_context_changed(session_id)
+
+    def _notify_canvas_context_changed(self, session_id: str | None) -> None:
+        callback = self._on_canvas_context_changed
+        if callback is None:
+            return
+        try:
+            callback(session_id)
+        except Exception as exc:  # noqa: BLE001 - observer cannot break chat state
+            logger.warning(
+                "canvas_context_observer_failed: {}",
+                type(exc).__name__,
+            )
 
     def session_mru_ids(self) -> tuple[str, ...]:
         """Return live native session IDs in most-recent activation order."""
@@ -3222,6 +3359,8 @@ class ConsoleChatStore:
         metadata_json: str | None = None,
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> bool:
         """Settle one claimed durable or ephemeral owner without a second write."""
 
@@ -3234,6 +3373,8 @@ class ConsoleChatStore:
                 metadata_json=metadata_json,
                 provider_continuation_json=provider_continuation_json,
                 provider_continuation=provider_continuation,
+                contributions=contributions,
+                on_durable_commit=on_durable_commit,
             )
 
     def _settle_dispatch_recovery(
@@ -3246,6 +3387,8 @@ class ConsoleChatStore:
         metadata_json: str | None = None,
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> bool:
         """Settle dispatch state while holding its generation owner."""
 
@@ -3302,6 +3445,7 @@ class ConsoleChatStore:
                             if message is not None
                             else None
                         ),
+                        contributions=tuple(contributions),
                     )
                 )
             except Exception:
@@ -3309,10 +3453,16 @@ class ConsoleChatStore:
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 return False
             committed_message_version = result.committed_message_version
+            if on_durable_commit is not None:
+                on_durable_commit()
         if message is not None:
             message.content = content
             message.status = terminal_state
             message.assistant_generation_state = terminal_state
+            if metadata_json is not None and message.video_metadata is None:
+                restored_metadata = MessageMetadata.from_json(metadata_json)
+                if restored_metadata is not None:
+                    message.metadata = restored_metadata
             message.provider_continuation = provider_continuation
             message.provider_continuation_message_version = committed_message_version
             message.provider_continuation_actions_enabled = False
@@ -3371,16 +3521,63 @@ class ConsoleChatStore:
             metadata_json = message.video_metadata.to_json()
         elif message.metadata is not None and not message.metadata.is_empty:
             metadata_json = message.metadata.to_json()
+        canvas_settlement = None
+        canvas_contributions: tuple[ConsolePromotionTransactionContribution, ...] = ()
+        canvas_controller = self.canvas_turn_controller
+        if canvas_controller is not None:
+            canvas_settlement = canvas_controller.settlement_for_assistant(message.id)
+            if canvas_settlement is not None:
+                try:
+                    existing = json.loads(metadata_json) if metadata_json else {}
+                    canvas_payload = json.loads(canvas_settlement.metadata_json)
+                    if type(existing) is not dict or type(canvas_payload) is not dict:
+                        raise ValueError("invalid Canvas card metadata")
+                    existing.update(canvas_payload)
+                    metadata_json = json.dumps(
+                        existing,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    if (
+                        terminal_state == "complete"
+                        and canvas_settlement.contribution is not None
+                    ):
+                        canvas_contributions = (canvas_settlement.contribution,)
+                except Exception:
+                    canvas_controller.abort_exact_settlement(
+                        canvas_settlement, "metadata_write_failed"
+                    )
+                    raise ConsoleDispatchSettlementError(
+                        "Canvas settlement metadata is invalid."
+                    ) from None
         if not self.settle_dispatch_recovery(
             session_id,
             assistant_message_id=message.id,
             terminal_state=terminal_state,
             content=message.content,
             metadata_json=metadata_json,
+            contributions=canvas_contributions,
+            on_durable_commit=(
+                lambda: canvas_controller.confirm_exact_settlement(canvas_settlement)
+                if canvas_settlement is not None and terminal_state == "complete"
+                else None
+            ),
         ):
             raise ConsoleDispatchSettlementError(
                 "Durable dispatch terminal settlement failed."
             )
+        if (
+            canvas_settlement is not None
+            and terminal_state == "complete"
+            and recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        ):
+            canvas_controller.confirm_exact_settlement(canvas_settlement)
         return True
 
     def _hydrate_provider_continuations_from_persistence(
@@ -4128,6 +4325,7 @@ class ConsoleChatStore:
         )
 
     @_fork_session_transition
+    @_ephemeral_promotion_session_lifecycle
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
 
@@ -4194,6 +4392,14 @@ class ConsoleChatStore:
     def _purge_session_runtime_state(self, session_id: str) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.discard_session(session_id)
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.discard_session(session_id)
 
         # Purge EVERY message the session owns, not just the active-path view:
         # off-path tree nodes and dropped display-only TOOL markers both live in
@@ -9575,6 +9781,7 @@ class ConsoleChatStore:
             "may not survive restart."
         )
 
+    @_ephemeral_promotion_global_lifecycle
     def restore_state(
         self,
         *,
@@ -9681,6 +9888,13 @@ class ConsoleChatStore:
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
                 self.library_policy_coordinator.unregister_holder(replaced_session_id)
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.discard_all()
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.discard_all()
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -9739,6 +9953,19 @@ class ConsoleChatStore:
                 applied_settings_submission_ids=deque(maxlen=32),
                 library_policy_holder=restored_holder,
             )
+            if (
+                restored_session.ephemeral
+                and self.canvas_promotion_participant is not None
+            ):
+                self.canvas_promotion_participant.activate_session(
+                    restored_session.id
+                )
+            if (
+                restored_session.ephemeral
+                and self.canvas_turn_controller is not None
+                and self.canvas_turn_controller is not self.canvas_promotion_participant
+            ):
+                self.canvas_turn_controller.activate_session(restored_session.id)
             self._sessions[session.id] = restored_session
             self._seed_console_settings_owned_bases(restored_session)
             if self.library_policy_coordinator is not None:
@@ -9777,8 +10004,17 @@ class ConsoleChatStore:
         elif self._sessions:
             self._activate_session(next(iter(self._sessions)))
 
+    @_ephemeral_promotion_global_lifecycle
     def end_app_runtime(self) -> None:
         """Drop every volatile recovery projection at explicit app teardown."""
+
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.close_runtime()
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.close_runtime()
 
         with self._fence_provider_trace_settlement_registrations(
             (),
@@ -10058,13 +10294,15 @@ class ConsoleChatStore:
                 "Console message is missing its owning session registration."
             )
         with self._fork_source_transition(session_id):
-            return self._create_sibling(
+            sibling = self._create_sibling(
                 anchor_message_id,
                 role=role,
                 content=content,
                 persist=persist,
                 attachments=attachments,
             )
+        self._notify_canvas_context_changed(session_id)
+        return sibling
 
     def _create_sibling(
         self,
@@ -12915,6 +13153,7 @@ class ConsoleChatStore:
                         else None
                     ),
                 )
+            self._notify_canvas_context_changed(session_id)
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
@@ -15372,6 +15611,10 @@ class ConsoleChatStore:
         current: ConsoleVariant | None = None,
         selected_index: int | None = None,
         append_variant: bool = False,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> tuple[bool, int | None]:
         """Persist a candidate without changing its live row owner."""
         current = current or self._generation_variant(message)
@@ -15508,24 +15751,52 @@ class ConsoleChatStore:
                     raise
                 boundary.sidecar_error = exc
             return True, candidate.provider_continuation_message_version
-        committed_version = writer(
-            message_id=message.persisted_message_id,
-            content=variant.content,
-            thinking_blocks_json=dump_thinking_blocks_json(variant.thinking),
-            provider_continuation_json=dump_provider_continuation_json(
+        generation_kwargs = {
+            "message_id": message.persisted_message_id,
+            "content": variant.content,
+            "thinking_blocks_json": dump_thinking_blocks_json(variant.thinking),
+            "provider_continuation_json": dump_provider_continuation_json(
                 variant.provider_continuation
             ),
-            assistant_generation_state=variant.assistant_generation_state,
-            usage_json=(variant.usage.to_json() if variant.usage is not None else None),
-            expected_version=message.provider_continuation_message_version,
-        )
+            "assistant_generation_state": variant.assistant_generation_state,
+            "usage_json": (
+                variant.usage.to_json() if variant.usage is not None else None
+            ),
+            "expected_version": message.provider_continuation_message_version,
+        }
+        metadata_committed_in_transaction = False
+        if transaction_contributions or on_durable_commit is not None:
+            transaction_writer = getattr(
+                self.persistence,
+                "replace_assistant_generation_projection_with_contributions",
+                None,
+            )
+            if not callable(transaction_writer):
+                raise RuntimeError(
+                    "Generation contribution persistence is unavailable."
+                )
+            committed_version = transaction_writer(
+                native_message_id=message.id,
+                metadata_json=(
+                    candidate.metadata.to_json()
+                    if candidate.metadata is not None
+                    else None
+                ),
+                update_metadata=candidate.metadata is not None,
+                contributions=tuple(transaction_contributions),
+                on_durable_commit=on_durable_commit,
+                **generation_kwargs,
+            )
+            metadata_committed_in_transaction = candidate.metadata is not None
+        else:
+            committed_version = writer(**generation_kwargs)
         if type(committed_version) is not int or committed_version <= 0:
             raise RuntimeError("Selected generation persistence did not commit.")
         candidate.provider_continuation_message_version = committed_version
         candidate.provider_continuation_remote = False
         boundary = self._record_generation_commit(message.id, candidate)
         try:
-            if candidate.metadata is not None:
+            if candidate.metadata is not None and not metadata_committed_in_transaction:
                 self._persist_metadata_only(candidate)
             if sync_configured and committed_source_available:
                 self._refresh_and_project_provider_continuation(candidate)
@@ -15649,10 +15920,60 @@ class ConsoleChatStore:
 
     def _persist_terminal_generation(self, message: ConsoleChatMessage) -> None:
         """Persist a terminal assistant as one paired generation projection."""
+        canvas_settlement = None
+        canvas_contributions: tuple[ConsolePromotionTransactionContribution, ...] = ()
+        canvas_controller = self.canvas_turn_controller
+        if (
+            canvas_controller is not None
+            and message.assistant_generation_state == "complete"
+        ):
+            candidate = canvas_controller.settlement_for_assistant(message.id)
+            if (
+                candidate is not None
+                and getattr(candidate.state, "value", None) == "ready"
+            ):
+                existing = (
+                    json.loads(message.metadata.to_json())
+                    if message.metadata is not None and not message.metadata.is_empty
+                    else {}
+                )
+                canvas_payload = json.loads(candidate.metadata_json)
+                if type(existing) is not dict or type(canvas_payload) is not dict:
+                    raise RuntimeError("Canvas settlement metadata is invalid.")
+                existing.update(canvas_payload)
+                merged = MessageMetadata.from_json(
+                    json.dumps(
+                        existing,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                if merged is None:
+                    raise RuntimeError("Canvas settlement metadata is invalid.")
+                if message.persisted_message_id is not None:
+                    merged = merged.remap_canvas_origins(
+                        {message.id: message.persisted_message_id}
+                    )
+                message.metadata = merged
+                canvas_settlement = candidate
+                if candidate.contribution is not None:
+                    canvas_contributions = (candidate.contribution,)
         try:
             if not (
                 message.role is ConsoleMessageRole.ASSISTANT
-                and self.persist_selected_generation(message.id)
+                and self.persist_selected_generation(
+                    message.id,
+                    transaction_contributions=canvas_contributions,
+                    on_durable_commit=(
+                        lambda: canvas_controller.confirm_exact_settlement(
+                            canvas_settlement
+                        )
+                    )
+                    if canvas_settlement is not None
+                    else None,
+                )
             ) and not self._persist_existing_message(
                 message, preserve_provider_continuation=True
             ):
@@ -16396,13 +16717,74 @@ class ConsoleChatStore:
         error = getattr(result, "error", None)
         session.context_policy_error = error if isinstance(error, str) else None
 
+    def _reserve_ephemeral_promotion(
+        self, session: ConsoleChatSession
+    ) -> _ConsoleEphemeralPromotionReservation | None:
+        """Fence an exact temporary-chat incarnation through save cleanup."""
+
+        with self._ephemeral_promotion_lock:
+            if self._sessions.get(session.id) is not session:
+                raise RuntimeError("Temporary chat identity changed before save.")
+            if session.id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Temporary chat save is already in progress.")
+            if not session.ephemeral:
+                return None
+            reservation = _ConsoleEphemeralPromotionReservation(
+                session_id=session.id,
+                session=session,
+            )
+            self._ephemeral_promotion_reservations[session.id] = reservation
+            return reservation
+
+    def _release_ephemeral_promotion(
+        self, reservation: _ConsoleEphemeralPromotionReservation
+    ) -> None:
+        """Release only the exact promotion reservation installed by this call."""
+
+        with self._ephemeral_promotion_lock:
+            if (
+                self._ephemeral_promotion_reservations.get(reservation.session_id)
+                is reservation
+            ):
+                self._ephemeral_promotion_reservations.pop(
+                    reservation.session_id,
+                    None,
+                )
+
+    def _settle_canvas_promotion_contribution(
+        self,
+        reservation: _ConsoleEphemeralPromotionReservation,
+        contribution: CanvasPromotionContribution | None,
+    ) -> None:
+        """Abort or retire one exact Canvas lease without masking its caller."""
+
+        participant = self.canvas_promotion_participant
+        if contribution is None or participant is None or reservation.canvas_settled:
+            return
+        try:
+            if reservation.committed:
+                settled = participant.retire_contribution(
+                    reservation.session_id,
+                    contribution,
+                )
+            else:
+                settled = participant.abort_contribution(
+                    reservation.session_id,
+                    contribution,
+                )
+        except Exception:
+            logger.warning("Canvas promotion cleanup failed.")
+            return
+        if settled:
+            reservation.canvas_settled = True
+
     @_fork_session_transition
     def promote_ephemeral_session(
         self,
         session_id: str,
         excluded_transient_message_id: str | None = None,
         *,
-        contributions: Sequence[ConsoleTransactionContribution] = (),
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
     ) -> str | None:
         """Save a temporary conversation to durable storage, all or nothing.
 
@@ -16447,30 +16829,58 @@ class ConsoleChatStore:
         )
         if not callable(atomic_promote):
             raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
-        activity_contribution = self._library_activity_buffer.promotion_contribution(
-            session_id
-        )
-        combined_contributions: tuple[ConsoleTransactionContribution, ...] = tuple(
-            contributions
-        )
-        if activity_contribution is not None:
-            combined_contributions = (
-                *combined_contributions,
-                activity_contribution,
+        reservation = self._reserve_ephemeral_promotion(session)
+        if reservation is None:
+            self.retry_pending_workspace_projection(session_id)
+            return None
+        canvas_contribution: CanvasPromotionContribution | None = None
+        try:
+            activity_contribution = (
+                self._library_activity_buffer.promotion_contribution(session_id)
             )
-        return self._promote_ephemeral_session_atomically(
-            session,
-            contributions=combined_contributions,
-            activity_contribution=activity_contribution,
-            excluded_transient_message_id=excluded_transient_message_id,
-        )
+            canvas_contribution = (
+                self.canvas_promotion_participant.promotion_contribution(session_id)
+                if self.canvas_promotion_participant is not None
+                else None
+            )
+            combined_contributions: tuple[
+                ConsolePromotionTransactionContribution, ...
+            ] = tuple(contributions)
+            if canvas_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    canvas_contribution,
+                )
+            if activity_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    activity_contribution,
+                )
+            return self._promote_ephemeral_session_atomically(
+                session,
+                reservation=reservation,
+                contributions=combined_contributions,
+                activity_contribution=activity_contribution,
+                canvas_contribution=canvas_contribution,
+                excluded_transient_message_id=excluded_transient_message_id,
+            )
+        finally:
+            try:
+                self._settle_canvas_promotion_contribution(
+                    reservation,
+                    canvas_contribution,
+                )
+            finally:
+                self._release_ephemeral_promotion(reservation)
 
     def _promote_ephemeral_session_atomically(
         self,
         session: ConsoleChatSession,
         *,
-        contributions: Sequence[ConsoleTransactionContribution],
+        reservation: _ConsoleEphemeralPromotionReservation,
+        contributions: Sequence[ConsolePromotionTransactionContribution],
         activity_contribution: LibraryActivityContribution | None = None,
+        canvas_contribution: CanvasPromotionContribution | None = None,
         excluded_transient_message_id: str | None = None,
     ) -> str:
         """Stage the promotable transcript and publish after commit only."""
@@ -16513,6 +16923,7 @@ class ConsoleChatStore:
         identity = self.stage_first_persistence(session_id)
         staged_message_ids = {message.id: str(uuid4()) for message in messages}
         prepared_messages: list[dict[str, object]] = []
+        remapped_message_metadata: dict[str, MessageMetadata] = {}
         for message in messages:
             native_parent = self._native_parent_by_message.get(message.id)
             create_kwargs: dict[str, object] = {
@@ -16526,6 +16937,10 @@ class ConsoleChatStore:
                 ),
                 "feedback": message.feedback,
             }
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                create_kwargs["assistant_generation_state"] = (
+                    message.assistant_generation_state
+                )
             if message.attachments:
                 create_kwargs["attachments"] = [
                     {
@@ -16575,7 +16990,11 @@ class ConsoleChatStore:
                     raise ValueError("Console message metadata shape is invalid.")
                 create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
-                create_kwargs["metadata_json"] = message.metadata.to_json()
+                remapped_metadata = message.metadata.remap_canvas_origins(
+                    staged_message_ids
+                )
+                create_kwargs["metadata_json"] = remapped_metadata.to_json()
+                remapped_message_metadata[message.id] = remapped_metadata
             prepared_messages.append(
                 {"native_id": message.id, "create_kwargs": create_kwargs}
             )
@@ -16686,19 +17105,65 @@ class ConsoleChatStore:
             trace_boundary=session.fork_trace_boundary,
         )
 
+        # The transaction has returned and SQLite can no longer roll it back.
+        # The exact reservation remains installed until every postcommit effect
+        # and Canvas cleanup finishes. Protect binding verification and the
+        # durable live projection as one check-and-publish window.
+        with self._ephemeral_promotion_lock:
+            reservation.committed = True
+            if (
+                self._ephemeral_promotion_reservations.get(session_id)
+                is not reservation
+                or reservation.session is not session
+                or self._sessions.get(session_id) is not session
+            ):
+                raise RuntimeError("Temporary chat identity changed during save.")
+            session.ephemeral = False
+            self.publish_committed_identity(session_id, identity)
+            if staged_generation_snapshot is not None:
+                session.generation_durable_snapshot = staged_generation_snapshot
+            session.library_policy_holder.snapshot = committed_policy
+            session.library_policy_holder.explicitly_staged = False
+            session.library_policy_holder.save_pending = False
+            for message in messages:
+                message.persisted_message_id = staged_message_ids[message.id]
+                remapped_metadata = remapped_message_metadata.get(message.id)
+                if remapped_metadata is not None:
+                    message.metadata = remapped_metadata
+                native_parent = self._native_parent_by_message.get(message.id)
+                message.parent_message_id = (
+                    staged_message_ids[native_parent]
+                    if native_parent is not None
+                    else None
+                )
+
+            if (
+                canvas_contribution is not None
+                and self.canvas_promotion_participant is not None
+            ):
+                try:
+                    reservation.canvas_settled = (
+                        self.canvas_promotion_participant.confirm_contribution(
+                            session_id,
+                            canvas_contribution,
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        "Canvas staging confirmation failed after committed promotion."
+                    )
+                if not reservation.canvas_settled:
+                    self._settle_canvas_promotion_contribution(
+                        reservation,
+                        canvas_contribution,
+                    )
+
         if activity_contribution is not None:
             self._library_activity_buffer.confirm_contribution(
                 session_id, activity_contribution
             )
             self._bump_library_activity_revision(session_id)
 
-        self.publish_committed_identity(session_id, identity)
-        if staged_generation_snapshot is not None:
-            session.generation_durable_snapshot = staged_generation_snapshot
-        session.ephemeral = False
-        session.library_policy_holder.snapshot = committed_policy
-        session.library_policy_holder.explicitly_staged = False
-        session.library_policy_holder.save_pending = False
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.register_holder(
                 session_id,
@@ -16706,12 +17171,6 @@ class ConsoleChatStore:
                 session.library_policy_holder,
             )
         self._project_workspace_membership_after_commit(session)
-        for message in messages:
-            message.persisted_message_id = staged_message_ids[message.id]
-            native_parent = self._native_parent_by_message.get(message.id)
-            message.parent_message_id = (
-                staged_message_ids[native_parent] if native_parent is not None else None
-            )
         held_scope = session.rag_scope_holder.scope
         session.rag_scope_holder.set(None)
         if held_scope is not None and self.on_scope_flushed is not None:
@@ -17887,12 +18346,24 @@ class ConsoleChatStore:
         # replacement wins, so it must not be treated like an omitted field.
         self._persist_existing_message(message, force_metadata_write=True)
 
-    def persist_selected_generation(self, message_id: str) -> bool:
+    def persist_selected_generation(
+        self,
+        message_id: str,
+        *,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
+    ) -> bool:
         """Atomically project the complete selected assistant generation."""
         with self._generation_owner_scope(message_id):
             return self._run_commit_aware_generation_mutation(
                 message_id,
-                lambda: self._persist_selected_generation(message_id),
+                lambda: self._persist_selected_generation(
+                    message_id,
+                    transaction_contributions=transaction_contributions,
+                    on_durable_commit=on_durable_commit,
+                ),
             )
 
     def reload_quarantined_generation(self, message_id: str) -> ConsoleChatMessage:
@@ -18038,13 +18509,25 @@ class ConsoleChatStore:
         except Exception as exc:
             raise RuntimeError("Canonical generation reload is unavailable.") from exc
 
-    def _persist_selected_generation(self, message_id: str) -> bool:
+    def _persist_selected_generation(
+        self,
+        message_id: str,
+        *,
+        transaction_contributions: Sequence[
+            ConsolePromotionTransactionContribution
+        ] = (),
+        on_durable_commit: Callable[[], object] | None = None,
+    ) -> bool:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages own generation projections.")
         current = self._generation_variant(message)
         durably_committed, committed_version = self._persist_generation_variant(
-            message, current, current=current
+            message,
+            current,
+            current=current,
+            transaction_contributions=transaction_contributions,
+            on_durable_commit=on_durable_commit,
         )
         if not durably_committed:
             return False

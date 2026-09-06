@@ -45,7 +45,7 @@ SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
 
 
 class SchedulesScreen(BaseAppScreen):
-    """When jobs, watchlists, and workflows run."""
+    """When scheduled tasks fire and recurring questions run."""
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "schedules", **kwargs)

@@ -77,6 +77,9 @@ dependencies = [
     "textual-image",
     "tiktoken==0.14.0",  # exact pin: reviewed offline encoding bundle/runtime seam
     "defusedxml",    # engine xml security parsing (Q9: core)
+    "html5lib>=1.1,<2",
+    "tinycss2>=1.4,<2",
+    "aiohttp>=3.9,<4",
 ]
 
 # --- Optional Dependencies ---
@@ -513,6 +516,21 @@ exclude = [
     "assets/tiktoken_cache/LICENSE.txt",
     "assets/tiktoken_cache/NOTICE.txt",
     "assets/tiktoken_cache/manifest.json",
+]
+"tldw_chatbook.Canvas" = [
+    "static/canvas_shell.html",
+    "static/canvas_shell.css",
+    "static/canvas_shell.js",
+    "static/quickjs-runtime.js",
+    "static/canvas_renderer.js",
+    "static/canvas_runtime_worker.js",
+    "static/runtime-manifest.json",
+    "static/THIRD_PARTY_LICENSES.txt",
+]
+"tldw_chatbook.Web_Server" = [
+    "static/served_shell.html",
+    "static/served_shell.css",
+    "static/served_shell.js",
 ]
 "tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories

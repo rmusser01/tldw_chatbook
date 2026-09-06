@@ -11,6 +11,7 @@ from tldw_chatbook.runtime_policy import (
     InMemoryServerCredentialStore,
     KeyringServerCredentialStore,
     ServerCredentialRef,
+    ServerCredentialScope,
     redact_secret,
 )
 from tldw_chatbook.runtime_policy.server_credentials import (
@@ -173,6 +174,49 @@ def test_in_memory_delete_one_purpose_leaves_other_purposes_for_server():
 
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
     assert store.get_secret("server-a", SERVER_CREDENTIAL_REFRESH_TOKEN) == "refresh-a"
+
+
+def test_in_memory_plain_and_legacy_scoped_api_read_each_others_writes():
+    """The plain API and `ServerCredentialScope.legacy` scope the same slot
+    (task-31416): a caller using either sees what the other wrote."""
+    store = InMemoryServerCredentialStore()
+    store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-a")
+
+    scope = ServerCredentialScope.legacy("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
+    assert store.get_scoped_secret(scope) == "access-a"
+
+    store.set_scoped_secret(scope, "access-a-updated")
+    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == (
+        "access-a-updated"
+    )
+
+
+def test_in_memory_scoped_secrets_isolate_two_profiles_at_the_same_origin():
+    """Two distinct `server_profile_id`s at the same `normalized_origin` do
+    not share a secret (task-31416 AC#1)."""
+    store = InMemoryServerCredentialStore()
+    origin = "https://server.example.com/api"
+    scope_a = ServerCredentialScope(
+        server_profile_id="profile-a",
+        normalized_origin=origin,
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="profile-b",
+        normalized_origin=origin,
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+
+    store.set_scoped_secret(scope_a, "token-a")
+    store.set_scoped_secret(scope_b, "token-b")
+
+    assert store.get_scoped_secret(scope_a) == "token-a"
+    assert store.get_scoped_secret(scope_b) == "token-b"
+
+    store.delete_scoped_secret(scope_a)
+
+    assert store.get_scoped_secret(scope_a) is None
+    assert store.get_scoped_secret(scope_b) == "token-b"
 
 
 @pytest.mark.parametrize(

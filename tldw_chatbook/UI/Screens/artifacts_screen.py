@@ -167,7 +167,8 @@ class ArtifactsScreen(BaseAppScreen):
         worker = self._report_preview_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     def _release_active_chatbook_claim(self) -> None:
         claim = self._active_chatbook_claim

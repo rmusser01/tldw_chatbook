@@ -737,6 +737,39 @@ immediately before every push, not just before the first one.
 
 ---
 
+## A heredoc inside a `git commit -F -` heredoc eats the commit message
+
+**What happened.** 2026-09-05, Library decomposition wave-6 close. A single
+`bash` invocation chained `git commit -q -F - <<'MSG' … MSG` with a nested
+`python - <<PY … PY` on the same command line, so the outer heredoc could
+substitute the inner script into the message body. The commit SUCCEEDED and
+`git rev-parse HEAD` printed a hash, so every success signal was green — but
+the resulting commit's subject line was the Python source, with the real
+subject buried at the end of it. It was caught only by reading
+`git log --oneline` afterwards, not by anything the commit itself reported.
+
+**Why it is worth an entry.** The failure is silent in exactly the way this
+file's other entries describe: the tool reports success, the artifact is
+wrong, and nothing downstream checks. And a bad commit SUBJECT is durable —
+it is what every `git log`, blame view and PR listing shows forever.
+
+**The habits that make it cheap:**
+
+* Never nest a heredoc inside a `git commit -F -` heredoc. Write the message
+  to a file first (`git commit -F <path>`), or make the commit its own
+  invocation with nothing else on the command line.
+* **Read `git log --oneline -1` after every commit**, the same way the ID
+  sweep's own lesson says to read the CLI's printed FILE PATH rather than its
+  success message. A commit that succeeds is not a commit that says what you
+  meant.
+
+**Recovering it.** Check what pins the hash before rewriting. Here nothing
+did — the commit carried no `.git-blame-ignore-revs` entry and nothing was
+pushed — so `git reset --soft <parent>` and re-committing was clean, and the
+one document that cited the old hash was updated in the same operation. Had a
+blame-ignore entry pinned it, the rule is the opposite (recipe §10, §6): the
+message is immutable, and the correction lives in the report and the PR body.
+
 ## Related
 
 - `lessons-testing-evidence.md`

@@ -1593,7 +1593,12 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
             # derives from an ancestor's `display: none` (`Widget.display`
             # only reads `self.styles.display`), so the hidden pane's title
             # still shows up here even while its content is invisible.
-            ("Schedule Queue", "Task Detail", "Definition Detail", "Inspector"),
+            (
+                "Schedule Queue",
+                "Task Detail",
+                "Recurring Question Detail",
+                "Inspector",
+            ),
         ),
         (
             "workflows",

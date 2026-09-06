@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
+from collections.abc import Collection, Iterator
 from typing import (
     List,
     Dict,
@@ -113,6 +114,8 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
+_CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
+_CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION = "canvas_revision_payload_valid"
 _NOTES_ORGANIZATION_SYNC_ID_TABLES = (
     "keywords",
     "keyword_collections",
@@ -434,6 +437,71 @@ def _split_sql_statements(script: str) -> List[str]:
     return statements
 
 
+def _canvas_revision_payload_valid(
+    source_bytes: object,
+    content_sha256: object,
+    declared_bytes: object,
+) -> int:
+    """Validate one Canvas payload without exposing its source bytes."""
+
+    if (
+        type(source_bytes) is not bytes
+        or type(content_sha256) is not str
+        or type(declared_bytes) is not int
+    ):
+        return 0
+    try:
+        source_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return 0
+    return int(
+        declared_bytes == len(source_bytes)
+        and content_sha256 == hashlib.sha256(source_bytes).hexdigest()
+    )
+
+
+class _CanvasRevisionDeletionAuthorization:
+    """Connection-local capability for an exact repository-owned hard purge."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._canvas_ids: frozenset[str] = frozenset()
+
+    @contextlib.contextmanager
+    def authorize(
+        self,
+        cursor: sqlite3.Cursor,
+        canvas_ids: Collection[str],
+    ) -> Iterator[None]:
+        """Authorize deletion of exactly ``canvas_ids`` in the current transaction."""
+
+        if cursor.connection is not self._connection:
+            raise RuntimeError("canvas_purge_connection_mismatch")
+        if not self._connection.in_transaction:
+            raise RuntimeError("caller_transaction_required")
+        if self._canvas_ids:
+            raise RuntimeError("canvas_purge_authorization_already_active")
+        normalized = frozenset(canvas_ids)
+        if not normalized or any(
+            type(value) is not str or not value for value in normalized
+        ):
+            raise ValueError("canvas_ids")
+        self._canvas_ids = normalized
+        try:
+            yield
+        finally:
+            self._canvas_ids = frozenset()
+
+    def sqlite_authorized(self, canvas_id: object) -> int:
+        """Return one only for an exact Canvas in the live purge transaction."""
+
+        return int(
+            type(canvas_id) is str
+            and canvas_id in self._canvas_ids
+            and self._connection.in_transaction
+        )
+
+
 def _table_check_references_console_project_context(create_sql: str) -> bool:
     """Return whether a CHECK expression references the local-only column."""
     tokens: list[tuple[str, str]] = []
@@ -591,7 +659,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 66  # Character-conversation selected-branch Keyword projection.
+    _CURRENT_SCHEMA_VERSION = 68  # Preserve bounded inert Canvas runtime profiles.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3306,6 +3374,7 @@ UPDATE db_schema_version
                 conn = None
                 self._local.conn = None
                 self._local.semantic_mutation_authorization = None
+                self._local.canvas_revision_deletion_authorization = None
             if conn:
                 last_used = getattr(self._local, "conn_last_used", None)
                 if (
@@ -3366,6 +3435,23 @@ UPDATE db_schema_version
                     conn.isolation_level = None
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
+                    )
+                    conn.create_function(
+                        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+                        3,
+                        _canvas_revision_payload_valid,
+                        deterministic=True,
+                    )
+                    canvas_deletion_authorization = (
+                        _CanvasRevisionDeletionAuthorization(conn)
+                    )
+                    conn.create_function(
+                        _CANVAS_REVISION_DELETE_GUARD_FUNCTION,
+                        1,
+                        canvas_deletion_authorization.sqlite_authorized,
+                    )
+                    self._local.canvas_revision_deletion_authorization = (
+                        canvas_deletion_authorization
                     )
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
@@ -3492,6 +3578,21 @@ UPDATE db_schema_version
             authorization, _SemanticMutationAuthorization
         ):
             raise RuntimeError("trace_gc_connection_mismatch")
+        return authorization
+
+    def _canvas_revision_deletion_authorization_for_repository(
+        self, connection: sqlite3.Connection
+    ) -> _CanvasRevisionDeletionAuthorization:
+        """Return the connection-local exact-Canvas hard-purge capability."""
+
+        current = self.get_connection()
+        authorization = getattr(
+            self._local, "canvas_revision_deletion_authorization", None
+        )
+        if connection is not current or not isinstance(
+            authorization, _CanvasRevisionDeletionAuthorization
+        ):
+            raise RuntimeError("canvas_purge_connection_mismatch")
         return authorization
 
     @staticmethod
@@ -3677,6 +3778,7 @@ UPDATE db_schema_version
                 # even if conn.close() itself raised an exception.
                 if hasattr(self._local, "conn"):
                     self._local.conn = None
+                self._local.canvas_revision_deletion_authorization = None
                 self._local.semantic_mutation_authorization = None
 
     def backup_database(self, backup_file_path: str) -> bool:
@@ -7745,7 +7847,6 @@ UPDATE db_schema_version
             / "migrations"
             / "chachanotes_v65_to_v66_character_conversation_search.sql"
         )
-
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
@@ -7776,6 +7877,137 @@ UPDATE db_schema_version
         except Exception as exc:
             raise SchemaError(
                 f"Migration from V65 to V66 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _require_canvas_migration_predecessor_schema(
+        self,
+        conn: sqlite3.Connection,
+        expected_version: int,
+    ) -> None:
+        """Refuse ambiguous pre-integration Canvas schema version ownership."""
+
+        character_search_objects = {
+            "character_conversation_search_documents",
+            "character_conversation_fts",
+            "character_conversation_search_generations",
+            "character_conversation_search_dirty",
+            "character_conversation_search_revision",
+            "character_conversation_search_state",
+        }
+        canvas_objects = {
+            "canvas_conversation_hints",
+            "canvas_documents",
+            "canvas_revisions",
+            "idx_canvas_documents_conversation",
+            "idx_canvas_revisions_canvas_sequence",
+            "idx_canvas_revisions_origin_message",
+            "idx_canvas_revisions_parent",
+            "uq_canvas_documents_id_conversation",
+            "uq_canvas_revisions_id_canvas",
+            "canvas_documents_ownership_immutable",
+            "canvas_origin_message_owner_guard",
+            "canvas_revisions_no_delete",
+            "canvas_revisions_no_update",
+            "canvas_revisions_origin_owner_guard",
+            "canvas_revisions_parent_guard",
+        }
+        if expected_version == 66:
+            required_objects = character_search_objects
+            forbidden_objects = canvas_objects
+        elif expected_version == 67:
+            required_objects = character_search_objects | canvas_objects
+            forbidden_objects = set()
+        else:
+            raise SchemaError("incompatible Canvas migration predecessor schema")
+
+        inspected_objects = required_objects | forbidden_objects
+        placeholders = ", ".join("?" for _ in inspected_objects)
+        rows = conn.execute(
+            f"SELECT name FROM sqlite_master WHERE name IN ({placeholders})",
+            tuple(sorted(inspected_objects)),
+        ).fetchall()
+        found_objects = {str(row[0]) for row in rows}
+        if not required_objects <= found_objects or forbidden_objects & found_objects:
+            raise SchemaError("incompatible Canvas migration predecessor schema")
+
+    def _migrate_from_v66_to_v67(self, conn: sqlite3.Connection) -> None:
+        """Add conversation-owned immutable Canvas revision graphs."""
+
+        self._require_migration_entry_version(conn, 66, "V66→V67")
+        self._require_canvas_migration_predecessor_schema(conn, 66)
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v66_to_v67_canvas_revisions.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V66→V67",
+                )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Canvas migration foreign key audit failed")
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 67 "
+                    "WHERE schema_name = ? AND version = 66",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V66→V67] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 67:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V66→V67] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V66 to V67 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v67_to_v68(self, conn: sqlite3.Connection) -> None:
+        """Widen Canvas storage to bounded, inert runtime profile identifiers."""
+
+        self._require_migration_entry_version(conn, 67, "V67→V68")
+        self._require_canvas_migration_predecessor_schema(conn, 67)
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v67_to_v68_canvas_runtime_profiles.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V67→V68",
+                )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Canvas runtime migration foreign key audit failed")
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 68 "
+                    "WHERE schema_name = ? AND version = 67",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V67→V68] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 68:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V67→V68] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V67 to V68 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -7996,6 +8228,8 @@ UPDATE db_schema_version
                     63: self._migrate_from_v63_to_v64,
                     64: self._migrate_from_v64_to_v65,
                     65: self._migrate_from_v65_to_v66,
+                    66: self._migrate_from_v66_to_v67,
+                    67: self._migrate_from_v67_to_v68,
                 }
 
                 if current_db_version == 0:
@@ -12607,6 +12841,7 @@ UPDATE db_schema_version
             and not msg_data.get("image_data")
             and provider_continuation_json is None
             and thinking_blocks_json is None
+            and not msg_data.get("metadata_json")
             and normalized_generation_state is None
         ):
             raise InputError(
@@ -13167,6 +13402,9 @@ UPDATE db_schema_version
         assistant_generation_state: str | None,
         usage_json: str | None,
         expected_version: int | None = None,
+        metadata_json: str | None = None,
+        update_metadata: bool = False,
+        transaction_callback: Callable[[sqlite3.Cursor], None] | None = None,
     ) -> int:
         """Coordinate replacement of one selected assistant generation."""
 
@@ -13223,7 +13461,7 @@ UPDATE db_schema_version
                 )
             if current["role"] != "assistant":
                 raise InputError("Generation projection requires an assistant message.")
-            return int(
+            committed_version = int(
                 self._coordinate_semantic_mutation(
                     cursor,
                     message_id=message_id,
@@ -13237,10 +13475,15 @@ UPDATE db_schema_version
                             assistant_generation_state=assistant_generation_state,
                             usage_json=usage_json,
                             expected_version=expected_version,
+                            metadata_json=metadata_json,
+                            update_metadata=update_metadata,
                         )
                     ),
                 )
             )
+            if transaction_callback is not None:
+                transaction_callback(cursor)
+            return committed_version
 
     def _replace_assistant_generation_projection_uncoordinated(
         self,
@@ -13252,6 +13495,8 @@ UPDATE db_schema_version
         assistant_generation_state: str | None,
         usage_json: str | None,
         expected_version: int | None = None,
+        metadata_json: str | None = None,
+        update_metadata: bool = False,
     ) -> int:
         """Atomically replace one active assistant row's selected generation."""
         if type(message_id) is not str or not message_id.strip():
@@ -13264,6 +13509,10 @@ UPDATE db_schema_version
             raise InputError("Expected message version must be positive.")
         if usage_json is not None and type(usage_json) is not str:
             raise InputError("Usage data must be text or None.")
+        if type(update_metadata) is not bool or (
+            metadata_json is not None and type(metadata_json) is not str
+        ):
+            raise InputError("Message metadata must be text or None.")
 
         canonical_thinking = (
             None
@@ -13330,6 +13579,7 @@ UPDATE db_schema_version
                        SET content = ?, thinking_blocks_json = ?,
                            provider_continuation_json = ?,
                            assistant_generation_state = ?, usage_json = ?,
+                           metadata_json = CASE WHEN ? THEN ? ELSE metadata_json END,
                            last_modified = ?, version = version + 1, client_id = ?
                      WHERE id = ? AND role = 'assistant' AND deleted = 0
                        AND (? IS NULL OR version = ?)
@@ -13343,6 +13593,8 @@ UPDATE db_schema_version
                         if normalized_state is not None
                         else None,
                         usage_json,
+                        int(update_metadata),
+                        metadata_json,
                         now,
                         self.client_id,
                         message_id,

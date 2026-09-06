@@ -13,6 +13,7 @@ from typing import cast
 import pytest
 
 from tldw_chatbook.Chat.console_trace_final_values import (
+    CompletedToolTurnWitness,
     ProviderRequestShadowBundle,
     SurfaceDeltaAdmission,
     VerifiedSurfaceDelta,
@@ -23,6 +24,9 @@ from tldw_chatbook.Chat.console_trace_final_values import (
 )
 from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
+    SemanticRevisionRef,
+    TraceCallState,
+    TraceContentRef,
     TraceOmission,
     new_opaque_id,
 )
@@ -139,11 +143,12 @@ def _revision(
     conversation_id: str,
     *,
     content: str,
+    role: str = "user",
 ) -> str:
     message_id = db.add_message(
         {
             "conversation_id": conversation_id,
-            "sender": "user",
+            "sender": role,
             "content": content,
         }
     )
@@ -1163,6 +1168,585 @@ def test_delta_contract_has_no_prefix_skip_and_is_bound_to_owner_domain(
         repository.get_surface_tail(db.get_connection().cursor(), other_segment_id)
         is None
     )
+
+
+def test_compound_preparation_requires_durable_witness_before_issuing_values(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    """A syntactically valid witness cannot authorize an arbitrary artifact range."""
+    from tldw_chatbook.Chat.console_trace_final_values import CompletedToolTurnWitness
+
+    owner_id, segment_id = _owned_segment(db, repository)
+    owner = repository.get_owner(db.get_connection().cursor(), owner_id)
+    policy = _policy()
+    service = ConsoleTraceService(repository)
+    count = 2
+    descriptors = tuple(
+        ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        for _ in range(count)
+    )
+    provenance = _provenance(descriptors)
+    with db.transaction() as cursor:
+        initial = _persist(
+            service,
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=provenance,
+            bundle=_available_bundle(
+                provenance,
+                messages=[
+                    {"role": "tool", "content": f"result-{index}"}
+                    for index in range(count)
+                ],
+            ),
+        )
+    assistant = SavedRevisionTraceProvenance(
+        _revision(
+            db, repository, owner.conversation_id, content="answer", role="assistant"
+        )
+    )
+    user = SavedRevisionTraceProvenance(
+        _revision(db, repository, owner.conversation_id, content="next")
+    )
+    checkpoint = initial.checkpoint
+    nodes = initial.appended_nodes
+    end = nodes[-1]
+    selected = VerifiedSurfaceReplacementRange(
+        predecessor_head_id=initial.surface_head_id,
+        start_node_id=nodes[0].node_id,
+        end_node_id=end.node_id,
+        start_sequence=0,
+        end_sequence=end.sequence,
+        current_ordinal=0,
+        component_name="messages_payload",
+        component_ordinal=0,
+    )
+    admission = SurfaceDeltaAdmission(
+        owner_id,
+        segment_id,
+        initial.surface_head_id,
+        ConsoleRequestRoute.FRESH.value,
+        new_opaque_id(),
+        (assistant, user),
+        checkpoint,
+        selected,
+        completed_tool_turn=CompletedToolTurnWitness(
+            new_opaque_id(), new_opaque_id(), assistant.revision_id, user.revision_id
+        ),
+    )
+    with db.transaction() as cursor:
+        before = tuple(
+            tuple(row)
+            for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
+        )
+        with pytest.raises(ValueError, match="^completed_tool_turn_unavailable$"):
+            service.prepare_surface_provenance(
+                cursor,
+                checkpoint,
+                provenance=_provenance((assistant, user)),
+                admission=admission,
+                values=(
+                    {"role": "assistant", "content": "answer"},
+                    {"role": "user", "content": "next"},
+                ),
+            )
+        assert (
+            tuple(
+                tuple(row)
+                for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
+            )
+            == before
+        )
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_replacements").fetchone()[0] == 0
+
+
+def _completed_run_compound_preparation(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    *,
+    tool_count: int = 2,
+    duplicate_append: bool = False,
+):
+    """Construct durable evidence directly, without provider overlay size limits."""
+    owner_id, segment_id = _owned_segment(db, repository)
+    with db.transaction() as cursor:
+        owner = repository.get_owner(cursor, owner_id)
+    assert owner is not None
+    first = SavedRevisionTraceProvenance(
+        _revision(db, repository, owner.conversation_id, content="first")
+    )
+    answer = SavedRevisionTraceProvenance(
+        _revision(
+            db, repository, owner.conversation_id, content="answer", role="assistant"
+        )
+    )
+    user = SavedRevisionTraceProvenance(
+        _revision(db, repository, owner.conversation_id, content="next")
+    )
+    service = ConsoleTraceService(repository)
+    policy = _policy()
+    run_id = f"{new_opaque_id()}:{new_opaque_id()}"
+
+    with db.transaction() as cursor:
+        repository.ensure_policy(cursor, policy)
+        first_revision = repository.get_semantic_revision(cursor, first.revision_id)
+        assert first_revision is not None
+
+        def event(event_type, **references):
+            tail = repository.get_event_tail(cursor, segment_id)
+            repository.append_event(
+                cursor,
+                segment_id=segment_id,
+                sequence=0 if tail is None else tail.sequence + 1,
+                event_type=event_type,
+                **references,
+            )
+
+        def reserve(sequence):
+            call = repository.reserve_call(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                turn_id=first_revision.source_message_id,
+                run_id=run_id,
+                call_sequence=sequence,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            )
+            event("call_boundary", call_id=call.call_id)
+            return call
+
+        def complete(call, node, route):
+            header = repository.create_or_reuse_request_header(
+                cursor,
+                provider_name="openai",
+                model_name="gpt-test",
+                route_identity=route.value,
+                endpoint_identity="https://api.example.invalid/v1",
+                generation_parameters={},
+                adapter_defaults={},
+                response_format={},
+                reasoning_controls={},
+                components=(),
+            )
+            repository.bind_call(
+                cursor,
+                call_id=call.call_id,
+                surface_node_id=node.node_id,
+                request_header_id=header.header_id,
+                provider_name="openai",
+                model_name="gpt-test",
+                route_identity=route.value,
+            )
+            for target in (
+                TraceCallState.DISPATCH_STARTED,
+                TraceCallState.RESPONSE_STARTED,
+                TraceCallState.COMPLETE,
+            ):
+                repository.advance_call_state(
+                    cursor,
+                    call_id=call.call_id,
+                    target=target,
+                    occurred_at="2026-09-05T00:00:00Z",
+                )
+
+        origin = reserve(0)
+        head = repository.append_surface_node(
+            cursor,
+            segment_id=segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(first.revision_id),
+        )
+        event("surface_append", surface_node_id=head.node_id)
+        complete(origin, head, ConsoleRequestRoute.AGENT_FIRST)
+        terminal = reserve(1)
+        tool_nodes = []
+        for sequence in range(1, tool_count + 1):
+            artifact = repository.store_sanitized_artifact(
+                cursor,
+                sanitized_bytes=json.dumps(
+                    {"role": "tool", "content": f"result-{sequence}"},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                media_type="application/json",
+                normalization_version="canonical-json-v1",
+            )
+            head = repository.append_surface_node(
+                cursor,
+                segment_id=segment_id,
+                sequence=sequence,
+                predecessor_node_id=head.node_id,
+                component_kind="tool_result",
+                reference=TraceContentRef(artifact.artifact_id, "tool_result"),
+            )
+            tool_nodes.append(head)
+            # The defect is constructed at insertion time: two real events
+            # for the first node, no event for the second. Never edit history.
+            event_count = (2 if sequence == 1 else 0) if duplicate_append else 1
+            for _ in range(event_count):
+                event("surface_append", surface_node_id=head.node_id)
+        complete(terminal, head, ConsoleRequestRoute.TOOL_LOOP)
+        repository.store_response_link(
+            cursor,
+            call_id=terminal.call_id,
+            response=SemanticRevisionRef(answer.revision_id),
+        )
+        assert repository.get_run_origin(cursor, run_id).call_id == origin.call_id
+        assert (
+            repository.get_call(cursor, terminal.call_id).state
+            is TraceCallState.COMPLETE
+        )
+        assert (
+            repository.get_latest_call_boundary(cursor, segment_id).call_id
+            == terminal.call_id
+        )
+        assert (
+            repository.get_response_link(cursor, terminal.call_id).semantic_revision_id
+            == answer.revision_id
+        )
+        assert tuple(node.sequence for node in tool_nodes) == tuple(
+            range(1, tool_count + 1)
+        )
+        append_sequences = tuple(
+            row[0]
+            for row in cursor.execute(
+                """SELECT n.sequence FROM console_trace_events e
+                     JOIN console_trace_surface_nodes n ON n.node_id = e.surface_node_id
+                    WHERE e.segment_id = ? AND e.event_type = 'surface_append'
+                      AND n.sequence > 0 ORDER BY e.sequence""",
+                (segment_id,),
+            )
+        )
+        assert append_sequences == (
+            (1, 1) if duplicate_append else tuple(range(1, tool_count + 1))
+        )
+        projection = service._surface_projection(cursor, segment_id, head)
+        checkpoint = service._completed_tool_turn_parent(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            tail=head,
+            projection=projection,
+            route=ConsoleRequestRoute.FRESH.value,
+            policy_id=policy.policy_id,
+        )
+    admission = SurfaceDeltaAdmission(
+        owner_id,
+        segment_id,
+        head.node_id,
+        ConsoleRequestRoute.FRESH.value,
+        new_opaque_id(),
+        (answer, user),
+        checkpoint,
+        VerifiedSurfaceReplacementRange(
+            predecessor_head_id=head.node_id,
+            start_node_id=tool_nodes[0].node_id,
+            end_node_id=head.node_id,
+            start_sequence=1,
+            end_sequence=tool_count,
+            current_ordinal=1,
+            component_ordinal=1,
+        ),
+        completed_tool_turn=CompletedToolTurnWitness(
+            origin.call_id, terminal.call_id, answer.revision_id, user.revision_id
+        ),
+    )
+    return (
+        service,
+        admission,
+        _provenance((answer, user)),
+        (
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "next"},
+        ),
+    )
+
+
+def _compound_storage_snapshot(cursor):
+    """Observe trace writes, including headers and call binding/state changes."""
+    return tuple(
+        tuple(tuple(row) for row in cursor.execute(query))
+        for query in (
+            "SELECT * FROM console_trace_surface_nodes ORDER BY node_id",
+            "SELECT * FROM console_trace_surface_replacements ORDER BY replacement_id",
+            "SELECT * FROM console_trace_request_headers ORDER BY header_id",
+            "SELECT * FROM console_trace_calls ORDER BY call_id",
+            "SELECT * FROM console_trace_events ORDER BY event_id",
+        )
+    )
+
+
+@pytest.mark.parametrize("tool_count", [2, 256])
+def test_compound_preparation_accepts_complete_append_event_coverage(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    tool_count: int,
+) -> None:
+    service, admission, provenance, values = _completed_run_compound_preparation(
+        db, repository, tool_count=tool_count
+    )
+    with db.transaction() as cursor:
+        before = _compound_storage_snapshot(cursor)
+        boundary = service.prepare_surface_provenance(
+            cursor,
+            admission.projection_checkpoint,
+            provenance=provenance,
+            admission=admission,
+            values=values,
+        )
+        assert tuple(
+            dict(value)
+            for value in boundary._provider_request_surface_values()["messages_payload"]
+        ) == (
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "next"},
+        )
+        assert _compound_storage_snapshot(cursor) == before
+
+
+def test_compound_rejects_duplicate_append_event_masking_missing_node_lineage(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    service, admission, provenance, values = _completed_run_compound_preparation(
+        db, repository, duplicate_append=True
+    )
+    adapter_entries = []
+    with db.transaction() as cursor:
+        before = _compound_storage_snapshot(cursor)
+        with pytest.raises(ValueError, match="^completed_tool_turn_lineage$"):
+            service.prepare_surface_provenance(
+                cursor,
+                admission.projection_checkpoint,
+                provenance=provenance,
+                admission=admission,
+                values=values,
+            )
+            adapter_entries.append("unexpected downstream entry")
+        assert not adapter_entries
+        assert _compound_storage_snapshot(cursor) == before
+
+
+def test_compound_rejects_oversized_range_with_valid_completed_run(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    service, admission, provenance, values = _completed_run_compound_preparation(
+        db, repository, tool_count=257
+    )
+    with db.transaction() as cursor:
+        before = _compound_storage_snapshot(cursor)
+        with pytest.raises(ValueError, match="^completed_tool_turn_range$"):
+            service.prepare_surface_provenance(
+                cursor,
+                admission.projection_checkpoint,
+                provenance=provenance,
+                admission=admission,
+                values=values,
+            )
+        assert _compound_storage_snapshot(cursor) == before
+
+
+def test_compound_rejects_noncontiguous_range_with_valid_completed_run(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    service, admission, provenance, values = _completed_run_compound_preparation(
+        db, repository
+    )
+    with db.transaction() as cursor:
+        before = _compound_storage_snapshot(cursor)
+        # Establish that this exact completed run is admissible before changing
+        # only the claimed endpoint, leaving durable evidence untouched.
+        service.prepare_surface_provenance(
+            cursor,
+            admission.projection_checkpoint,
+            provenance=provenance,
+            admission=admission,
+            values=values,
+        )
+        selected = admission.replacement_range
+        invalid = replace(
+            admission,
+            replacement_range=replace(selected, end_node_id=selected.start_node_id),
+        )
+        with pytest.raises(ValueError, match="^replacement_range_mismatch$"):
+            service.prepare_surface_provenance(
+                cursor,
+                invalid.projection_checkpoint,
+                provenance=provenance,
+                admission=invalid,
+                values=values,
+            )
+        assert _compound_storage_snapshot(cursor) == before
+
+
+def test_compound_rejects_origin_without_ordered_call_boundary(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    """A call row cannot prove the event interval when its origin event is absent."""
+    from tldw_chatbook.Chat.console_trace_final_values import CompletedToolTurnWitness
+    from tldw_chatbook.Chat.console_trace_models import (
+        SemanticRevisionRef,
+        TraceCallState,
+    )
+
+    owner_id, segment_id = _owned_segment(db, repository)
+    owner = repository.get_owner(db.get_connection().cursor(), owner_id)
+    first = SavedRevisionTraceProvenance(
+        _revision(db, repository, owner.conversation_id, content="first")
+    )
+    answer = SavedRevisionTraceProvenance(
+        _revision(
+            db, repository, owner.conversation_id, content="answer", role="assistant"
+        )
+    )
+    next_user = SavedRevisionTraceProvenance(
+        _revision(db, repository, owner.conversation_id, content="next")
+    )
+    policy = _policy()
+    service = ConsoleTraceService(repository)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    first_values = ({"role": "user", "content": "first"},)
+    tool = ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+
+    def dispatch(sequence, route, descriptors, values, *, record_boundary):
+        provenance = replace(
+            _provenance(descriptors),
+            metadata=(request_route_provenance(route, actor_id=actor, chain_id=chain),),
+        )
+        with db.transaction() as cursor:
+            repository.ensure_policy(cursor, policy)
+            first_revision = repository.get_semantic_revision(cursor, first.revision_id)
+            reserved = repository.reserve_call(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                turn_id=first_revision.source_message_id,
+                run_id=f"{actor}:{chain}",
+                call_sequence=sequence,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            )
+            if record_boundary:
+                tail = repository.get_event_tail(cursor, segment_id)
+                repository.append_event(
+                    cursor,
+                    segment_id=segment_id,
+                    sequence=0 if tail is None else tail.sequence + 1,
+                    event_type="call_boundary",
+                    call_id=reserved.call_id,
+                )
+            admission, boundary = service.prepare_current_surface_delta(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=route.value,
+                preparation_identity=new_opaque_id(),
+                provenance=provenance,
+                values=values,
+            )
+            kwargs = {
+                "api_endpoint": "openai",
+                "model": "gpt-test",
+                **boundary._provider_request_surface_values(),
+            }
+            bundle = verify_provider_request_shadow(
+                actual_kwargs=kwargs,
+                expected_kwargs=dict(kwargs),
+                provenance=boundary.provenance,
+                project_handler_kwargs=lambda supplied: supplied,
+                endpoint_identity="https://api.example.invalid/v1",
+                preparation_identity=admission.preparation_identity,
+                surface_boundary=boundary,
+            )
+            assert bundle.available
+            delta = build_verified_surface_delta(
+                boundary.provenance, bundle, admission=admission
+            )
+        service.bind_and_mark_dispatch(
+            db,
+            call_id=reserved.call_id,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=boundary.provenance,
+            bundle=bundle,
+            surface_delta=delta,
+            occurred_at="2026-09-05T00:00:00Z",
+        )
+        with db.transaction() as cursor:
+            repository.advance_call_state(
+                cursor,
+                call_id=reserved.call_id,
+                target=TraceCallState.RESPONSE_STARTED,
+                occurred_at="2026-09-05T00:00:01Z",
+            )
+            repository.advance_call_state(
+                cursor,
+                call_id=reserved.call_id,
+                target=TraceCallState.COMPLETE,
+                occurred_at="2026-09-05T00:00:02Z",
+            )
+        return reserved.call_id
+
+    origin = dispatch(
+        0,
+        ConsoleRequestRoute.AGENT_FIRST,
+        (first,),
+        first_values,
+        record_boundary=False,
+    )
+    terminal = dispatch(
+        1,
+        ConsoleRequestRoute.TOOL_LOOP,
+        (first, tool, tool),
+        first_values
+        + ({"role": "tool", "content": "one"}, {"role": "tool", "content": "two"}),
+        record_boundary=True,
+    )
+    with db.transaction() as cursor:
+        repository.store_response_link(
+            cursor, call_id=terminal, response=SemanticRevisionRef(answer.revision_id)
+        )
+        before = tuple(
+            tuple(row)
+            for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
+        )
+        new_revision = repository.get_semantic_revision(cursor, next_user.revision_id)
+        incoming = _provenance((first, answer, next_user))
+        with pytest.raises(ValueError, match="completed_tool_turn_lineage"):
+            service.prepare_current_surface_delta(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=ConsoleRequestRoute.FRESH.value,
+                preparation_identity=new_opaque_id(),
+                provenance=incoming,
+                values=first_values
+                + (
+                    {"role": "assistant", "content": "answer"},
+                    {"role": "user", "content": "next"},
+                ),
+                completed_tool_turn=CompletedToolTurnWitness(
+                    origin, terminal, answer.revision_id, next_user.revision_id
+                ),
+                current_turn_id=new_revision.source_message_id,
+                current_policy_id=policy.policy_id,
+            )
+        assert (
+            tuple(
+                tuple(row)
+                for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
+            )
+            == before
+        )
 
 
 def test_slice_b_delta_builder_drops_ordinary_body_and_has_content_safe_repr(

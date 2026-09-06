@@ -2,7 +2,19 @@ import base64
 import json
 import time
 from dataclasses import asdict, dataclass, replace
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from types import MappingProxyType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 from loguru import logger as _logger
 
@@ -52,7 +64,8 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
+    ConsoleExactNativeIdTransactionContribution,
+    ConsolePromotionTransactionContribution,
     _scoped_console_transaction_writer,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -873,7 +886,7 @@ class ChatPersistenceService:
         context_summary_boundary_message_id: str | None = None,
         project_context_json: str | None = None,
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
-        contributions: Sequence[ConsoleTransactionContribution] = (),
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         trace_boundary: TraceForkBoundary | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
@@ -901,6 +914,7 @@ class ChatPersistenceService:
                 raise RuntimeError(
                     "Console Library policy could not be committed with conversation."
                 )
+            native_message_ids: dict[str, str] = {}
             message_ids: dict[str, str] = {}
             for prepared in messages:
                 native_id = str(prepared["native_id"])
@@ -912,6 +926,7 @@ class ChatPersistenceService:
                 expected_id = str(kwargs["message_id"])
                 if persisted_id != expected_id:
                     raise RuntimeError("Persistence returned an unexpected message id.")
+                native_message_ids[native_id] = persisted_id
                 message_ids[native_id] = persisted_id
                 role = str(kwargs["sender"])
                 if role in {"user", "assistant"}:
@@ -936,16 +951,27 @@ class ChatPersistenceService:
                     project_context_json,
                 )
             if contributions:
+                exact_native_message_ids = MappingProxyType(dict(native_message_ids))
                 with _scoped_console_transaction_writer(
                     cursor,
                     conversation_id,
                 ) as writer:
                     for contribution in contributions:
-                        contribution.write(
-                            writer=writer,
-                            conversation_id=conversation_id,
-                            message_ids=message_ids,
-                        )
+                        if isinstance(
+                            contribution,
+                            ConsoleExactNativeIdTransactionContribution,
+                        ):
+                            contribution.write_exact(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                native_message_ids=exact_native_message_ids,
+                            )
+                        else:
+                            contribution.write(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                message_ids=message_ids,
+                            )
         return policy_result.snapshot
 
     def fork_console_conversation_bundle(
@@ -2266,6 +2292,72 @@ class ChatPersistenceService:
             usage_json=usage_json,
             expected_version=expected_version,
         )
+
+    def replace_assistant_generation_projection_with_contributions(
+        self,
+        *,
+        native_message_id: str,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        metadata_json: str | None,
+        update_metadata: bool,
+        contributions: Sequence[ConsolePromotionTransactionContribution],
+        on_durable_commit: Callable[[], object] | None = None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Replace one generation and append exact contributions atomically."""
+
+        def write_contributions(cursor: Any) -> None:
+            row = cursor.execute(
+                "SELECT conversation_id FROM messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Durable assistant owner is unavailable.")
+            conversation_id = str(row["conversation_id"])
+            message_ids = MappingProxyType(
+                {
+                    native_message_id: message_id,
+                    message_id: message_id,
+                    "assistant": message_id,
+                }
+            )
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                for contribution in contributions:
+                    if isinstance(
+                        contribution, ConsoleExactNativeIdTransactionContribution
+                    ):
+                        contribution.write_exact(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            native_message_ids=message_ids,
+                        )
+                    else:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+
+        committed_version = self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
+            metadata_json=metadata_json,
+            update_metadata=update_metadata,
+            transaction_callback=write_contributions,
+        )
+        if on_durable_commit is not None:
+            on_durable_commit()
+        return committed_version
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
         """Persist a message's normalized usage WITHOUT touching sync metadata.

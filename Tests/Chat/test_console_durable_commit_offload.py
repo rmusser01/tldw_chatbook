@@ -434,10 +434,23 @@ def test_clean_restore_reconcile_takes_no_write_lock(tmp_path: Path) -> None:
     # Settle the turn out-of-band so the checkpoint is gone and the restore
     # is clean: terminal assistant + no checkpoint = nothing to reconcile.
     with db.transaction(immediate=True) as cursor:
-        cursor.execute(
-            "UPDATE messages SET assistant_generation_state = 'complete', "
-            "content = 'done' WHERE id = ?",
-            (commit.assistant_message_id,),
+        authorization = db._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        with authorization._authorize(
+            message_id=commit.assistant_message_id,
+            operations={"message_update"},
+        ):
+            cursor.execute(
+                "UPDATE messages SET assistant_generation_state = 'complete', "
+                "content = 'done' WHERE id = ?",
+                (commit.assistant_message_id,),
+            )
+        assert (
+            authorization._sqlite_authorized(
+                commit.assistant_message_id, "message_update"
+            )
+            == 0
         )
         cursor.execute(
             "DELETE FROM console_dispatch_checkpoints WHERE assistant_message_id = ?",
@@ -494,10 +507,23 @@ def test_terminal_checkpoint_reconcile_still_deletes_under_write_lock(
     # Terminal assistant state with a lingering checkpoint row: reconcile
     # must delete the checkpoint -- a real write.
     with db.transaction(immediate=True) as cursor:
-        cursor.execute(
-            "UPDATE messages SET assistant_generation_state = 'complete', "
-            "content = 'done' WHERE id = ?",
-            (commit.assistant_message_id,),
+        authorization = db._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        with authorization._authorize(
+            message_id=commit.assistant_message_id,
+            operations={"message_update"},
+        ):
+            cursor.execute(
+                "UPDATE messages SET assistant_generation_state = 'complete', "
+                "content = 'done' WHERE id = ?",
+                (commit.assistant_message_id,),
+            )
+        assert (
+            authorization._sqlite_authorized(
+                commit.assistant_message_id, "message_update"
+            )
+            == 0
         )
 
     statements = _traced_statements(db)

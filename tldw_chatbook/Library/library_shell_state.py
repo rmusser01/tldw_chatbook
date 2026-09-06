@@ -41,7 +41,7 @@ LIBRARY_ROW_CREATE_QUIZZES = "create-quizzes"
 # this row's target_id is "prompts" itself: it reuses the SAME canvas kind
 # Browse > Prompts targets. The screen distinguishes "opened via Browse" vs
 # "opened via New prompt" by view/selection state
-# (`_library_prompts_view == "editor"` plus a `prompt_id=None` sentinel),
+# (`_prompts_state.view == "editor"` plus a `prompt_id=None` sentinel),
 # not by a separate canvas kind -- see library_screen.py's
 # `_enter_library_prompt_create_editor`.
 LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
