@@ -870,3 +870,33 @@ Independent review of the final Watchlists repair found no actionable issues;
 static checks pass. TASK-31750 remains In Progress (AC4 qualified by the 142-test
 internals file above, AC3/AC5 open). Broader census, resource/architecture work
 and pending task-ID decisions remain open. PR stays draft.
+
+## Six handoff owner repairs and confirmed warm-return regression
+
+The seven handoff cases reproduced again
+(`/private/tmp/tldw-handoff-seven-baseline.xml`). Test-only corrections isolate
+bare restore shells from the live app runtime, wire current settings owners,
+retarget the removed RAG helper, and assert the real nested Live Work topology.
+Restored payload, empty-channel behavior, sent notice, legacy tolerance, media
+sendability and both swap directions remain checked; the live runtime's view
+and store are explicitly preserved. The topology now follows
+Environment/Tasks/Subagents/tray and the stable outer root/bounded viewport.
+
+Final complete `Tests/UI/test_console_live_work_handoffs.py`: **65 passed /
+1 failed in 81.59s**, three existing dependency warnings
+(`/private/tmp/tldw-handoff-owner-qualified.xml`). Full-file lint,
+changed-region formatting and diff checks pass. Independent review found no
+actionable issues in the six repairs. No production changes or relaxed guards.
+
+The remaining `test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch`
+failure is a runtime defect introduced by the intended TASK-31520 Console reuse:
+diagnostics show Library really opens, then the same Console returns with A still
+resident and B still pending after navigation completes. Compose is skipped on
+warm visits, and `on_screen_resume` does not consume the live-work channel. The
+existing consume/supersede path already owns claim acknowledgement and surface
+refresh. Proposed bounded fix: reuse those paths on ordinary resume, cover both
+resident and initially empty launches, preserve suspend/ordered-startup behavior,
+and verify claim settlement and rendered evidence through real navigation.
+The brainstorming skill's design approval is required before that production
+change; the test remains failing and unmodified. TASK-31750 and PR stay open;
+broader census/resource/architecture and task-ID work remains outstanding.
