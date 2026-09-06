@@ -159,7 +159,7 @@ context that is already active:
 | Settings > Console Behavior > Rail layout scope | **Global** is the default and keeps one arrangement across workspace switches. **Per workspace** restores and keeps each workspace's existing saved arrangement. |
 | What the selected layout scope saves | Whether the Context and Inspect rails are open, direct section disclosures (including **More**), and explicit rail-open behavior markers. Compact responsive collapse may temporarily override the rendering without rewriting those choices. |
 | What it does not save | Local or outer scroll positions, Workspaces search disclosure, Tree selection, pointer tooltip, and focus are transient. Switching layout scope neither deletes the inactive scope's records nor turns those transient states into preferences. |
-| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. |
+| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The heading says so: it reads `If I send now? · +4 more`. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. |
 | Inspect **More** | Empty Tools, Approvals, and Artifacts groups stay under **More**. A nonzero, pending, blocked, available, or otherwise actionable group promotes into the main Inspect sequence; collapsing More never hides an actionable group. |
 
 Workspaces search can reveal matching conversation results whose parent branch
@@ -353,11 +353,15 @@ for authority, privacy, limits, key routing, cleanup, and platform support.
 | Alt+I | Open the Inspect rail and move focus into it; press again to close it. Works at every terminal width, including below 84 columns where the rail's handle is hidden |
 | Tab / Shift+Tab | Move within the Console region you are already in — the composer's controls, the Context rail, the transcript, or the Inspect rail. Tab deliberately does **not** cross between them; **F6** / **Shift+F6** do, and **Alt+I** enters the Inspect rail directly |
 
-Everything in the Inspect rail that Tab can land on shows a solid accent
-edge (`█`) down its left side while it holds focus — buttons, section
-chevrons, the "Refresh" and "Narrow…" actions, and the rows themselves. The
-pinned send summary is drawn in a full accent box instead, and the scrolling
-body draws the edge alongside its sections.
+Everything in the Inspect rail that Tab can land on shows where focus is
+without relying on colour alone. Buttons — the rail header, section
+chevrons, "Refresh", "Search Library", "Narrow…", **More** — take a solid
+accent edge (`█`) down their left side; the collapsed rail's handle takes
+the same edge on its right, where it has room. A focused row is wrapped in
+corner brackets (`┌ … ┐`) instead, which is what tells "this row has focus"
+apart from "the whole list has focus" — the scrolling body draws the `█`
+edge alongside every one of its sections. The pinned send summary is drawn
+in a full accent box.
 
 ## Related settings & docs
 

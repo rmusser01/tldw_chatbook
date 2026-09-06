@@ -39,11 +39,11 @@ measured rather than assumed:
 from __future__ import annotations
 
 import pytest
-from textual.widget import Widget
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
+from Tests.UI.test_console_environment_wiring import _snapshot
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )
@@ -51,6 +51,10 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSectionRow,
+)
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 
 #: The two terminal sizes the rail's critique was measured at.
@@ -86,7 +90,35 @@ async def _open_rail(host, pilot):
     await pilot.press("alt+i")
     await pilot.pause()
     await pilot.pause()
+    await _land_environment_rows(console, pilot)
     return console, console.query_one("#console-right-rail")
+
+
+async def _land_environment_rows(console, pilot) -> None:
+    """Put the Environment section's four rows into the rail's focus ring.
+
+    Without this the default fixture's Environment section is UNBOUND and
+    projects no rows at all, so a "walk every stop in the ring" test walks a
+    ring that contains no `ConsoleInspectorSectionRow` -- which is how the
+    first cut of this file shipped a dead `.console-inspector-section-row:focus`
+    rule with nothing to catch it. The same canned OK-git snapshot
+    `test_console_environment_wiring.py` uses; nothing shells out to git.
+    """
+
+    console._stop_console_transcript_sync_timer()
+    snapshot = _snapshot(files=(ChangedFile("M", "a.py", 3, 1),))
+    console._console_environment.snapshot = snapshot
+    console._land_console_environment(snapshot)
+    await pilot.pause()
+    await pilot.pause()
+    # Freeze the Environment feed for the rest of the test. A focus walk over
+    # the whole ring is many `pilot.pause`es long, and opening the rail arms
+    # `notify_rail_opened` -> a background refresh whose landing REPLACES row
+    # widgets when the section's structural key changes. That orphaned the
+    # "Refresh" button mid-walk (its region went to 0x0) -- a fixture race,
+    # not a product defect, but one that makes the walk's verdict luck.
+    console._console_environment.request_refresh = lambda **_kwargs: None
+    console._console_environment.poll_tick = lambda: None
 
 
 async def _focus_carrier_rows(host, pilot, console, widget) -> tuple[list[str], list[str]]:
@@ -143,6 +175,13 @@ async def test_every_rail_tab_stop_changes_what_it_paints_on_focus(size):
             if rail in widget.ancestors_with_self
         ]
         assert len(stops) >= 8, f"rail focus ring collapsed to {len(stops)} stops"
+        # The ring must actually CONTAIN the widget classes it claims to
+        # cover. A ring with no rows in it is how a dead row rule passed.
+        assert [
+            widget.row_id
+            for widget in stops
+            if isinstance(widget, ConsoleInspectorSectionRow)
+        ], f"no inspector rows in the ring at {size}; the walk proves nothing"
 
         indication_free: list[str] = []
         for widget in stops:
@@ -164,8 +203,13 @@ async def test_rail_button_focus_edge_costs_no_label_character(size):
 
     A block glyph that overwrote the first label character would trade one
     a11y defect for a legibility one -- "Narrow…" reading "█arrow…". Every
-    rail Button already paints a leading space, so the edge is lossless;
-    this pins that, per button, rather than trusting the current labels.
+    rail Button already paints a leading space, so the edge is lossless.
+
+    The check is on the CARRIER COLUMN's own content before focus, not on a
+    focused-vs-unfocused diff of the rest of the row: the latter compares
+    both sides with that column already dropped and so cannot see the loss
+    it is meant to catch (it is exactly what let the collapsed rail handle,
+    whose column 0 holds the "<" of "<-Inspect", look safe).
     """
 
     app = _build_test_app()
@@ -183,51 +227,114 @@ async def test_rail_button_focus_edge_costs_no_label_character(size):
             unfocused, focused = await _focus_carrier_rows(
                 host, pilot, console, button
             )
-            assert focused[0].startswith("█"), (
-                f"#{button.id} has no accent edge when focused: {focused[0]!r}"
-            )
-            assert focused[0][1:] == unfocused[0][1:], (
-                f"#{button.id}'s focus edge overwrote label text: "
-                f"{unfocused[0]!r} -> {focused[0]!r}"
-            )
+            _assert_lossless_edge(button.id, unfocused, focused, side="left")
 
 
-# --- AC#3: nothing hidden may hold a Tab stop --------------------------------
+def _assert_lossless_edge(widget_id, unfocused, focused, *, side: str) -> None:
+    """Assert an accent edge appeared and cost no painted character.
 
+    Args:
+        widget_id: The widget's DOM id, for failure messages.
+        unfocused: Painted rows before focus.
+        focused: Painted rows while focused.
+        side: ``"left"`` (column 0) or ``"right"`` (the last column).
+    """
 
-def _hidden_behind_an_ancestor(widget: Widget) -> bool:
-    node: object = widget
-    while isinstance(node, Widget):
-        if not node.display:
-            return True
-        node = node.parent
-    return False
+    index = 0 if side == "left" else -1
+    assert any(row[index] == "█" for row in focused), (
+        f"#{widget_id} has no accent edge on its {side} when focused: {focused!r}"
+    )
+    blocked = [row for row in unfocused if row and row[index] not in (" ", "█")]
+    assert not blocked, (
+        f"#{widget_id}'s {side} carrier column already paints content "
+        f"({blocked!r}); the edge would overwrite it"
+    )
 
 
 @pytest.mark.asyncio
-async def test_no_console_tab_stop_is_hidden_behind_a_display_none_ancestor():
-    """AC#3: a widget nobody can see must not hold a place in the Tab ring.
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+async def test_a_focused_inspector_row_paints_corner_brackets(size):
+    """AC#1, and the correction of a wrong premise in this task's first cut.
 
-    The critique attributed "Tab never reaches the rail" to a hidden-but-
-    focusable blank widget labelled "Review changes". Measured, that widget
-    is `#console-prompt-improvement-review` in the COMPOSER's hidden
-    prompt-improvement recovery row (not the left rail), and it is kept out
-    of the ring only incidentally -- by `disabled=True` plus its parent's
-    `display: none`. This is the standing guard: no focus-chain member may
-    be hidden by any ancestor.
+    Rows are NOT tint-only and never were: the app-wide fallback
+    `*:focus { outline: solid $ds-focus-accent }` in `css/core/_reset.tcss`
+    reaches them -- nothing opts rows out the way `Button:focus` opts buttons
+    out with `outline: none` -- so a focused row paints `┌…┐` around its own
+    padding columns. That is the row's carrier, and it is deliberately NOT
+    the buttons' `█` edge: brackets wrap the ONE focused row, while a `█`
+    column beside every row is what the focused SCROLLER paints, and keeping
+    them distinct is what tells those two states apart.
     """
 
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = FocusCarrierHarness(app)
-    async with host.run_test(size=(200, 50)) as pilot:
-        console, _rail = await _open_rail(host, pilot)
-        hidden = [
-            widget.id or type(widget).__name__
+    async with host.run_test(size=size) as pilot:
+        console, rail = await _open_rail(host, pilot)
+        rows = [
+            widget
             for widget in console.focus_chain
-            if _hidden_behind_an_ancestor(widget)
+            if rail in widget.ancestors_with_self
+            and isinstance(widget, ConsoleInspectorSectionRow)
         ]
-        assert not hidden, f"hidden widgets hold Tab stops: {hidden}"
+        assert rows, "no focusable inspector rows to check"
+        for row in rows:
+            unfocused, focused = await _focus_carrier_rows(host, pilot, console, row)
+            assert focused[0][0] in "┌╭", (
+                f"row {row.row_id} paints no focus bracket: {focused[0]!r}"
+            )
+            assert unfocused[0][0] == " ", (
+                f"row {row.row_id}'s bracket column already paints content: "
+                f"{unfocused[0]!r}"
+            )
+            assert focused[0][1:-1] == unfocused[0][1:-1], (
+                f"row {row.row_id}'s focus brackets ate its text: "
+                f"{unfocused[0]!r} -> {focused[0]!r}"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(200, 50), (140, 40)])
+async def test_the_collapsed_rail_handle_has_a_focus_carrier(size):
+    """AC#1 for the rail's SHIPPING DEFAULT state (review M8).
+
+    `#console-inspector-rail-open` is a Button, but it lives in
+    `#console-inspector-rail-handle`, outside `#console-right-rail`, so the
+    rail-scoped rule missed it -- and measured, focusing it changed nothing
+    at all. It is the one stop a user meets before the rail is ever opened.
+
+    A RIGHT edge, because measured its column 0 carries the "<" of
+    "<-Inspect" at every width the handle is shown while its last column is
+    blank on every row. Below ~84 columns the handle is hidden entirely and
+    Alt+I is the only route, so there is no stop to indicate there.
+    """
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = FocusCarrierHarness(app)
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        handle = console.query_one("#console-inspector-rail-handle")
+        assert handle.display, (
+            f"fixture assumption: the rail starts collapsed at {size}"
+        )
+        opener = console.query_one("#console-inspector-rail-open", Button)
+        assert opener in console.focus_chain, "the handle is not a Tab stop"
+        unfocused, focused = await _focus_carrier_rows(host, pilot, console, opener)
+        assert unfocused != focused, (
+            "focusing the collapsed rail's handle changes nothing a keyboard "
+            f"user can see at {size}"
+        )
+        _assert_lossless_edge(opener.id, unfocused, focused, side="right")
+
+
+# --- AC#3: nothing hidden may hold a Tab stop --------------------------------
+#
+# There is deliberately NO "no focus-chain member is hidden by an ancestor"
+# test here. Textual builds `Screen.focus_chain` by walking `displayed_children`,
+# so such a test cannot fail whatever this app does -- it would assert the
+# framework, not the code. The real guard is the coupling test below.
 
 
 @pytest.mark.asyncio
@@ -396,7 +503,9 @@ def test_the_compact_pinned_block_has_both_halves_of_its_geometry():
     """
 
     stylesheet = app_css_text()
-    assert "#console-send-authority-summary.-authority-compact" in stylesheet, (
+    assert (
+        "#console-send-authority-summary.console-authority-compact" in stylesheet
+    ), (
         "the compact pinned-summary height is only in Python; the stylesheet "
         "still says the block is six rows tall at every size"
     )
@@ -448,6 +557,8 @@ async def test_pinned_authority_block_compacts_at_80x24_and_not_at_200x50():
             assert len(summary.contextual_help_rows()) == 5
             run_row = console.query_one("#console-send-authority-run")
             assert run_row.display, "the Run rollup must keep its line"
+            heading = console.query_one("#console-send-authority-heading")
+            painted_heading = _painted_rows(host, heading.region)[0]
             if expected_compact:
                 assert summary.tooltip is not None, (
                     "the compacted block must carry the hidden facts"
@@ -459,6 +570,21 @@ async def test_pinned_authority_block_compacts_at_80x24_and_not_at_200x50():
                     "console-send-authority-approvals",
                 ):
                     assert not console.query_one(f"#{widget_id}").display
+                # Review M7: the compression must ANNOUNCE itself. Four facts
+                # vanishing silently leaves two rows that still read like a
+                # complete answer.
+                assert "+4" in painted_heading, (
+                    "the compacted block hides four facts with no cue: "
+                    f"{painted_heading!r}"
+                )
+                assert "…" not in painted_heading, (
+                    "the compact heading is being ellipsized, so its own "
+                    f"marker is what gets cut: {painted_heading!r}"
+                )
+            else:
+                assert "+4" not in painted_heading, (
+                    f"the full-height block claims hidden facts: {painted_heading!r}"
+                )
 
 
 @pytest.mark.asyncio

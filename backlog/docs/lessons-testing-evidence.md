@@ -11371,3 +11371,47 @@ both resolved to white. Switching this local host to the existing
 `APP_STYLESHEETS` authority made the exact two compositor assertions pass in4.53s;
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
+
+## A "settled geometry" assertion bounded by WALL CLOCK is load-sensitive — run the base arm N times before blaming a diff (TASK-31663, 2026-09-05)
+
+The covering batch for TASK-31663 failed intermittently on the branch —
+twice, on two *different* tests — while the first two runs of the same batch
+at the base commit were clean. Two clean base runs against two dirty branch
+runs reads like a regression, and it was treated as one.
+
+It was not. `Tests/UI/test_console_right_rail.py::_wait_for_right_rail_condition`
+polls a predicate against a **wall-clock** deadline (`timeout: float = 5.0`),
+and the caller then spends one more `await pilot.pause()` before re-asserting
+the same predicate. The failing tuple is the tell: every geometry value was
+correct (`desired_content_lines=15`, `viewport=15`, `hint=False`) and the only
+false term was `rail._outer_reconcile_scheduled` — one extra pause re-arming
+the reconcile, not wrong geometry. On a busy machine the 5 s budget and the
+extra pause land differently run to run.
+
+Final tally, same 4-file batch, same machine: **branch 4 failures in 6 runs;
+base 1 failure in 5** — the base failure being the identical test and
+parametrisation. One base run would have "proved" a regression that does not
+exist; three would still have missed it (it appeared on the third).
+
+Two branch-local mechanisms were formed and both disproven before the control
+settled it, and disproving them is what kept the search honest:
+
+- *"The new density hook flips on transient layout heights."* A spy on every
+  call showed it fires twice while opening the rail — `rail_rows=0` (early
+  return) then the settled height — and **never flips** at the sizes involved.
+- *"The new `outline-left` descendant rule invalidates layout on N widgets."*
+  The cost is real (`outline-left` is a `BoxProperty` whose setter calls
+  `refresh(layout=True)`, and `Stylesheet.replace_rules` assigns through those
+  descriptors), but the failing test never focuses the widget the rule is
+  scoped to — and **removing the rule entirely did not stop the failure**.
+
+Rules this pays for:
+
+- For an intermittent failure, the base arm needs **as many runs as the branch
+  arm**, not one. A single clean control is not a control.
+- A predicate that is re-asserted after an extra `pause()` is asserting
+  "settled AND stays settled", which no wall-clock wait can guarantee. Prefer
+  asserting the settled predicate once, at the point the wait returns.
+- Disproving your own suspect is progress. Both mechanisms above were cheap to
+  test directly (a spy; a rule deletion) and both were wrong — which is what
+  stopped a needed focus carrier from being deleted to "fix" an unrelated flake.

@@ -40,14 +40,29 @@ shape/outline, not a stronger tint.
 <!-- SECTION:NOTES:BEGIN -->
 ### What shipped
 
-**One carrier for the whole rail: the accent edge.** TASK-24702 had already
-proved a tint cannot be rescued on this near-black theme, so the fix had to
-change CELLS. `outline-left: thick $ds-action-focus` (which paints a solid
-`█`) is now applied to every focusable control in the rail — `#console-right-rail
-Button:focus` covers the header button, the project-instruction status button,
-section chevrons, "Refresh", "Search Library", "Narrow…", the More toggle and
-the run-inspector actions in one rule — plus `.console-inspector-section-row:focus`
-(which kept its 20% tint as a redundant second cue).
+**An accent edge for every BUTTON in the rail.** TASK-24702 had already proved
+a tint cannot be rescued on this near-black theme, so the fix had to change
+CELLS. `outline-left: thick $ds-action-focus` (which paints a solid `█`) is
+applied by one rule, `#console-right-rail Button:focus`, covering the header
+button, the project-instruction status button, section chevrons, "Refresh",
+"Search Library", "Narrow…", the More toggle and the run-inspector actions.
+The collapsed rail's handle (`#console-inspector-rail-open`) lives outside the
+rail and needs its own rule — a RIGHT edge, because measured its column 0
+carries the "<" of "<-Inspect" while its last column is blank on every row.
+
+**Rows were already carrying a shape cue and are deliberately untouched.**
+Round-1 review correction: an `outline-left` rule on
+`.console-inspector-section-row:focus` shipped in the first cut and was DEAD
+CODE. The app-wide `*:focus { outline: solid $ds-focus-accent }` in
+`css/core/_reset.tcss` reaches rows (nothing opts them out the way
+`Button:focus` opts buttons out with `outline: none`), and Textual takes a
+line's left cell from the TOP edge's glyph set whenever that line is the
+widget's top line — since TASK-31662 a row is one or two lines tall, so every
+line is a top or bottom line and the thick left edge had no middle line to
+paint on. Measured before and after: `┌Changes  +3 −1┐` either way. The rule
+was removed and the real carrier documented in its place. The critique's "row
+focus is shape-carried (good)" was right, and this task's first cut said
+otherwise.
 
 **Measurement first, both sizes, focus parked outside between stops.** Re-read
 through the real compositor, seven stops painted byte-identical text focused and
@@ -99,7 +114,7 @@ At 80x24 the rail's five children measured 1 / 1 / **6** / **3** / 1: eight pinn
 rows over a three-row body, so the Environment section (seven rows at rest since
 TASK-31662) could never show its four rows. `ConsoleSendAuthoritySummary` now has
 a two-row compact density — heading + **Run** — driven by
-`ConsoleRightRail._sync_authority_summary_density` from the rail's own height
+`ConsoleInspectorRail._sync_authority_summary_density` from the rail's own height
 against a DERIVED threshold (`INSPECTOR_FULL_DENSITY_MIN_ROWS` = full pinned stack
 8 + hint 1 + a section at rest 7 = 16). At 80x24 the body is now **seven** rows and
 all four Environment rows paint; at 200x50 nothing changes.
@@ -110,6 +125,15 @@ the block's tooltip carries them, and F1 while it has focus still renders all fi
 (`action_show_workbench_help` reads the PROJECTION, not the mounted rows, so hiding
 rows costs it nothing). All six Statics stay mounted, so `sync_state`'s in-place
 patching and every id-based consumer are untouched.
+
+The compaction **announces itself** (round-1 review): the compact heading is its
+own copy, `If I send now? · +4 more`, not the full heading plus a suffix — the
+block gets 29 content columns at 80x24 and the full heading already spends 27, so
+`<heading> +4` (30) would have ellipsized the marker straight back off. The
+`console-authority-compact` class is `console-`-prefixed so `build_css`'s owner
+classifier files its rule with the Console screen sheet rather than leaving it in
+the always-loaded boot bundle (verified: the rule moved out of
+`tldw_cli_modular.tcss` into `screen_agentic_console.tcss`).
 
 ### The one non-obvious physics fact
 
@@ -127,20 +151,50 @@ own first column fails there rather than shipping as "█arrow…".
 
 ### Tests
 
-New `Tests/UI/test_console_inspector_focus_carriers.py` (11 tests): the whole-ring
+New `Tests/UI/test_console_inspector_focus_carriers.py` (15 tests): the whole-ring
 plain-text focus diff at both sizes (not a hand-listed subset — the defect was a
-convention being invisible); the per-button lossless-edge pin; the hidden-widget
-focus-chain guard; the explicit composer recovery coupling; the Tab-region /
-F6-route pin; the scrollbar thumb-vs-track contrast measured from painted cells at
-both sizes; the compact-density pins; and the rail-level sibling of 31662's
-component test — Environment's four rows painted through the real pinned stack at
-80x24.
+convention being invisible); the per-button lossless-edge pin; the row corner-bracket
+pin; the collapsed-handle carrier; the explicit composer recovery coupling; the
+Tab-region / F6-route pin; the scrollbar thumb-vs-track contrast measured from
+painted cells at both sizes; the compact-density and compression-cue pins; and the
+rail-level sibling of 31662's component test — Environment's four rows painted
+through the real pinned stack at 80x24.
+
+Two test-design corrections from round 1, both of which had let something ship
+unverified. First, the ring walk ran against the DEFAULT fixture, whose Environment
+section is UNBOUND and projects no rows — so "walk every stop" never touched a
+`ConsoleInspectorSectionRow`, which is exactly how the dead row rule got through.
+The walk now lands a canned OK-git snapshot first and asserts the ring actually
+contains rows. Second, the lossless-edge check compared focused-vs-unfocused with
+the carrier column already dropped from both sides, so it could not see the loss it
+existed to catch; it now asserts the carrier column is blank BEFORE focus, which is
+what caught that a left edge on the collapsed handle would paint "█-Inspect". A
+third fixture fix: the Environment feed is frozen for the walk, because opening the
+rail arms a background refresh whose landing replaces row widgets mid-walk (it
+orphaned the "Refresh" button, region 0x0). Deleted rather than fixed: a
+"no focus-chain member is hidden by an ancestor" test — Textual builds the chain
+from `displayed_children`, so it asserted the framework and could not fail.
 
 Regression sweep: every suite touching the changed surfaces was run against this
 branch AND against its base commit (`21dcb743a4`) in a throwaway worktree. Failure
 sets are byte-identical — 22 in workbench_contract/compact_access/run_inspector, 2
 in inspector_navigation, 2 CSS-contract, 3 focus-contract, 3 geometry, 16 in
 internals/live_work — all pre-existing. `./scripts/preflight.sh` green.
+
+Round-1 addendum — an intermittent failure chased to ground rather than waved
+through. The covering batch failed twice on this branch, on two DIFFERENT tests,
+while the first two base runs were clean, which is the shape of a regression. It
+is not one: `test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry`
+also fails on the untouched base commit (branch 4 failures / 6 runs, base 1 / 5,
+same test and parametrisation). Both tests wait on a WALL-CLOCK-bounded predicate
+and then re-assert it after one more `pause()`; the failing tuple had every
+geometry value correct and only `_outer_reconcile_scheduled` True — one extra
+pause re-arming the loop. Two branch-local mechanisms were formed and both
+disproven by direct measurement: the AC#5 density hook never flips at the sizes
+involved (spied on every call), and deleting the new `outline-left` descendant
+rule did not stop the failure (and that rule cannot apply there — the test never
+focuses the rail body). Recorded in `backlog/docs/lessons-testing-evidence.md`;
+the residual higher rate on this branch is flagged, not explained.
 
 ### Modified
 

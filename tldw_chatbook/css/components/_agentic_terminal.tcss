@@ -4404,12 +4404,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
    stack was eight rows (header 1 + project instruction 1 + this block's 6)
    over a THREE-row scroll body, so the Environment section -- seven rows at
    rest since TASK-31662 -- could never show its four rows. Two rows here
-   makes that body seven. `ConsoleRightRail._sync_authority_summary_density`
-   flips this class and pins the same two numbers INLINE (inline wins over
-   CSS in Textual, and the widget has always carried its own geometry so a
-   bare harness measures the right box); the pair is kept in step so the
-   stylesheet never disagrees with the widget about how tall it is. */
-#console-send-authority-summary.-authority-compact {
+   makes that body seven. `ConsoleInspectorRail._sync_authority_summary_
+   density` flips this class and pins the same two numbers INLINE (inline
+   wins over CSS in Textual, and the widget has always carried its own
+   geometry so a bare harness measures the right box); the pair is kept in
+   step so the stylesheet never disagrees with the widget about how tall it
+   is. The class carries the `console-` prefix so `build_css`'s owner
+   classifier files this rule with the rest of the Console screen's CSS
+   instead of leaving it in the always-loaded boot bundle. */
+#console-send-authority-summary.console-authority-compact {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -4867,9 +4870,10 @@ ConsoleBoundedSection {
     outline-left: thick $ds-action-focus;
 }
 
-/* TASK-31663 AC#1/AC#2: ONE focus carrier for the whole rail, and it is the
-   accent edge above -- extended from the two containers TASK-24702 styled
-   to every control in the ring. Measured through the compositor with focus
+/* TASK-31663 AC#1/AC#2: the accent edge above, extended from the two
+   containers TASK-24702 styled to every BUTTON in the rail's focus ring.
+   (Buttons only -- rows carry a different, deliberately distinguishable cue;
+   see the block two rules down.) Measured through the compositor with focus
    parked on the composer between stops (so a scroll-into-view cannot be
    mistaken for a cue), SEVEN stops painted byte-identical text focused and
    unfocused at both 80x24 and 200x50: the "▸ Inspect" header button, the
@@ -4893,22 +4897,67 @@ ConsoleBoundedSection {
     outline-left: thick $ds-action-focus;
 }
 
-/* Same edge for a focused inspector ROW: `.console-inspector-section-row`
-   had `background: $ds-action-focus 20%` alone, which is the tint TASK-24702
-   ruled out. The row's own `padding: 0 1` gives the block a free column, so
-   this costs no row text either; the tint stays as a second, redundant cue. */
-.console-inspector-section-row:focus {
-    outline-left: thick $ds-action-focus;
+/* The COLLAPSED rail's handle is a Button too, but it lives in
+   `#console-inspector-rail-handle`, outside the rail, so the rule above
+   misses it -- and it is the rail's shipping default state, which makes it
+   the stop that matters most. Measured before this rule: focusing it changed
+   nothing at all, at 140x40 and 200x50 alike (below ~84 columns the handle is
+   hidden and Alt+I is the only route, so there is no stop to indicate).
+
+   RIGHT edge here, not left, and that is measured rather than stylistic: the
+   shell gives this button ten columns for an eleven-column box, and the
+   column the clip drops is the leading pad -- so its col 0 carries the "<" of
+   "<-Inspect" at every width the handle is shown, while its last column is
+   blank on every row. A left edge would paint "█-Inspect"; the right edge is
+   lossless. `Tests/UI/test_console_inspector_focus_carriers.py` asserts the
+   carrier column is blank BEFORE focus, so this stays honest if the label
+   changes. */
+#console-inspector-rail-open:focus {
+    outline-right: thick $ds-action-focus;
 }
+
+/* Inspector ROWS are deliberately NOT in the rule above, and this comment is
+   the correction of a wrong premise shipped in the first cut of TASK-31663.
+   Rows do NOT rely on `background: $ds-action-focus 20%` alone: the app-wide
+   fallback `*:focus { outline: solid $ds-focus-accent }` in
+   `css/core/_reset.tcss` reaches them (nothing opts rows out the way
+   `Button:focus` opts buttons out with `outline: none`), so a focused row has
+   always painted corner brackets -- measured, `[ Changes  +3 −1 ]` becomes
+   `┌Changes  +3 −1┐`, landing on the row's own `padding: 0 1` and costing no
+   text. The critique's "row focus is shape-carried (good)" was right.
+
+   An `outline-left: thick` here was DEAD CODE and was removed. Textual takes a
+   row's left cell from the TOP edge's glyph set whenever that line is the
+   widget's top line, and since TASK-31662 a row is one or two lines tall --
+   every line is a top or bottom line, never a middle one -- so the thick left
+   edge had no line to paint on and the resolved `Edges(top=solid, left=thick)`
+   rendered `┌` regardless. Making it visible would have meant `outline: none`
+   first, i.e. REPLACING a working, distinct cue: brackets wrap the one focused
+   row, while `█` down a column is what the focused SCROLLER paints beside
+   every row (see the section-body rule below). Keeping them different is what
+   tells those two states apart. */
 
 /* The rail's SCROLLER is the one stop the edge above cannot carry on its
    own. Textual composites children OVER a container's own strips, so
-   `#console-inspector-rail-body:focus`'s edge is painted only in the gaps
-   BETWEEN sections -- visible at 200x50, and at 80x24 completely absent,
-   because all three of its rows are covered. The innermost widget with a
-   column no child occupies is the section body, whose `padding: 0 0 0 1`
-   reserves exactly one; putting the same edge there draws the accent down
-   the left of the focused scroller's content at every size. */
+   `#console-inspector-rail-body:focus`'s edge is painted only in the rows no
+   child covers -- the gaps between sections. At 200x50 there are several; at
+   80x24 there are none (measured with the Environment section's four rows
+   landed, the seven-row body is fully covered), so the container's own edge
+   shows nothing there at all. The innermost widget with a column no child
+   occupies is the section body, whose `padding: 0 0 0 1` reserves exactly
+   one; putting the same edge there draws the accent down the left of the
+   focused scroller's content at every size.
+
+   Known cost, measured and accepted: `outline-left` is a `BoxProperty` whose
+   setter calls `refresh(layout=True)` when the rule is set or cleared, and
+   the CSS path assigns through those descriptors (`Stylesheet.replace_rules`)
+   -- so this rule turns each focus-enter/leave of the SCROLLER into a layout
+   refresh on every mounted section body. It was investigated as the cause of
+   an intermittent rail-reconciliation test failure and CLEARED, twice over:
+   the failing test never focuses the rail body (opening the rail focuses the
+   collapse button or the pinned summary, per `CONSOLE_FOCUS_TARGETS_BY_PANE`),
+   and removing this rule entirely did not stop the failure. Left in place
+   because it is the only carrier the 80x24 scroller stop has. */
 #console-inspector-rail-body:focus .console-inspector-section-body {
     outline-left: thick $ds-action-focus;
 }

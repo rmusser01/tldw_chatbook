@@ -52,6 +52,28 @@ CONSOLE_AUTHORITY_SUMMARY_COMPACT_HEIGHT = 2
 #: nothing.
 _COMPACT_FACT_ATTRIBUTES = frozenset({"run"})
 
+#: Class flipped on the block while compact. `console-`-prefixed so
+#: `build_css`'s owner classifier files the matching rule with the Console
+#: screen's sheet instead of the always-loaded boot bundle.
+CONSOLE_AUTHORITY_SUMMARY_COMPACT_CLASS = "console-authority-compact"
+
+#: The block's heading at each density. Compact needs its own copy, not just
+#: a suffix (TASK-31663 review M7): without a marker the compression is
+#: SILENT -- four facts vanish and the two remaining rows still read like a
+#: complete answer. The width is the constraint that shapes the wording: the
+#: block gets 29 content columns at 80x24 (31 wide, `padding: 0 1`) and the
+#: full heading already spends 27 of them, so "<heading> +4" (30) would
+#: ellipsize the marker straight back off. The compact heading keeps the
+#: question, names the count that is missing, and fits with room to spare;
+#: the facts themselves stay in the block's tooltip and in F1 while it has
+#: focus.
+CONSOLE_AUTHORITY_SUMMARY_HEADING = "What happens if I send now?"
+CONSOLE_AUTHORITY_SUMMARY_COMPACT_HEADING = "If I send now? · +4 more"
+
+#: DOM id of the heading row, which is the one row whose COPY changes with
+#: density (the five fact rows only change display).
+CONSOLE_AUTHORITY_SUMMARY_HEADING_ID = "console-send-authority-heading"
+
 
 @dataclass(frozen=True, slots=True)
 class ConsoleSendAuthorityProjection:
@@ -184,8 +206,8 @@ class ConsoleSendAuthoritySummary(Static):
         """
 
         yield self._row(
-            "What happens if I send now?",
-            "console-send-authority-heading",
+            self._heading_copy(),
+            CONSOLE_AUTHORITY_SUMMARY_HEADING_ID,
         )
         for label, attribute, widget_id in _FACTS:
             value = getattr(self._projection, attribute)
@@ -214,6 +236,19 @@ class ConsoleSendAuthoritySummary(Static):
 
         return self.compact and attribute not in _COMPACT_FACT_ATTRIBUTES
 
+    def _heading_copy(self) -> str:
+        """Return the heading for the current density.
+
+        The compact form is what ANNOUNCES the compression; see the constant's
+        note for why it is separate copy rather than a suffix.
+        """
+
+        return (
+            CONSOLE_AUTHORITY_SUMMARY_COMPACT_HEADING
+            if self.compact
+            else CONSOLE_AUTHORITY_SUMMARY_HEADING
+        )
+
     def set_compact(self, compact: bool) -> None:
         """Switch the block between its six-line and two-line densities.
 
@@ -241,9 +276,17 @@ class ConsoleSendAuthoritySummary(Static):
         self.styles.height = height
         self.styles.min_height = height
         self.styles.max_height = height
-        self.set_class(self.compact, "-authority-compact")
+        self.set_class(self.compact, CONSOLE_AUTHORITY_SUMMARY_COMPACT_CLASS)
         if not self.is_mounted:
             return
+        try:
+            heading = self.query_one(
+                f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            heading.update(Text(self._heading_copy()))
         for _label, attribute, widget_id in _FACTS:
             try:
                 row = self.query_one(f"#{widget_id}", Static)

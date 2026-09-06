@@ -42,4 +42,5 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [ ] #12 test_unknown_root_never_paints_the_unbound_copy asserts the rail is open after its toggle (vacuity guard); empty-state docs table and environment.py module docstring updated for the UNKNOWN state
 - [ ] #13 The fleet section's periodic _sync_console_agent_section recompose steals focus the same way the Environment poll did (its rows ARE focusable) -- apply the 31661 capture/restore + outside-rail guard there (review finding, 31661 round 1)
 - [ ] #14 row_fits_one_line measures with len() not rich.cells.cell_len — a CJK/wide-glyph title would be under-measured and ellipsize the primary (31662 review minor; one-line fix)
+- [ ] #15 The same invisible scrollbar thumb ($ds-grid-line on panel surface, ~1.01:1) ships on #console-left-rail-body, #console-settings-body, #settings-impact-pane-body, #library-media-viewer, #prompt-variables-scroll — apply 31663's $ds-text-muted fix (31663 review M6)
 <!-- AC:END -->
