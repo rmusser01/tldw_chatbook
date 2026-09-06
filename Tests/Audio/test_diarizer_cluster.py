@@ -40,15 +40,36 @@ def test_reconcile_maps_final_to_live_by_nearest_centroid():
 def test_reconcile_with_no_live_clusters_returns_empty():
     assert reconcile({}, [("F0", _v(1, 0, 0))]) == {}
 
-def test_reconcile_never_gives_two_final_clusters_the_same_live_id():
+def test_reconcile_mints_for_a_final_cluster_no_live_voice_claims():
     # Qodo Q11 completion: the Stop pass separated two speakers the live pass
     # had merged into one cluster. Mapping each final id to its nearest live
-    # id independently handed BOTH of them "S1" and undid the correction.
+    # id independently handed BOTH of them "S1" and undid the correction. The
+    # second cluster here is a DIFFERENT voice (well past the threshold), so
+    # it must be left unmatched for the caller to mint.
     live = {"S1": _v(1, 0, 0)}
-    final = [("F0", _v(0.99, 0.01, 0)), ("F1", _v(0.9, 0.1, 0))]
-    mapping = reconcile(live, final)
+    final = [("F0", _v(0.99, 0.01, 0)), ("F1", _v(0, 1, 0))]
+    mapping = reconcile(live, final, threshold=0.25)
     assert mapping == {"F0": "S1"}                 # the closest match wins it
-    assert "F1" not in mapping                     # ... the other is left to be minted
+    assert "F1" not in mapping                     # ... the other is minted
+
+def test_reconcile_reuses_a_live_id_for_an_over_split_of_the_same_voice():
+    # Design ruling: injectivity is the default, but a surplus final cluster
+    # still within the clusterer's own threshold is the BATCH over-splitting
+    # one person -- minting an id there would strand the user's typed name on
+    # half of that speaker's segments.
+    live = {"S1": _v(1, 0, 0)}
+    final = [("F0", _v(1, 0.02, 0)), ("F1", _v(1, 0.08, 0))]   # both plainly S1
+    assert reconcile(live, final, threshold=0.25) == {"F0": "S1", "F1": "S1"}
+
+def test_reconcile_threshold_comes_from_the_live_clusterer():
+    # Same input, stricter yardstick -> the surplus is no longer "the same
+    # voice" and falls through to minting. The worker passes
+    # `OnlineClusterer.threshold`, so both passes always agree on sameness.
+    live = {"S1": _v(1, 0, 0)}
+    final = [("F0", _v(1, 0.02, 0)), ("F1", _v(1, 0.5, 0))]
+    assert reconcile(live, final, threshold=0.25) == {"F0": "S1", "F1": "S1"}
+    assert reconcile(live, final, threshold=0.0001) == {"F0": "S1"}
+    assert OnlineClusterer().threshold == 0.25          # the one default
 
 
 # ---- spec §4/§8: many-to-one merge keeps both names and flags --------------

@@ -88,6 +88,15 @@ class OnlineClusterer:
         # All clusters are pinned: return nearest but do NOT update centroid
         return best_id
 
+    @property
+    def threshold(self) -> float:
+        """The cosine distance that counts as "the same voice" for this run.
+
+        Read by the Stop pass so `reconcile` judges a surplus final cluster by
+        the SAME yardstick live assignment used, rather than a second constant.
+        """
+        return self._threshold
+
     def pin(self, cluster_id: str) -> None:
         """Mark a cluster as pinned (centroid never corrupted by folds).
 
@@ -105,26 +114,35 @@ class OnlineClusterer:
         return {k: v.copy() for k, v in self._centroids.items()}
 
 def reconcile(live_centroids: dict[str, np.ndarray],
-              final: list[tuple[str, np.ndarray]]) -> dict[str, str]:
-    """Match final cluster ids to live cluster ids by cosine, one-to-one.
+              final: list[tuple[str, np.ndarray]],
+              threshold: float = 0.25) -> dict[str, str]:
+    """Match final cluster ids to live cluster ids by cosine.
 
-    Best-first greedy matching: the closest (final, live) pair anywhere wins,
-    then both are taken out of the running. The pairing MUST be injective --
-    a live cluster is one person, so two distinct final clusters can never
-    both be it. Mapping each final id independently to its nearest live id
-    (Qodo Q11) quietly re-collapsed everything the authoritative batch pass
-    had just separated: with one live cluster and two real speakers, both
-    final clusters mapped back to "S1". The caller mints a fresh live-style
-    id for whatever stays unmatched.
+    Injective FIRST: best-first greedy, the closest (final, live) pair
+    anywhere wins and both leave the running. Mapping each final id
+    independently to its nearest live id (Qodo Q11) quietly re-collapsed
+    everything the authoritative batch pass had just separated -- with one
+    live cluster and two real speakers, both final clusters mapped back to
+    "S1".
+
+    Then a bounded exception for the surplus. A leftover final cluster that is
+    still within `threshold` of some already-matched live cluster is the batch
+    pass OVER-splitting one person, not a second person: give it that live id
+    anyway, so the user's typed name survives the split. Only a leftover that
+    no live cluster claims within the threshold is a genuinely new speaker,
+    and the caller mints a fresh live-style id for it.
 
     Args:
         live_centroids: Dict mapping live cluster ID to centroid vector.
         final: List of (cluster_id, centroid) tuples from a batch pass.
+        threshold: Cosine DISTANCE (1 - similarity) that still counts as the
+            same voice. Pass the live clusterer's own `threshold` so both
+            passes judge sameness identically.
 
     Returns:
         Dict mapping final cluster ID to its matched live cluster ID. Final
-        clusters left over (more final clusters than live ones, or no live
-        centroids at all) are absent.
+        clusters no live cluster claims (too dissimilar, or no live centroids
+        at all) are absent.
     """
     pairs = [
         (
@@ -143,6 +161,10 @@ def reconcile(live_centroids: dict[str, np.ndarray],
             continue
         out[fid] = lid
         taken.add(lid)
+    # Surplus finals: reuse a taken live id only when it really is that voice.
+    for neg_sim, fid, lid in pairs:
+        if fid not in out and (1.0 + neg_sim) <= threshold:
+            out[fid] = lid  # `pairs` is sorted, so this is fid's nearest
     return out
 
 

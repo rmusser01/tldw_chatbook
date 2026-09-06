@@ -72,7 +72,7 @@ def _embed(encoder, torch, np, pcm: bytes):
     return np.asarray(emb.squeeze().detach().cpu().numpy(), dtype=np.float32)
 
 
-def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn):
+def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25):
     """Pure (no torch): cluster window embeddings, reconcile to live ids.
 
     The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
@@ -95,6 +95,10 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn):
             the count.
         cluster_fn: ``(np.ndarray[n,d], int | None) -> labels[n]``; skipped
             when there are fewer than two windows to cluster.
+        threshold: The live clusterer's own cosine-distance threshold, passed
+            to `reconcile` so a surplus final cluster that is plainly the same
+            voice keeps that speaker's live id (and name) instead of being
+            minted a new one.
 
     Returns:
         Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
@@ -115,7 +119,7 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn):
     for label, emb in zip(labels, embeddings):
         grouped.setdefault(f"F{label}", []).append(emb)
     final_centroids = [(key, np.mean(vecs, axis=0)) for key, vecs in grouped.items()]
-    mapping = reconcile(live_centroids, final_centroids)  # final label -> live id
+    mapping = reconcile(live_centroids, final_centroids, threshold)  # final label -> live id
     # An unmatched final cluster (no live centroid to match -- e.g. near-live
     # labelling was backpressured the whole meeting, so live_centroids is
     # empty) must NOT surface as "Speaker F0" (final whole-branch review I2):
@@ -176,7 +180,9 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
         "min_speakers": 1,
         "clustering_method": ClusteringMethod.AGGLOMERATIVE.value,
     })
-    return _reconcile_windows(spans, embeddings, live.centroids(), svc._cluster_speakers)
+    return _reconcile_windows(
+        spans, embeddings, live.centroids(), svc._cluster_speakers, live.threshold,
+    )
 
 
 def _write(stdout, obj) -> None:

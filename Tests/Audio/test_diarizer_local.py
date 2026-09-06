@@ -11,7 +11,9 @@ import threading
 import time
 from pathlib import Path
 
+from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
+    COARSE_UNAVAILABLE,
     DIARIZE_BUDGET_CEILING_S,
     DIARIZE_BUDGET_FLOOR_S,
     SpeechBrainDiarizer,
@@ -142,6 +144,25 @@ def test_construction_is_non_blocking_and_assign_is_coarse_until_ready():
     gate.set()
     assert d.wait_ready(2.0) is True
     assert d.assign(_PCM, 16000, 1) == "S1"
+
+
+def test_diarize_gives_up_on_a_worker_that_never_warms_and_records_why(monkeypatch):
+    """Re-review item 1: the warm-up wait is bounded by READY_TIMEOUT_S, NOT by
+    the clamped batch budget (which would let the Stop pass stall for 2x it),
+    and a worker that spawned but never reached READY is the spec §7 "failed to
+    become ready" case -- it has to reach the footer, not fail silently."""
+    monkeypatch.setattr(diarizer_local, "READY_TIMEOUT_S", 0.05)
+    proc = FakeProc([_SEGMENTS_REPLY])
+    proc.stderr = _GatedStderr(threading.Event())   # a gate nobody ever opens
+
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    t0 = time.monotonic()
+    assert d.diarize(Path("mixed.wav"), 0.0, 3.0) == []
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 5.0                            # bounded by READY_TIMEOUT_S...
+    assert elapsed < DIARIZE_BUDGET_FLOOR_S         # ... not by the 60 s budget
+    assert d.coarse_reason == COARSE_UNAVAILABLE    # ... and the footer can say so
 
 
 def test_diarize_waits_for_a_late_ready():

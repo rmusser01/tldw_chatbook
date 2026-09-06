@@ -284,3 +284,22 @@ def test_stop_reports_no_reason_when_the_backend_was_fine(meeting_session_with_f
     session = meeting_session_with_fake_capture(diarizer=FakeDiarizer([]), mode="call")
     session.start()
     assert session.stop().speaker_labels_reason is None
+
+
+def test_stop_captures_a_reason_the_stop_pass_itself_discovered(tmp_path, meeting_session_with_fake_capture):
+    """Re-review item 1, session half: the real backend only learns it never
+    warmed up INSIDE `diarize()` (that is where it waits). `stop()` must read
+    `coarse_reason` after the batch pass, not before, or that case is silent."""
+
+    class NeverWarmDiarizer(FakeDiarizer):
+        coarse_reason = None
+
+        def diarize(self, wav_path, start_s, end_s):
+            self.coarse_reason = "backend unavailable"   # gave up waiting for READY
+            return []
+
+    (tmp_path / "others.wav").write_bytes(b"")
+    session = meeting_session_with_fake_capture(diarizer=NeverWarmDiarizer([]), mode="call")
+    session.start()
+    result = session.stop()
+    assert result.speaker_labels_reason == "backend unavailable"

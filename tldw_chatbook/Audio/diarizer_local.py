@@ -320,15 +320,22 @@ class SpeechBrainDiarizer:
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]:
         """Batch Stop pass: reconciled live ids for the whole recording.
 
-        The only call that WAITS on warm-up (bounded by the same budget), so
-        a meeting whose model finished downloading mid-recording still gets
-        an authoritative pass. Best-effort: any trouble returns ``[]`` and
-        the session keeps the near-live labels ``assign`` already placed.
+        The only call that WAITS on warm-up, so a meeting whose model finished
+        downloading mid-recording still gets an authoritative pass. The two
+        waits are bounded SEPARATELY: warm-up by `READY_TIMEOUT_S` (never the
+        clamped batch budget, or the Stop pass could stall for 2x it), the
+        reply by the budget. Best-effort: any trouble returns ``[]`` and the
+        session keeps the near-live labels ``assign`` already placed.
         """
         budget = diarize_budget_s(end_s - start_s)
         if self._degraded:
             return []
-        if not self.wait_ready(budget):
+        if not self.wait_ready(min(budget, READY_TIMEOUT_S)):
+            # Spawned but never warm (offline first-run download, wedged
+            # worker): this IS the spec §7 "failed to become ready" case, so
+            # record it -- otherwise the footer stays silent about a meeting
+            # that ran entirely on coarse labels (re-review, item 1).
+            self._mark_coarse(COARSE_UNAVAILABLE)
             return []
         with self._lock:
             if self._degraded:
