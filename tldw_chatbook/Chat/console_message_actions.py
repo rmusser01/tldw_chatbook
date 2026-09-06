@@ -782,6 +782,7 @@ class ConsoleMessageActionService:
                     )
                 )
             elif action.action_id.startswith("canvas-open"):
+                overflow.append(action)
             elif action.action_id in {"summarize-note", "save-transcript-note"}:
                 overflow.append(action)
         return tuple(overflow)
