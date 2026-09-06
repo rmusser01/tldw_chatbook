@@ -1928,6 +1928,7 @@ class ConsoleCompactionService:
                         resolution=resolution,
                         messages=attempt_messages,
                         max_output_tokens=plan.requested_output_cap,
+                        route=ConsoleRequestRoute.MANUAL_SUMMARY,
                     )
                 except asyncio.CancelledError:
                     self._finish(
@@ -2498,9 +2499,8 @@ class ConsoleCompactionService:
                         "falling back to the local auxiliary call",
                         type(exc).__name__,
                     )
-        kwargs = {} if route is None else {"route": route}
         completion = await asyncio.wait_for(
-            self._gateway.complete_auxiliary(request, **kwargs),
+            self._gateway.complete_auxiliary(request, route=route),
             timeout=self._auxiliary_timeout,
         )
         return completion, "local"
