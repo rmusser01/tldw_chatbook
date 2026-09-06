@@ -142,6 +142,14 @@ class AuthAccountScopeService:
         )
         if credential_store is None or not active_server_id:
             return
+        store_scoped = getattr(
+            self.server_context_provider, "store_scoped_credential", None
+        )
+        if callable(store_scoped):
+            store_scoped(active_server_id, SERVER_CREDENTIAL_BEARER_TOKEN, access_token)
+            return
+        # Provider predates the scoped-write seam (task-31821); fall back to
+        # the plain (unscoped) API rather than fail the login flow.
         credential_store.set_secret(
             active_server_id,
             SERVER_CREDENTIAL_BEARER_TOKEN,
@@ -153,6 +161,12 @@ class AuthAccountScopeService:
             self._resolve_provider_credential_store_context()
         )
         if credential_store is None or not active_server_id:
+            return
+        delete_scoped = getattr(
+            self.server_context_provider, "delete_scoped_credential", None
+        )
+        if callable(delete_scoped):
+            delete_scoped(active_server_id, SERVER_CREDENTIAL_BEARER_TOKEN)
             return
         credential_store.delete_secret(
             active_server_id,

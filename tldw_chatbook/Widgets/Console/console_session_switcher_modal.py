@@ -243,8 +243,12 @@ class ConsoleSessionSwitcherModal(
             yield Button("Cancel", id="console-switcher-cancel")
 
     async def on_mount(self) -> None:  # type: ignore[override]
-        """Paint Active immediately and leave History cold."""
-        super().on_mount()
+        """Paint Active immediately and leave History cold.
+
+        No super().on_mount(): the dispatcher already invokes
+        SafeModalDismissMixin.on_mount separately for this Mount event
+        (TASK-31822).
+        """
         self._sync_modal_max_height()
         self._update_receipt_status()
         self.query_one("#console-switcher-query", Input).focus()

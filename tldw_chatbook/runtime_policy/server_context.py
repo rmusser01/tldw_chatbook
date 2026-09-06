@@ -59,6 +59,12 @@ def default_server_credential_profile_id() -> str | None:
     directly, so tests that construct it explicitly (the overwhelming
     majority of `Tests/RuntimePolicy/`) keep getting the unscoped default
     with no changes required.
+
+    Returns:
+        None under the default (un-retargeted) config path. Otherwise the
+        resolved `TLDW_CONFIG_PATH` config file path, used as
+        `RuntimeServerContextProvider`'s `credential_profile_id` -- the
+        dedicated keyring namespace every server under that profile shares.
     """
     if not os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -451,14 +457,16 @@ class RuntimeServerContextProvider:
     def clear_active_server_credentials(self) -> None:
         active_server_id = self._require_active_server_id()
         self.credential_store.clear_server(
-            self._credential_profile_scope_id(active_server_id)
+            self._credential_profile_scope_id(active_server_id),
+            normalized_origin=active_server_id,
         )
         self._mark_legacy_server_id_cleared(active_server_id)
         self._invalidate_cached_client()
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(
-            self._credential_profile_scope_id(server_id)
+            self._credential_profile_scope_id(server_id),
+            normalized_origin=server_id,
         )
         self._mark_legacy_server_id_cleared(server_id)
         self._invalidate_cached_client()
@@ -592,6 +600,38 @@ class RuntimeServerContextProvider:
         self._legacy_cleared_server_ids.discard(normalized_server_id)
         self._invalidate_cached_client()
         return purpose
+
+    def store_scoped_credential(self, server_id: str, purpose: str, secret: str) -> None:
+        """Persist ``secret`` for ``server_id``/``purpose``, profile-scoped (task-31821).
+
+        Generic scoped-write seam mirroring the store's ``set_scoped_secret``,
+        but keyed by the plain ``server_id``/``purpose`` pair a caller already
+        has -- it derives the ``ServerCredentialScope`` (including
+        ``server_profile_id``) the same way every other write on this
+        provider does, so callers outside this module never need their own
+        scoping logic. For the default (un-retargeted) profile this lands
+        byte-for-byte where the legacy ``credential_store.set_secret`` call
+        would have (task-31416 AC#4 equivalence).
+
+        Args:
+            server_id: Server profile the secret belongs to.
+            purpose: Credential purpose (e.g. ``SERVER_CREDENTIAL_BEARER_TOKEN``).
+            secret: Secret value to persist.
+        """
+        self.credential_store.set_scoped_secret(
+            self._credential_scope(server_id, purpose), secret
+        )
+
+    def delete_scoped_credential(self, server_id: str, purpose: str) -> None:
+        """Delete the ``server_id``/``purpose`` credential, profile-scoped (task-31821).
+
+        Args:
+            server_id: Server profile the secret belongs to.
+            purpose: Credential purpose (e.g. ``SERVER_CREDENTIAL_BEARER_TOKEN``).
+        """
+        self.credential_store.delete_scoped_secret(
+            self._credential_scope(server_id, purpose)
+        )
 
     def resolve_target(self) -> ConfiguredServerTarget | None:
         active_server_id = self._require_active_server_id()

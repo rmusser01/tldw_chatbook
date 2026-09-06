@@ -397,7 +397,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         return True
 
     async def on_mount(self) -> None:  # type: ignore[override]
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self._sync_layout()
         self.call_after_refresh(self._finish_mount)
 

@@ -177,7 +177,9 @@ class ToolPackImportOptionsModal(
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self.query_one("#tool-pack-import-profile-id", Input).focus()
 
     def _parse(self) -> ToolPackImportOptions | None:
@@ -402,7 +404,9 @@ class ToolPackImportReviewModal(
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self.query_one("#tool-pack-import-unbound", Button).focus()
 
     @on(Button.Pressed, "#tool-pack-import-cancel")
@@ -580,7 +584,9 @@ class ToolPackExportReviewModal(
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self.query_one("#tool-pack-export-continue", Button).focus()
 
     @on(Button.Pressed, "#tool-pack-export-cancel")
@@ -776,7 +782,9 @@ class ToolProfileFirstBindReviewModal(
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self.query_one("#tool-profile-bind-confirm", Button).focus()
 
     @on(Button.Pressed, "#tool-profile-bind-cancel")

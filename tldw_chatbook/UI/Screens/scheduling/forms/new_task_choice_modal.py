@@ -89,7 +89,9 @@ class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self.query_one("#new-task-choice-reminder", Button).focus()
 
     @on(Button.Pressed)

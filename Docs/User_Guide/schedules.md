@@ -305,6 +305,33 @@ target and only changes through **Edit in full…** or the create form.
   buttons, and the automation-only transfer keys that went with them,
   are retired.
 
+### Duplicate and View runs
+
+A second row of buttons sits under Edit/Acknowledge/Run now/Enable/
+Disable/Delete:
+
+- **Duplicate** creates a new local copy of the task, named "*Title*
+  (copy)" — same schedule, body, and linked item, but a fresh id, no
+  transfer state, and no borrowed run history. It always lands on this
+  device, even when the task you duplicated is server-owned: duplicating
+  is a plain new draft, not an implicit move. It is disabled (with the
+  reason shown under the button, same as Edit/Enable/Disable/Delete)
+  while the task is mid-transfer, for the same reason those four are.
+- **View runs** scrolls the pane down to the **Recent runs** list — a
+  reminder has no separate run-history screen of its own, only that
+  inline section, so this is a shortcut to it rather than a new view.
+
+There is no **View results** button here: results (`automation_results`
+rows) are a recurring-question concept a reminder has no equivalent of,
+and a permanently-disabled button plus a permanent explanation for it
+was standing weight this pane doesn't need — the automation detail
+pane's own **View results** (below) covers the action wherever it
+actually applies.
+
+The automation detail pane carries **Duplicate**, **View runs**, and
+**View results** — see "The automation detail pane", below, for what
+they do there.
+
 ## Creating a scheduled task
 
 Press **n**, or click **Create ▾** in the rail header. Both ask which
@@ -689,6 +716,29 @@ selection, not "all searchable library" — pick **Edit in full…** if you
 want the scope to keep resolving to whatever sources are readable at
 each run rather than freezing today's three.
 
+Below Pause/Resume/Run now sits a second row: **Duplicate**, **View
+runs**, and **View results**. **View runs** and **View results** are
+plain shortcuts onto the `Last run` and `Unread results` rows above —
+same destination, same "always reachable, viewing history is never
+gated" rule — so they work for any definition regardless of family or
+lock state. **Duplicate** creates a new local copy named "*Name*
+(copy)" with the same question, schedule, model pin, generation mode,
+sources, and notification policy, and a fresh id. Its **paused or
+active state carries over** — pausing before duplicating, or after, is
+your call, but Duplicate itself never turns a paused definition into a
+running one behind your back. (An archived or otherwise inactive
+source collapses to paused, not archived — a brand-new row starting
+out archived would be a copy you could not even see turned on.) A
+generation mode/sources/finding-policy/retention field the source left
+unset ("Not set") is written as its concrete default in the copy
+(e.g. "Balanced findings") rather than staying unset — display only;
+what actually runs is unaffected either way, since an unset field
+already resolved to that same default. Duplicate always lands on this
+device, the same "new draft, not an implicit move" rule the reminder
+pane's own Duplicate follows, and is disabled (with the reason shown
+under the button) while the definition is mid-transfer or is a family
+this pane cannot author (`agent_task`).
+
 At narrow widths this pane opens full-screen over the list instead of
 beside it — see "Narrow terminals", above. Everything described here
 works there unchanged.
@@ -789,6 +839,61 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against task-31823's final review wave (F1/F2) — docs pass
+against shipped code/tests, 2026-09-06. (1) F2: the reminder pane no
+longer renders a **View results** button at all (it used to render one,
+permanently disabled, plus its own permanent explanation Static — pure
+standing weight on the one pane whose outstanding problem is running
+out of vertical room at the 24-row floor, for an action that can never
+apply to a reminder). AC#1 only requires the action reachable from a
+reminder **or** definition pane; the automation pane's own **View
+results** covers it. (2) F1: duplicating a paused/archived/disabled
+definition whose pause follow-up itself fails (returns non-`saved`, or
+raises) now gets exactly ONE honest warning toast, never also the
+contradictory plain success toast, and never the create's own "Failed
+to duplicate" error (which would misreport an ACTIVE copy that exists
+on disk as a failed duplicate — the opposite of what happened). Pinned
+by `Tests/UI/test_schedules_workbench.py`'s
+`test_duplicate_pause_followup_returning_non_saved_warns_without_a_
+success_toast` and `test_duplicate_pause_followup_raising_warns_and_
+never_reports_failed_to_duplicate`, and
+`Tests/UI/test_schedules_transfer_actions.py`'s
+`test_view_results_is_not_rendered_on_the_reminder_pane`.
+
+*Verified against task-31823 (the detail-pane Duplicate/View runs/View
+results affordance — the redesign spec §5 kebab item deferred twice) —
+docs pass against shipped code/tests, 2026-09-06 (revised after review
+round 1: the first pass of this page wrongly said Duplicate always
+resets a definition's lifecycle to active — see below). New: both
+detail panes gained a second button row under their existing lifecycle
+buttons. Reminder pane: **Duplicate** (creates a local copy, disabled
+mid-transfer same as Edit/Enable/Disable/Delete) and **View runs**
+(scrolls to Recent runs — reminders have no separate run-history
+screen); **View results** was removed from this pane in the final
+review wave above — see there. Automation pane: **Duplicate**/**View
+runs**/**View results**, with **View runs**/**View results** reusing
+the `Last run`/`Unread results` rows' own navigation verbatim, and
+**Duplicate** additionally gated on family (only recurring-question
+definitions can be duplicated). Review round 1 caught two things the
+first pass got wrong or left unsaid: (1) Duplicate must NOT silently
+reactivate a paused definition — the due-run selector gates strictly on
+`lifecycle = 'configured'`, so an unpaused copy would start spending on
+its own schedule unasked; fixed so a paused/archived/disabled source's
+Duplicate collapses to **paused** (never to archived or disabled — a
+fresh row starting there would be invisible to Resume), while an active
+source still duplicates active, unchanged. (2) A duplicated definition's
+unset optional config fields (generation mode, sources scope, finding
+policy, retention policy) get written as concrete defaults in the copy
+rather than staying "Not set" — a display-only divergence from the
+source (the create path's own normalize-on-create step, task-31414),
+never a behavioral one: an unset field already resolves to that same
+default at run time. Pinned by
+`Tests/UI/test_schedules_transfer_actions.py`,
+`Tests/UI/test_schedules_workbench.py` (including
+`test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_
+due_for_selection` and its active-source control), and
+`Tests/UI/test_schedules_automations_tab.py`.*
 
 *Verified against the schedules UAT remediation, Tasks 1/3/4 — live in
 the real TUI, 2026-09-05 (scratch profile, 235x52 and 80x24). Copy
