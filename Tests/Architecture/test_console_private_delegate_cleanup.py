@@ -339,6 +339,19 @@ def _tree(path):
     return ast.parse(path.read_text())
 
 
+def test_private_delegate_inventory_keeps_exact_approved_count_and_command_owners():
+    assert len(DELEGATES) == 64
+    expected_command_owners = {
+        "_console_command_generate_image": "image",
+        "_console_command_generate_video": "video",
+        "_console_command_stream_video": "video",
+        "_console_command_skills": "skill",
+    }
+    assert {
+        name: DELEGATES[name][0] for name in expected_command_owners
+    } == expected_command_owners
+
+
 @pytest.mark.parametrize("name", DELEGATES)
 def test_private_delegate_is_retired_and_its_owner_remains(name):
     module, owner_name, target_name = DELEGATES[name]

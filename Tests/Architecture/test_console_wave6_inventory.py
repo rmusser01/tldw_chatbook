@@ -137,6 +137,7 @@ class Wave6Group:
     owner_name: str
     moved: frozenset[str]
     delegates: frozenset[str] = frozenset()
+    post_wave6_retired: frozenset[str] = frozenset()
     stays: frozenset[str] = frozenset()
     deleted: frozenset[str] = frozenset()
     raw_lines: int = 0
@@ -146,7 +147,13 @@ class Wave6Group:
     @property
     def raw_names(self) -> frozenset[str]:
         """All implementation-base definitions counted by this family."""
-        return self.moved | self.delegates | self.stays | self.deleted
+        return (
+            self.moved
+            | self.delegates
+            | self.post_wave6_retired
+            | self.stays
+            | self.deleted
+        )
 
     @property
     def removed_methods(self) -> int:
@@ -188,7 +195,7 @@ WAVE6_GROUPS = {
                 "_handle_console_toggle_image_view",
             }
         ),
-        delegates=frozenset({"_console_command_generate_image"}),
+        post_wave6_retired=frozenset({"_console_command_generate_image"}),
         stays=frozenset(
             {
                 "_ensure_console_image_view",
@@ -240,7 +247,7 @@ WAVE6_GROUPS = {
                 "_regenerate_console_video_message",
             }
         ),
-        delegates=frozenset(
+        post_wave6_retired=frozenset(
             {"_console_command_generate_video", "_console_command_stream_video"}
         ),
         raw_lines=1_292,
@@ -352,11 +359,11 @@ WAVE6_GROUPS = {
         ),
         delegates=frozenset(
             {
-                "_console_command_skills",
                 "handle_console_skill_install_decided",
                 "handle_console_skill_script_decided",
             }
         ),
+        post_wave6_retired=frozenset({"_console_command_skills"}),
         deleted=frozenset(
             {
                 "_console_skill_search",
@@ -557,17 +564,37 @@ BASELINE_DEFAULTS = {
     "_console_expression_spec_cache": ("dict",),
 }
 DELEGATE_BINDINGS = {
-    "_console_command_generate_image": "_dispatch_console_command",
-    "_console_command_generate_video": "_dispatch_console_command",
-    "_console_command_stream_video": "_dispatch_console_command",
     "on_console_workspace_conversation_search_changed": "@on",
     "_execute_console_library_rag_search": "_run_console_library_rag_from_visible_action",
-    "_console_command_skills": "_dispatch_console_command",
     "handle_console_skill_install_decided": "@on",
     "handle_console_skill_script_decided": "@on",
     "on_console_auto_speak_changed": "@on",
     "on_console_auto_speak_resume_requested": "@on",
     "on_console_auto_speak_retry_requested": "@on",
+}
+POST_WAVE6_RETIRED_COMMAND_OWNERS = {
+    "_console_command_generate_image": "_image",
+    "_console_command_generate_video": "_video",
+    "_console_command_stream_video": "_video",
+    "_console_command_skills": "_skill",
+}
+SKILL_EVENT_DELEGATE_TEMPLATES = {
+    "handle_console_skill_install_decided": """
+@on(SkillInstallConfirmCard.InstallDecided)
+def handle_console_skill_install_decided(self, event: Any) -> None:
+    event.stop()
+    self._skill.handle_console_skill_install_decided(
+        event.allow, request_id=event.request_id
+    )
+""",
+    "handle_console_skill_script_decided": """
+@on(SkillScriptConfirmCard.ScriptDecided)
+def handle_console_skill_script_decided(self, event: Any) -> None:
+    event.stop()
+    self._skill.handle_console_skill_script_decided(
+        event.allow, event.remember, request_id=event.request_id
+    )
+""",
 }
 
 
@@ -1099,15 +1126,6 @@ def _has_real_delegate_binding(
     if binding == "@on":
         return _has_on_binding(screen_methods[method_name])
     caller = screen_methods.get(binding)
-    if binding == "_dispatch_console_command" and caller is not None:
-        commands_path = _REPO_ROOT / "tldw_chatbook/UI/Console_Modules/commands.py"
-        wiring_path = commands_path.with_name("wiring.py")
-        return _has_command_callback_binding(
-            caller,
-            method_name,
-            _methods(commands_path, "ConsoleCommandsController"),
-            ast.parse(wiring_path.read_text(encoding="utf-8")),
-        )
     return caller is not None and any(
         isinstance(node, ast.Attribute)
         and isinstance(node.value, ast.Name)
@@ -1119,24 +1137,25 @@ def _has_real_delegate_binding(
 
 
 def _has_command_callback_binding(
-    caller: ast.AST,
     method_name: str,
+    owner_name: str,
     commands: dict[str, ast.AST],
     wiring: ast.AST,
 ) -> bool:
-    """Follow only the explicit screen → command owner → injected callback route."""
+    """Require one late-bound owner callback reached by awaited command dispatch."""
 
     def contains(tree: ast.AST, expression: str) -> bool:
         expected = ast.dump(ast.parse(expression, mode="eval").body)
         return any(ast.dump(node) == expected for node in ast.walk(tree))
 
-    if not contains(caller, "self._commands._dispatch_console_command"):
-        return False
     dispatch = commands.get("_dispatch_console_command")
     constructor = commands.get("__init__")
     if dispatch is None or constructor is None:
         return False
     if not contains(dispatch, f"self.{method_name}"):
+        return False
+    expected_await = ast.dump(ast.parse("await handler(parse)").body[0].value)
+    if not any(ast.dump(node) == expected_await for node in ast.walk(dispatch)):
         return False
     expected_assignment = ast.dump(
         ast.parse(f"self.{method_name} = {method_name}").body[0]
@@ -1160,42 +1179,65 @@ def _has_command_callback_binding(
             continue
         for keyword in call.keywords:
             if keyword.arg == method_name and isinstance(keyword.value, ast.Lambda):
-                body = keyword.value.body
-                if isinstance(body, ast.Call) and contains(
-                    body.func, f"screen.{method_name}"
-                ):
+                expected_lambda = ast.parse(
+                    f"lambda *args, **kwargs: "
+                    f"screen.{owner_name}.{method_name}(*args, **kwargs)",
+                    mode="eval",
+                ).body
+                if ast.dump(keyword.value) == ast.dump(expected_lambda):
                     return True
     return False
 
 
 @pytest.mark.parametrize(
-    "broken", [None, "screen", "dispatch", "constructor", "owner", "callback"]
+    "broken",
+    [None, "dispatch", "constructor", "assignment", "owner", "args", "kwargs", "await"],
 )
 def test_command_callback_binding_rejects_disconnected_routes(broken):
-    caller = ast.parse(
-        "async def caller(self, parse):\n    await self._commands._dispatch_console_command(parse)"
-    )
     source = """class Commands:
     def __init__(self, *, delegate):
         self.delegate = delegate
-    def _dispatch_console_command(self):
-        return self.delegate
+    async def _dispatch_console_command(self, parse):
+        dispatch_map = {"sample": self.delegate}
+        handler = dispatch_map.get("sample")
+        await handler(parse)
 """
-    wiring = "screen._commands = ConsoleCommandsController(delegate=lambda *args: screen.delegate(*args))"
-    if broken == "screen":
-        caller = ast.parse("self._unrelated._dispatch_console_command(parse)")
+    wiring = (
+        "screen._commands = ConsoleCommandsController("
+        "delegate=lambda *args, **kwargs: "
+        "screen._owner.delegate(*args, **kwargs))"
+    )
     if broken == "dispatch":
-        source = source.replace("return self.delegate", "return self.unrelated")
+        source = source.replace("self.delegate}", "self.unrelated}")
     if broken == "constructor":
         source = source.replace("self.delegate = delegate", "self.delegate = unrelated")
-    if broken == "owner":
+    if broken == "assignment":
         wiring = wiring.replace("screen._commands", "screen._unrelated")
-    if broken == "callback":
-        wiring = wiring.replace("screen.delegate", "unrelated.delegate")
+    if broken == "owner":
+        wiring = wiring.replace("screen._owner", "screen._unrelated")
+    if broken == "args":
+        wiring = wiring.replace("(*args, **kwargs)", "(**kwargs)")
+    if broken == "kwargs":
+        wiring = wiring.replace("(*args, **kwargs)", "(*args)")
+    if broken == "await":
+        source = source.replace("await handler(parse)", "handler(parse)")
     commands = _methods_from_class(ast.parse(source).body[0])
     assert _has_command_callback_binding(
-        caller, "delegate", commands, ast.parse(wiring)
+        "delegate", "_owner", commands, ast.parse(wiring)
     ) is (broken is None)
+
+
+@pytest.mark.unit
+def test_post_wave6_retired_commands_keep_exact_late_bound_owner_callbacks() -> None:
+    """Keep all four retired screen commands late-bound to their real owners."""
+    commands_path = _REPO_ROOT / "tldw_chatbook/UI/Console_Modules/commands.py"
+    commands = _methods(commands_path, "ConsoleCommandsController")
+    wiring = ast.parse(commands_path.with_name("wiring.py").read_text(encoding="utf-8"))
+
+    for method_name, owner_name in POST_WAVE6_RETIRED_COMMAND_OWNERS.items():
+        assert _has_command_callback_binding(
+            method_name, owner_name, commands, wiring
+        ), method_name
 
 
 def _assert_no_dom_access(methods: object) -> None:
@@ -1324,6 +1366,15 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
     assert set(DELEGATE_BINDINGS) == set().union(
         *(group.delegates for group in WAVE6_GROUPS.values())
     )
+    assert POST_WAVE6_RETIRED_COMMAND_OWNERS == {
+        "_console_command_generate_image": "_image",
+        "_console_command_generate_video": "_video",
+        "_console_command_stream_video": "_video",
+        "_console_command_skills": "_skill",
+    }
+    assert set(POST_WAVE6_RETIRED_COMMAND_OWNERS) == set().union(
+        *(group.post_wave6_retired for group in WAVE6_GROUPS.values())
+    )
     all_names: set[str] = set()
     for name, group in WAVE6_GROUPS.items():
         overlap = all_names & group.raw_names
@@ -1346,6 +1397,10 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
             assert owners == 1, f"{name}.{method_name} must have exactly one owner"
             if method_name in target_owners:
                 assert not _calls_query_one(target_owners[method_name])
+        for method_name in group.post_wave6_retired:
+            assert method_name not in screen_methods
+            assert method_name in target_owners
+            assert not _calls_query_one(target_owners[method_name])
         assert group.delegates <= screen_methods.keys()
         assert group.stays <= screen_methods.keys()
         assert not (group.deleted & target_owners.keys())
@@ -1356,9 +1411,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
             group.raw_lines
         )
 
-        complete = not (group.moved & screen_methods.keys()) and not (
-            group.deleted & screen_methods.keys()
-        )
+        complete = not (
+            (group.moved | group.post_wave6_retired) & screen_methods.keys()
+        ) and not (group.deleted & screen_methods.keys())
         if complete:
             residue = group.delegates | group.stays
             assert (
@@ -1374,7 +1429,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         if target_path.exists():
             methods_to_scan = (
                 target_methods[method_name]
-                for method_name in group.moved | group.delegates
+                for method_name in (
+                    group.moved | group.delegates | group.post_wave6_retired
+                )
                 if method_name in target_methods
             )
             _assert_no_dom_access(methods_to_scan)
@@ -1493,7 +1550,7 @@ def test_retrieval_compatibility_descriptors_all_target_retrieval() -> None:
 
 @pytest.mark.unit
 def test_skill_family_has_completed_controller_ownership() -> None:
-    """Require the exact nine-M/three-D/four-X skill inventory."""
+    """Require current ownership of the historical skill inventory."""
     group = WAVE6_GROUPS["skill"]
     target_path = _REPO_ROOT / group.target_path
     screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
@@ -1505,11 +1562,16 @@ def test_skill_family_has_completed_controller_ownership() -> None:
         f"{sorted(group.moved & screen_methods.keys())}"
     )
     assert group.moved <= target_methods.keys()
+    assert not (group.post_wave6_retired & screen_methods.keys())
+    assert group.post_wave6_retired <= target_methods.keys()
     assert group.delegates <= screen_methods.keys()
     assert group.delegates <= target_methods.keys()
     assert not (group.deleted & screen_methods.keys())
     assert not (group.deleted & target_methods.keys())
-    owned = [target_methods[name] for name in group.moved | group.delegates]
+    owned = [
+        target_methods[name]
+        for name in group.moved | group.delegates | group.post_wave6_retired
+    ]
     _assert_no_dom_access(owned)
     assert "_screen" not in _self_assignments(target_methods["__init__"])
 
@@ -1528,11 +1590,7 @@ def test_skill_compatibility_descriptor_targets_skill_controller() -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "method_name",
-    [
-        "_console_command_skills",
-        "handle_console_skill_install_decided",
-        "handle_console_skill_script_decided",
-    ],
+    SKILL_EVENT_DELEGATE_TEMPLATES,
 )
 def test_skill_screen_entry_points_are_bounded_controller_delegates(
     method_name: str,
@@ -1542,18 +1600,10 @@ def test_skill_screen_entry_points_are_bounded_controller_delegates(
     _assert_delegate_contract(
         _methods(_SCREEN_PATH, "ChatScreen"), method_name, complete=True
     )
-    calls = [
-        node
-        for node in ast.walk(method)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == method_name
-        and isinstance(node.func.value, ast.Attribute)
-        and isinstance(node.func.value.value, ast.Name)
-        and node.func.value.value.id == "self"
-        and node.func.value.attr == "_skill"
-    ]
-    assert len(calls) == 1
+    expected = ast.parse(SKILL_EVENT_DELEGATE_TEMPLATES[method_name]).body[0]
+    assert ast.dump(method, include_attributes=False) == ast.dump(
+        expected, include_attributes=False
+    )
 
 
 @pytest.mark.unit

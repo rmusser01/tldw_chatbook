@@ -277,10 +277,20 @@ def _seed_streaming_assistant(store: ConsoleChatStore, session_id: str) -> str:
     """Append a real user+assistant pair so `_mark_stream_stopped` (which
     calls `store.mark_message_stopped`) has a real row to act on -- a bare
     string id would raise KeyError deep inside `stop_active_run`."""
-    store.append_message(session_id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(
-        session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+    user = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="hi",
+        persist=True,
     )
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+    assert user.persisted_message_id is not None
+    assert assistant.persisted_message_id is None
     store.append_stream_chunk(assistant.id, "partial")
     return assistant.id
 
@@ -339,6 +349,11 @@ async def test_stop_active_run_cancels_only_viewed_sessions_task(
 
     store.switch_session(session_a)  # A is VIEWED
     assert controller.stop_active_run() is True
+
+    stopped_a = store.get_message(assistant_a)
+    assert stopped_a.content == "partial"
+    assert stopped_a.status == "stopped"
+    assert stopped_a.persisted_message_id is not None
 
     with pytest.raises(asyncio.CancelledError):
         await task_a
