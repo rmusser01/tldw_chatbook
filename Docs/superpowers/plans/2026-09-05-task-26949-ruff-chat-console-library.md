@@ -104,7 +104,7 @@
 
   Add concise Implementation Notes containing every exact verification command/result and the focused-test rationale. Check all eight acceptance criteria, set status to `Done`, update the date, and state the ADR determination. Mark completed plan steps accurately.
 
-- [ ] **Step 4: Review and prepare integration**
+- [x] **Step 4: Review and prepare integration**
 
   Commit the task/plan closeout separately, generate a whole-branch review package from the immutable branch base, obtain an independent final review, and address all Critical or Important findings before using `superpowers:finishing-a-development-branch` for PR integration.
 
