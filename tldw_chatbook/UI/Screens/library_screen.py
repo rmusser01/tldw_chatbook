@@ -517,7 +517,11 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from .destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_recovery_state,
+    policy_denied_recovery_state,
+)
 from .model_browser_state import install_failure_message
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -731,6 +735,9 @@ from ..Library_Modules.screen_constants import (
     _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY,
     LIBRARY_SERVICE_ERROR_COPY,
     LIBRARY_SERVICE_UNAVAILABLE_COPY,
+    LIBRARY_SOURCE_FAILURE_SELECTOR,
+    LIBRARY_SOURCE_RETRY_ID,
+    LIBRARY_SOURCE_TIMEOUT_COPY,
     LIBRARY_EMPTY_COPY,
     LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
     LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
@@ -855,6 +862,21 @@ def _assign_library_reader_preferences_attribute(
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
     setattr(target, tail, value)
+
+
+def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
+    """The one warning both source-snapshot failure branches share.
+
+    task-31632 final review I-2: splitting the deadline into its own
+    ``except TimeoutError`` branch left it with no log line at all, while
+    the hard-failure branch kept the single ``warning`` the old bare
+    ``except`` gave every failure kind. Routing both branches through this
+    one call -- instead of adding a second ``logger.*`` site -- keeps the
+    call-site count unchanged; only its own text (the marker) differs.
+    """
+    logger.opt(exception=True).warning(
+        f"Failed to load local Library source snapshot.{deadline_marker}"
+    )
 
 
 class LibraryScreen(BaseAppScreen):
@@ -9637,7 +9659,15 @@ class LibraryScreen(BaseAppScreen):
                     origin="entry",
                     focus_identity=None,
                 )
-        self._refresh_local_source_snapshot()
+        # task-31632 AC#2: returning to Library is the source snapshot's
+        # automatic retry -- one per return, no timer. A snapshot that missed
+        # its DEADLINE is exactly the case a later attempt may beat, so it
+        # keeps this refresh; a HARD failure does not re-run itself (its
+        # callout carries the Retry, in reach, and a failing read is not
+        # worth the deadline again on every visit).
+        source_failure = self._library_source_load_failure()
+        if source_failure is None or source_failure.severity != "error":
+            self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
@@ -12695,6 +12725,27 @@ class LibraryScreen(BaseAppScreen):
             if study_counts is not None
             else {"study_decks": None, "flashcards_due": None, "quizzes": None}
         )
+        if recovery_state is not None:
+            previous_recovery = self._library_lookup_recovery_state
+            if (
+                previous_recovery is not None
+                and dataclasses.replace(recovery_state, attempt=1)
+                == dataclasses.replace(previous_recovery, attempt=1)
+            ):
+                # task-31632 final review I-1: a byte-identical repeat
+                # failure must still visibly repaint, never go silent --
+                # bumping ``attempt`` breaks the equality check below (and
+                # the ones above never differ for a repeat, since records/
+                # counts/lookup_error are just as static) so the callout
+                # reads a fresh attempt number instead of nothing at all.
+                recovery_state = dataclasses.replace(
+                    recovery_state, attempt=previous_recovery.attempt + 1
+                )
+                # Keep the two in sync: every existing ``_library_lookup_
+                # error`` consumer (the rail's Details line, the bare
+                # ``#library-canvas-error`` Statics) already reads
+                # ``recovery_state.message`` through this field.
+                lookup_error = recovery_state.message
         presentation_changed = not self._library_loaded or (
             normalized_records != self._local_source_records
             or normalized_counts != self._local_source_counts
@@ -13220,16 +13271,53 @@ class LibraryScreen(BaseAppScreen):
                 recovery_state,
                 empty_study_counts,
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to load local Library source snapshot.",
+        except TimeoutError:
+            # task-31632 AC#2: ``asyncio.TimeoutError`` IS ``TimeoutError``
+            # on 3.11+, and it must be told apart from a hard failure --
+            # collapsed into the same static sentence, a deadline the next
+            # attempt may beat read as an indefinite outage. This is the one
+            # place the deadline figure is true, so the reason quotes it.
+            # Final review I-2: shares the generic branch's one warning
+            # (via ``_log_source_snapshot_failure``) with a deadline marker,
+            # so a chronic/repeated deadline stays diagnosable off-screen
+            # too, without a second ``logger.*`` call site.
+            _log_source_snapshot_failure(
+                f" (deadline: waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
+            )
+            timeout_state = load_failure_recovery_state(
+                what=LIBRARY_SOURCE_TIMEOUT_COPY,
+                reason=f"waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s",
+                retry_id=LIBRARY_SOURCE_RETRY_ID,
+                stable_selector=LIBRARY_SOURCE_FAILURE_SELECTOR,
+                kind="timeout",
             )
             return (
                 empty_records,
                 empty_counts,
                 empty_total_known,
-                LIBRARY_SERVICE_ERROR_COPY,
-                None,
+                timeout_state.message,
+                timeout_state,
+                empty_study_counts,
+            )
+        except Exception as exc:
+            _log_source_snapshot_failure()
+            # ``_retry_failure_reason`` is the shared leak rule the Media
+            # callout already applies: an OS/SQLite message is the reader's
+            # own words, anything else is reduced to its class name so an
+            # arbitrary exception's text (which can carry a private path)
+            # never reaches the screen.
+            failure_state = load_failure_recovery_state(
+                what=LIBRARY_SERVICE_ERROR_COPY,
+                reason=_retry_failure_reason(exc),
+                retry_id=LIBRARY_SOURCE_RETRY_ID,
+                stable_selector=LIBRARY_SOURCE_FAILURE_SELECTOR,
+            )
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                failure_state.message,
+                failure_state,
                 empty_study_counts,
             )
 
@@ -13553,11 +13641,20 @@ class LibraryScreen(BaseAppScreen):
         loading policy `_build_library_shell_input()` applies to the rail's
         own count suffixes. `_hub_source_count_value()` appends "+" when
         the source's total is an estimate, mirroring the rail. On a lookup
-        ERROR the line carries the error itself rather than misleading
-        zeros (PR #1318 review; the F-014 count policy: a failed fetch
-        must not dress up as an empty Library).
+        ERROR the line never reports zeros (PR #1318 review; the F-014
+        count policy: a failed fetch must not dress up as an empty
+        Library) -- it carries the error itself, or stays EMPTY when the
+        failure has its own recovery callout above (task-31632).
         """
         if self._library_lookup_error is not None:
+            if self._library_source_load_failure() is not None:
+                # task-31632: the recovery callout above already reads
+                # "<what> · <why>"; repeating it here as a bare line under
+                # its own bordered card is the duplicate the callout exists
+                # to remove. Failures WITHOUT a load-failure state (policy
+                # denials, a runtime with no source services) have no
+                # callout and keep carrying their sentence here.
+                return ""
             return self._library_lookup_error
 
         def value(source_type: str) -> str:
@@ -13570,6 +13667,23 @@ class LibraryScreen(BaseAppScreen):
             f"Conversations ({value('conversations')})"
         )
 
+    def _library_source_load_failure(self) -> DestinationRecoveryState | None:
+        """Return the source-snapshot failure the hub paints as a callout.
+
+        Only the snapshot's OWN load failures (the deadline and the hard
+        failure raised at the ``wait_for`` site) carry this Retry id -- a
+        policy denial keeps its taxonomy state and its own copy, and a
+        runtime without source services has no recovery state at all.
+
+        Returns:
+            The recovery state to render, or ``None`` when the current
+            lookup error is not one of the snapshot's load failures.
+        """
+        state = self._library_lookup_recovery_state
+        if state is None or state.retry_id != LIBRARY_SOURCE_RETRY_ID:
+            return None
+        return state
+
     def _library_landing_canvas_state(self) -> LibraryLandingCanvasState:
         """Build the landing owner's display-only snapshot."""
         get_started = self._library_lifecycle in (
@@ -13577,6 +13691,13 @@ class LibraryScreen(BaseAppScreen):
             LibraryLifecycle.STARTER,
         )
         lifecycle_status = self._library_onboarding_status_copy if get_started else ""
+        # Qodo PR G finding 5: the source-snapshot failure is valid
+        # regardless of lifecycle -- a new profile's first source read can
+        # time out or fail exactly like a returning one's, and withholding
+        # it here left a STARTER/UNKNOWN visit with empty counts and no
+        # callout or Retry. The canvas is the one that decides how to
+        # compose it per mode (above the starter content in Get-started).
+        load_failure = self._library_source_load_failure()
         attention_action = (
             self._library_landing_attention_action()
             if not get_started and not self._library_notes_compact
@@ -13613,6 +13734,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_landing_continue_action() if not get_started else None
             ),
             attention_action=attention_action,
+            load_failure=load_failure,
         )
 
     def _library_landing_attention_action(
@@ -15552,6 +15674,10 @@ class LibraryScreen(BaseAppScreen):
                 else ""
             ),
             "analysis_action_reason": self._library_media_analyze_reason(),
+            # task-31632: the page-or-facet load failure the canvas paints as
+            # ONE recovery callout, Retry inside it. ``None`` whenever the
+            # last load of each fence succeeded.
+            "load_failure": controller.failure,
             "compact": False,
             "show_preview": False,
         }
@@ -21880,6 +22006,12 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._refresh_library_onboarding_evidence()
+
+    @on(Button.Pressed, "#library-source-retry")
+    def _retry_library_source_snapshot(self, event: Button.Pressed) -> None:
+        """Re-run the source snapshot from the failure callout's own Retry."""
+        event.stop()
+        self._refresh_local_source_snapshot()
 
     @on(Button.Pressed, "#library-hub-continue")
     async def _continue_library_landing(self, event: Button.Pressed) -> None:
