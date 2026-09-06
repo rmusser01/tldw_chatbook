@@ -597,3 +597,144 @@ async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
         assert _text(screen.query_one("#speaker-label-S1", Static)) == "Alice"
         assert screen.rendered_lines == ["[00:00:00] Alice: hello"]
         assert owner.session.meta.speaker_names["S1"] == "Alice"
+
+
+# ---- I4 / spec §7: live speaker labels are reported, on and off ------------
+
+@pytest.mark.asyncio
+async def test_rail_reports_live_speaker_labels_off_with_a_reason(tmp_path):
+    """Fix I4: `PrepareResult.live_diarization_active` was computed and read
+    by nobody, so a user who turned live diarization on (or left it off) had
+    no way to learn what would actually happen."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        status = _text(screen.query_one("#meetings-live-diarization-status", Static))
+        assert status == "Live speaker labels: off (not enabled in settings)"
+
+
+@pytest.mark.asyncio
+async def test_rail_reports_live_speaker_labels_on(tmp_path):
+    host, owner = await _boot(tmp_path)
+    owner.prepared.live_diarization_active = True
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        assert _text(screen.query_one("#meetings-live-diarization-status", Static)) == (
+            "Live speaker labels: on"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_names_the_missing_module_when_live_labels_were_wanted(tmp_path):
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True          # asked for, but torch is absent
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        assert "torch missing" in _text(
+            screen.query_one("#meetings-live-diarization-status", Static)
+        )
+
+
+@pytest.mark.asyncio
+async def test_footer_says_speaker_labels_unavailable_when_the_backend_never_built(tmp_path):
+    """Spec §7: a subprocess that failed to start puts the whole meeting on
+    coarse labels; the footer has to say so instead of staying silent."""
+    host, owner = await _boot(tmp_path)
+    owner.prepared.live_diarization_active = True   # wanted...
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        assert owner.session._diarizer is None       # ... but never built
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        footer = _text(screen.query_one("#meetings-footer", Static))
+        assert "Speaker labels unavailable (backend unavailable)." in footer
+
+
+@pytest.mark.asyncio
+async def test_footer_reports_the_backends_own_degradation_reason(tmp_path):
+    """A mid-meeting worker crash sends the rest of the meeting to coarse
+    labels; the reason travels on the result (static string, never a path)."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        result = MeetingResult(
+            meta=owner.session.meta, ended_at="2026-09-04T15:00:00", duration_s=12.0,
+            segment_count=0, transcription_complete=True, failed_segments=0,
+            stop_reason="user", speaker_labels_reason="backend crashed",
+        )
+        owner.session._result = result
+        owner.session.state = "stopped"
+        owner.session.emit("state", "stopped")
+        await pilot.pause(0.2)
+        assert "Speaker labels unavailable (backend crashed)." in _text(
+            screen.query_one("#meetings-footer", Static)
+        )
+
+
+@pytest.mark.asyncio
+async def test_footer_surfaces_a_flagged_speaker_merge(tmp_path):
+    """Spec §4: the Stop pass merged two clusters the user named differently;
+    both names were kept on the survivor and need resolving."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.meta.speaker_names.update({"S1": "Alice / Bob"})
+        result = MeetingResult(
+            meta=owner.session.meta, ended_at="2026-09-04T15:00:00", duration_s=12.0,
+            segment_count=0, transcription_complete=True, failed_segments=0,
+            stop_reason="user", flagged_speakers=["S1"],
+        )
+        owner.session._result = result
+        owner.session.state = "stopped"
+        owner.session.emit("state", "stopped")
+        await pilot.pause(0.2)
+        assert "Speaker merge to resolve: Alice / Bob." in _text(
+            screen.query_one("#meetings-footer", Static)
+        )
+
+
+# ---- I2 / MINOR: hostile names and ids in the live legend -----------------
+
+@pytest.mark.asyncio
+async def test_live_legend_renders_a_markup_name_literally(tmp_path):
+    """Fix I2 (Qodo Q2): the legend label was markup-enabled, so renaming a
+    speaker to "Alice [/]" raised out of Rich and took the app down."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.add_segment("hello", "others", speaker_id="S1")
+        await pilot.pause(0.1)
+        screen._apply_rename("S1", "Alice [/]")
+        await pilot.pause(0.1)
+        label = screen.query_one("#speaker-label-S1", Static)
+        assert _rendered(label) == "Alice [/]"
+
+
+def test_live_rename_bounds_the_name(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hi")])
+    screen._apply_rename("S1", "  " + "B" * 500 + "  ")
+    from tldw_chatbook.Audio.meeting_session import MAX_SPEAKER_NAME_CHARS
+    assert screen._session.meta.speaker_names["S1"] == "B" * MAX_SPEAKER_NAME_CHARS
+
+
+def test_live_legend_skips_a_hostile_speaker_id(meetings_screen_with_session):
+    """Final review MINOR: the id is interpolated into a widget id."""
+    screen = meetings_screen_with_session()
+    seg = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "others", "hi", speaker_id="bad id #1")
+    screen._note_speaker(seg)
+    assert screen._seen_speakers == set()

@@ -22,6 +22,8 @@ from ...Audio.meeting_session import (
     MeetingResult,
     MeetingSegment,
     format_clock,
+    is_widget_safe_cluster_id,
+    normalize_speaker_name,
     render_label,
     update_meeting_json,
 )
@@ -51,6 +53,10 @@ class MeetingsScreen(BaseAppScreen):
         super().__init__(app_instance, "meetings", **kwargs)
         self._owner = getattr(app_instance, "meeting_session_owner", None)
         self._session: Any | None = None
+        # Whether this meeting asked for live speaker labels, and whether a
+        # backend was actually built for it (spec §7 footer copy, fix I4).
+        self._live_labels_requested = False
+        self._live_labels_built = False
         self._level_timer = None
         self._transcribing = False
         # True while a user-initiated Stop is in flight: `owner.stop()`
@@ -103,6 +109,7 @@ class MeetingsScreen(BaseAppScreen):
                     yield Static("System audio: probing…", id="meetings-system-status")
                     yield Static("Transcriber: probing…", id="meetings-provider-status")
                     yield Static("Speaker labels after the meeting: probing…", id="meetings-diarization-status")
+                    yield Static("Live speaker labels: probing…", id="meetings-live-diarization-status")
                     yield Static("Recording other people may require their consent.", id="meetings-consent", classes="destination-note")
                     with Horizontal(id="meetings-controls"):
                         yield Button(
@@ -157,6 +164,9 @@ class MeetingsScreen(BaseAppScreen):
         if owner is None or not owner.is_active or owner.session is None:
             return
         self._session = owner.session
+        prepared = getattr(owner, "prepared", None)
+        self._live_labels_requested = bool(getattr(prepared, "live_diarization_active", False))
+        self._live_labels_built = getattr(self._session, "_diarizer", None) is not None
         self._session.subscribe(self._on_session_event)
         for segment in list(self._session.segments):
             self._render_segment(segment)
@@ -188,6 +198,28 @@ class MeetingsScreen(BaseAppScreen):
             return
         self.query_one("#meetings-provider-status", Static).update(f"Transcriber: {reason}")
 
+    def _live_diarization_copy(self, prepared: PrepareResult) -> str:
+        """Rail copy for `PrepareResult.live_diarization_active` (fix I4).
+
+        The flag was computed and read by nobody, so a user who turned live
+        diarization on had no way to learn it would not run.
+
+        Args:
+            prepared: The owner's probe result.
+
+        Returns:
+            "on", or "off (<reason>)" with a static, non-identifying reason.
+        """
+        if getattr(prepared, "live_diarization_active", False):
+            return "on"
+        settings = getattr(self._owner, "settings", None)
+        if not getattr(settings, "live_diarization", False):
+            return "off (not enabled in settings)"
+        if prepared.diarization_missing:
+            return f"off ({', '.join(prepared.diarization_missing)} missing)"
+        backend = getattr(settings, "diarizer_backend", "")
+        return f"off (unsupported backend: {backend})" if backend else "off"
+
     def _apply_prepared(self, prepared: PrepareResult) -> None:
         if not self.is_mounted:
             return
@@ -207,6 +239,9 @@ class MeetingsScreen(BaseAppScreen):
         else:
             diar = f"Speaker labels after the meeting: off ({', '.join(prepared.diarization_missing)} missing)"
         self.query_one("#meetings-diarization-status", Static).update(diar)
+        self.query_one("#meetings-live-diarization-status", Static).update(
+            f"Live speaker labels: {self._live_diarization_copy(prepared)}"
+        )
         devices = list(prepared.input_devices)
         settings = getattr(self._owner, "settings", None)
         self._syncing_pickers = True
@@ -299,6 +334,12 @@ class MeetingsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._session = session
+        # Spec §7: a live diarizer that was expected but never got built
+        # (spawn failure, missing backend) must be reported at Stop -- the
+        # session is detached by then, so record it now (fix I4).
+        prepared = getattr(self._owner, "prepared", None)
+        self._live_labels_requested = bool(getattr(prepared, "live_diarization_active", False))
+        self._live_labels_built = getattr(session, "_diarizer", None) is not None
         session.subscribe(self._on_session_event)
         self._set_buttons(session.state)
 
@@ -341,6 +382,25 @@ class MeetingsScreen(BaseAppScreen):
         self._set_buttons("stopped")
         self.app_instance.notify(f"Meeting failed to stop cleanly: {reason}", severity="error")
 
+    def _speaker_labels_failure(self, result: MeetingResult) -> str | None:
+        """Why live speaker labels did not happen, for the footer (spec §7).
+
+        Args:
+            result: The finished meeting's result.
+
+        Returns:
+            A static reason ("backend unavailable", "backend crashed"), or
+            None when live labels were never requested or ran fine.
+        """
+        reason = getattr(result, "speaker_labels_reason", None)
+        if reason:
+            return str(reason)
+        if getattr(self, "_live_labels_requested", False) and not getattr(
+            self, "_live_labels_built", False
+        ):
+            return "backend unavailable"
+        return None
+
     def _on_stopped(self, result: MeetingResult | None) -> None:
         # `on_unmount` has already detached; the widget updates below would
         # raise on a screen that is no longer composed (Qodo Q14).
@@ -360,6 +420,18 @@ class MeetingsScreen(BaseAppScreen):
             parts.append("The last segment was dropped (transcriber did not finish in time).")
         if result.failed_segments:
             parts.append(f"{result.failed_segments} failed segment(s).")
+        labels_reason = self._speaker_labels_failure(result)
+        if labels_reason:
+            parts.append(f"Speaker labels unavailable ({labels_reason}).")
+        if result.flagged_speakers:
+            # Spec §4: the Stop pass merged two clusters the user named
+            # differently; both names were kept and need resolving.
+            names = result.meta.speaker_names
+            parts.append(
+                "Speaker merge to resolve: "
+                + ", ".join(names.get(sid, sid) for sid in result.flagged_speakers)
+                + "."
+            )
         parts.append(f"Folder: {result.meta.folder}.")
         if job_id:
             parts.append(f"Library ingest queued: {job_id}.")
@@ -471,11 +543,18 @@ class MeetingsScreen(BaseAppScreen):
         cluster_id = segment.speaker_id
         if not cluster_id or cluster_id in self._seen_speakers:
             return
+        # An id that is not a legal Textual widget id would raise out of the
+        # mount below and take the screen down (final review, MINOR).
+        if not is_widget_safe_cluster_id(cluster_id):
+            return
         self._seen_speakers.add(cluster_id)
         if not self.is_mounted:
             return
         row = Horizontal(
-            Static(self._speaker_label(cluster_id), id=f"speaker-label-{cluster_id}"),
+            # markup=False: a typed name is arbitrary text, and Rich would
+            # either swallow "[b]" or raise on "[/]" (Qodo Q2). The Library
+            # twin's legend already does this.
+            Static(self._speaker_label(cluster_id), id=f"speaker-label-{cluster_id}", markup=False),
             Input(placeholder="Rename…", id=f"speaker-input-{cluster_id}"),
             classes="meetings-speaker-row",
         )
@@ -504,7 +583,7 @@ class MeetingsScreen(BaseAppScreen):
         session = self._session
         if session is None:
             return
-        name = name.strip()
+        name = normalize_speaker_name(name)
         if name:
             session.meta.speaker_names[cluster_id] = name
         else:
