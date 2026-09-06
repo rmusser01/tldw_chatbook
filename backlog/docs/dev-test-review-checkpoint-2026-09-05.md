@@ -1123,3 +1123,16 @@ scroll assertions remain intact. Complete file: **51 passed in 101.93s**, three
 dependency warnings (`/private/tmp/tldw-inventory-rail-final.xml`). Independent
 review found no issues in this change or the 26-test system-prompt repair above.
 No runtime/CSS, geometry, timeout or assertion budget was changed.
+
+### TASK-31818: launch-wake app resource ownership
+
+The launch-wake file's roughly 357-descriptor baseline is resolved by reusing
+the hydration teardown as an explicitly imported, module-local builder fixture.
+It records only its builder products and their exact database callbacks, drains
+every owned runtime before controller/ChaChaNotes cleanup, and touches no foreign
+or process-global owners. Four new isolation/order/error/cancellation controls
+failed before extraction and pass afterward. Launch/hydration/controls pass 77;
+root's full prior importer set plus launch-wake passes **576 in 236.96s**, three
+dependency warnings, zero retained SQLite lines and no FD-growth warning
+(`/private/tmp/tldw-31818-all-importers-final.xml`). Independent root review and
+scoped static checks pass. TASK-31818 is Done; no new ADR or production change.
