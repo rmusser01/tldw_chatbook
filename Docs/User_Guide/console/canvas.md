@@ -53,6 +53,12 @@ revision parents, origins, titles, runtime profiles, and inert source files.
 Transcript-only exports are not a full Canvas-history backup. Canvas is local to
 the Chatbook host and is not included in server synchronization.
 
+Restoring the same identities skips only an exact match, including exported
+citation context. Divergent records are rejected without overwrite. Validation
+does not provision citation keys or reconcile legacy citation history; if that
+history cannot be verified read-only, the restore is refused until the local
+citation state is reconciled.
+
 ## Source and confirmed actions
 
 The trusted Canvas toolbar offers:

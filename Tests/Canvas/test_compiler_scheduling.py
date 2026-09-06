@@ -150,7 +150,7 @@ async def test_served_preview_yields_during_compilation(monkeypatch):
     proxy = _ServedCanvasAuthorityProxy(SimpleNamespace())
 
     async def read(_scope):
-        return {}, {"source": SOURCE}
+        return {}, {"source": SOURCE, "runtime_profile": "canvas-v1"}
 
     monkeypatch.setattr(proxy, "_read", read)
 
@@ -356,7 +356,7 @@ async def test_served_preview_rechecks_child_branch_after_compilation(monkeypatc
     branch = ["message"]
 
     async def read(_scope):
-        return {}, {"source": SOURCE}
+        return {}, {"source": SOURCE, "runtime_profile": "canvas-v1"}
 
     async def request(_scope, _type, _payload):
         return SimpleNamespace(
@@ -484,7 +484,7 @@ async def test_near_limit_operations_preserve_source_and_allow_loop_progress(
     proxy = _ServedCanvasAuthorityProxy(SimpleNamespace())
 
     async def read(_scope):
-        return {}, {"source": source}
+        return {}, {"source": source, "runtime_profile": "canvas-v1"}
 
     async def request(_scope, _type, _payload):
         return SimpleNamespace(

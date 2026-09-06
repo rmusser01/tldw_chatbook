@@ -1,11 +1,11 @@
 ---
 id: TASK-31742
 title: Address Qodo review findings for Canvas V1
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 04:45'
+updated_date: '2026-09-06 06:12'
 labels:
   - canvas
   - review
@@ -25,7 +25,7 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #1 All eight initial Qodo findings have a documented technical disposition and a reply in their original review thread.
 - [x] #2 Queued Canvas card actions cannot resolve an old card against a different active conversation; current-card actions still work.
 - [x] #3 Valid review corrections preserve path authorization, transaction ownership, strict bounded wire validation, effective configuration precedence, compatibility and source-private diagnostics.
-- [ ] #4 Targeted regression tests, independent review and required current-head CI support merge readiness; no security or performance gate is weakened.
+- [x] #4 Targeted regression tests, independent review and required current-head CI support merge readiness; no security or performance gate is weakened.
 - [x] #5 A completed tool turn followed by a saved user prompt admits Capture On atomically, preserving original call reconstruction, exact owner/response/range validation and failure rollback; calculator and Canvas production-factory controls pass.
 - [x] #6 Pre-dispatch Retry proves and reuses its exact owned reservation without admitting unrelated calls, reviving terminal calls or duplicating dispatch; real controller/gateway recovery tests cover repeated failure and stale authority.
 - [x] #7 Commit reconciliation distinguishes committed, rolled-back and unknown outcomes; post-commit failures cannot duplicate surface writes or provider entry, or incorrectly mark a dispatched call not dispatched.
@@ -70,6 +70,8 @@ Final scoped rereview of f55ab2cbe..ee27c7193 approves runtimeI1 and minorM2 wit
 Owner-approved reference update: amended backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md and the repair plan before changing fixture hardware/version only (v5 M5 Max18CPU128GiB). Fresh v4 gate fails on the four hardware fields:1failed1Requests warning32.25s. Full v5 latency file passes19tests1Requests warning43.11s, environment_match=true and threshold_gate_applied=true with no opt-in. Reservation/dispatch p95 2.811ms/max4.467ms and settlement p95 1.701ms satisfy unchanged10/50/25ms limits; all five per-database checks pass. Both raw sample artifacts retained in the local SDD evidence workspace with SHA-256 digests and exact commands in Docs/Canvas/V1_VERIFICATION.md. No runtime/test-logic changes or claim of performance on the former M4 Pro. I2 closed for this checkpoint; I3 latest-dev migration/task-ID reconciliation, rebase, Qodo/current-headCI and merge remain open. AC4 stays unchecked and task remains In Progress.
 
 I3 integrated and independently approved: canonical character-search65→66 retained, Canvas66→67→68, real predecessor/refusal/rollback/state preservation and exact index census verified. Later task collisions renumbered31812/31813 with all tracked pointers and provenance. Final root gates:179growth/runtime/recovery passes;19approved-reference latency passes;90Chromium passes/2optional skips;110startup/controller passes;all6preflight guards. Warnings remain qualified in Docs/Canvas/V1_VERIFICATION.md. Latest devcc22deb0a adds only two CI workflow fixes; final143commit rebase is exactly equivalent for every replay commit, and resulting tree differs only in those workflows. Independent I3 follow-up approves pointer correction with no blocking findings. Retained recovery ref codex/canvas-v1-before-ci-dev-20260905. AC4/current-head Qodo/CI remain pending; no merge or V2 yet.
+
+Final protected integration completed: PR #2432 merged normally into dev at 2026-09-06T06:11:26Z, merge commit f32a16839d1810618107f7e2ffaed8ac2e3e634f, verified head 18828038d080f59405828d8634e03b56b504c9ee. Fresh fetch and ancestor check confirm dev contains the reviewed head. Qodo summary 5554930741 references that exact head with zero bugs/rule violations/skill insights; all original threads were addressed. Current-head checks passed, including Fast Lane 9m1s and Derived Artifacts 6m23s. Windows GGUF import required one unchanged failed-job rerun after a missing-node assertion; rerun passed, initial failure retained. Latest rebase onto 723c81460 was conflict-free with all 144 replay commits patch-equivalent. Directly affected checks: 66 passed, one Requests warning, 37.57s; six preflight categories passed. Two old suspend-stub failures reproduce exactly on untouched dev and remain baseline-qualified, not repaired or claimed passing. No full-suite claim, protection bypass, pause of other work, or cleanup. Recovery refs, feature worktree and raw evidence preserved. ADR-121 and trace ADR-097 remain governing contracts. V2 may now enter brainstorming; no V2 implementation has begun.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05

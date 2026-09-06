@@ -770,18 +770,18 @@ their own design and ADR check before implementation.
   with the retained verification and warning qualifications.
   TASK-31741 owns the discovered diagnostic-inventory and index-census guard
   gaps, including content-free Canvas failure logging and no-statistics plans.
-- [ ] Address Qodo on PR2432 in this active session. A proposed unattended
+- [x] Address Qodo on PR2432 in this active session. A proposed unattended
   follow-up was rejected; persistent scheduling needs explicit user approval.
   Read review bodies, inline threads, issue comments and suggestions; maintain
   an item-by-item resolution ledger. Verify suggestions technically, implement
   valid corrections with tests, and reply with evidence to each applicable
   thread. Do not treat silence as a clean review or bypass protected checks.
-- [ ] Recheck current PR head/base, completed Qodo feedback and required CI,
+- [x] Recheck current PR head/base, completed Qodo feedback and required CI,
   update from `dev` and retest affected conflicts if necessary, then merge via
   the repository's allowed method without an admin/protection bypass. Verify
   merged state and commit identity. Retain the worktree/evidence; do not touch
   the user's main checkout or delete branches as an implied cleanup step.
-- [ ] Only after merge, begin V2 brainstorming: a small offline bundled library
+- [x] Only after merge, begin V2 brainstorming: a small offline bundled library
   catalog under the existing zero-egress guarantee. Do not silently add network,
   filesystem, cookies or multi-file VFS; settle design and ADR before coding.
 
