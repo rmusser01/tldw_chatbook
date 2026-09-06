@@ -1190,6 +1190,14 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                     service.page_two_entered.is_set()
                     and controller.loading
                     and len(screen.query(".library-media-row")) == 20
+                    # The retained rows are already in the DOM before the
+                    # loading recompose runs, so they cannot stand in for it:
+                    # settle on the pager the recompose disables, which only
+                    # exists again once that recompose has mounted.
+                    and any(
+                        button.disabled
+                        for button in screen.query("#library-media-next")
+                    )
                 ),
                 message="Compact page-2 loading never retained its mounted rows.",
             )
