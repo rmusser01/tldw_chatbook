@@ -1,6 +1,6 @@
 # ADR-124: Canvas Mermaid subset and immutable runtime profiles
 
-Status: Proposed — written design awaiting user review
+Status: Accepted — user approved the written design on 2026-09-06
 Date: 2026-09-06
 Related Task: TASK-31933
 Extends: [ADR-121](121-local-versioned-canvas-artifacts-and-browser-sandbox.md)
@@ -122,12 +122,13 @@ examples within unchanged budgets, adversarial real-browser qualification,
 native/served workflow evidence, profile lifecycle tests and genuine archive
 round-trips. The spike is feasibility evidence only. If the promised subset
 cannot qualify within the limits, return to design review; do not silently weaken
-the boundary. This proposed ADR does not authorize implementation before written
-spec approval.
+the boundary. Written-spec approval was received on 2026-09-06; the qualification
+gates remain mandatory before product admission.
 
 ## Links
 
 - [Design task](../tasks/task-31933%20-%20Design-Canvas-V2-Mermaid-subset-and-pinned-runtime-profiles.md)
 - [Design spec](../../Docs/superpowers/specs/2026-09-06-chatbook-canvas-v2-mermaid-design.md)
+- [Implementation plan](../../Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md)
 - [V1 compatibility contract](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md)
 - [Deferred Canvas synchronization contract](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
