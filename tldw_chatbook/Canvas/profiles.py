@@ -60,6 +60,34 @@ _QUOTA_FIELDS = {
     "css_rules",
     "patches_per_operation",
 }
+_MERMAID_QUOTA_FIELDS = {
+    "document_declarations",
+    "diagram_input_bytes",
+    "document_input_bytes",
+    "diagram_nodes",
+    "document_nodes",
+    "diagram_edges",
+    "document_edges",
+    "diagram_participants",
+    "document_participants",
+    "diagram_messages",
+    "document_messages",
+    "diagram_notes",
+    "document_notes",
+    "label_bytes",
+    "diagram_label_bytes",
+    "document_label_bytes",
+    "diagram_svg_elements",
+    "document_svg_elements",
+    "diagram_output_bytes",
+    "document_output_bytes",
+    "diagram_work_units",
+    "document_work_units",
+    "diagram_width",
+    "diagram_height",
+    "diagram_area",
+    "document_area",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +227,14 @@ def _validate_manifest_contract(manifest: dict[str, Any]) -> None:
             raise ValueError("invalid Unicode contract identifier")
     _validate_digest(unicode_contract["sha256"], "unicode.sha256")
     quotas = contract["quotas"]
-    if type(quotas) is not dict or set(quotas) != _QUOTA_FIELDS:
+    quota_fields = _QUOTA_FIELDS
+    if manifest.get("runtime_profile") == "canvas-v2-mermaid-1":
+        quota_fields = quota_fields | _MERMAID_QUOTA_FIELDS
+    if type(quotas) is not dict or set(quotas) != quota_fields:
         raise ValueError("invalid quota contract identity")
     if type(quotas["id"]) is not str or not quotas["id"]:
         raise ValueError("invalid quota contract identifier")
-    for quota_name in _QUOTA_FIELDS - {"id"}:
+    for quota_name in quota_fields - {"id"}:
         if type(quotas[quota_name]) is not int or quotas[quota_name] <= 0:
             raise ValueError("invalid quota contract value")
 

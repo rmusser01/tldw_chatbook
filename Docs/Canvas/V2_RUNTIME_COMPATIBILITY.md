@@ -70,8 +70,59 @@ policy reload. `runtime_snapshot_id()` is the canonical, source-free cross-proce
 identity for parent/child consistency and cache binding; it is not a browser
 credential.
 
-The production catalog currently admits only `canvas-v1`, with zero library bytes
-and `default_diagram_profile: null`. Task 2 first registers
-`canvas-v2-mermaid-1` as non-executable after its real verified candidate manifest
-and grammar assets exist; Task 1 does not fabricate a placeholder byte identity.
-V2 remains unavailable until all qualification gates are complete.
+The production catalog admits only `canvas-v1`, with zero library bytes and
+`default_diagram_profile: null`. `canvas-v2-mermaid-1` is a verified development
+candidate with `executable: false`; its current engine, facade, plan and layout
+identities reference the real V1 assets until the later V2 slices replace them.
+V2 remains unavailable until all qualification gates are complete. Development
+candidate bytes can evolve before qualification; no normal revision admission may
+reference this candidate and its immutable release manifest is not yet frozen.
+
+## Mermaid candidate build and private interface
+
+`scripts/vendor_canvas_mermaid.py` uses Python 3.12.11 and the standard library.
+`Canvas/mermaid/inputs.json` declares every download, exact byte/hash inventory,
+the full Mermaid archive member allowlist, two exact source-map entries and their
+source hashes, Unicode 16.0.0 data and UAX29 revision45 rules. No npm install,
+lifecycle hook, upstream renderer, native guest evaluation or code generator runs.
+The authenticated Mermaid 11.17.2 archive is scanned under a 1,200-member / 96 MiB
+uncompressed scan bound; only its two maps, package metadata and MIT license are
+read under the existing 32 MiB selected-input cap. Its exact generated Jison
+0.4.18 ESM export suffix is validated and replaced with a private return, then
+deterministic property tables and authored modules are concatenated.
+
+Use `--input-dir` for a previously verified offline input directory; omitting it
+downloads only the declared HTTPS inputs with redirects refused. `--output-dir`
+supports independent builds. Unicode tables merge adjacent explicit ranges and
+implement extended grapheme rules GB3–GB999, including GB9c and GB11. The fixture
+retains all 1,093 official Unicode 16.0.0 grapheme conformance rows. Width is a
+profile-owned logical cell rule (8 CSS px per cell), not a platform measurement.
+Original label code points are retained; Unicode normalization and `Intl` are not
+used. Escaped Mermaid entity spellings in plain labels remain literal text.
+
+`mermaid-subset.json` has exactly `schema_version`, `profile_id`, `source`,
+`source_bytes`, `source_sha256`, `inputs_sha256`, and `inventory` (the four authored
+module digests). The catalog's library inventory binds this JSON and the separate
+`MERMAID_THIRD_PARTY_LICENSES.txt`. `ProfileRecord.library_bytes` counts all those
+packaged bytes. The actual evaluated-script charge is **`source_bytes`**, verified
+against the UTF-8 `source`, and shares the 256 KiB document script ceiling with
+authored scripts. JSON escaping and notice bytes are not evaluated JavaScript.
+
+Evaluating the verified source returns private handles `parseMermaid`,
+`DiagramBudget`, `DiagramError`, `segmentGraphemes`, and `graphemeWidth`; none is
+installed on the guest global. A worker retains one `new DiagramBudget()` for a
+document. `parseMermaid(source, budget)` calls `beginDiagram(source)` and returns
+the closed flow/sequence model. `beginDiagram` increments the ordinal, charges
+the raw UTF-8 input before comment processing, and resets only per-diagram counts.
+`charge(kind, amount=1)` charges both scopes for `input`, `labels`, `nodes`,
+`edges`, `participants`, `messages`, or `notes`; `label(text)` also checks the
+individual 512-byte ceiling. Failed startup discards the entire VM/budget. Task 3
+extends this owner with layout accounting rather than creating a second budget.
+
+The V2 quota manifest adds exactly `document_declarations`, `label_bytes`,
+`diagram_width`, `diagram_height`, and diagram/document pairs for `input_bytes`,
+`nodes`, `edges`, `participants`, `messages`, `notes`, `label_bytes`, `svg_elements`,
+`output_bytes`, `work_units`, and `area`. V1's quota schema stays unchanged.
+All accepted ceilings are recorded now, including layout ceilings enforced by
+later slices. In the test-only `candidate_snapshot` fixture, execution policy is
+replaced while all real verified manifest and asset hashes remain attached.

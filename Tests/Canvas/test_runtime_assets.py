@@ -106,6 +106,108 @@ def _sri_sha512(data: bytes) -> str:
     return "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode("ascii")
 
 
+def _load_mermaid_vendor():
+    _load_vendor_module()
+    spec = importlib.util.spec_from_file_location(
+        "vendor_canvas_mermaid", ROOT / "scripts/vendor_canvas_mermaid.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_real_mermaid_candidate_retains_assets_but_is_not_admitted(candidate_snapshot):
+    from tldw_chatbook.Canvas.profiles import (
+        load_profile_snapshot,
+        resolve_profile,
+        runtime_assets_for,
+    )
+
+    base = load_profile_snapshot()
+    candidate = "canvas-v2-mermaid-1"
+    assert not resolve_profile(
+        base, operation="load", parent_profile=candidate, has_diagrams=True
+    ).executable
+    assert base.default_diagram_profile is None
+    owned = runtime_assets_for(candidate_snapshot, candidate)
+    library = json.loads(owned.library_files["mermaid-subset.json"])
+    assert library["source_bytes"] == len(library["source"].encode())
+    assert (
+        library["source_sha256"]
+        == hashlib.sha256(library["source"].encode()).hexdigest()
+    )
+    assert library["source_bytes"] < 262144
+    quotas = owned.manifest["profile_contract"]["quotas"]
+    assert quotas["diagram_input_bytes"] == 8192
+    assert quotas["document_input_bytes"] == 16384
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "unexpected", "unsafe", "duplicate", "symlink", "oversized"]
+)
+def test_mermaid_vendor_rejects_invalid_archive_inventory(mutation):
+    vendor = _load_mermaid_vendor()
+    members = [
+        (
+            "package/package.json",
+            b'{"name":"mermaid","version":"11.17.2","license":"MIT"}',
+            "file",
+        )
+    ]
+    selected = {name: hashlib.sha256(data).hexdigest() for name, data, _ in members}
+    names = list(selected)
+    if mutation == "missing":
+        names.append("package/missing")
+    elif mutation == "unexpected":
+        members.append(("package/extra", b"x", "file"))
+    elif mutation == "unsafe":
+        members.append(("package/../escape", b"x", "file"))
+    elif mutation == "duplicate":
+        members.append(members[0])
+    elif mutation == "symlink":
+        members.append(("package/link", b"", "symlink"))
+    else:
+        # A declared oversized selected file must fail before allocation/extraction.
+        payload = b"x" * (32 * 1024 * 1024 + 1)
+        members.append(("package/large", payload, "file"))
+        names.append("package/large")
+        selected["package/large"] = hashlib.sha256(payload).hexdigest()
+    archive = _tar_bytes(members)
+    inputs = {
+        "mermaid_integrity": _sri_sha512(archive),
+        "members": names,
+        "selected": selected,
+    }
+    with pytest.raises(vendor.VendorError):
+        vendor.selected_archive(archive, inputs)
+
+
+def test_mermaid_vendor_requires_authenticated_input_and_exact_map_entry():
+    vendor = _load_mermaid_vendor()
+    with pytest.raises(vendor.VendorError, match="integrity"):
+        vendor.verify_input(b"tampered", {"bytes": 8, "sha256": "0" * 64})
+    rule = {"member": "map", "source": "exact", "sha256": "0" * 64}
+    for value in (
+        {"sources": ["wrong"], "sourcesContent": ["value"]},
+        {"sources": ["exact", "exact"], "sourcesContent": ["a", "a"]},
+        {"sources": ["exact"], "sourcesContent": ["tampered"]},
+    ):
+        with pytest.raises(vendor.VendorError):
+            vendor.grammar_source({"map": json.dumps(value).encode()}, rule)
+
+
+def test_mermaid_rebuild_is_reproducible_from_verified_inputs(tmp_path):
+    input_dir = os.environ.get("TLDW_CANVAS_MERMAID_INPUT_DIR")
+    if not input_dir:
+        pytest.skip("explicit offline Mermaid inputs required for rebuild")
+    vendor = _load_mermaid_vendor()
+    first = vendor.build(Path(input_dir), tmp_path / "first")
+    second = vendor.build(Path(input_dir), tmp_path / "second")
+    assert first == second
+    for name in first:
+        assert (tmp_path / "first" / name).read_bytes() == (STATIC / name).read_bytes()
+
+
 def _tar_bytes(members: list[tuple[str, bytes, str]]) -> bytes:
     stream = io.BytesIO()
     with tarfile.open(
