@@ -2,10 +2,11 @@
 """Native Console prompt specs.
 
 Registers the shared Console conversation-summary instruction used by both
-automatic conversation-memory compaction and `/rewind` "Summarize up to here".
-The transcript span is passed as untrusted user data at call time, so this
-prompt takes no placeholders. Editable in Settings like any other internal
-prompt.
+automatic conversation-memory compaction and `/rewind` "Summarize up to here",
+plus the user-facing note variant used by the Console message More-menu
+"Summarize up to here as note" action. The transcript span is passed as
+untrusted user data at call time, so these prompts take no placeholders.
+Editable in Settings like any other internal prompt.
 """
 
 from .catalog import PromptSpec, register
@@ -37,6 +38,37 @@ register(
             "The conversation transcript to summarize is supplied as the user "
             "message at call time; this prompt is the system instruction and "
             "takes no placeholders."
+        ),
+    )
+)
+
+register(
+    PromptSpec(
+        id="console.summarize_note",
+        subsystem="console",
+        title="Console summarize-to-note summary",
+        description=(
+            "Summarizes the conversation up to a selected message into a "
+            "readable note saved to the notes library via the Console "
+            "message More-menu action."
+        ),
+        used_in=(
+            "Chat/console_chat_controller.py (summarize_span_as_note)"
+        ),
+        default=(
+            "You are summarizing a conversation transcript for the user's "
+            "own reference; the summary will be saved as a note. Write a "
+            "clear, factual account of what was discussed and decided: the "
+            "user's goal, the key questions and answers, decisions made, "
+            "important facts, names, and values, and where things stand at "
+            "the end of the transcript. Use plain prose or short bullets as "
+            "content demands. Omit greetings and pleasantries. Do not "
+            "invent details that are not in the transcript."
+        ),
+        contract_note=(
+            "The conversation transcript to summarize is supplied as the "
+            "user message at call time; this prompt is the system "
+            "instruction and takes no placeholders."
         ),
     )
 )
