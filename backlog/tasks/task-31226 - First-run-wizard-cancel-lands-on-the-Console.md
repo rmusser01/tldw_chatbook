@@ -17,5 +17,35 @@ Esc-exiting the first-run setup wizard leaves the user on Home (the screen it wa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cancelling the boot-offered first-run wizard (Esc exit / finish-later) switches to the Console tab,Cancelling a Settings/command-palette wizard re-run leaves the current screen unchanged,Completed wizard results keep routing per their exit_route (regression pin),A registered workspace with zero conversations keeps its tree node (mounted pin)
+- [x] Cancelling the boot-offered first-run wizard (Esc exit / finish-later) switches to the Console tab
+- [x] Cancelling a Settings/command-palette wizard re-run leaves the current screen unchanged
+- [x] Completed wizard results keep routing per their exit_route (regression pin)
+- [x] A registered workspace with zero conversations keeps its tree node (mounted pin)
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Tests first: cancel routes to TAB_CHAT; rerun cancel stays; completed-result routing regression; empty-workspace tree node pin.
+2. app.py: cancel branch of the wizard result handler posts NavigateToScreen(TAB_CHAT) and consumes a deferred focus request; Settings/palette re-run sites pass cancel_to_console=False through the interview wrapper.
+3. Suites, lint, live UAT (fresh profile, Esc-exit lands on Console), PR.
+
+## Implementation Notes
+
+UAT triage (2026-08-31) of three findings; one product fix, two pins.
+
+- Wizard cancel routes to Console: the boot flow parks first-run launches on
+  Home and pushes the wizard over it; a cancelled result (no dict) made the
+  handler return early, stranding the user on Home. The cancel branch now
+  posts NavigateToScreen(TAB_CHAT) and consumes a deferred focus request
+  under the same Chat-route rule the completed paths use. The Settings/
+  command-palette re-run sites opt out via cancel_to_console=False (cancel
+  returns to Settings); the interview wrapper forwards the flag.
+- Tree drop = UAT artifact, pinned not fixed: tree nodes derive from the
+  registry's list_workspaces, independent of conversation rows; a new
+  mounted pin holds that an empty registered workspace keeps its node.
+- Home cards = synthetic-input artifact: mounted tests click the same cards
+  successfully; no product change.
+- Verification: 6-test cancel-routing suite green; 424 across the wizard/
+  focus/interview suites after updating the palette-reentry pin to the new
+  callback contract; lint debt unchanged from baseline. Live UAT on a fresh
+  scratch profile: Esc-exit lands on the Console workbench, clean exit.
