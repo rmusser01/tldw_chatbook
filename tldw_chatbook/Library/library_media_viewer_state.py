@@ -105,6 +105,13 @@ class LibraryMediaViewerState:
             ``media_type`` is one of the types local ingestion can
             plausibly tag a markdown file with AND ``content`` actually
             contains markdown syntax (see ``looks_like_markdown_content``).
+        can_rename_speakers: TASK-31745 -- whether this item is a finished
+            meeting recording whose speakers can still be renamed (its
+            meeting folder survives; see ``can_rename_meeting_speakers``).
+            The screen resolves it; the reader only renders it.
+        speaker_legend_rows: ``(cluster_id, display_label)`` for every
+            speaker in that meeting, in first-seen transcript order, or ()
+            for anything else.
     """
 
     media_id: str
@@ -123,6 +130,8 @@ class LibraryMediaViewerState:
     canonical_id: str
     original_source: str
     stored_representation: str
+    can_rename_speakers: bool = False
+    speaker_legend_rows: tuple[tuple[str, str], ...] = ()
 
 
 def _text(value: Any) -> str:

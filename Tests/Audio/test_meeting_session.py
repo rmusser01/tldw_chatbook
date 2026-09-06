@@ -491,5 +491,89 @@ def test_render_markdown_room_mode_omits_labels(tmp_path):
     assert "[00:00:00] hello" in md and "**You:**" not in md
 
 
+def test_render_markdown_uses_the_meeting_configured_display_name(tmp_path):
+    """task 31746: a `you` segment renders `meta.user_display_name`, not a
+    hardcoded "You" -- so the saved transcript agrees with what the live
+    session showed."""
+    meta = _meta(tmp_path)
+    meta.user_display_name = "Alice"
+    result = MeetingResult(
+        meta=meta, ended_at="2026-09-04T15:00:00", duration_s=2.0, segment_count=1,
+        transcription_complete=True, failed_segments=0, stop_reason="user",
+    )
+    segment = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "you", "hello")
+    md = render_markdown(result, [segment])
+    assert "[00:00:00] **Alice:** hello" in md
+
+    both_segment = MeetingSegment(1, 2.0, 3.0, 2.0, 3.0, "both", "overlap")
+    md = render_markdown(result, [segment, both_segment])
+    assert "**Alice + Others:** overlap" in md
+
+
+# ---- Qodo Q1: a typed name must not become markup -------------------------
+
+def test_render_markdown_escapes_a_name_that_would_be_markup(tmp_path):
+    """Qodo Q1: names go in unescaped between `**...**`, and the Library
+    renders this document through Textual's Markdown widget -- so a name
+    like "[x](http://e)" became a live LINK in the persisted transcript, and
+    backticks became a code span. They must render literally."""
+    meta = _meta(tmp_path)
+    meta.speaker_names = {"S1": "`code` [x](http://e) *b* _i_"}
+    result = MeetingResult(
+        meta=meta, ended_at="2026-09-04T15:00:00", duration_s=2.0, segment_count=1,
+        transcription_complete=True, failed_segments=0, stop_reason="user",
+    )
+    segment = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "others", "hello", speaker_id="S1")
+
+    md = render_markdown(result, [segment])
+
+    assert "**\\`code\\` \\[x\\]\\(http://e\\) \\*b\\* \\_i\\_:** hello" in md
+    # Nothing that markdown-it would still read as markup survives unescaped.
+    assert "`code`" not in md and "[x](http://e)" not in md
+    # ... and the transcript TEXT is untouched: only the name is escaped.
+    assert md.rstrip().endswith("hello")
+
+
+def test_render_markdown_leaves_an_ordinary_name_byte_identical(tmp_path):
+    """The escape must be free for every name that needs none -- otherwise
+    it would change the render of every recording already in the Library and
+    the rename's content-shape guard would refuse them all."""
+    meta = _meta(tmp_path)
+    meta.speaker_names = {"S1": "Alice O'Hara"}
+    result = MeetingResult(
+        meta=meta, ended_at="2026-09-04T15:00:00", duration_s=2.0, segment_count=1,
+        transcription_complete=True, failed_segments=0, stop_reason="user",
+    )
+    segment = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "others", "hello", speaker_id="S1")
+
+    assert "[00:00:00] **Alice O'Hara:** hello" in render_markdown(result, [segment])
+
+
+def test_normalize_speaker_name_strips_control_characters():
+    """Qodo Q1: names reach `meeting.json`, the line-oriented transcript
+    render, `Media.content` and the terminal -- a newline would split one
+    transcript row into two, and an ANSI escape would repaint the reader."""
+    from tldw_chatbook.Audio.meeting_session import (
+        MAX_SPEAKER_NAME_CHARS,
+        normalize_speaker_name,
+    )
+
+    assert normalize_speaker_name("Al\x1b[31mice\x00\r\nBob\x7f") == "Al[31miceBob"
+    assert normalize_speaker_name("A\u2028B\u202eC") == "ABC"   # LS + RTL override
+    assert normalize_speaker_name("  Alice  ") == "Alice"         # unchanged otherwise
+    assert normalize_speaker_name("Ali\u200dce") == "Ali\u200dce"  # ZWJ stays (emoji)
+    assert normalize_speaker_name("\x00\x01\x02") == ""            # control-only -> removal
+    assert len(normalize_speaker_name("\x00" + "A" * 500)) == MAX_SPEAKER_NAME_CHARS
+
+
+def test_old_meeting_json_backfills_the_user_display_name(tmp_path):
+    """A recording from before task 31746 has no `user_display_name` key at
+    all; reading it back must not silently drop to a KeyError downstream."""
+    from tldw_chatbook.Audio.meeting_session import write_meeting_json
+
+    write_meeting_json(tmp_path, {"mode": "call"})
+    assert read_meeting_json(tmp_path)["user_display_name"] == "You"
+
+
 def test_format_clock():
     assert format_clock(0) == "00:00:00" and format_clock(3725.9) == "01:02:05"

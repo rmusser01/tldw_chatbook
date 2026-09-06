@@ -17,7 +17,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, ProgressBar, RichLog, Select, Static
 
-from ...Audio.meeting_owner import PrepareResult, recover_folder
+from ...Audio.meeting_owner import PrepareResult, meeting_user_display_name, recover_folder
 from ...Audio.meeting_session import (
     MeetingResult,
     MeetingSegment,
@@ -39,7 +39,11 @@ from ..Navigation.main_navigation import NavigateToScreen
 # `meeting_session.py`/`library_media_canvas.py`'s own import of it.
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
-LABELS = {"you": "You", "others": "Others", "both": "You + Others"}
+# "you"/"both" are NOT here (task 31746 review): `_coarse_label` resolves
+# them through the configured display-name helper instead, so a stale
+# literal can't drift out of sync with it again. This is only the fallback
+# for "others" and any other coarse label.
+LABELS = {"others": "Others"}
 STOP_REASON_COPY = {
     "mic_lost": "Microphone stopped delivering audio; the meeting was ended.",
     "disk_error": "Recording stopped: the disk write failed.",
@@ -463,7 +467,7 @@ class MeetingsScreen(BaseAppScreen):
             self.query_one("#meetings-partial", Static).update("")
         elif kind == "partial":
             text, label = payload
-            prefix = f"{LABELS.get(label, label)}: " if label else ""
+            prefix = f"{self._coarse_label(label)}: " if label else ""
             self.query_one("#meetings-partial", Static).update(f"{prefix}{text}…")
         elif kind == "transcribing":
             self._transcribing = bool(payload)
@@ -517,27 +521,55 @@ class MeetingsScreen(BaseAppScreen):
     def _user_display_name(self) -> str:
         """The name that stands in for "you" in the transcript and legend.
 
-        Deliberately NOT `chat_defaults.user_display_name`: that section's
-        own factory default is the literal string ``"User"`` (see
-        `config.py`'s `CONFIG_TOML_CONTENT`), so a fresh install has no way
-        to tell "never touched this setting" apart from "chose User" --
-        wiring it in here would silently turn every untouched install's
-        "You:" rows into "User:" rows. `LABELS["you"]` is Meetings' own,
-        already-shipped default; a per-meeting override is future scope.
+        The RUNNING meeting's own stamped `meta.user_display_name` wins
+        (Qodo Q4). The owner stamps it once at `start()` and every
+        after-the-fact render -- `render_markdown`, the Library item's
+        re-render, `meeting.json` -- reads it back from there, so re-reading
+        configuration per row instead meant a display-name setting changed
+        MID-meeting split the live rows away from the saved transcript: rows
+        already on screen kept the old name, new ones took the new one, and
+        neither matched what the Library would show.
+
+        Only before a session exists (the idle screen's legend/preview) does
+        this fall back to `meeting_owner.meeting_user_display_name`, the ONE
+        place the decision is made: `chat_defaults.user_display_name`'s own
+        factory default is the literal string ``"User"`` (see `config.py`'s
+        `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no way to tell
+        "never touched this setting" apart from "chose User" -- honouring it
+        unconditionally would silently turn every untouched install's "You:"
+        rows into "User:" rows.
         """
-        return LABELS["you"]
+        if self._session is not None:
+            return self._session.meta.user_display_name
+        return meeting_user_display_name()
+
+    def _coarse_label(self, label: str) -> str:
+        """Coarse "you"/"others"/"both" label text for the partial preview.
+
+        The finalized transcript/legend get the configured mic name through
+        `render_label` (via `_user_display_name()`); this is the same
+        channel-name decision for the still-streaming partial line, so "You:
+        hel..." and the finalized "Alice: hello" never disagree (task 31746).
+        """
+        if label == "you":
+            return self._user_display_name()
+        if label == "both":
+            return f"{self._user_display_name()} + Others"
+        return LABELS.get(label, label)
 
     def _line_for_segment(self, segment: MeetingSegment) -> str:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
         names = self._session.meta.speaker_names if self._session is not None else {}
-        label = render_label(segment, names, self._user_display_name())
+        diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
+        label = render_label(segment, names, self._user_display_name(), diarize_mic=diarize_mic)
         return f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}"
 
     def _speaker_label(self, cluster_id: str) -> str:
         """The legend row's current display name for `cluster_id`."""
         names = self._session.meta.speaker_names if self._session is not None else {}
+        diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
         placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
-        return render_label(placeholder, names, self._user_display_name()) or cluster_id
+        return render_label(placeholder, names, self._user_display_name(), diarize_mic=diarize_mic) or cluster_id
 
     def _note_speaker(self, segment: MeetingSegment) -> None:
         """Track a newly-seen `speaker_id`, mounting its legend row once."""

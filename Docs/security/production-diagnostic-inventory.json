@@ -134,8 +134,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "b3da49b6ea618eb0b84e",
+      "call_count": 8,
+      "diagnostic_digest": "9a4b815b7547d3f7094b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/diarizer_local.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -170,14 +170,14 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "37343ec1648761f9360f",
+      "diagnostic_digest": "e587513f1e4290fa14e8",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_owner.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
       "call_count": 10,
-      "diagnostic_digest": "6e631714c032f112595b",
+      "diagnostic_digest": "4e68aa3d00c8f330d447",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_session.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -1265,6 +1265,13 @@
       "diagnostic_digest": "9153fdc8d8d86c93cc23",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/local_media_chunk_tool_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "dc8cd8e09ee258969332",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Library/meeting_speaker_rename.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3708,6 +3715,13 @@
       "diagnostic_digest": "9a1cb4a6ac92a5716650",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Library/library_media_canvas.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "ad0fa5a5b3f26fc9ff4b",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Library/library_media_viewer.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -11443,11 +11457,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 587,
+    "owner_files": 589,
     "path_privacy_candidate_calls": 710,
     "persistent_sink_files": 12,
     "task_31551_calls": 35,
     "task_492_calls": 1347,
-    "task_494_calls": 7662
+    "task_494_calls": 7665
   }
 }

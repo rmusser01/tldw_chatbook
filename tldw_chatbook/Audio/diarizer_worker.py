@@ -4,6 +4,9 @@ Never import this module in the app process -- it pulls in torch. `main()` is
 run as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
 `diarizer_local.SpeechBrainDiarizer`, which owns the wire protocol:
 
+    argv  :  ``--start-id N`` (optional) -- start cluster numbering past ``N``.
+             Set only on a RESTART, so the replacement worker cannot re-mint
+             an id the dead one already handed out (31749).
     stdin :  one JSON control line per command; an "assign" line is followed
              by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
     stdout:  one ``{"id": ..., "seq": ...}`` line per assign (the ``seq`` is
@@ -72,7 +75,19 @@ def _embed(encoder, torch, np, pcm: bytes):
     return np.asarray(emb.squeeze().detach().cpu().numpy(), dtype=np.float32)
 
 
-def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25):
+def _parse_start_id(argv) -> int:
+    """``--start-id N`` -> N (0 when absent or garbled).
+
+    Written by `diarizer_local.SpeechBrainDiarizer._command` when it restarts a
+    dead worker, so this one continues the first worker's numbering (31749).
+    """
+    try:
+        return max(0, int(argv[list(argv).index("--start-id") + 1]))
+    except (ValueError, IndexError, TypeError):
+        return 0
+
+
+def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25, start_id=0):
     """Pure (no torch): cluster window embeddings, reconcile to live ids.
 
     The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
@@ -99,6 +114,11 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=
             to `reconcile` so a surplus final cluster that is plainly the same
             voice keeps that speaker's live id (and name) instead of being
             minted a new one.
+        start_id: The live clusterer's `max_id` -- the highest cluster number
+            in use, INCLUDING ids a pre-crash worker minted and this one only
+            inherited (31749). A minted id always continues past it, so a Stop
+            pass run on a restarted (centroid-less) worker cannot hand out an
+            id the user already named.
 
     Returns:
         Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
@@ -124,7 +144,11 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=
     # labelling was backpressured the whole meeting, so live_centroids is
     # empty) must NOT surface as "Speaker F0" (final whole-branch review I2):
     # mint it a fresh live-style id continuing past the highest live number.
-    next_n = max((int(k[1:]) for k in live_centroids if k[1:].isdigit()), default=0) + 1
+    # ... past the highest live id AND past `start_id`: after a crash the
+    # restarted worker has no live centroids at all, so counting from them
+    # alone would mint "S1" straight onto a pre-crash speaker's name (31749).
+    next_n = max((int(k[1:]) for k in live_centroids if k[1:].isdigit()), default=0)
+    next_n = max(next_n, int(start_id)) + 1
     for fid, _cen in final_centroids:
         if fid not in mapping:
             mapping[fid] = f"S{next_n}"
@@ -181,13 +205,68 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
         "clustering_method": ClusteringMethod.AGGLOMERATIVE.value,
     })
     return _reconcile_windows(
-        spans, embeddings, live.centroids(), svc._cluster_speakers, live.threshold,
+        spans, embeddings, live.centroids(), svc._cluster_speakers, live.threshold, live.max_id,
     )
 
 
 def _write(stdout, obj) -> None:
     stdout.write((json.dumps(obj) + "\n").encode())
     stdout.flush()
+
+
+def serve(stdin, stdout, live, embed, batch) -> int:
+    """Run the wire protocol until stdin closes or a ``close`` arrives.
+
+    Split out of `main()` (Qodo Q2) so the command loop is reachable without
+    torch: `main()` is the only place the encoder is loaded, and the loop
+    used to sit behind that load, so nothing but a hand-written fake process
+    on the app side could exercise command dispatch. A serialization or
+    dispatch regression -- the ``pin`` forwarding in particular, which sends
+    no reply and so shows up nowhere else -- could not fail a test. `main()`
+    passes the real encoder-bound callables; a test passes its own.
+
+    Args:
+        stdin: Binary input stream: one JSON control line per command, an
+            "assign" line followed by exactly its ``n`` bytes of PCM.
+        stdout: Binary output stream for the one-line JSON replies.
+        live: The `OnlineClusterer` held for the whole meeting.
+        embed: ``(pcm: bytes) -> embedding`` for an assign.
+        batch: ``(wav, start_s, end_s) -> segment dicts`` for a diarize.
+
+    Returns:
+        0 -- the process exit code, so `main()` can return it directly.
+    """
+    while True:
+        line = stdin.readline()
+        if not line:
+            break
+        try:
+            cmd = json.loads(line)
+        except Exception:  # noqa: BLE001 - ignore a garbled control line
+            continue
+        op = cmd.get("cmd")
+        if op == "assign":
+            pcm = _read_exactly(stdin, int(cmd.get("n", 0)))
+            try:
+                sid = live.assign(embed(pcm))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
+                sys.stderr.flush()
+                sid = None
+            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
+        elif op == "diarize":
+            try:
+                segs = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"ERROR diarize {type(exc).__name__}\n")
+                sys.stderr.flush()
+                segs = []
+            _write(stdout, {"segments": segs})
+        elif op == "pin":
+            live.pin(str(cmd.get("id", "")))
+        elif op == "close":
+            break
+    return 0
 
 
 def main() -> int:
@@ -210,42 +289,17 @@ def main() -> int:
         sys.stderr.flush()
         return 1
 
-    live = OnlineClusterer(max_speakers=max_speakers)
+    live = OnlineClusterer(max_speakers=max_speakers, start_id=_parse_start_id(sys.argv[1:]))
     sys.stderr.write("READY\n")
     sys.stderr.flush()
 
-    while True:
-        line = stdin.readline()
-        if not line:
-            break
-        try:
-            cmd = json.loads(line)
-        except Exception:  # noqa: BLE001 - ignore a garbled control line
-            continue
-        op = cmd.get("cmd")
-        if op == "assign":
-            pcm = _read_exactly(stdin, int(cmd.get("n", 0)))
-            try:
-                sid = live.assign(_embed(encoder, torch, np, pcm))
-            except Exception as exc:  # noqa: BLE001
-                sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
-                sys.stderr.flush()
-                sid = None
-            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
-        elif op == "diarize":
-            try:
-                segs = _batch(
-                    encoder, torch, np, live,
-                    cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)), max_speakers,
-                )
-            except Exception as exc:  # noqa: BLE001
-                sys.stderr.write(f"ERROR diarize {type(exc).__name__}\n")
-                sys.stderr.flush()
-                segs = []
-            _write(stdout, {"segments": segs})
-        elif op == "close":
-            break
-    return 0
+    return serve(
+        stdin, stdout, live,
+        lambda pcm: _embed(encoder, torch, np, pcm),
+        lambda wav, start_s, end_s: _batch(
+            encoder, torch, np, live, wav, start_s, end_s, max_speakers
+        ),
+    )
 
 
 if __name__ == "__main__":
