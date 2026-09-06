@@ -2879,6 +2879,11 @@ class LibraryScreen(BaseAppScreen):
             tuple[tuple[str, ...], tuple[str, ...]] | None
         ) = None
         self._library_media_analyze_reason_cache: str | None = None
+        # (fix I3) One-slot memo of "is the SELECTED item a renameable meeting
+        # recording": ``(media_id, answer)``. Same motivation as the reason
+        # cache above -- it is read on every media sync and costs a DB read
+        # plus a filesystem check, but can only change with the selection.
+        self._library_media_rename_cache: tuple[int, bool] | None = None
         # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
         # started from -- "media" (Select mode) or "import" (the Import
         # queue's "Analyze N skipped"). Read only by ``on_unmount``'s
@@ -15806,11 +15811,7 @@ class LibraryScreen(BaseAppScreen):
         controller = self._library_media_browse_controller
         backing_id = self._library_media_selected_backing_id()
         db = getattr(self.app_instance, "media_db", None)
-        can_rename = (
-            backing_id is not None
-            and db is not None
-            and can_rename_meeting_speakers(db, backing_id)
-        )
+        can_rename = self._library_media_can_rename_speakers(db, backing_id)
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
@@ -15840,6 +15841,31 @@ class LibraryScreen(BaseAppScreen):
             "media_db": db,
             "speaker_rename_media_id": backing_id,
         }
+
+    def _library_media_can_rename_speakers(self, db: Any, backing_id: int | None) -> bool:
+        """Whether the selected item is a renameable meeting, memoized per id.
+
+        The presentation this feeds is rebuilt on EVERY media selection,
+        filter and page change, and the answer costs a DB read plus a
+        filesystem `exists()` on the UI thread (fix I3) -- while it can only
+        change when the selection does. One slot is enough: the cache is
+        keyed by the selected id, so a new selection replaces it.
+
+        Args:
+            db: The media database, or None when the app has none.
+            backing_id: The selected item's media id, or None.
+
+        Returns:
+            True only for a selected meeting recording whose folder survives.
+        """
+        if backing_id is None or db is None:
+            return False
+        cached = self._library_media_rename_cache
+        if cached is not None and cached[0] == backing_id:
+            return cached[1]
+        can_rename = can_rename_meeting_speakers(db, backing_id)
+        self._library_media_rename_cache = (backing_id, can_rename)
+        return can_rename
 
     def _library_media_selected_backing_id(self) -> int | None:
         """Resolve the selected Media list identity to its positive int id.

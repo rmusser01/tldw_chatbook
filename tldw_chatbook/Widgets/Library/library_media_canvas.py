@@ -24,6 +24,8 @@ from tldw_chatbook.Audio.meeting_session import (
     TRANSCRIPT_JSONL,
     MeetingSegment,
     format_clock,
+    is_widget_safe_cluster_id,
+    normalize_speaker_name,
     read_meeting_json,
     render_label,
     update_meeting_json,
@@ -69,12 +71,20 @@ def can_rename_meeting_speakers(db: Any, media_id: int) -> bool:
 
     False (never an exception) when the media item is gone, has no URL, or
     the folder has since been cleaned up.
+
+    Reads ONLY the `url` column, never the row: this runs on the UI thread
+    for every media selection, filter and page change (`_library_media_
+    canvas_presentation`), and `get_media_by_id`'s `SELECT *` dragged the
+    whole `content` blob of every non-meeting item across with it (fix I3).
     """
     try:
-        row = db.get_media_by_id(media_id)
+        cursor = db.execute_query(
+            "SELECT url FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 0", (media_id,)
+        )
+        row = cursor.fetchone()
     except Exception:  # noqa: BLE001 - a lookup failure just means "can't tell, so no"
         return False
-    url = row.get("url") if row else None
+    url = row["url"] if row else None
     if not url:
         return False
     return (Path(url).parent / MEETING_JSON).exists()
@@ -170,7 +180,26 @@ def _write_meeting_transcript_row(
         )
 
 
-def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -> None:
+@dataclass(frozen=True)
+class SpeakerRenameResult:
+    """Outcome of `rename_meeting_speaker`: did it write, and if not, why.
+
+    `reason` is static, user-safe copy (never a path, a name, or transcript
+    text) so the canvas can show it verbatim.
+    """
+
+    ok: bool
+    reason: str = ""
+
+
+#: A refusal leaves BOTH authorities untouched (fix C2 / Qodo Q16).
+RENAME_REFUSED_NOT_MEETING_CONTENT = (
+    "this item's Library transcript wasn't produced by the meeting recording"
+)
+RENAME_REFUSED_EMPTY_TRANSCRIPT = "this meeting's local transcript is missing or empty"
+
+
+def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -> SpeakerRenameResult:
     """Rename `cluster_id` to `name` on a finished meeting's Library item.
 
     Updates the meeting folder's `meeting.json` name map (an empty `name`
@@ -193,6 +222,25 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     post-ingest hook is still dispatched, just AFTER this transaction
     commits, matching its documented "post-commit" contract.
 
+    This rewrite REPLACES whatever `Media.content` holds, so it first proves
+    that content is the meeting's own render (fix C2): with the shipped
+    `post_transcribe` default the Library item's content is the ingest's
+    offline transcription of `mixed.wav`, which a rename would otherwise
+    silently destroy. Re-rendering the transcript with the CURRENT (pre-
+    rename) name map and comparing is that proof; an empty render (a missing
+    or emptied `transcript.jsonl`, Qodo Q16) is refused for the same reason.
+    A refusal touches neither the DB nor `meeting.json`.
+
+    Args:
+        db: The `MediaDatabase`.
+        media_id: The meeting recording's Library media id.
+        cluster_id: The speaker cluster to rename.
+        name: The new name; empty removes the entry (back to "Speaker N").
+
+    Returns:
+        `SpeakerRenameResult(ok=True)` when both authorities were rewritten,
+        or `ok=False` with static copy naming why nothing was touched.
+
     Raises:
         InputError: `media_id` does not name a live media item.
         ConflictError: The row's optimistic-lock version changed
@@ -205,14 +253,20 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
 
     meeting = read_meeting_json(folder)
     names = dict(meeting.get("speaker_names") or {})
-    name = name.strip()
+    segments = _read_meeting_transcript_segments(folder)
+    current_content = _render_meeting_transcript(segments, names)
+    if not current_content.strip():
+        return SpeakerRenameResult(False, RENAME_REFUSED_EMPTY_TRANSCRIPT)
+    if (row["content"] or "").strip() != current_content.strip():
+        return SpeakerRenameResult(False, RENAME_REFUSED_NOT_MEETING_CONTENT)
+
+    name = normalize_speaker_name(name)
     if name:
         names[cluster_id] = name
     else:
         names.pop(cluster_id, None)
     update_meeting_json(folder, speaker_names=names)
 
-    segments = _read_meeting_transcript_segments(folder)
     new_content = _render_meeting_transcript(segments, names)
     new_hash = hashlib.sha256(new_content.encode()).hexdigest()
 
@@ -224,6 +278,14 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
 
     with db.transaction() as conn:
         cur = conn.cursor()
+        # Make the swap reversible (C2): `rollback_to_version` restores a
+        # DocumentVersions row's content into `Media`, but refuses the LATEST
+        # version number -- so the state being replaced has to be seeded
+        # before the new one is appended, or the very first rename would be
+        # unrecoverable. Seed once per item; later renames just append.
+        cur.execute("SELECT 1 FROM DocumentVersions WHERE media_id = ? LIMIT 1", (media_id,))
+        if cur.fetchone() is None:
+            db.create_document_version(media_id=media_id, content=row["content"] or "")
         cur.execute(
             "UPDATE Media SET content=?, content_hash=?, last_modified=?, version=?, client_id=? "
             "WHERE id=? AND version=?",
@@ -239,8 +301,10 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         _write_meeting_transcript_row(
             db, conn, media_id, row.get("transcription_model"), new_content, now, client_id,
         )
+        db.create_document_version(media_id=media_id, content=new_content)
 
     dispatch_media_post_ingest(db, media_id, media_uuid)
+    return SpeakerRenameResult(True)
 
 
 def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]]:
@@ -257,7 +321,12 @@ def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]
     segments = _read_meeting_transcript_segments(folder)
     seen: list[str] = []
     for segment in segments:
-        if segment.speaker_id and segment.speaker_id not in seen:
+        # A hand-edited transcript.jsonl can carry a speaker_id that is not a
+        # legal Textual widget id ("S 1", "S#1"); interpolating it below would
+        # raise out of compose() and take the screen down. Skip the row.
+        if not is_widget_safe_cluster_id(segment.speaker_id or ""):
+            continue
+        if segment.speaker_id not in seen:
             seen.append(segment.speaker_id)
     rows = []
     for cluster_id in seen:
@@ -535,18 +604,45 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
             return
         cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
-        name = event.value
+        name = normalize_speaker_name(event.value)
         event.input.value = ""
         if self.media_db is None or self.speaker_rename_media_id is None:
             return
+        # Qodo Q3: the rename reads the transcript file, runs several DB
+        # writes, FTS maintenance and a post-ingest dispatch -- all of which
+        # would freeze the UI on a large transcript or a busy database.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(self, cluster_id: str, name: str) -> None:
+        """Persist one rename on a worker thread, then refresh on the UI one."""
         try:
-            rename_meeting_speaker(self.media_db, self.speaker_rename_media_id, cluster_id, name)
+            outcome = rename_meeting_speaker(
+                self.media_db, self.speaker_rename_media_id, cluster_id, name
+            )
         except Exception as exc:  # noqa: BLE001 - a rename must not crash the canvas
             # `rename_meeting_speaker` reads/writes `meeting.json`; a
             # filesystem failure's `str()` embeds the meeting folder path
             # (task-9 diagnostic inventory review) -- redact it, mirroring
             # `meetings_screen.py`'s own rename-persist failure log.
             logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(self._apply_speaker_rename_outcome, cluster_id, outcome)
+
+    def _apply_speaker_rename_outcome(
+        self, cluster_id: str, outcome: SpeakerRenameResult
+    ) -> None:
+        """Report a refused/failed rename, or repaint after a successful one.
+
+        Qodo Q15: a rename that changed nothing used to leave only a debug
+        log, so the user saw the old name and no explanation.
+        """
+        if not outcome.ok:
+            self.app.notify(f"Couldn't rename this speaker: {outcome.reason}.", severity="warning")
             return
         if not self.is_mounted:
             return
@@ -1563,8 +1659,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # `can_rename_meeting_speakers` says the meeting folder is
                 # still there (absent, not disabled, otherwise: a non-meeting
                 # item has nothing to rename).
+                # ... and only while the pane is actually visible: building
+                # the rows parses the whole transcript.jsonl, which is pure
+                # waste on a hidden pane (final review, MINOR).
                 if (
                     self.can_rename_speakers
+                    and has_preview
+                    and not self.compact
                     and self.media_db is not None
                     and self.speaker_rename_media_id is not None
                 ):
