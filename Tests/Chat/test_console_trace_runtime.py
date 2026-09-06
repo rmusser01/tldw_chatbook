@@ -843,6 +843,92 @@ async def test_compound_bind_reconciles_actual_postcommit_outcome(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_factory", [False, True], ids=["cold-factory", "warm-factory"])
+async def test_cold_fresh_replay_cannot_hide_unresolved_turn_behind_completed_turn(
+    tmp_path, make_database, make_gateway, reuse_factory,
+):
+    """Completing distinct B must not authorize a cold replay of unresolved A."""
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    database = make_database(tmp_path / "hidden-unresolved-turn.sqlite", "turn-owner")
+    conversation = database.add_conversation({"title": "unresolved turn"})
+    turn_a, revision_a = _saved_message(database, conversation, "turn A")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    adapter_entries = []
+
+    def adapter(**kwargs):
+        adapter_entries.append(kwargs["messages_payload"])
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=adapter, trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True, provider="openai", model="gpt-test", execution_key="openai",
+        base_url="https://api.openai.com/v1", streaming=False,
+    )
+
+    def prepare(text, revision):
+        return gateway.prepare_chat_request(
+            resolution,
+            _semantic_request([{"role": "user", "content": text}], [revision], policy),
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+    async def dispatch(selected_gateway, prepared, signals=None):
+        return [item async for item in selected_gateway.stream_chat(
+            resolution, prepared, route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON, signals=signals,
+        )]
+
+    prepared_a = prepare("turn A", revision_a)
+    first = factory(prepared_a, resolution, ConsoleRequestRoute.FRESH)
+    reserved_a = first.reserve()
+    assert reserved_a.turn_id == turn_a
+    assert reserved_a.state is TraceCallState.RESERVED
+    assert adapter_entries == []
+    with database.transaction() as cursor:
+        unresolved_a = factory.repository.get_call(cursor, reserved_a.call_id)
+    assert unresolved_a.state is TraceCallState.RESERVED
+
+    turn_b, revision_b = _saved_message(database, conversation, "turn B")
+    answer_b, _ = _saved_message(database, conversation, "ok", sender="assistant")
+    signals = ConsoleProviderStreamSignals()
+    signals.bind_trace_settlement_sink(lambda handoff: handoff.settle(answer_b))
+    assert await dispatch(gateway, prepare("turn B", revision_b), signals) == ["ok"]
+    assert len(adapter_entries) == 1
+    with database.transaction() as cursor:
+        latest = factory.repository.get_latest_call_boundary(cursor, first.identity.segment_id)
+        completed_b = factory.repository.get_call(cursor, latest.call_id)
+        assert completed_b.turn_id == turn_b
+        assert completed_b.state is TraceCallState.COMPLETE
+        assert factory.repository.get_call(cursor, reserved_a.call_id) == unresolved_a
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == 2
+
+    # A new gateway has no accepted recovery scope, even when its long-lived
+    # production factory retains B's ordinary replacement capability.
+    cold_factory = factory if reuse_factory else ConsoleTraceBoundaryFactory(database)
+    cold_gateway = make_gateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=cold_factory,
+    )
+    with pytest.raises(TraceCallPersistenceError):
+        await dispatch(cold_gateway, prepared_a)
+    assert len(adapter_entries) == 1
+    with database.transaction() as cursor:
+        actual_a = factory.repository.get_call(cursor, reserved_a.call_id)
+        assert actual_a == unresolved_a
+        assert actual_a.call_id == reserved_a.call_id
+        assert actual_a.idempotency_key == reserved_a.idempotency_key
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == 2
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary'"
+        ).fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
 async def test_cold_fresh_reservation_cannot_allocate_another_call(
     tmp_path, make_database, make_gateway, monkeypatch,
 ):

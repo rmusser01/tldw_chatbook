@@ -74,6 +74,7 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 ## Task 2: Owned retry handoff and commit reconciliation
 
 **Files:**
+- Modify only for the saved-turn unresolved-call existence query: `tldw_chatbook/Chat/console_trace_repository.py`; reuse the existing owner/turn index without schema or registry changes.
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
 - Modify: `tldw_chatbook/Chat/console_provider_gateway.py`
 - Modify: `tldw_chatbook/Chat/console_trace_runtime.py`
@@ -134,6 +135,9 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
   unresolved; retain completed ordinary replacements, new saved turns, and the
   existing explicit `RETRY` route used by Retry anyway. Verify the refusal with
   the actual cold gateway after unreadable postcommit state, not preparation alone.
+  Check the requested saved turn even when another turn has a later call; a new
+  gateway may reuse a warm factory, so a cold-factory replacement refusal alone
+  is not sufficient recovery ownership evidence.
 
 - [ ] **Step 5: Root runs new recovery cases and the four affected test files.** Also repeat Task 1's production calculator/Canvas controls to verify recovery integration has not changed healthy sends. Independently review the task and commit only verified changes.
 

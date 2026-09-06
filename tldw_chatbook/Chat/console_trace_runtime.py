@@ -343,23 +343,14 @@ class ConsoleTraceBoundaryFactory:
                     cursor,
                     conversation_id,
                 )
-                if owner is not None and route_record.route is ConsoleRequestRoute.FRESH:
-                    latest = self.repository.get_latest_call_boundary(cursor, owner.root_segment_id)
-                    prior = (
-                        None if latest is None or latest.call_id is None
-                        else self.repository.get_call(cursor, latest.call_id)
+                if (
+                    owner is not None
+                    and route_record.route is ConsoleRequestRoute.FRESH
+                    and self.repository.has_unresolved_call_for_turn(
+                        cursor, owner_id=owner.owner_id, turn_id=turn_id
                     )
-                    if (
-                        prior is not None
-                        and (prior.owner_id, prior.turn_id) == (owner.owner_id, turn_id)
-                        and prior.state in {
-                            TraceCallState.RESERVED,
-                            TraceCallState.DISPATCH_STARTED,
-                            TraceCallState.DISPATCH_UNKNOWN,
-                            TraceCallState.RESPONSE_STARTED,
-                        }
-                    ):
-                        raise ValueError("trace_fresh_turn_requires_owned_recovery")
+                ):
+                    raise ValueError("trace_fresh_turn_requires_owned_recovery")
                 if tool_loop:
                     origin = self.repository.get_run_origin(cursor, run_id)
                     if (
