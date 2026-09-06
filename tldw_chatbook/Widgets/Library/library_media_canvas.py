@@ -126,13 +126,16 @@ def _write_meeting_transcript_row(
     """
     cur = conn.cursor()
     whisper_model = whisper_model or "meeting"
-    # ponytail: this lookup keys on `media_id` alone, not `(media_id,
-    # whisper_model)` -- fine today because no ASR pipeline in this codebase
-    # writes a Transcripts row for a meeting item (see the docstring above),
-    # so at most one live row per media_id ever exists here. Filter by
-    # whisper_model too if that ever changes.
+    # Match regardless of `deleted` (final whole-branch review M2): the table's
+    # UNIQUE(media_id, whisper_model) counts soft-deleted rows too, so a prior
+    # soft-deleted row that a `deleted = 0` filter skips would collide the
+    # INSERT below (a caught IntegrityError that silently dropped the rename).
+    # Reuse the row instead -- the UPDATE path resurrects it (deleted=0).
+    # ponytail: keys on `media_id` alone, not `(media_id, whisper_model)` --
+    # fine today because no ASR pipeline in this codebase writes a Transcripts
+    # row for a meeting item, so at most one row per media_id ever exists here.
     cur.execute(
-        "SELECT id, uuid, version FROM Transcripts WHERE media_id = ? AND deleted = 0 ORDER BY id DESC LIMIT 1",
+        "SELECT id, uuid, version, deleted FROM Transcripts WHERE media_id = ? ORDER BY id DESC LIMIT 1",
         (media_id,),
     )
     existing = cur.fetchone()
@@ -152,8 +155,10 @@ def _write_meeting_transcript_row(
         )
     else:
         new_version = existing["version"] + 1
+        # deleted=0 resurrects a soft-deleted prior row (M2) -- a no-op when the
+        # row was already live.
         cur.execute(
-            "UPDATE Transcripts SET transcription=?, last_modified=?, version=?, client_id=?, prev_version=? "
+            "UPDATE Transcripts SET transcription=?, last_modified=?, version=?, client_id=?, prev_version=?, deleted=0 "
             "WHERE id=? AND version=?",
             (transcription, now, new_version, client_id, existing["version"], existing["id"], existing["version"]),
         )

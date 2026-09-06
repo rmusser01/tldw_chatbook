@@ -14,6 +14,34 @@ def test_rename_after_rewrites_content_and_reindexes(tmp_media_db, meeting_folde
     assert any(h["id"] == media_id for h in hits)
 
 
+def test_rename_survives_a_soft_deleted_prior_transcript_row(tmp_media_db, meeting_folder_media_item):
+    """M2: a soft-deleted prior Transcripts row must not collide the rename's
+    INSERT -- UNIQUE(media_id, whisper_model) counts deleted rows, so the old
+    `WHERE deleted = 0` lookup missed it and the INSERT hit a caught
+    IntegrityError that silently dropped the rename."""
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice")   # creates the Transcripts row
+
+    # Soft-delete that row (as a prior delete would), keeping the sync trigger
+    # happy: version increments by exactly 1, client_id stays non-empty.
+    with tmp_media_db.transaction() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, version, client_id FROM Transcripts WHERE media_id=?", (media_id,))
+        prior = cur.fetchone()
+        cur.execute(
+            "UPDATE Transcripts SET deleted=1, version=?, client_id=? WHERE id=?",
+            (prior["version"] + 1, prior["client_id"], prior["id"]),
+        )
+
+    rename_meeting_speaker(tmp_media_db, media_id, "S1", "Bob")     # must not silently fail
+    row = tmp_media_db.get_media_by_id(media_id)
+    assert "Bob:" in row["content"]
+    hits, _total = tmp_media_db.search_media_db(search_query="Bob")
+    assert any(h["id"] == media_id for h in hits)
+
+
 def test_rename_after_disabled_when_folder_gone(tmp_media_db, meeting_folder_media_item):
     media_id, folder = meeting_folder_media_item(names={}, segments=[("S1", "hi")])
     import shutil; shutil.rmtree(folder)
