@@ -36,6 +36,14 @@ class EnvSourceAvailability(str, Enum):
     UNBOUND = "unbound"
     #: No gatherer has answered yet. Renders as progress, never as a claim.
     PENDING = "pending"
+    #: The workspace root could not be DETERMINED, and has stayed that way
+    #: (TASK-31665 AC#11). Distinct from ``UNBOUND`` ("determined: nothing
+    #: is bound") and from ``PENDING`` ("a gatherer is on its way"): here
+    #: nothing is on its way, because the accessor chain itself has no
+    #: answer -- no chat controller, or no active session. Landed only
+    #: after the condition PERSISTS, so a transient blip still leaves the
+    #: previous paint alone.
+    UNKNOWN = "unknown"
 
 
 class ExecTargetKind(str, Enum):
@@ -173,6 +181,30 @@ def unbound_snapshot(target: ExecTargetState | None = None) -> EnvironmentSnapsh
     )
 
 
+def unknown_snapshot(target: ExecTargetState | None = None) -> EnvironmentSnapshot:
+    """Build the snapshot for "the workspace root could not be determined".
+
+    TASK-31665 AC#11. Mirrors ``unbound_snapshot`` exactly in shape -- all
+    three tiers carry the SAME availability and no data, so no tier can be
+    left describing a root nobody could name. Kept a separate factory
+    rather than a parameter so a caller cannot land "unknown" for one tier
+    and "unbound" for another.
+
+    Args:
+        target: Exec target to preserve; the execution destination is a
+            session property, not a workspace one.
+
+    Returns:
+        A snapshot whose git, pr, and tasks tiers are all ``UNKNOWN``.
+    """
+    return EnvironmentSnapshot(
+        git=GitEnvState(availability=EnvSourceAvailability.UNKNOWN),
+        target=target if target is not None else ExecTargetState(),
+        pr=PrEnvState(availability=EnvSourceAvailability.UNKNOWN),
+        tasks=TasksEnvState(availability=EnvSourceAvailability.UNKNOWN),
+    )
+
+
 _BRANCH_TASK_RE = re.compile(r"task-(\d+(?:\.\d+)*)")
 
 
@@ -211,11 +243,19 @@ def relative_age(then: datetime | None, now: datetime) -> str:
 
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     RAIL_CONTENT_WIDTH_MIN,
+    ROW_INDENT_COLUMNS,
     SECTION_TOGGLE_WIDTH,
     SINGLE_LINE_ROW_BUDGET,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
+
+#: Columns an ``indent=1`` expansion child gets for its own text
+#: (TASK-31665 AC#3). Every projection below that ellipsizes an indented
+#: row must budget against THIS, not ``SINGLE_LINE_ROW_BUDGET`` -- an
+#: indent the fitter does not know about is exactly the silent truncation
+#: `_with_expand_marker`'s docstring already warns about.
+_CHILD_ROW_BUDGET = SINGLE_LINE_ROW_BUDGET - ROW_INDENT_COLUMNS
 
 ENVIRONMENT_SECTION_ID = "environment"
 TASKS_SECTION_ID = "tasks"
@@ -226,6 +266,8 @@ ENV_ROW_EMPTY = "env-empty"
 ENV_ROW_PENDING = "env-pending"
 ENV_ROW_UNBOUND = "env-unbound"
 ENV_ROW_UNBOUND_NOTE = "env-unbound-note"
+ENV_ROW_UNKNOWN = "env-unknown"
+ENV_ROW_UNKNOWN_NOTE = "env-unknown-note"
 ENV_ROW_LOCAL = "env-local"
 ENV_ROW_BRANCH = "env-branch"
 ENV_ROW_COMMIT_PUSH = "env-commit-push"
@@ -299,6 +341,19 @@ ENV_UNBOUND_TEXT = "Changes aren't tracked for this workspace."
 ENV_UNBOUND_NOTE_TEXT = (
     "Bind a folder and enable Change Review in Settings ▸ Workspaces — "
     "this is not a report that nothing changed."
+)
+
+# TASK-31665 AC#11. `ENV_PENDING_TEXT` promises motion ("Checking…"), and
+# a root the accessor chain cannot determine has none: nothing is
+# dispatched, so nothing will ever land, and the panel sat on that promise
+# with an inert Refresh for the life of the screen (no chat controller yet,
+# or no active session). This copy stops promising and says what is
+# actually true, plus the one thing that changes it. Deliberately NOT the
+# UNBOUND copy: "changes aren't tracked for this workspace" asserts
+# something about a workspace that has not been identified.
+ENV_UNKNOWN_TEXT = "No active chat session — workspace not determined."
+ENV_UNKNOWN_NOTE_TEXT = (
+    "Start or open a chat in a Workspace, then Refresh."
 )
 
 
@@ -477,6 +532,21 @@ def project_environment_section(
             ),),
             summary="",
         )
+    if git.availability is EnvSourceAvailability.UNKNOWN:
+        # TASK-31665 AC#11: a root that stayed undetermined. Says so, and
+        # names the gesture that changes it, instead of sitting forever on
+        # PENDING's "Checking workspace…" with nothing checking.
+        return ConsoleInspectorSectionState(
+            rows=(
+                InspectorSectionRow(
+                    row_id=ENV_ROW_UNKNOWN, primary_text=ENV_UNKNOWN_TEXT,
+                ),
+                InspectorSectionRow(
+                    row_id=ENV_ROW_UNKNOWN_NOTE, primary_text=ENV_UNKNOWN_NOTE_TEXT,
+                ),
+            ),
+            summary="",
+        )
     if git.availability is EnvSourceAvailability.UNBOUND:
         # No folder is bound, so nothing about a repository can be asserted
         # -- including, emphatically, "clean". Returning before the counts
@@ -529,16 +599,21 @@ def project_environment_section(
                 row_id=f"{ENV_FILE_ROW_PREFIX}{index}",
                 primary_text=f"{change.status} {change.path}",
                 secondary_text=signed_change_counts(change.adds, change.dels),
+                indent=1,
             ))
         if len(git.files) > _MAX_FILE_ROWS:
             rows.append(InspectorSectionRow(
                 row_id="env-file-more",
                 primary_text=f"… {len(git.files) - _MAX_FILE_ROWS} more — Review opens all",
+                indent=1,
             ))
         rows.append(InspectorSectionRow(
             row_id="env-changes-review",
-            primary_text=_with_surface_marker("Review in Change Review"),
+            primary_text=_with_surface_marker(
+                "Review in Change Review", budget=_CHILD_ROW_BUDGET
+            ),
             clickable=True,
+            indent=1,
         ))
 
     rows.append(InspectorSectionRow(
@@ -549,10 +624,12 @@ def project_environment_section(
     if ENV_ROW_LOCAL in expanded:
         rows.append(InspectorSectionRow(
             row_id="env-local-current", primary_text="Local instance ✓",
+            indent=1,
         ))
         rows.append(InspectorSectionRow(
             row_id="env-local-remote",
             primary_text="Remote tldw_server — not configured",
+            indent=1,
         ))
 
     rows.append(InspectorSectionRow(
@@ -566,6 +643,7 @@ def project_environment_section(
     if ENV_ROW_BRANCH in expanded:
         rows.append(InspectorSectionRow(
             row_id="env-branch-detail",
+            indent=1,
             primary_text=git.branch or _branch_primary(git),
             secondary_text=(
                 f"upstream {git.upstream} (↑↓ vs last fetch)"
@@ -577,6 +655,7 @@ def project_environment_section(
                 row_id="env-branch-worktree",
                 primary_text=f"worktree {git.worktree_name}",
                 secondary_text=git.root,
+                indent=1,
             ))
 
     if git.dirty or git.ahead:
@@ -616,16 +695,21 @@ def project_environment_section(
             rows.append(InspectorSectionRow(
                 row_id="env-pr-title", primary_text=pr.title,
                 secondary_text=signed_change_counts(pr.adds, pr.dels),
+                indent=1,
             ))
             rows.append(InspectorSectionRow(
                 row_id=ENV_ROW_PR_OPEN,
-                primary_text=_with_surface_marker("Open in browser"),
+                primary_text=_with_surface_marker(
+                    "Open in browser", budget=_CHILD_ROW_BUDGET
+                ),
                 clickable=True,
+                indent=1,
             ))
             rows.append(InspectorSectionRow(
                 row_id=ENV_ROW_PR_ADD,
                 primary_text=_with_insert_marker("Add to chat"),
                 clickable=True,
+                indent=1,
             ))
         if pr.checks:
             failing = len(pr.failing_checks)
@@ -654,6 +738,7 @@ def project_environment_section(
                     rows.append(InspectorSectionRow(
                         row_id=f"env-check-{index}", primary_text=check.name,
                         status="error",
+                        indent=1,
                     ))
                 if failing:
                     rows.append(InspectorSectionRow(
@@ -662,6 +747,7 @@ def project_environment_section(
                             "Fix — add failure summary to chat"
                         ),
                         clickable=True,
+                        indent=1,
                     ))
 
     return ConsoleInspectorSectionState(
@@ -692,6 +778,45 @@ TASKS_ENTRY_ROW_PREFIX = "task-entry-"
 MAX_TASK_LIST_ROWS = 30
 
 _STATUS_ROW_CLASS = {"In Progress": "running", "Done": "done"}
+
+
+def tasks_count_summary(
+    in_progress: int, todo: int, *, budget: int = TASKS_SUMMARY_BUDGET
+) -> str:
+    """Tasks header summary for a branch with no task of its own.
+
+    TASK-31665 AC#6. This line used to read "3 doing · 12 todo" while every
+    other statement of the same fact in the section -- each task entry's
+    own ``secondary_text``, and the branch-task summary
+    ``task-N · In Progress`` -- used the backlog's canonical "In Progress"
+    / "To Do". Two vocabularies for one thing; the backlog's wins, because
+    it is the one the task FILES use and the one the other rows already
+    carry.
+
+    The canonical words are longer than the abbreviations they replace
+    ("3 in progress · 12 to do" is 24 columns against a 21-column budget at
+    the narrowest supported rail), so this degrades rather than letting
+    ``_ellipsize`` cut mid-word into "3 in progress · 12 t…". The half it
+    keeps is the actionable one -- the same priority rule
+    ``environment_summary`` applies to its own ± counts. The dropped count
+    is one keypress away: expanding the section lists every task with its
+    status.
+
+    Args:
+        in_progress: Number of "In Progress" tasks in the backlog.
+        todo: Number of "To Do" tasks in the backlog.
+        budget: Columns the header summary may take.
+
+    Returns:
+        The widest form that fits ``budget``.
+    """
+    full = f"{in_progress} in progress · {todo} to do"
+    if len(full) <= budget:
+        return full
+    actionable = f"{in_progress} in progress"
+    if len(actionable) <= budget:
+        return actionable
+    return _ellipsize(full, budget)
 
 
 def project_tasks_section(
@@ -756,21 +881,25 @@ def project_tasks_section(
                 primary_text=f"task-{entry.task_id} · {entry.title}",
                 secondary_text=entry.status,
                 status=_STATUS_ROW_CLASS.get(entry.status, ""),
+                indent=1,
             ))
         if len(tasks.entries) > MAX_TASK_LIST_ROWS:
             rows.append(InspectorSectionRow(
                 row_id="task-entry-more",
                 primary_text=f"… {len(tasks.entries) - MAX_TASK_LIST_ROWS} more",
+                indent=1,
             ))
         if tasks.branch_task is not None:
             rows.append(InspectorSectionRow(
                 row_id=TASKS_ROW_ADD,
                 primary_text=_with_insert_marker("Add task to chat"),
                 clickable=True,
+                indent=1,
             ))
     summary = (
         f"task-{tasks.branch_task.task_id} · {tasks.branch_task.status}"
-        if tasks.branch_task else f"{tasks.in_progress} doing · {tasks.todo} todo"
+        if tasks.branch_task
+        else tasks_count_summary(tasks.in_progress, tasks.todo)
     )
     return ConsoleInspectorSectionState(
         rows=tuple(rows), summary=_ellipsize(summary, TASKS_SUMMARY_BUDGET)

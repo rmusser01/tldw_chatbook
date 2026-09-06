@@ -236,14 +236,22 @@ async def test_commit_push_row_opens_change_review_in_current_mode():
 
 
 @pytest.mark.asyncio
-async def test_changes_review_row_opens_change_review_in_default_mode():
-    """The expanded "Review in Change Review" row opens the ordinary view."""
+async def test_both_environment_change_rows_open_the_same_working_tree_view():
+    """TASK-31665 AC#8 -- the canonical-opener ruling.
+
+    "Review in Change Review…" used to open the latest RECORDED TURN while
+    its neighbour "Review & commit… · N files" opened the WORKING TREE:
+    two rows one line apart, under the same "Changes" heading whose counts
+    come from `git status`, going to two different views of the same word.
+    Destination now follows the surface that offers it -- an Environment
+    row is always about the working tree.
+    """
     async with _console_screen() as (pilot, screen):
         captured: list[dict] = []
         screen._open_change_review = lambda *a, **kw: captured.append(dict(kw))
         screen._handle_console_environment_row("environment", "env-changes-review")
         await pilot.pause()
-        assert captured == [{}]
+        assert captured == [{"initial_current_mode": True}]
 
 
 @pytest.mark.asyncio
@@ -1261,6 +1269,16 @@ async def test_unknown_root_never_paints_the_unbound_copy():
         screen._review_selection._workspace_roots_accessor = _boom
         await screen.action_toggle_console_inspector_rail()  # opens -> refresh
         await pilot.pause()
+        # TASK-31665 AC#12 (vacuity guard). `action_toggle_...` TOGGLES: if
+        # the rail were already open this closes it, and every assertion
+        # below then passes for the wrong reason -- `poll_tick` and
+        # `request_refresh` both early-return on a closed rail, so "no
+        # negative was asserted" would be proving that nothing ran at all
+        # rather than that the UNKNOWN path is quiet.
+        assert screen._is_console_widget_displayed("console-right-rail"), (
+            "the rail is closed, so the controller's rail-open guard would "
+            "have suppressed the refresh this test is measuring"
+        )
         screen._console_environment.poll_tick()
         await pilot.pause()
 
@@ -1570,8 +1588,11 @@ async def test_environment_rows_take_one_line_each_at_the_smallest_terminal():
         ]
         for row in rows:
             assert row.size.height == 1, row.row_id
-        # header + four rows + the Refresh tail (margin + button) = 7 (was 11).
-        assert section.size.height == 7
+        # header + four rows + the Refresh tail = 6 (was 11 before TASK-31662,
+        # then 7 while the tail still reserved a blank line above itself --
+        # TASK-31665 AC#5 attached it to the section instead, buying the
+        # 80x24 rail one more content line on the way).
+        assert section.size.height == 6
 
 
 @pytest.mark.asyncio
@@ -1604,3 +1625,136 @@ async def test_mounted_sections_suppress_their_summary_while_open():
             section.set_open(False)
             await pilot.pause()
             assert summary.display, dom_id
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#13: the Agent fleet section's periodic sync must not steal
+# rail focus either (TASK-31661 round-1 review finding)
+# ---------------------------------------------------------------------------
+
+
+def _fleet_payload(base, rows):
+    """Return a fleet payload built from ``base`` with its rows replaced.
+
+    ``base`` is captured ONCE, before the real derivation is replaced -- a
+    helper that re-read `_console_agent_section_payload` would recurse into
+    the stub that calls it.
+    """
+    from tldw_chatbook.Widgets.Console.console_inspector_section import (
+        ConsoleInspectorSectionState,
+    )
+
+    payload = list(base)
+    payload[2] = ConsoleInspectorSectionState(rows=tuple(rows), summary="")
+    return tuple(payload)
+
+
+def _fleet_row(section, row_id):
+    return next(
+        widget
+        for widget in section.query(ConsoleInspectorSectionRow)
+        if widget.row_id == row_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_fleet_section_sync_keeps_focus_on_the_same_row():
+    """AC#13. `_sync_console_agent_section` runs on its own periodic tick and
+    its rows ARE focusable, so a child finishing (a structural row-set change)
+    recomposed the section, unmounted the focused row, and parked the caret
+    above the header -- exactly the defect TASK-31661 fixed for the
+    Environment poll, one section over."""
+    from tldw_chatbook.Widgets.Console.console_inspector_section import (
+        InspectorSectionRow,
+    )
+
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        rows = [
+            InspectorSectionRow(row_id="child-a", primary_text="a", clickable=True),
+            InspectorSectionRow(row_id="child-b", primary_text="b", clickable=True),
+        ]
+        base = screen._agent._console_agent_section_payload()
+        screen._agent._console_agent_section_payload = (
+            lambda: _fleet_payload(base, rows)
+        )
+        screen._console_agent_section_last = None
+        screen._sync_console_agent_section()
+        await pilot.pause()
+
+        section = screen.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        assert _row_ids(section) == ["child-a", "child-b"]
+        _fleet_row(section, "child-b").focus()
+        await pilot.pause()
+        assert screen.focused is _fleet_row(section, "child-b")
+
+        # A tick lands one more child -- a structural change, so `sync_state`
+        # recomposes and unmounts the focused row.
+        grown = rows + [
+            InspectorSectionRow(row_id="child-c", primary_text="c", clickable=True)
+        ]
+        screen._agent._console_agent_section_payload = (
+            lambda: _fleet_payload(base, grown)
+        )
+        screen._sync_console_agent_section()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _row_ids(section) == ["child-a", "child-b", "child-c"]
+        focused = screen.focused
+        assert isinstance(focused, ConsoleInspectorSectionRow), focused
+        assert focused.row_id == "child-b", (
+            "the fleet sync moved focus off the row the user had parked it on"
+        )
+
+
+@pytest.mark.asyncio
+async def test_fleet_section_sync_yields_to_a_focus_move_outside_the_rail():
+    """AC#13 reuses TASK-31661's outside-rail guard rather than cloning it:
+    a human who moved focus during the recompose window must win."""
+    from tldw_chatbook.Widgets.Console.console_inspector_section import (
+        InspectorSectionRow,
+    )
+
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        rows = [
+            InspectorSectionRow(row_id="child-a", primary_text="a", clickable=True),
+            InspectorSectionRow(row_id="child-b", primary_text="b", clickable=True),
+        ]
+        base = screen._agent._console_agent_section_payload()
+        screen._agent._console_agent_section_payload = (
+            lambda: _fleet_payload(base, rows)
+        )
+        screen._console_agent_section_last = None
+        screen._sync_console_agent_section()
+        await pilot.pause()
+
+        section = screen.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        _fleet_row(section, "child-b").focus()
+        await pilot.pause()
+
+        grown = rows + [
+            InspectorSectionRow(row_id="child-c", primary_text="c", clickable=True)
+        ]
+        screen._agent._console_agent_section_payload = (
+            lambda: _fleet_payload(base, grown)
+        )
+        screen._sync_console_agent_section()
+        # ...and in the recompose window the user clicks into the composer.
+        composer = screen.query_one("#console-native-composer")
+        screen.set_focus(composer)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is composer, (
+            "the fleet sync fought the user for focus they had just moved"
+        )

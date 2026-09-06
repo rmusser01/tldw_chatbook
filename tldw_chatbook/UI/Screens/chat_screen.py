@@ -785,13 +785,19 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
-# DOM ids of the two Inspect-rail sections the Environment controller paints
-# (`UI/Console_Modules/right_rail.py`), keyed by the `section_id` their rows'
-# messages carry. One map, so the focus re-land and the landing path can
-# never disagree about which widget a `section_id` names.
+# DOM ids of the Inspect-rail `ConsoleInspectorSection`s whose rows are
+# focus-restorable (`UI/Console_Modules/right_rail.py`), keyed by the
+# `section_id` their rows' messages carry. One map, so the focus re-land and
+# the landing path can never disagree about which widget a `section_id`
+# names. The Agent fleet section joined the map in TASK-31665 AC#13, when
+# its own periodic sync got the same capture/restore the Environment poll
+# got in TASK-31661 -- it is listed here purely so the restore's
+# last-resort chevron fallback can prefer the fleet's OWN toggle over a
+# neighbouring section's; the Environment controller does not paint it.
 CONSOLE_ENVIRONMENT_SECTION_DOM_IDS = {
     ENVIRONMENT_SECTION_ID: "console-environment-section",
     TASKS_SECTION_ID: "console-tasks-section",
+    CONSOLE_AGENT_FLEET_SECTION_ID: "console-agent-section-subagents",
 }
 # task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
 # used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
@@ -8149,9 +8155,12 @@ class ChatScreen(BaseAppScreen):
         composer (or any other widget) is never fought for focus it
         legitimately holds.
 
-        The Agent fleet section is NOT covered here: it syncs through
-        ``_sync_console_agent_section`` on its own separate tick, tracked
-        as a follow-up (task-31665 #13) rather than folded in here.
+        The Agent fleet section is not covered *here* -- it syncs through
+        ``_sync_console_agent_section`` on its own separate tick -- but it
+        is covered: TASK-31665 AC#13 applies the same capture/restore
+        there, reusing this method's own
+        ``_focus_console_environment_row_after_sync`` callback rather than
+        cloning it.
 
         Args:
             snapshot: The controller's newly landed environment snapshot.
@@ -8230,7 +8239,7 @@ class ChatScreen(BaseAppScreen):
     def _console_environment_focused_row_in_section(
         self, section_id: str
     ) -> str | None:
-        """Return the row_id focused inside Environment/Tasks section ``section_id``.
+        """Return the row_id focused inside Inspector section ``section_id``.
 
         Read synchronously at the call site (see `_land_console_environment`'s
         docstring for why that matters): a flag set around `focus()` would
@@ -8238,7 +8247,9 @@ class ChatScreen(BaseAppScreen):
         delivers `DescendantFocus` asynchronously.
 
         Args:
-            section_id: ``"environment"`` or ``"tasks"``.
+            section_id: ``"environment"``, ``"tasks"``, or the Agent fleet
+                section's id (TASK-31665 AC#13 -- the rows all carry their
+                owning section's id, so one lookup serves all three).
 
         Returns:
             The focused row's row_id, or ``None`` when focus is not
@@ -8640,7 +8651,16 @@ class ChatScreen(BaseAppScreen):
                 self._request_console_environment_row_focus(section_id, row_id)
             return
         if row_id == "env-changes-review":
-            self._open_change_review()
+            # TASK-31665 AC#8 (the canonical-opener ruling). This row lives
+            # inside the Environment section's own Changes block, whose
+            # counts, file rows and "Review & commit…" all describe the
+            # WORKING TREE -- but it used to open Change Review on the
+            # latest RECORDED TURN, so two rows one line apart, under one
+            # heading, went to two different views of "changes". Destination
+            # now follows the surface that offers it: an Environment row
+            # opens the working tree; a run-anchored control (the run
+            # inspector button, a turn file card's Review) opens that run.
+            self._open_change_review_current_mode()
             return
         if row_id == ENV_ROW_COMMIT_PUSH:
             self._open_change_review_current_mode()
@@ -8888,10 +8908,38 @@ class ChatScreen(BaseAppScreen):
             fleet_section = self.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection
             )
+            # TASK-31665 AC#13 (TASK-31661 round-1 review finding). The
+            # fleet section's rows ARE focusable (`clickable`/`cancellable`
+            # sub-agent rows), it lives inside the same Inspect rail, and
+            # this sync runs on its own periodic tick -- so it stole focus
+            # exactly the way the Environment poll did before TASK-31661:
+            # a child finishing changes the row SET, `sync_state`
+            # recomposes, the focused row unmounts, and Textual's reset
+            # parks the caret above the section header. Same capture/
+            # restore, same outside-rail guard (`_focus_console_environment_
+            # row_after_sync` bails when a human moved focus during the
+            # recompose window). Captured synchronously BEFORE `sync_state`,
+            # for the reason `_land_console_environment` documents at
+            # length: `DescendantFocus` is delivered asynchronously.
+            fleet_focus_row_id = self._console_environment_focused_row_in_section(
+                CONSOLE_AGENT_FLEET_SECTION_ID
+            )
+            fleet_previous_rows = fleet_section.rows
+            fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
                 "block" if fleet_section_state.rows else "none"
             )
+            if fleet_focus_row_id is not None and (
+                tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
+                or fleet_section_state.summary != fleet_previous_summary
+            ):
+                fleet_section.call_next(
+                    self._focus_console_environment_row_after_sync,
+                    fleet_section,
+                    fleet_focus_row_id,
+                    tuple(row.row_id for row in fleet_previous_rows),
+                )
             # task-13 (addition A): the section mounts COLLAPSED in the
             # Inspect rail (`open=False`, right_rail.py) -- a header with no
             # body is not "surfacing the fleet". This call is also the only
@@ -19437,7 +19485,26 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _open_change_review_current_mode(self) -> None:
-        """Open Change Review on the working tree (Environment "Commit or push")."""
+        """Open Change Review on the working tree.
+
+        TASK-31665 AC#8 -- the canonical-opener ruling, recorded here
+        because this is the pair of methods it is about. Every user-facing
+        route into Change Review already funnels through
+        ``_open_change_review``; what was NOT canonical was the
+        DESTINATION. The rule now is that destination follows the surface
+        that offers it:
+
+        * an Environment-section row (``Review & commit… · N files``,
+          ``Review in Change Review…``) describes the WORKING TREE -- its
+          counts come from ``git status`` -- so it opens this method;
+        * a RUN-anchored control (the run inspector's "Review changes"
+          button, a ``ConsoleTurnFileCard``'s own Review) opens that run's
+          recorded turn via ``_open_change_review(run_id)``.
+
+        Before the ruling, ``env-changes-review`` and ``env-commit-push``
+        sat one line apart under the same "Changes" heading and went to two
+        different views of the word "changes".
+        """
         self._open_change_review(initial_current_mode=True)
 
     @on(Button.Pressed, "#console-inspector-review-changes")

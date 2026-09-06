@@ -797,3 +797,143 @@ def test_unknown_and_unbound_are_different_answers(monkeypatch):
     fx.root = None  # asked, and the answer is "nothing is bound"
     fx.controller.poll_tick()
     assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#10: a bound -> bound switch must not pair the new root's
+# branch/counts with the OLD root's PR while the deferred `gh` fetch is out
+# ---------------------------------------------------------------------------
+
+
+def test_bound_to_bound_switch_retires_the_previous_roots_pr_immediately(monkeypatch):
+    """The local tier is fast and `gh` is not (measured ~12s). Between the
+    two landings the panel painted the NEW root's branch and counts beside
+    the OLD root's PR number and checks -- the same "another repository's
+    data, unmarked" defect TASK-31660 fixed for bound -> unbound."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/repo
+    fx.run_job(1)  # the deferred net job lands
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.number == 7
+
+    fx.root = "/w/other"
+    fx.controller.poll_tick()  # root change -> full refresh, net deferred
+    local_job_index = len(fx.jobs) - 1
+    fx.run_job(local_job_index)  # the new root's local tier lands FIRST
+
+    snapshot = fx.controller.snapshot
+    assert snapshot.git.root == "/w/other"
+    assert snapshot.pr.availability is EnvSourceAvailability.PENDING, (
+        "the previous root's PR state is still painted beside the new root's "
+        f"branch: {snapshot.pr}"
+    )
+    assert snapshot.pr.number == 0
+
+
+def test_a_same_root_local_landing_still_keeps_the_pr_state(monkeypatch):
+    """Negative control for AC#10: only a ROOT CHANGE retires the PR tier.
+    An ordinary 10s poll must not blank the PR card every ten seconds."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    fx.run_job(1)
+    assert fx.controller.snapshot.pr.number == 7
+
+    fx.controller.poll_tick()  # same root
+    fx.run_job(len(fx.jobs) - 1)
+
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.OK
+    assert fx.controller.snapshot.pr.number == 7
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#11: a PERSISTENTLY undetermined root gets its own state
+# ---------------------------------------------------------------------------
+
+
+def test_persistent_unknown_root_eventually_lands_its_own_state(monkeypatch):
+    """The panel used to sit on PENDING's "Checking workspace…" with an inert
+    Refresh for the life of the screen whenever the cause was structural (no
+    chat controller, no active session) rather than transient."""
+    fx = Fixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS - 1):
+        fx.controller.poll_tick()
+    assert fx.snapshots == [], "an undetermined root must stay quiet at first"
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.PENDING
+
+    fx.controller.poll_tick()  # the threshold tick
+    assert len(fx.snapshots) == 1
+    assert fx.snapshots[-1].git.availability is EnvSourceAvailability.UNKNOWN
+    assert fx.dispatched == [], "nothing was dispatched; nothing may claim to be"
+
+
+def test_the_unknown_state_lands_once_not_on_every_subsequent_tick(monkeypatch):
+    fx = Fixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 5):
+        fx.controller.poll_tick()
+    assert len(fx.snapshots) == 1
+
+
+def test_an_explicit_refresh_answers_a_never_landed_unknown_root_at_once(monkeypatch):
+    """AC#11's other half: Refresh must re-probe HONESTLY rather than be a
+    visible no-op. The user just asked; "there is no session to look at" is
+    an answer, and it is the one that is true."""
+    fx = Fixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+
+    assert len(fx.snapshots) == 1
+    assert fx.snapshots[-1].git.availability is EnvSourceAvailability.UNKNOWN
+    assert fx.controller._failures == {"local": 0, "net": 0}
+
+
+def test_a_transient_unknown_root_never_lands_the_unknown_state(monkeypatch):
+    """Below the threshold the old behaviour is exactly preserved."""
+    fx = Fixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+    fx.controller.poll_tick()
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+
+    assert all(
+        snapshot.git.availability is not EnvSourceAvailability.UNKNOWN
+        for snapshot in fx.snapshots
+    )
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+
+def test_a_panel_with_real_data_keeps_it_through_a_persistent_unknown(monkeypatch):
+    """An undetermined root is not evidence the last answer went stale."""
+    fx = Fixture(monkeypatch)
+    fx.controller.notify_rail_opened()
+    good = fx.controller.snapshot
+    assert good.git.availability is EnvSourceAvailability.OK
+
+    fx.root = env_mod.UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 3):
+        fx.controller.poll_tick()
+    fx.controller.request_refresh(include_net=True, force_net=True)
+
+    assert fx.controller.snapshot is good
+
+
+def test_the_unknown_landing_does_not_pretend_a_scope_was_established(monkeypatch):
+    """`_landed_root`/`_has_landed` are the root-change bookkeeping; an
+    unknown landing states that NOTHING was established, so it must not
+    register as an establishment or the next real root would not read as a
+    change."""
+    fx = Fixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS):
+        fx.controller.poll_tick()
+    assert fx.controller._has_landed is False
+    assert fx.controller._landed_root is None
+
+    fx.root = "/w/repo"
+    fx.controller.poll_tick()
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK

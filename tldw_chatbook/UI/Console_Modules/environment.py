@@ -71,6 +71,24 @@ tests could not exercise since jobs ran synchronously at dispatch time):
   nothing *triggered* the refetch, so a checkout kept painting the previous
   branch's PR and checks as if they were the new branch's. (task-13
   addition C.)
+- A bound -> bound root change resets the PR tier to ``PENDING`` in the
+  same landing that replaces git/tasks (TASK-31665 AC#10). The per-field
+  ``dataclasses.replace`` used to keep ``pr``, so between the fast local
+  landing and the slow ``gh`` one the panel showed the NEW root's branch
+  and counts beside the OLD root's PR number and checks.
+- ``UNKNOWN_ROOT`` still skips -- but no longer forever (TASK-31665
+  AC#11). ``poll_tick`` counts consecutive undetermined observations and,
+  once ``_MAX_UNKNOWN_TICKS`` have passed with nothing EVER having landed,
+  lands an explicit ``EnvSourceAvailability.UNKNOWN`` snapshot once
+  (``_land_unknown``); an explicit Refresh in that same never-landed state
+  lands it immediately. This is a THIRD state, distinct from both
+  neighbours: ``PENDING`` promises an answer is coming (something was
+  dispatched), ``UNBOUND`` asserts a determined "nothing is bound", and
+  ``UNKNOWN`` says the root itself could not be named -- no chat
+  controller, or no active session. A panel that has real data keeps it:
+  an undetermined root is not evidence the last answer went stale, and
+  neither the failure counters nor ``_landed_root``/``_has_landed`` are
+  touched by the unknown landing.
 
 The gatherers (``gather_git_env``, ``gather_pr_env``, ``BacklogTaskScanner``)
 are imported as module attributes -- not called through an indirection
@@ -86,7 +104,9 @@ from typing import Any, Callable
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot,
     EnvSourceAvailability,
+    PrEnvState,
     unbound_snapshot,
+    unknown_snapshot,
 )
 from tldw_chatbook.Workspaces.environment_status import (
     BacklogTaskScanner,
@@ -137,6 +157,12 @@ class ConsoleEnvironmentController:
 
     _MAX_FAILURES = 3
     _NET_TTL = timedelta(seconds=60)
+    #: Consecutive UNKNOWN_ROOT polls before the panel says so out loud
+    #: (TASK-31665 AC#11). Three 10s ticks ~= 30s: long enough that a
+    #: pre-mount/not-ready blip on the accessor chain never reaches the
+    #: screen, short enough that a genuinely session-less Console stops
+    #: promising "Checking workspace…" inside a minute.
+    _MAX_UNKNOWN_TICKS = 3
 
     def __init__(
         self,
@@ -183,6 +209,16 @@ class ConsoleEnvironmentController:
         # Per-tier monotonic dispatch counters (I4): a landing is honored
         # only if its token still matches the tier's latest dispatch.
         self._dispatch_tokens: dict[str, int] = {_LOCAL_TIER: 0, _NET_TIER: 0}
+
+        # TASK-31665 AC#11: consecutive UNKNOWN_ROOT observations. An
+        # undetermined root still SKIPS (see `UNKNOWN_ROOT`'s comment), but
+        # skipping forever left the panel on PENDING's "Checking workspace…"
+        # with an inert Refresh for the life of the screen whenever the
+        # cause was structural rather than transient (no chat controller, no
+        # active session). After `_MAX_UNKNOWN_TICKS` polls with nothing
+        # ever having landed, an explicit UNKNOWN state lands ONCE.
+        self._unknown_ticks = 0
+        self._unknown_landed = False
 
         # TASK-31664 AC#3, round-1 review I1/I2: tiers the most recent
         # EXPLICIT (``force_net``) refresh is still owed. Populated by
@@ -259,7 +295,18 @@ class ConsoleEnvironmentController:
             # UNBOUND here would assert "no folder is bound" on the strength
             # of a swallowed exception or a not-yet-built chat controller,
             # AND would reset the local tier's failure counter.
+            #
+            # TASK-31665 AC#11: a DELIBERATE Refresh press against a panel
+            # that has never had an answer is the one case where staying
+            # silent is worse than saying so -- the user just asked, and
+            # the honest reply is "there is no session to look at". Gated
+            # on `not self._has_landed` so a press during a transient blip
+            # never wipes a good paint, and it still touches no counter.
+            if force_net and not self._has_landed:
+                self._land_unknown()
             return
+        self._unknown_ticks = 0
+        self._unknown_landed = False
         if root is None:
             if force_net:
                 self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
@@ -318,7 +365,22 @@ class ConsoleEnvironmentController:
             # mistaken for a root CHANGE either, or a transient accessor
             # failure would wipe the net TTL and re-fetch `gh` on every
             # 10s tick for as long as it lasts.
+            #
+            # TASK-31665 AC#11: but it must not be mistaken for a temporary
+            # condition FOREVER either. Count the ticks; once the condition
+            # has persisted and nothing has ever landed, say so once. A
+            # panel that HAS landed real data keeps it -- an undetermined
+            # root is not evidence the last answer went stale.
+            self._unknown_ticks += 1
+            if (
+                self._unknown_ticks >= self._MAX_UNKNOWN_TICKS
+                and not self._has_landed
+                and not self._unknown_landed
+            ):
+                self._land_unknown()
             return
+        self._unknown_ticks = 0
+        self._unknown_landed = False
         if self._has_landed and root != self._landed_root:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
             self._net_fetched_at = None
@@ -410,6 +472,25 @@ class ConsoleEnvironmentController:
             self._next_token(_LOCAL_TIER),
         )
 
+    def _land_unknown(self) -> None:
+        """Paint the "root could not be determined" state, once (AC#11).
+
+        Deliberately does NOT go through ``_land``: there is no scope to
+        pass its stale-scope guard (the accessor returns the
+        ``UNKNOWN_ROOT`` sentinel, not a ``str | None``), no dispatch to
+        supersede, and nothing about this landing should touch
+        ``_landed_root``/``_has_landed`` -- it is a statement that nothing
+        has been established, so it must not read as an establishment. The
+        failure counters are likewise untouched, for the same reason the
+        skip path never touched them: this is not a gatherer outcome.
+
+        Idempotent within one UNKNOWN spell: ``_unknown_landed`` is cleared
+        the moment the accessor returns a real answer again.
+        """
+        self._unknown_landed = True
+        self.snapshot = unknown_snapshot(target=self.snapshot.target)
+        self._on_snapshot(self.snapshot)
+
     def _land(self, scope_root: str | None, tier: str, result: Any, token: int) -> None:
         if scope_root != self._workspace_root_accessor():
             # Stale-scope guard: a newer refresh already superseded this one.
@@ -455,6 +536,28 @@ class ConsoleEnvironmentController:
                 self.snapshot = unbound_snapshot(target=self.snapshot.target)
                 self._net_fetched_at = None
                 self._clear_net_pending()
+            elif self._has_landed and scope_root != self._landed_root:
+                # TASK-31665 AC#10 (TASK-31660 round-1 review finding). A
+                # bound -> bound switch takes this per-field branch, which
+                # replaced git and tasks and KEPT `pr`. The local tier is
+                # fast and the `gh` tier is not (measured ~12s), so for the
+                # whole deferred-fetch window the panel painted the NEW
+                # root's branch and counts beside the OLD root's PR number,
+                # title and check results -- the same "another repository's
+                # data, unmarked" defect TASK-31660 fixed for the
+                # bound -> unbound direction, one direction over. The PR
+                # tier goes back to PENDING (which `project_environment_
+                # section` renders as no PR rows at all, never as "no PR"),
+                # and its TTL/pending bookkeeping retires with it so the
+                # new root re-fetches instead of inheriting the old 60s
+                # window keyed on the old `(root, branch)`.
+                self.snapshot = dataclasses.replace(
+                    self.snapshot,
+                    git=git_result,
+                    tasks=tasks_result,
+                    pr=PrEnvState(availability=EnvSourceAvailability.PENDING),
+                )
+                self._net_fetched_at = None
             else:
                 self.snapshot = dataclasses.replace(
                     self.snapshot, git=git_result, tasks=tasks_result

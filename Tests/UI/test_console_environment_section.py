@@ -389,5 +389,7 @@ async def test_environment_at_rest_shows_its_four_top_level_rows_unscrolled():
             _assert_painted_at_own_region(app, primary)
         # Nothing is hidden below a fold: the viewport holds the whole
         # header + four rows without a scroll offset to reach them.
-        assert section.size.height == 7
+        # 6 since TASK-31665 AC#5 attached the Refresh tail to the section
+        # (it used to reserve a blank line above itself, making this 7).
+        assert section.size.height == 6
         assert scroll.max_scroll_y == 0

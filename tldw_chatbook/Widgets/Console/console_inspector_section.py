@@ -43,6 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from rich.cells import cell_len
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -85,8 +86,20 @@ VIEW_ALL_BUSY_LABEL = "Refreshing…"
 SINGLE_LINE_ROW_BUDGET = RAIL_CONTENT_WIDTH_MIN - 1 - 2
 
 
+#: Columns one expansion level indents a child row by (TASK-31665 AC#3).
+#: Two, not one: a single column reads as a rendering wobble next to the
+#: section body's own 1-column padding, and the rail's narrowest content
+#: budget (``SINGLE_LINE_ROW_BUDGET`` = 27) still leaves 25 columns for a
+#: child row's own text.
+ROW_INDENT_COLUMNS = 2
+
+
 def row_fits_one_line(
-    primary_text: str, secondary_text: str, *, budget: int = SINGLE_LINE_ROW_BUDGET
+    primary_text: str,
+    secondary_text: str,
+    *,
+    budget: int = SINGLE_LINE_ROW_BUDGET,
+    indent: int = 0,
 ) -> bool:
     """Whether a row's primary and secondary can share ONE line.
 
@@ -99,10 +112,23 @@ def row_fits_one_line(
     200x50 but not at 80x24 keeps the two-line form everywhere; the pair is
     never truncated to make one fit.
 
+    TASK-31665 AC#14: measured with ``rich.cells.cell_len``, not ``len``.
+    A CJK or emoji title is two terminal cells per character, so ``len``
+    under-measured it by up to half -- a pair that ``len`` called a fit
+    was mounted in the one-line form and then ellipsized by the primary's
+    own ``text-overflow`` at paint time. Branch names and backlog titles
+    are ASCII today, but a task title (AC#2 now reads them straight out of
+    frontmatter) and a changed file's path are both user data.
+
     Args:
         primary_text: The row's first-line text.
         secondary_text: The row's dimmed detail text.
         budget: Columns available to the row's own text.
+        indent: Columns this row's own indent spends (TASK-31665 AC#3),
+            deducted from ``budget`` -- an indented child gets less room,
+            and deciding its shape against the un-indented budget would
+            reintroduce exactly the truncation this function exists to
+            prevent.
 
     Returns:
         ``True`` when both texts plus one separating column fit ``budget``.
@@ -111,7 +137,8 @@ def row_fits_one_line(
     """
     if not secondary_text:
         return False
-    return len(primary_text) + 1 + len(secondary_text) <= budget
+    room = budget - indent
+    return cell_len(primary_text) + 1 + cell_len(secondary_text) <= room
 
 
 @dataclass(frozen=True)
@@ -158,6 +185,16 @@ class InspectorSectionRow:
             Independent of ``clickable`` -- a row can be either, both, or
             neither; the two are separate gestures (Enter/Space to drill
             in, Delete to cancel) so they never contend for the same key.
+        indent: Expansion depth, in levels (TASK-31665 AC#3). ``0`` is a
+            top-level row; ``1`` is a child revealed by expanding the row
+            above it. Rendered as ``ROW_INDENT_COLUMNS`` extra columns of
+            left padding on the row widget, and deducted from the
+            one-line budget so an indented pair is never mounted into a
+            shape it cannot fit. Children used to share their parent's
+            indent exactly, so the only cue that a block belonged to the
+            row above it was the blank line the old two-line row shape
+            happened to leave -- a cue TASK-31662 removed when it made
+            rows one line tall.
     """
 
     row_id: str
@@ -166,6 +203,7 @@ class InspectorSectionRow:
     status: str = ""
     clickable: bool = False
     cancellable: bool = False
+    indent: int = 0
 
 
 @dataclass(frozen=True)
@@ -447,6 +485,12 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 classes="console-inspector-section-view-all",
                 compact=True,
             )
+            # TASK-31665 AC#5: name the SCOPE. A bare "Refresh" in a rail of
+            # stacked sections does not say what it refreshes, and the
+            # critique found it reading as a rail-wide (or app-wide)
+            # control. The section owns the tail, so the section's title is
+            # the honest scope.
+            view_all.tooltip = self._view_all_tooltip()
             yield view_all
 
     def _build_row_widget(
@@ -547,6 +591,24 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         except (NoMatches, QueryError):
             return
         button.label = VIEW_ALL_BUSY_LABEL if busy else self.view_all_label
+        # Both halves (AC#5): `compose` sets the tooltip on a fresh build,
+        # this sets it on a live one, and the two must agree about scope.
+        button.tooltip = self._view_all_tooltip()
+
+    def _view_all_tooltip(self) -> str:
+        """Tooltip naming what the tail button's action applies to.
+
+        TASK-31665 AC#5. The tail carries no scope in its label ("Refresh",
+        "View all"), and the Inspect rail stacks several sections that each
+        own one -- so the label alone leaves a user guessing whether the
+        control is section-scoped or rail-scoped. Reads the busy state so
+        the acknowledgment window says what is being refreshed too.
+
+        Returns:
+            ``"<label> — <section title>"``, e.g. ``"Refresh — Environment"``.
+        """
+        label = VIEW_ALL_BUSY_LABEL if self._view_all_busy else self.view_all_label
+        return f"{label} — {self.title}"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route the chevron toggle and the "View all" tail button."""
@@ -597,7 +659,20 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """
         return (
             tuple(
-                (row.row_id, row_fits_one_line(row.primary_text, row.secondary_text))
+                (
+                    row.row_id,
+                    row_fits_one_line(
+                        row.primary_text,
+                        row.secondary_text,
+                        indent=max(0, row.indent) * ROW_INDENT_COLUMNS,
+                    ),
+                    # TASK-31665 AC#3: the indent is inline padding written
+                    # in `ConsoleInspectorSectionRow.__init__`, so an
+                    # in-place patch never revisits it -- a row whose depth
+                    # changed while its id and line shape did not would keep
+                    # the OLD indent forever. Part of the key, therefore.
+                    max(0, row.indent),
+                )
                 for row in rows
             ),
             bool(summary),
@@ -772,13 +847,29 @@ class ConsoleInspectorSectionRow(Vertical):
         # `InspectorSectionRow.primary_text`'s docstring.
         self._primary_text = resolve_glyph_text(row.primary_text)
         self._secondary_text = row.secondary_text
-        self._one_line = row_fits_one_line(row.primary_text, row.secondary_text)
+        self.indent = max(0, row.indent)
+        self._one_line = row_fits_one_line(
+            row.primary_text,
+            row.secondary_text,
+            indent=self.indent * ROW_INDENT_COLUMNS,
+        )
         self.styles.height = "auto"
         # Inline as well as in the CSS: a bare test harness loads neither
         # the app bundle nor the console-owned split sheet, and geometry
         # has to be right for any host (the same reason the header's
         # summary sets its own width/height inline).
         self.styles.min_height = 1
+        if self.indent:
+            # TASK-31665 AC#3. MARGIN, not padding: the row's `padding: 0 1`
+            # lives in the console-owned sheet, which a bare harness never
+            # loads, so an inline `padding` write would have had to restate
+            # a value it cannot see -- and would then shift an unstyled row
+            # by a different amount than a styled one. Margin is additive to
+            # whatever padding the host supplies, so the indent is exactly
+            # `ROW_INDENT_COLUMNS` per level in BOTH hosts. Inline because
+            # the depth is per-row DATA, not a class.
+            self.styles.margin = (0, 0, 0, self.indent * ROW_INDENT_COLUMNS)
+            self.add_class("console-inspector-section-row-child")
         if row.status:
             self.add_class(f"console-inspector-section-row-{row.status}")
 

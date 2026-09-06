@@ -31,11 +31,13 @@ from Tests.UI.test_console_parallel_runs import (
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     RAIL_CONTENT_WIDTH_MIN,
+    ROW_INDENT_COLUMNS,
     SINGLE_LINE_ROW_BUDGET,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
+    row_fits_one_line,
 )
 
 
@@ -1071,3 +1073,122 @@ def test_inspector_section_css_is_styled_in_source_and_bundle():
             ".console-inspector-section-view-all",
         ):
             assert class_name in text, f"{class_name} missing from {path}"
+
+
+# --- TASK-31665 AC#14: one-line fitting must measure CELLS, not codepoints ---
+
+
+def test_row_fits_one_line_measures_wide_glyphs_in_terminal_cells():
+    """AC#14. `len()` under-measured a CJK/emoji title by up to half, so a
+    pair that did not fit was mounted in the one-line form and then
+    ellipsized by the primary's own `text-overflow` at paint time. Backlog
+    titles (read straight out of frontmatter since AC#2) and changed-file
+    paths are both user data."""
+    wide = "映画生成基盤の実装"          # 9 chars, 18 cells
+    assert len(wide) == 9
+    assert row_fits_one_line(wide, "x", budget=12) is False
+    # The ASCII control of the same codepoint count still fits.
+    assert row_fits_one_line("a" * 9, "x", budget=12) is True
+
+
+def test_row_fits_one_line_charges_the_indent_against_the_budget():
+    """AC#3 + AC#14: an indented child has fewer columns for its own text,
+    and deciding its shape against the un-indented budget would reintroduce
+    exactly the truncation this fitter exists to prevent."""
+    assert row_fits_one_line("abcdefgh", "xy", budget=12) is True
+    assert row_fits_one_line("abcdefgh", "xy", budget=12, indent=2) is False
+
+
+# --- TASK-31665 AC#3: expansion children are visually contained -------------
+
+
+@pytest.mark.asyncio
+async def test_an_indented_row_paints_further_right_than_its_parent():
+    """AC#3, measured as GEOMETRY. The containment cue used to be the blank
+    second line the pre-TASK-31662 two-line row shape happened to leave."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(
+            InspectorSectionRow(row_id="parent", primary_text="Changes ▸"),
+            InspectorSectionRow(row_id="child", primary_text="M a.py", indent=1),
+        ),
+        summary="",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        parent = next(
+            row for row in section.query(ConsoleInspectorSectionRow)
+            if row.row_id == "parent"
+        )
+        child = next(
+            row for row in section.query(ConsoleInspectorSectionRow)
+            if row.row_id == "child"
+        )
+        assert child.content_region.x > parent.content_region.x, (
+            "the expansion child paints flush with its parent: "
+            f"child x={child.content_region.x} parent x={parent.content_region.x}"
+        )
+        assert child.content_region.x - parent.content_region.x == ROW_INDENT_COLUMNS
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_gains_an_indent_recomposes_rather_than_patching():
+    """AC#3: the indent is inline padding written in `__init__`, so an
+    in-place patch never revisits it -- a row whose depth changed while its
+    id and line shape did not would keep the OLD indent forever."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(InspectorSectionRow(row_id="r", primary_text="M a.py"),),
+        summary="",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        flush_x = section.query_one(
+            "#console-inspector-section-env-row-0", ConsoleInspectorSectionRow
+        ).content_region.x
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(InspectorSectionRow(row_id="r", primary_text="M a.py", indent=1),),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+        indented_x = section.query_one(
+            "#console-inspector-section-env-row-0", ConsoleInspectorSectionRow
+        ).content_region.x
+        assert indented_x - flush_x == ROW_INDENT_COLUMNS, (
+            "the depth change was patched in place and the indent never applied"
+        )
+
+
+# --- TASK-31665 AC#5: the tail button names its own scope -------------------
+
+
+@pytest.mark.asyncio
+async def test_the_view_all_tail_tooltip_names_the_section_in_both_halves():
+    """AC#5. `compose` sets the tooltip on a fresh build and
+    `set_view_all_busy` sets it on a live one; both halves must agree, or the
+    acknowledgment window silently drops the scope."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(InspectorSectionRow(row_id="r", primary_text="Changes"),),
+        summary="",
+        view_all_label="Refresh",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tail = section.query_one("#console-inspector-section-env-view-all")
+        assert str(tail.tooltip) == "Refresh — Environment"
+        section.set_view_all_busy(True)
+        await pilot.pause()
+        assert "Environment" in str(tail.tooltip)
+        section.set_view_all_busy(False)
+        await pilot.pause()
+        assert str(tail.tooltip) == "Refresh — Environment"

@@ -2310,6 +2310,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -2320,8 +2327,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
        visible width so long lines wrap. */
     overflow-x: hidden;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 

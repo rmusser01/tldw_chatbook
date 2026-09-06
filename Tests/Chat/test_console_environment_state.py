@@ -22,10 +22,16 @@ from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_PR_OPEN,
     ENV_ROW_UNBOUND,
     ENV_ROW_UNBOUND_NOTE,
+    ENV_ROW_UNKNOWN,
+    ENV_ROW_UNKNOWN_NOTE,
     ENV_UNBOUND_NOTE_TEXT,
     ENV_UNBOUND_TEXT,
+    ENV_UNKNOWN_NOTE_TEXT,
+    ENV_UNKNOWN_TEXT,
     EnvSourceAvailability,
+    tasks_count_summary,
     unbound_snapshot,
+    unknown_snapshot,
     ExecTargetKind,
     GitEnvState,
     PrCheck,
@@ -539,7 +545,14 @@ def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
     assert head.clickable
     assert head.primary_text == "Backlog ▸"
     assert head.secondary_text == "2 tasks"
-    assert state.summary == "3 doing · 12 todo"
+    # TASK-31665 AC#6: the header's own vocabulary is now the backlog's --
+    # "in progress", not "doing" -- and at the narrowest supported rail
+    # (21 columns for this summary) the full two-count form does not fit,
+    # so it degrades to the actionable half rather than being cut
+    # mid-word. See `tasks_count_summary`.
+    assert state.summary == "3 in progress"
+    assert "doing" not in state.summary
+    assert "todo" not in state.summary
     assert "in progress" not in head.primary_text
 
 
@@ -587,3 +600,109 @@ def test_scanning_placeholder():
         tasks=TasksEnvState(availability=EnvSourceAvailability.OK, scanning=True))
     rows = project_tasks_section(snapshot, frozenset()).rows
     assert rows[0].primary_text == "Scanning backlog…"
+
+
+# --- TASK-31665 AC#3: expansion children must be visually contained ----------
+
+
+def _rows_by_id(rows):
+    return {row.row_id: row for row in rows}
+
+
+def test_every_expansion_child_carries_an_indent():
+    """AC#3. Children used to share their parent's indent exactly; the only
+    containment cue was the blank second line the OLD two-line row shape left,
+    which TASK-31662 removed when it made rows one line tall."""
+    snapshot = EnvironmentSnapshot(
+        git=_git_state(),
+        pr=PrEnvState(
+            availability=EnvSourceAvailability.OK, number=7, title="A PR",
+            state="OPEN", url="https://example/7",
+            checks=(PrCheck("build", "failure"), PrCheck("lint", "success")),
+        ),
+    )
+    expanded = frozenset(
+        {ENV_ROW_CHANGES, ENV_ROW_LOCAL, ENV_ROW_BRANCH, ENV_ROW_PR, ENV_ROW_CHECKS}
+    )
+    rows = project_environment_section(
+        snapshot, expanded, now=datetime(2026, 9, 5, tzinfo=timezone.utc)
+    ).rows
+    by_id = _rows_by_id(rows)
+
+    # Every top-level (expandable) row stays flush.
+    for row_id in expanded:
+        assert by_id[row_id].indent == 0, f"{row_id} is a top-level row"
+    assert by_id[ENV_ROW_COMMIT_PUSH].indent == 0
+
+    children = [
+        "env-file-0", "env-file-1", "env-changes-review",
+        "env-local-current", "env-local-remote",
+        "env-branch-detail",
+        "env-pr-title", ENV_ROW_PR_OPEN, ENV_ROW_PR_ADD,
+        "env-check-0", ENV_ROW_CHECKS_FIX,
+    ]
+    missing = [row_id for row_id in children if by_id[row_id].indent != 1]
+    assert not missing, f"these expansion children render flush with their parent: {missing}"
+
+
+def test_task_entries_are_indented_under_the_head_row():
+    """AC#3, the Tasks section's own expansion."""
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state(branch_task=None))
+    rows = project_tasks_section(snapshot, frozenset({TASKS_ROW_HEAD})).rows
+    assert rows[0].row_id == TASKS_ROW_HEAD and rows[0].indent == 0
+    assert all(row.indent == 1 for row in rows[1:]), [
+        (row.row_id, row.indent) for row in rows[1:]
+    ]
+
+
+# --- TASK-31665 AC#11: a persistently undetermined root has its own state ----
+
+
+def test_unknown_root_projects_its_own_copy_not_pending_and_not_unbound():
+    """AC#11. PENDING promises motion ("Checking workspace…") that an
+    undetermined root has none of -- nothing was dispatched, so nothing will
+    land. UNBOUND asserts a determined "nothing is bound" about a workspace
+    that was never identified. This is the third state."""
+    snapshot = unknown_snapshot()
+    state = project_environment_section(
+        snapshot, frozenset(), now=datetime(2026, 9, 5, tzinfo=timezone.utc)
+    )
+    assert [row.row_id for row in state.rows] == [
+        ENV_ROW_UNKNOWN, ENV_ROW_UNKNOWN_NOTE
+    ]
+    assert state.rows[0].primary_text == ENV_UNKNOWN_TEXT
+    assert state.rows[1].primary_text == ENV_UNKNOWN_NOTE_TEXT
+    assert state.summary == ""
+    painted = " ".join(row.primary_text for row in state.rows)
+    assert ENV_PENDING_TEXT not in painted
+    assert ENV_UNBOUND_TEXT not in painted
+    assert ENV_UNBOUND_NOTE_TEXT not in painted
+
+
+def test_unknown_root_hides_the_tasks_card_like_every_other_non_ok_state():
+    """AC#11: no card is the Tasks section's way of asserting nothing."""
+    state = project_tasks_section(unknown_snapshot(), frozenset())
+    assert state.rows == () and state.summary == ""
+
+
+def test_unknown_snapshot_marks_every_tier_so_no_tier_keeps_old_data():
+    """AC#11: same discipline as `unbound_snapshot` -- one factory, three tiers."""
+    snapshot = unknown_snapshot(target=ExecTargetState(kind=ExecTargetKind.LOCAL))
+    assert snapshot.git.availability is EnvSourceAvailability.UNKNOWN
+    assert snapshot.pr.availability is EnvSourceAvailability.UNKNOWN
+    assert snapshot.tasks.availability is EnvSourceAvailability.UNKNOWN
+    assert snapshot.target.kind is ExecTargetKind.LOCAL
+
+
+# --- TASK-31665 AC#6: one Tasks vocabulary --------------------------------
+
+
+def test_tasks_count_summary_uses_the_backlogs_own_words_when_they_fit():
+    assert tasks_count_summary(3, 12, budget=40) == "3 in progress · 12 to do"
+
+
+def test_tasks_count_summary_degrades_to_the_actionable_half_not_a_cut_word():
+    """AC#6: at the narrowest supported rail the canonical words do not fit.
+    Dropping the backlog-depth half beats "3 in progress · 12 t…"."""
+    assert tasks_count_summary(3, 12) == "3 in progress"
+    assert "…" not in tasks_count_summary(3, 12)

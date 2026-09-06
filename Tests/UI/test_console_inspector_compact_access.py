@@ -306,7 +306,7 @@ async def test_left_handle_opens_left_rail_at_90_cols():
         context_button = console.query_one("#console-context-rail-open", Button)
         assert left_rail.display is False
         assert left_handle.display is True
-        assert context_button.label == "Context->"
+        assert context_button.label == "Context ▸"
         assert context_button.tooltip == "Open Context rail"
 
         context_button.focus()

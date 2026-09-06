@@ -154,6 +154,13 @@ ConsoleSettingsModal {
     padding: 1 2;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #console-settings-body {
     height: 1fr;
     min-height: 0;
@@ -161,8 +168,8 @@ ConsoleSettingsModal {
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -720,6 +727,13 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;
@@ -731,7 +745,8 @@ PromptVariablesDialog {
     overflow-y: auto;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1034,6 +1049,13 @@ ConsoleRunLogModal {
     overflow-x: hidden;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
     width: 100%;
@@ -1041,8 +1063,8 @@ ConsoleRunLogModal {
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -3528,6 +3550,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -3538,8 +3567,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
        visible width so long lines wrap. */
     overflow-x: hidden;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -4308,6 +4337,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
 }
 
+/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
+   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
+   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
+   scrollers. `$ds-text-muted` is the app's established thumb token (the
+   Library screen's own rules already use it) and is generated per theme
+   polarity; `scrollbar-color-active` keeps the accent so a drag still
+   reads as a drag. */
 #console-left-rail-body {
     width: 100%;
     min-width: 0;
@@ -4329,8 +4365,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -4906,9 +4942,9 @@ ConsoleBoundedSection {
 
    RIGHT edge here, not left, and that is measured rather than stylistic: the
    shell gives this button ten columns for an eleven-column box, and the
-   column the clip drops is the leading pad -- so its col 0 carries the "<" of
-   "<-Inspect" at every width the handle is shown, while its last column is
-   blank on every row. A left edge would paint "█-Inspect"; the right edge is
+   column the clip drops is the leading pad -- so its col 0 carries the "◂" of
+   "◂ Inspect" at every width the handle is shown, while its last column is
+   blank on every row. A left edge would paint "█ Inspect"; the right edge is
    lossless. `Tests/UI/test_console_inspector_focus_carriers.py` asserts the
    carrier column is blank BEFORE focus, so this stays honest if the label
    changes. */
@@ -5260,10 +5296,20 @@ Button.console-inspector-action:disabled {
     text-overflow: ellipsis;
 }
 
+/* TASK-31665 AC#9: `text-style: dim` was DOUBLE-dimming an already-muted
+   token. Measured through the real compositor at 235x52, the secondary
+   painted #7a8086 on the rail's $ds-surface-panel backdrop -- 3.42:1, an
+   AA fail -- while every other muted string in the same rail (the staged-
+   context empty copy, the scope label, "▼ more sections") painted the
+   undimmed #a7abaf at 5.91:1. That pair IS the critique's "same secondary
+   fg measures 3.44:1 on one line and 5.24:1 on the next": two different
+   FOREGROUNDS on one background, not one foreground on two backgrounds
+   (see AC#1's finding). Dropping `dim` puts the row secondary on the same
+   token as its neighbours, at 5.91:1 on $ds-surface-panel and 6.42:1 on
+   the $surface islands the rail's Buttons/Inputs paint. */
 .console-inspector-section-row-secondary {
     height: 1;
     color: $ds-text-muted;
-    text-style: dim;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
@@ -5311,11 +5357,19 @@ Button.console-inspector-action:disabled {
     color: $ds-status-error-readable;
 }
 
+/* TASK-31665 AC#5: the tail button used to reserve a blank line above
+   itself (`margin: 1 0 0 0`). With the Environment section's own
+   `margin: 0 0 1 0` below it, "Refresh" floated between two blank lines
+   with nothing visually attaching it to the section whose data it
+   refreshes -- the critique measured it "orphaned ... ~28 lines from its
+   data when Changes is expanded". It now sits flush under the last row,
+   inside the section box, so its owner is unambiguous; its scope is named
+   in the tooltip (`ConsoleInspectorSection.compose`). */
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 1 0 0 0;
+    margin: 0;
 }
 
 .console-live-work-source-readiness {

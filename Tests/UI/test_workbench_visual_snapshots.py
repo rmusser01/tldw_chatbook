@@ -277,9 +277,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
 
             assert inspector_handle.display is True
             assert _painted_region_rows(screen, inspector_button.region) == [
-                "<-Inspect"
+                "◂ Inspect"
             ]
-            assert inspector_button.label == "<-Inspect"
+            assert inspector_button.label == "◂ Inspect"
             assert inspector_button.tooltip == "Open Inspector rail"
             assert workspace.content_region.contains_region(inspector_handle.region), (
                 f"Inspector handle escapes workspace at {size}: "
@@ -515,9 +515,9 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             # rails: the glyph sits on the edge adjacent to the transcript,
             # pointing the way that rail leaves. The COLLAPSED handles keep
             # their compact ASCII forms, which are unchanged.
-            context_label = "Context ◂" if effective_context_open else "Context->"
+            context_label = "Context ◂" if effective_context_open else "Context ▸"
             inspector_label = (
-                "▸ Inspect" if effective_inspector_open else "<-Inspect"
+                "▸ Inspect" if effective_inspector_open else "◂ Inspect"
             )
             context_tooltip = (
                 "Collapse Console context rail"

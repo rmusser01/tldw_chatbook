@@ -209,7 +209,7 @@ async def test_rail_button_focus_edge_costs_no_label_character(size):
     focused-vs-unfocused diff of the rest of the row: the latter compares
     both sides with that column already dropped and so cannot see the loss
     it is meant to catch (it is exactly what let the collapsed rail handle,
-    whose column 0 holds the "<" of "<-Inspect", look safe).
+    whose column 0 holds the "◂" of "◂ Inspect", look safe).
     """
 
     app = _build_test_app()
@@ -303,8 +303,8 @@ async def test_the_collapsed_rail_handle_has_a_focus_carrier(size):
     rail-scoped rule missed it -- and measured, focusing it changed nothing
     at all. It is the one stop a user meets before the rail is ever opened.
 
-    A RIGHT edge, because measured its column 0 carries the "<" of
-    "<-Inspect" at every width the handle is shown while its last column is
+    A RIGHT edge, because measured its column 0 carries the "◂" of
+    "◂ Inspect" at every width the handle is shown while its last column is
     blank on every row. Below ~84 columns the handle is hidden entirely and
     Alt+I is the only route, so there is no stop to indicate there.
     """

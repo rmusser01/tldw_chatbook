@@ -38,6 +38,7 @@ import tldw_chatbook.Utils.path_validation as path_validation_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     _land_on_ui,
+    CHECKING_FOR_CHANGES_COPY,
     CURRENT_MODE_SENTINEL,
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
@@ -1617,3 +1618,97 @@ async def test_initial_current_mode_is_noop_without_git(
         assert screen.git_detection_settled
         assert CURRENT_MODE_SENTINEL not in _select_values(screen)
         assert screen.query_one("#change-review-turn-select", Select).value == run1
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#7: no transient "No file changes recorded" flash on entry
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def no_turns_repo_fixture(tmp_path):
+    """A real repo with real working-tree changes and ZERO recorded turns.
+
+    That is the shape every Console opener that lands on the working tree
+    produces -- `Review & commit… · N files` and `Review in Change Review`
+    both open here -- and it is the shape the flash lives in: snapshot turns
+    are read synchronously (none), while the `current` view arrives only
+    after the off-thread repo detection lands.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("changed in the working tree\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-empty"
+    )
+    try:
+        yield provider, repo, db
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_entry_never_flashes_the_empty_history_claim_before_the_diff(
+    monkeypatch, no_turns_repo_fixture
+):
+    """AC#7. Measured at <=0.5s in the critique: the screen asserted "No file
+    changes recorded for this conversation." -- a claim about the user's own
+    uncommitted work -- and then replaced it with the real diff. Detection is
+    blocked here on a real Event so the window is deterministic rather than
+    raced for."""
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db = no_turns_repo_fixture
+
+    release = threading.Event()
+    real_detect = provider.detect_git
+
+    def blocking_detect(roots):
+        release.wait(timeout=10)
+        return real_detect(roots)
+
+    provider.detect_git = blocking_detect
+
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        painted = await _wait_for(
+            pilot,
+            lambda: _static_text(screen, "#change-review-diff-content") or None,
+            "the entry pane to paint something",
+        )
+        assert "No file changes recorded" not in painted, (
+            "the screen asserted the user's work away while detection was "
+            f"still in flight: {painted!r}"
+        )
+        assert painted == CHECKING_FOR_CHANGES_COPY
+
+        release.set()
+        await _wait_for_detection(pilot, screen)
+        await _wait_idle(pilot, app, "change-review-current")
+        await pilot.pause()
+        assert CURRENT_MODE_SENTINEL in _select_values(screen)
+
+
+@pytest.mark.asyncio
+async def test_the_empty_history_claim_still_lands_once_detection_finds_nothing(
+    monkeypatch, plain_review_fixture, tmp_path
+):
+    """AC#7's other half: the loading copy must not become the new permanent
+    lie. With no repository anywhere, detection settles empty-handed and the
+    honest empty-state copy takes over."""
+    _patch_git_actions(monkeypatch, True)
+    provider, root, db, _run1 = plain_review_fixture
+    # Drop the recorded turn so the screen is genuinely empty.
+    provider.turns = lambda: []
+
+    app = _Harness(provider, workspace_roots=[str(root)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        await pilot.pause()
+        painted = _static_text(screen, "#change-review-diff-content")
+        assert painted != CHECKING_FOR_CHANGES_COPY, (
+            "the transient loading copy outlived the thing it waited for"
+        )
+        assert painted == screen._empty_history_copy()

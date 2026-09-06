@@ -365,7 +365,7 @@ async def test_console_handle_uses_inward_inspector_label_on_the_right() -> None
         await pilot.pause()
         button = app.query_one("#console-rail-open", Button)
 
-        assert str(button.label) == "<-Inspect"
+        assert str(button.label) == "◂ Inspect"
         assert button.tooltip == "Open Inspector rail"
         assert handle.region.width == 11
         assert handle.content_region.width == 9
@@ -381,7 +381,7 @@ async def test_console_handle_uses_inward_context_label_on_the_left() -> None:
         await pilot.pause()
         button = app.query_one("#console-rail-open", Button)
 
-        assert str(button.label) == "Context->"
+        assert str(button.label) == "Context ▸"
         assert button.tooltip == "Open Context rail"
         assert handle.region.width == 13
         assert handle.content_region.width == 11

@@ -258,6 +258,7 @@ source never renders as an error:
 | Situation | What you see |
 | --- | --- |
 | Nothing has been checked yet (cold start, or the rail has only just opened) | one muted **Checking workspace…** row — the panel never claims anything before a source has answered |
+| There is no active chat session to read a workspace from (no conversation open yet), and that stays true | after ~30 seconds, two muted rows: **No active chat session — workspace not determined.** and **Start or open a chat in a Workspace, then Refresh.** — the panel stops promising a check that nothing is performing. A brief hiccup never reaches this state, and a panel that already has real data keeps showing it |
 | Changes aren't tracked for this workspace (no folder bound, Change Review not enabled for a bound folder, or the consent check itself failed — the rail can't always tell which) | two muted rows saying so, and that this is *not* a report that nothing changed, plus where to fix it (bind a folder and enable Change Review in Settings ▸ Workspaces); no counts, no commit/push row, no Tasks/PR/check rows |
 | A folder is bound but it is not a git repo | one muted **No git workspace** row; no Tasks, PR, or check rows |
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
@@ -1026,3 +1027,26 @@ enabled for an otherwise-bound folder, so the panel now says only what is
 always true (changes aren't tracked) and names both fixes (bind AND enable).
 Code-level pass (pure projection, widget, and screen-wiring suites); not
 re-driven live.*
+
+*Amended — 2026-09-05 (TASK-31665, minors batch): the Environment section's
+**Refresh** now sits flush under its last row instead of floating a blank
+line away from it, and its tooltip names its scope (**Refresh — Environment**).
+Rows revealed by expanding another row are indented under it, so a block of
+file rows or task entries reads as belonging to the row above it. Task rows
+show the title the task file's own frontmatter carries rather than the
+hyphenated filename slug. The Tasks header summary now uses the backlog's own
+words — **N in progress** rather than "N doing · M todo", matching the status
+each task entry already shows; at 80x24 only the in-progress count fits, and
+expanding the section lists every task with its status. The collapsed rail
+handles read **Context ▸** and **◂ Inspect**, the same arrow vocabulary the
+open rails' own collapse controls use (`>` / `<` in ASCII-glyph mode). Both
+**Changes** actions — **Review in Change Review…** and
+**Review & commit… · N files** — now open the same working-tree view; a
+Change Review opened from a run (the run inspector's button, a turn card's
+**Review**) still opens that run's recorded turn. Change Review no longer
+flashes "No file changes recorded for this conversation." for a moment on
+entry while it is still looking, and its header says "1 file", not "1 files".
+Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
+projection, widget, controller and screen-wiring suites) plus a live
+`tmux` capture at 235x52 for the background diagnosis; not re-driven live
+for the rest.*
