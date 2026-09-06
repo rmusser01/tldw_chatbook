@@ -2,7 +2,7 @@
 id: TASK-31664
 title: >-
   Environment panel affordances: mark actionable rows, name consequences, acknowledge Refresh
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, ux, critique-2026-09-05]

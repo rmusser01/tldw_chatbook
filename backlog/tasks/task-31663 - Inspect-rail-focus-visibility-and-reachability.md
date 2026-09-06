@@ -2,7 +2,7 @@
 id: TASK-31663
 title: >-
   Inspect rail focus visibility and keyboard reachability
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
 labels: [console, inspector, a11y, critique-2026-09-05]
