@@ -436,6 +436,40 @@ def test_pin_sends_a_pin_command_to_the_worker():
     assert any(b'"cmd": "pin"' in chunk and b'"S1"' in chunk for chunk in proc.stdin.chunks)
 
 
+def test_pin_never_waits_for_an_in_flight_assign():
+    """Final review I1: `assign` holds the backend lock across `_await_reply`
+    (up to the assign budget) and `pin` runs on the APP thread, from the
+    Meetings screen's `Input.Submitted` handler -- so a blocking acquire froze
+    the whole TUI for as long as the window in flight took to give up."""
+    release = threading.Event()
+
+    class _Silent:
+        """A stdout that never answers and never EOFs (so no crash sentinel)."""
+
+        def readline(self) -> bytes:
+            release.wait(5.0)
+            return b""
+
+    proc = FakeProc([])
+    proc.stdout = _Silent()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc, assign_budget_s=1.0))
+
+    assigning = threading.Thread(target=d.assign, args=(_PCM, 16000, 0), daemon=True)
+    assigning.start()
+    deadline = time.monotonic() + 2.0
+    while not d._lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert d._lock.locked(), "the assign under test never took the backend lock"
+
+    t0 = time.monotonic()
+    d.pin("S1")  # must not raise, must not wait out the assign budget
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.5, f"pin blocked the app thread for {elapsed:.2f}s"
+    assigning.join(3.0)
+    release.set()
+
+
 def test_pin_is_a_noop_when_coarse_only():
     proc = FakeProc([])
     d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))

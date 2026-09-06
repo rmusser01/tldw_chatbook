@@ -59,6 +59,10 @@ ASSIGN_BUDGET_S = 2.0
 #: finalize/ingest by exactly this long -- 10 minutes, not forever.
 DIARIZE_BUDGET_FLOOR_S = 60.0
 DIARIZE_BUDGET_CEILING_S = 600.0
+#: `pin` runs on the APP thread (the rename handler) and the backend lock is
+#: held by `assign` for up to `ASSIGN_BUDGET_S`; a pin that cannot get the
+#: lock within this is dropped rather than freezing the TUI (final review I1).
+_PIN_LOCK_WAIT_S = 0.05
 #: First run downloads the ECAPA model; warm-up can take a while. Nothing
 #: blocks on it -- see the module docstring.
 READY_TIMEOUT_S = 120.0
@@ -406,16 +410,23 @@ class SpeechBrainDiarizer:
     def pin(self, cluster_id: str) -> None:
         """Best-effort: tell the worker's live clusterer to pin `cluster_id`.
 
-        Fire-and-forget -- no reply is sent or awaited, so this never blocks
-        the caller (the screen's rename handler, on the app thread) behind a
-        subprocess round trip. Silently does nothing when there is no live
-        worker to tell (not ready, coarse-only, or degraded).
+        Fire-and-forget -- no reply is sent or awaited, and the lock is taken
+        with a short timeout, so this never blocks the caller (the screen's
+        rename handler, on the app thread) behind a subprocess round trip.
+        `assign` holds the same lock across `_await_reply` for up to
+        `ASSIGN_BUDGET_S`, so a blocking acquire here froze the TUI for up to
+        two seconds whenever a rename landed while a window was in flight
+        (final review I1). A pin dropped because the backend was busy is the
+        same best-effort miss as one dropped because there is no live worker
+        to tell (not ready, coarse-only, or degraded).
         """
         if self._degraded or self._coarse_only:
             return
         if not (self._ready.is_set() and self._ready_ok):
             return
-        with self._lock:
+        if not self._lock.acquire(timeout=_PIN_LOCK_WAIT_S):
+            return
+        try:
             if self._degraded or self._coarse_only:
                 return
             proc = self._proc
@@ -425,6 +436,8 @@ class SpeechBrainDiarizer:
                 self._send(proc, {"cmd": "pin", "id": cluster_id})
             except Exception as exc:  # noqa: BLE001 - best-effort, never raises
                 logger.warning("diarizer: pin failed ({})", type(exc).__name__)
+        finally:
+            self._lock.release()
 
     def centroids(self) -> dict[str, Any]:
         # The live centroids live in the worker (voice embeddings never cross
