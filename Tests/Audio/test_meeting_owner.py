@@ -145,6 +145,28 @@ def test_prepare_reports_tap_provider_and_diarization(tmp_path, monkeypatch):
     assert owner.prepared is prepared and owner._facade.name == "facade"
 
 
+def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
+    owner, _, _ = _owner(tmp_path, live_diarization=False)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
+
+
+def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    built = {}
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: built.setdefault("d", object()))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is built["d"]
+
+
+def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
+
+
 def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
