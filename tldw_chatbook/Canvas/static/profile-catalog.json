@@ -1,0 +1,19 @@
+{
+  "build_id": "4834015faa07885fc3fb6d54adbce52941ccc8b63ea0877e57cc3b709bf0da94",
+  "default_diagram_profile": null,
+  "policy_id": "a28ce37078ed5cdf6b68b5842a4d3a92c5cad3bf46dd68bd1d99d32cff98d570",
+  "profiles": [
+    {
+      "executable": true,
+      "library": {
+        "bytes": 0,
+        "files": {}
+      },
+      "manifest": "runtime-manifest.json",
+      "manifest_sha256": "19d9122e6f23f20c92279dfd2bd0353e7261fb8a56fef7bb88cba6655e3da62e",
+      "profile_id": "canvas-v1",
+      "reason": null
+    }
+  ],
+  "schema_version": 1
+}
