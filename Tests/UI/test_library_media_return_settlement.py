@@ -2439,7 +2439,7 @@ async def test_control_exact_return_requires_matching_semantic_row(
         selected_id = str(semantic_row.media_id)
         screen._selected_media_id = selected_id
         original_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        parked_offset = _park_row_scroll(original_owner)
+        _park_row_scroll(original_owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()
