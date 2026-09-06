@@ -34,6 +34,10 @@ from ..Canvas.gateway import (
     CanvasSelectionChanged,
     CanvasSourceResponse,
 )
+from ..Canvas.limits import (
+    SUPPORTED_CANVAS_RUNTIME_PROFILE,
+    UnsupportedCanvasRuntimeProfile,
+)
 from ..Canvas.web_auth import (
     CSRF_HEADER_NAME,
     SESSION_COOKIE_NAME,
@@ -184,8 +188,8 @@ class _ServedCanvasAuthorityProxy:
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = await self._plan_scope(scope)
         _payload, metadata = await self._read(scope)
-        if metadata.get("runtime_profile") != "canvas-v1":
-            raise ValueError("unsupported Canvas runtime profile")
+        if metadata.get("runtime_profile") != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+            raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
             lambda: compile_canvas_document(metadata["source"])
         )

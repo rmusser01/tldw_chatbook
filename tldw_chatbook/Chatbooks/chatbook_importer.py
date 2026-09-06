@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Dict, List, Mapping, Optional, Tuple
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..Canvas.archive import (
     CANVAS_ARCHIVE_IO_CHUNK_BYTES,
@@ -94,6 +95,13 @@ _MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
 _MAX_V2_TOTAL_THINKING_BYTES = 16 * 1024 * 1024
 _MAX_V2_GRAPH_DEPTH = 2_048
 _MAX_IMPORT_ERROR_CHARS = 512
+
+
+class _SameIdentityConversationEnvelope(BaseModel):
+    """Bound comparison shapes before graph validation and exact projection."""
+
+    model_config = ConfigDict(strict=True, extra="allow")
+    messages: list[dict[str, Any]] = Field(max_length=_MAX_V2_GRAPH_MESSAGES)
 
 
 def _bounded_error_text(error: BaseException) -> str:
@@ -1136,10 +1144,7 @@ class ChatbookImporter:
     ) -> None:
         """Import conversations through one caller-owned database handle."""
 
-        conversation_service, _, _ = build_local_citation_conversation_service(
-            db,
-            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
-        )
+        conversation_service = None
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(
             f"ChatbookImporter._import_conversations: Looking for conversations in {conv_dir}"
@@ -1164,6 +1169,14 @@ class ChatbookImporter:
                         raise CanvasArchiveValidationError("same_identity_conflict")
                     status.record_skipped(ContentType.CONVERSATION)
                     continue
+                if conversation_service is None:
+                    conversation_service, _, _ = (
+                        build_local_citation_conversation_service(
+                            db,
+                            sidecar_path=get_user_data_dir()
+                            / "tldw_chatbook_chat_rag_context.json",
+                        )
+                    )
                 # Find conversation file
                 conv_file = self._conversation_file_path(
                     extract_dir, conv_dir, manifest, conv_id
@@ -1599,8 +1612,15 @@ class ChatbookImporter:
         conversation_id: str,
     ) -> None:
         """Compare the canonical archive projection using the locked target DB."""
+        from ..Chat.citation_provenance_runtime import CitationProvenanceRuntimePolicy
+        from ..Chat.citation_trace_identity import KeyringCitationFingerprintKeyProvider
+        from ..Chat.citation_trace_repository import (
+            CitationPersistenceUnavailable,
+            CitationTraceRepository,
+            load_local_citation_identity_context,
+        )
         from ..Chat.thinking_blocks import normalize_thinking_history_policy
-        from .chatbook_creator import CITATION_MESSAGE_EXPORT_KEYS, ChatbookCreator
+        from .chatbook_creator import ChatbookCreator
 
         path = self._conversation_file_path(
             extract_dir,
@@ -1609,6 +1629,11 @@ class ChatbookImporter:
             conversation_id,
         )
         expected = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            _SameIdentityConversationEnvelope.model_validate(expected)
+            self._validate_v2_conversation_graph(expected)
+        except (TypeError, ValueError):
+            raise CanvasArchiveValidationError("same_identity_conflict") from None
         conversation = db.get_conversation_by_id(conversation_id)
         if not conversation:
             raise CanvasArchiveValidationError("same_identity_conflict")
@@ -1630,14 +1655,39 @@ class ChatbookImporter:
                 value = value.isoformat()
             if expected.get(key) != value:
                 raise CanvasArchiveValidationError("same_identity_conflict")
-        rows = ChatbookCreator._conversation_graph_messages(db, conversation_id)
+        rows = ChatbookCreator._conversation_graph_messages(
+            db, conversation_id, limit=_MAX_V2_GRAPH_MESSAGES + 1
+        )
         if len(rows) > _MAX_V2_GRAPH_MESSAGES:
             raise CanvasArchiveValidationError("same_identity_conflict")
         expected_messages = expected.get("messages", [])
         if len(rows) != len(expected_messages):
             raise CanvasArchiveValidationError("same_identity_conflict")
+        # Inject a read-existing-key repository so comparison cannot provision
+        # credentials or update identity state through the writable factory.
+        repository = CitationTraceRepository.from_key_provider(
+            db,
+            policy=CitationProvenanceRuntimePolicy.from_config(),
+            identity_context=load_local_citation_identity_context(db),
+            key_provider=KeyringCitationFingerprintKeyProvider(),
+        )
+        conversation_service, _, _ = build_local_citation_conversation_service(
+            db,
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            repository=repository,
+        )
+        try:
+            # Preserve the exporter's default first-100 visible-message context
+            # projection; its graph rows remain the SQL-bounded rows above.
+            context = conversation_service.get_messages_with_context(
+                conversation_id,
+                read_only=True,
+            )
+        except CitationPersistenceUnavailable:
+            raise CanvasArchiveValidationError("same_identity_conflict") from None
+        rows = ChatbookCreator._merge_message_context(rows, context)
         projected: list[dict[str, Any]] = []
-        # Reuse export normalization without a creator instance, sidecar, or DB owner.
+        # Reuse export normalization over the caller-owned rows and attachments.
         with tempfile.TemporaryDirectory(prefix="canvas-restore-compare-") as temporary:
             root = Path(temporary)
             conv_dir = root / "content" / "conversations"
@@ -1652,11 +1702,7 @@ class ChatbookImporter:
                 )
                 for index in range(start, len(projected)):
                     message = projected[index]
-                    archived = {
-                        key: value
-                        for key, value in expected_messages[index].items()
-                        if key not in CITATION_MESSAGE_EXPORT_KEYS
-                    }
+                    archived = expected_messages[index]
                     if message != archived:
                         raise CanvasArchiveValidationError("same_identity_conflict")
                     for attachment in message.get("attachments", []):

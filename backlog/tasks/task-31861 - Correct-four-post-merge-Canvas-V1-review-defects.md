@@ -1,11 +1,11 @@
 ---
 id: TASK-31861
 title: Correct four post-merge Canvas V1 review defects
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 13:36'
-updated_date: '2026-09-06 14:22'
+updated_date: '2026-09-06 14:42'
 labels:
   - canvas
   - review
@@ -25,6 +25,7 @@ Correct four independently reproduced defects in the merged Canvas V1 implementa
 - [x] #3 Same-identity Canvas archive restore rejects any divergent canonical conversation or message graph atomically while exact restores remain idempotent.
 - [x] #4 Untouched textarea and select defaults have matching rendered and virtual values in real Chromium; edits and reconstruction preserve supported form behavior.
 - [x] #5 All four findings have permanent regressions with observed RED then GREEN, focused preservation tests and independent scoped review, without weakened sandbox or performance limits.
+- [ ] #6 Qodo feedback on PR #2459 is verified and addressed: bounded typed archive comparison including citations, structured unsupported-profile refusal, shared profile constant, and documented public contracts; targeted regressions and scoped review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,6 +49,22 @@ Global Constraints: strict zero egress; no native global, parent DOM, network, f
 6. Root runs focused RED/GREEN plus preservation tests, package integrity regeneration/checks as required, lint and formatting checks limited to touched code. Worker self-reviews and records evidence. Independent scoped review verifies all four corrections and new breakage; root performs final task hygiene and reports any remaining limitations.
 
 Report concerns before expanding architectural authority. Do not commit/push/merge from a worker.
+
+### Task 2: Address Qodo review of PR #2459
+
+ADR required: no new ADR
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md
+Reason: preserve the existing bounded, atomic archive and fail-closed runtime contracts.
+
+Base: 78f8801b09d5e92f43b5fa94b00aa222cb00b61a (rebased onto dev 43d7b93a8). All Task 1 Global Constraints apply, including root-only execution and no worker subagents. Task 1 is complete; do not repeat that review.
+
+1. Verify Qodo comments 3944264229, 3944264231, 3944264232, 3944264236, 3944264239 and 3944264244 against code. Read the relevant existing models and citation exporter before choosing minimal corrections.
+2. Add permanent behavioral regressions and provide exact selectors to root; wait for observed RED before product edits. Same-identity graph reads must enforce the existing message ceiling at SQL fetch time (limit plus one), malformed incoming comparison shapes must reject through bounded typed validation before downstream dictionary operations, and citation-bearing archive fields must participate in canonical equality. Exact restores with citations stay idempotent and all divergences reject atomically. Preserve attachment comparison and graph validation.
+3. Translate expected unsupported-profile failures at the plan HTTP route to its bounded plan_unavailable response in both native and served modes; do not swallow unexpected arbitrary faults. Reuse a shared supported runtime profile constant without weakening rejection or moving heavy imports onto startup.
+4. Document Args/Returns/applicable Raises contracts of bind_selection_resolver, capture_selected_scope, capture_selection_owner, and canvas_active_path_message_ids, without behavior changes.
+5. Root verifies focused RED/GREEN and preservation suites, preflight, changed-code lint/format and independent scoped rereview; records evidence, replies to Qodo, pushes with exact lease after rebase, waits for current-head review and required checks, and merges only when clear. Preserve all refs and worktrees.
+
+Citation implementation clarification: use an optional read-only projection through the existing citation conversation service/migration and inject a repository that reads existing keys without provisioning. Preserve the current bounded 100 visible-context-row export projection. If legacy fingerprint reconciliation would be required, reject same-identity comparison conservatively without key, sidecar, or journal writes; ordinary exporter behavior remains unchanged. Verify those non-mutation guarantees with regressions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

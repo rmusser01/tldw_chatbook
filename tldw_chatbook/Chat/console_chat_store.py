@@ -13237,6 +13237,15 @@ class ConsoleChatStore:
         Durable paths omit only transcript-only SYSTEM notices. Unpersisted
         user/assistant IDs stay in the path so durable validation rejects them;
         temporary paths retain every native message.
+
+        Args:
+            session_id: Native Console session whose active branch is projected.
+
+        Returns:
+            Root-to-leaf message IDs, preferring persisted IDs when available.
+
+        Raises:
+            KeyError: If the session or a message on its active path is unknown.
         """
         session = self._session_or_raise(session_id)
         active_ids: list[str] = []

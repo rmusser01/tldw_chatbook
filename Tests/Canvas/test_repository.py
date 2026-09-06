@@ -1477,6 +1477,7 @@ def test_valid_import_preserves_ids_branch_graph_source_and_reopen_hint(db) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.loopback_network
 @pytest.mark.parametrize("delivery", ["native", "served"])
 async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
     db, delivery
@@ -1588,6 +1589,41 @@ async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
     assert inert_source.source == source
     with pytest.raises(ValueError, match="unsupported Canvas runtime profile"):
         await reader.resolve_render_plan(gateway_scope)
+
+    import aiohttp
+
+    from Tests.Canvas.test_gateway import _post_json
+    from tldw_chatbook.Canvas.gateway import CanvasGateway
+
+    gateway = CanvasGateway(authority=reader)
+    try:
+        launch = await gateway.open_shell(gateway_scope)
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            boot = await _post_json(
+                session,
+                launch.clean_url + "api/boot",
+                {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+                origin=gateway.origin,
+            )
+            assert boot.status == 200
+            frame = await _post_json(
+                session,
+                launch.clean_url + "api/frame",
+                {},
+                origin=gateway.origin,
+                csrf=(await boot.json())["csrf"],
+            )
+            assert frame.status == 200
+            response = await session.get(
+                launch.clean_url + "api/plan",
+                headers={"Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "same-origin"},
+            )
+            assert response.status == 503
+            assert await response.json() == {"error": "plan_unavailable"}
+    finally:
+        await gateway.aclose()
 
 
 def test_import_prevalidation_collisions_and_injected_write_failure_are_atomic(

@@ -375,12 +375,31 @@ class ConsoleCanvasController:
     def bind_selection_resolver(
         self, resolver: Callable[[CanvasScope], CanvasScope]
     ) -> None:
-        """Bind the current native authority without eagerly constructing it."""
+        """Bind the current native authority without eagerly constructing it.
+
+        Args:
+            resolver: Callback that resolves only the scope's live selection.
+
+        Returns:
+            None.
+        """
         with self._lock:
             self._selection_resolver = resolver
 
     def capture_selected_scope(self, scope: CanvasScope) -> CanvasScope:
-        """Hand the live reachable selection to a newly captured assistant run."""
+        """Hand the live reachable selection to a newly captured assistant run.
+
+        Args:
+            scope: Current run authority whose selection may be refreshed.
+
+        Returns:
+            The scope with its reachable live selection, or the original scope
+            when no resolver is bound.
+
+        Raises:
+            RuntimeError: If closed, the resolver changes during capture, or
+                the resolver changes authority fields beyond the selection.
+        """
         with self._lock:
             if self._closed:
                 raise RuntimeError("canvas_scope_unavailable")
@@ -766,7 +785,20 @@ class ConsoleCanvasController:
     def capture_selection_owner(
         self, scope: CanvasScope, *, temporary: bool
     ) -> CanvasSessionOwner | None:
-        """Retain selection identity only across a confirmed same-session promotion."""
+        """Retain selection identity only across a confirmed same-session promotion.
+
+        Args:
+            scope: Session authority whose selection owner is being captured.
+            temporary: Whether the scope belongs to an unsaved session.
+
+        Returns:
+            The active owner, the confirmed promoted owner, or None for a
+            durable session without a retained temporary owner.
+
+        Raises:
+            RuntimeError: If closed or temporary ownership is unavailable,
+                replaced, or currently being promoted.
+        """
         with self._lock:
             owner = self.capture_interactive_owner(scope, temporary=temporary)
             if owner is not None or temporary:

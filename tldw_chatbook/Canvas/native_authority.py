@@ -24,7 +24,12 @@ from .gateway import (
     CanvasGatewayScope,
     CanvasSourceResponse,
 )
-from .limits import sha256_utf8, validate_utf8_text
+from .limits import (
+    SUPPORTED_CANVAS_RUNTIME_PROFILE,
+    UnsupportedCanvasRuntimeProfile,
+    sha256_utf8,
+    validate_utf8_text,
+)
 from .models import (
     CanvasReadResult,
     CanvasRenderPlan,
@@ -703,8 +708,8 @@ class NativeConsoleCanvasAuthority:
             captured, temporary=self._is_temporary(captured)
         )
         read = self._read_exact(captured, scope.canvas_id, scope.revision_id)
-        if read.revision.runtime_profile != "canvas-v1":
-            raise ValueError("unsupported Canvas runtime profile")
+        if read.revision.runtime_profile != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+            raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
             lambda: compile_canvas_document(read.source)
         )

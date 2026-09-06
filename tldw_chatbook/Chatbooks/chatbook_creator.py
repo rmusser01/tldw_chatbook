@@ -743,9 +743,21 @@ class ChatbookCreator:
 
     @staticmethod
     def _conversation_graph_messages(
-        db: CharactersRAGDB, conversation_id: str
+        db: CharactersRAGDB, conversation_id: str, *, limit: int | None = None
     ) -> list[dict[str, Any]]:
-        """Return every row needed to reconstruct one conversation graph."""
+        """Return graph rows in archive order, optionally capped at SQL fetch.
+
+        Args:
+            db: Caller-owned database handle.
+            conversation_id: Conversation whose complete graph is projected.
+            limit: Optional SQL row ceiling, including any overflow sentinel.
+
+        Returns:
+            Message mappings in timestamp and insertion order.
+
+        Raises:
+            _ConversationGraphProjectionError: The database returns no row list.
+        """
         cursor = db.execute_query(
             """
             SELECT id, conversation_id, parent_message_id, sender, content,
@@ -756,8 +768,9 @@ class ChatbookCreator:
               FROM messages
              WHERE conversation_id = ?
              ORDER BY timestamp ASC, rowid ASC
-            """,
-            (conversation_id,),
+            """
+            + (" LIMIT ?" if limit is not None else ""),
+            (conversation_id, limit) if limit is not None else (conversation_id,),
         )
         rows = cursor.fetchall()
         if not isinstance(rows, list):
