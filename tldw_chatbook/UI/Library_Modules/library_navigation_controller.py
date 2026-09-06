@@ -55,6 +55,7 @@ class LibraryNavigationController:
         self.keyword_generation = 0
         self.semantic_generation = 0
         self.character_route = None
+        self.character_candidate = None
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -83,7 +84,8 @@ class LibraryNavigationController:
             return
         if not isinstance(context, Mapping):
             return
-        self.character_route = None
+        self.character_candidate = None
+        self.screen._library_navigation_context_generation += 1
         is_character_navigation = set(context) in (
             {LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION},
             {LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE},
@@ -113,7 +115,6 @@ class LibraryNavigationController:
         )
         if target_row_id is None:
             return
-        self.screen._library_navigation_context_generation += 1
         character_admission = (
             self.screen._unavailable_navigation._library_character_navigation_admission(
                 self.screen,

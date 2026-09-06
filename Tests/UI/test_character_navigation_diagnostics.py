@@ -56,7 +56,9 @@ async def test_unavailable_authority_failure_keeps_exception_canary_out_of_diagn
     )
 
     screen._library_navigation_context_generation = 1
-    screen._navigation_controller = SimpleNamespace(character_route=None)
+    screen._navigation_controller = SimpleNamespace(
+        character_route=None, character_candidate=None
+    )
     screen._pending_library_character_navigation = None
     screen._conversations_state = SimpleNamespace(loading=False)
     screen.is_mounted = False

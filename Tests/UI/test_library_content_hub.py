@@ -842,6 +842,182 @@ async def test_library_character_route_rejects_authority_mismatch() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "incoming",
+    (
+        "invalid_repair",
+        "invalid_character",
+        "ordinary_veto",
+        "typed_veto",
+        "superseded_typed",
+    ),
+)
+async def test_rejected_navigation_preserves_committed_unavailable_browse(
+    monkeypatch, incoming
+):
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    authority = "retained-authority"
+    key = UnresolvedConversationKey(authority, "retained-chat")
+    row = CharacterConversationRow.unavailable(
+        key,
+        reason=UnavailableCharacterReason.MISSING_CARD,
+        character_label="Unavailable",
+        title="Retained chat",
+        last_modified="2026-09-03T10:00:00Z",
+        created_at="2026-09-01T00:00:00Z",
+    )
+
+    class NavigationService:
+        def __init__(self, database):
+            pass
+
+        def unavailable_page(self, *, offset, limit, query=""):
+            return CharacterConversationPage((row,), 1, None, 7)
+
+    monkeypatch.setattr(
+        character_service_module,
+        "CharacterConversationNavigationService",
+        NavigationService,
+    )
+    app = _build_test_app()
+    _seed_library_content(app)
+    app.chachanotes_db = SimpleNamespace(get_local_authority_id=lambda: authority)
+    route = character_navigation.LibraryUnavailableConversationsBrowse(
+        key, character_navigation.RoleplayReturnTarget.console_context_character()
+    )
+    context = {
+        constants.LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: character_navigation.serialize_library_unavailable_browse(
+            route
+        )
+    }
+    returned = []
+    host = DestinationHarness(app, "library")
+    async with host.run_test(
+        size=(120, 40),
+        message_hook=lambda message: (
+            returned.append(message) if isinstance(message, NavigateToScreen) else None
+        ),
+    ) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        screen.apply_navigation_context(context)
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if screen._conversations_state.page_loaded and screen.query(
+                "#library-character-back-console"
+            ):
+                break
+        back = screen.query_one("#library-character-back-console", Button)
+        committed = screen._navigation_controller.character_route
+        scope = screen._library_unavailable_browse_scope
+        records = screen._conversations_state.page_records
+        generation = screen._library_navigation_context_generation
+        entered = asyncio.Event()
+
+        async def veto():
+            entered.set()
+            return False
+
+        screen._flush_active_file_notes = veto
+        if incoming == "invalid_repair":
+            rejected = {constants.LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR: {}}
+        elif incoming == "invalid_character":
+            rejected = {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: {}}
+        elif incoming == "ordinary_veto":
+            rejected = {LIBRARY_NAV_CONTEXT_MODE: "search"}
+        else:
+            rejected = {
+                constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: character_navigation.serialize_library_unavailable_inspection(
+                    character_navigation.LibraryUnavailableConversationInspection(
+                        UnresolvedConversationKey(authority, "replacement-chat"),
+                        route.return_target,
+                    )
+                )
+            }
+        if incoming == "superseded_typed":
+            release = asyncio.Event()
+
+            async def delayed_save():
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    await asyncio.wait_for(release.wait(), 2)
+                return True
+
+            async def permit():
+                return True
+
+            screen._flush_active_file_notes = delayed_save
+            screen.apply_navigation_context(rejected)
+            await asyncio.wait_for(entered.wait(), 2)
+            attempted_generation = screen._library_navigation_context_generation
+            assert screen._navigation_controller.character_route is committed
+            assert not screen._conversations_state.loading
+            screen._flush_active_file_notes = permit
+            screen.apply_navigation_context(context)
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if (
+                    screen._navigation_controller.character_route is not committed
+                    and screen._pending_library_character_navigation is None
+                ):
+                    break
+            replacement = screen._navigation_controller.character_route
+            assert replacement is not None and replacement is not committed
+            successful_generation = screen._library_navigation_context_generation
+            assert successful_generation > attempted_generation > generation
+            release.set()
+            await pilot.pause(0.2)
+            assert screen._navigation_controller.character_route is replacement
+            assert (
+                screen._library_navigation_context_generation == successful_generation
+            )
+            screen._unavailable_navigation.return_from_character(screen, committed)
+            await pilot.pause()
+            assert not returned
+            committed = replacement
+            scope = screen._library_unavailable_browse_scope
+            records = screen._conversations_state.page_records
+        else:
+            screen.apply_navigation_context(rejected)
+        if incoming.endswith("veto"):
+            await asyncio.wait_for(entered.wait(), 2)
+        await pilot.pause()
+        assert screen._navigation_controller.character_route is committed
+        assert screen._library_navigation_context_generation >= generation
+        assert screen._library_unavailable_browse_scope is scope
+        assert screen._conversations_state.page_records == records
+        assert (
+            screen._unavailable_navigation._library_unavailable_browse_scope_is_current(
+                screen, scope
+            )
+        )
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.value = "Retained"
+        filter_input.focus()
+        await pilot.press("enter")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if not screen._conversations_state.loading:
+                break
+        assert screen._conversations_state.projection == "unavailable_character"
+        assert (
+            screen._conversations_state.page_records[0]["conversation_id"]
+            == "retained-chat"
+        )
+        back = screen.query_one("#library-character-back-console", Button)
+        back.press()
+        await pilot.pause()
+        assert returned and all(message is returned[0] for message in returned)
+        assert (returned[0].screen_name, returned[0].screen_context) == (
+            "chat",
+            {"return_focus": "console-context-character"},
+        )
+
+
+@pytest.mark.asyncio
 async def test_character_authority_read_yields_ui_and_cannot_admit_superseded_route():
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])

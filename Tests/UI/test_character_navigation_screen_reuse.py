@@ -43,6 +43,7 @@ async def test_unavailable_route_returns_to_originating_console_character(
     from tldw_chatbook.Constants import (
         LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
         LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
+        LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
         TAB_LIBRARY,
     )
     from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
@@ -107,6 +108,26 @@ async def test_unavailable_route_returns_to_originating_console_character(
                 break
         library = app.screen
         back = library.query_one("#library-character-back-console", Button)
+        committed = library._navigation_controller.character_route
+        library.apply_navigation_context({LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR: {}})
+        library.apply_navigation_context({LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: {}})
+        assert library._navigation_controller.character_route is committed
+        original_incoming_flush = library._flush_active_file_notes
+        rejected = asyncio.Event()
+
+        async def reject_incoming():
+            rejected.set()
+            return False
+
+        library._flush_active_file_notes = reject_incoming
+        for replacement in ({"mode": "search"}, context):
+            rejected.clear()
+            library.apply_navigation_context(replacement)
+            await asyncio.wait_for(rejected.wait(), 2)
+            await pilot.pause()
+            assert library._navigation_controller.character_route is committed
+            assert library.query_one("#library-character-back-console") is back
+        library._flush_active_file_notes = original_incoming_flush
         back.focus()
         await pilot.pause()
         painted = "\n".join(strip.text for strip in library._compositor.render_strips())

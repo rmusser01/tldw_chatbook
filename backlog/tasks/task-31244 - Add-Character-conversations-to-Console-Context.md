@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:08'
-updated_date: '2026-09-06 05:41'
+updated_date: '2026-09-06 06:06'
 labels:
   - console
   - context
@@ -58,4 +58,6 @@ ADR required: no new ADR. ADR path: backlog/decisions/120-character-conversation
 Implemented the bounded, avatar-independent Character Context browser, exact typed activation and complete Roleplay/Library handoffs. Reused reviewed Task4 and owning focus/avatar lifetime fixes, adapted paginated repair totals and strict lazy Pydantic payloads, and kept unavailable navigation in the existing Library module boundary (ADR120/ADR083; no new ADR). Search rows retain visible title, character and Local/age metadata; existing outer scrolling follows the exact focused Character control. Targeted aggregate:355 passed/3 inherited-evidence failures; final scoped paint/avatar/rail/preference confirmation:137 passed; final scoped static/CSS/diagnostics:12 passed. No cap raises. Native/platform and aggregate FD attribution remain unverified; retain In Progress and unchecked AC pending controller qualification. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-report.md.
 
 Fix round1 closes post-await generation admission, retained-profile Start, off-loop Library authority reads, recompose focus ownership and route-owned Back to Console. ADR120 now clarifies the two new routes originate only in Console Context; incumbent repair origins remain unchanged. Return reveal is transient, preserves manual disclosure policy, and keeps the semantic anchor with visible composer fallback at52x20 without resize focus theft. Search copy is Search chats. Covering gate231 passed/3 fixture-wait failures; corrected final ownership/return confirmation19 passed; final static/startup/CSS/canary17 passed. The new unmerged helper initial pin is803 (+90), explicitly approved; all incumbent caps fixed. Native/platform/resource attribution remains unqualified; no Done or AC change. Full fix evidence and capture/source manifests: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-1-report.md.
+
+Fix round 2 preserves the committed unavailable Library route, browse projection, and Back action through invalid or save-vetoed incoming navigation. Validated candidates are staged separately, with monotonic attempt generations and promotion only after guarded admission; a late superseded save cannot resurrect ownership. Direct ADR120 implementation, no new ADR. Genuine RED: 4 failures; final affected Library/payload/diagnostic/complete-return gate: 85 passed, 1 known incumbent empty-preview deselected; scoped size/slack gate: 4 passed. The still-unmerged helper initial pin is 811 (+8), explicitly approved; incumbent caps and both screens are unchanged. No new Ruff diagnostics; four incumbent diagnostics remain. Native/platform/resource qualifications remain open; status and AC unchanged. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-2-report.md.
 <!-- SECTION:NOTES:END -->

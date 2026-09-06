@@ -175,6 +175,8 @@ def clear_character_return(self) -> None:
     if isinstance(self.app.screen, ModalScreen):
         return
     self._navigation_controller.character_route = None
+    self._navigation_controller.character_candidate = None
+    self._library_navigation_context_generation += 1
     for control in self.query("#library-character-return"):
         control.display = False
 
@@ -188,9 +190,10 @@ def _library_character_admission_is_current(
     database = getattr(self.app_instance, "chachanotes_db", None)
     if database is not admission.database:
         return False
-    return (
-        admission.generation == self._library_navigation_context_generation
-        and self._navigation_controller.character_route is admission
+    navigation = self._navigation_controller
+    return navigation.character_route is admission or (
+        navigation.character_candidate is admission
+        and admission.generation == self._library_navigation_context_generation
     )
 
 
@@ -215,7 +218,8 @@ def _library_unavailable_browse_scope_is_current(
         scope is not None
         and self._library_unavailable_browse_scope is scope
         and getattr(self.app_instance, "chachanotes_db", None) is scope.database
-        and scope.navigation_generation == self._library_navigation_context_generation
+        and scope.navigation_generation
+        == getattr(self._navigation_controller.character_route, "generation", None)
         and _library_character_authority_is_current(self, scope.authority)
     )
 
@@ -287,7 +291,9 @@ async def _validate_library_character_admission(self, admission) -> bool:
 
     if not scope_is_current():
         return False
-    self._conversations_state.loading = True
+    initial_loading = self._navigation_controller.character_route is None
+    if initial_loading:
+        self._conversations_state.loading = True
     if self.is_mounted:
         self.notify("Loading character conversations…", severity="information")
     route = admission.route
@@ -308,11 +314,12 @@ async def _validate_library_character_admission(self, admission) -> bool:
         authority = None
     if not scope_is_current():
         return False
-    self._conversations_state.loading = False
+    if initial_loading:
+        self._conversations_state.loading = False
     if authority != key.data_authority_id:
         _discard_library_character_admission(self, admission)
         return False
-    self._navigation_controller.character_route = admission
+    self._navigation_controller.character_candidate = admission
     return True
 
 
@@ -592,13 +599,12 @@ def _apply_navigation_context_state(
             if not self.is_mounted:
                 self._pending_library_character_navigation = character_admission
             return
-        from ..Library_Modules.library_unavailable_navigation import (
-            _LibraryUnavailableBrowseScope,
-        )
         from ..Navigation.character_conversation_navigation import (
             LibraryUnavailableConversationsBrowse,
         )
 
+        self._navigation_controller.character_route = character_admission
+        self._navigation_controller.character_candidate = None
         self._pending_library_character_navigation = character_admission
         route = character_admission.route
         if isinstance(route, LibraryUnavailableConversationsBrowse):
@@ -626,6 +632,8 @@ def _apply_navigation_context_state(
         if self.is_mounted and recompose:
             self.refresh(recompose=True)
         return
+    self._navigation_controller.character_route = None
+    self._navigation_controller.character_candidate = None
     self._library_unavailable_browse_scope = None
     self._supersede_library_notes_navigation()
     raw_open_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
