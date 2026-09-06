@@ -900,3 +900,38 @@ and verify claim settlement and rendered evidence through real navigation.
 The brainstorming skill's design approval is required before that production
 change; the test remains failing and unmodified. TASK-31750 and PR stay open;
 broader census/resource/architecture and task-ID work remains outstanding.
+
+## Approved Console warm-resume handoff repair
+
+The user approved the bounded runtime repair above. Reused the existing
+claim/acknowledgement-and-surface-refresh routine on ordinary warm resume,
+after session reconciliation, excluding first mount and ordered saved-chat
+startup. No new timer, queue, ownership boundary or ADR was needed; this
+preserves ADR-033 and TASK-31520's installed-screen reuse.
+
+The real navigation regression now covers resident/empty Console crossed with
+new/no-new handoff. Both new-handoff cases failed before production changes;
+both controls passed. All four passed after the fix, asserting actual Library
+leave, same-instance return, mounted tray title, no hidden consumption,
+sent-notice clearing/preservation and settled claims. The initial five-file run
+was 145 passed / 2 failed: two constructor-bypass ordered-resume fixtures patched
+an uninitialized prompt owner before calling startup. Both now initialize that
+owner with the same async spy, preserving release/order, acquisition-error,
+privacy and cleanup assertions.
+
+Final complete handoff, Console reuse, roleplay resume navigation, active-path
+resume and generic screen reuse files: **147 passed in 243.84s**, six existing
+warning occurrences (`/private/tmp/tldw-warm-handoff-lifecycle-final.xml`).
+All 69 handoff cases pass. Full changed-file lint, changed-region formatting,
+diff checks and independent review pass. The testing-evidence lesson records
+the compose-only consumption trap.
+
+Architecture remains open: **10 passed / 2 failed** in the screen-size and
+realtime boundary files (`/private/tmp/tldw-warm-handoff-architecture.xml`).
+Console is 16900 lines against the unchanged 16818 ceiling (HEAD was 16899);
+the method count is unchanged. The other failure is an unchanged AST template
+expecting the retired screen dictation delegate instead of the existing
+`_dictation` owner. No ceiling or guard was relaxed. TASK-31750 AC5/AC6/AC7 are
+qualified; AC3, the broader census/resource work and task-ID decisions remain
+open. The earlier design-approval hold is resolved. PR remains draft, not
+merge-ready; no full-suite completion is claimed.
