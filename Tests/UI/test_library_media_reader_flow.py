@@ -1329,6 +1329,39 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     assert calls[-1] == ("focus", "#library-media-reader-more")
 
 
+def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
+    """PR H2: the hook is used only when the VIEWER is the thing rebuilding.
+
+    ``_sync_library_media_viewer_state`` returns True for the no-change
+    short-circuit too (nothing is rebuilt, so nothing would ever fire the
+    hook), and it returns False -- whole-screen recompose -- while the OLD
+    viewer is still mounted and about to be torn down. Queuing on either
+    swallows the follow-up outright, so the seam reads the viewer's own armed
+    recompose flag rather than assuming a mounted viewer means a rebuild.
+    """
+    calls: list = []
+    viewer = _RecomposeHookViewer(pending=lambda: calls.append("pr-f-restore"))
+    viewer._recompose_required = False
+    fake = SimpleNamespace(
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: viewer,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+
+    LibraryScreen._after_library_media_viewer_sync(
+        fake, "#library-media-reader-more"
+    )
+
+    assert calls[0] == "sync"
+    # The follow-up went to the screen seam, and the viewer's own slot is
+    # untouched -- whatever was queued there still belongs to its owner.
+    assert calls[1][0] == "after"
+    assert viewer._post_recompose_callback is not None
+    calls[1][1]()
+    assert calls[-1] == ("focus", "#library-media-reader-more")
+
+
 def test_escape_closes_more_find_confirmation_before_leaving_reader():
     """Every Reader transient consumes Escape before outward graduation."""
     fake, calls, _shell, _find = _escape_fake(region="reader", more_open=True)

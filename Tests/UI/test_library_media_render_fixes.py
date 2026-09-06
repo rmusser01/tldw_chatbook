@@ -2545,11 +2545,13 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
 #
 # ``_sync_library_media_viewer_or_recompose`` rebuilds the Reader on the
 # VIEWER's message pump. A ``screen.call_after_refresh`` follow-up has no
-# ordering against that pump: it can focus the control the recompose is
-# about to detach, and Textual then re-picks focus for the pruned widget --
-# landing on a pane grip (or, when the follow-up wins the race the other
-# way, on a detached orphan). PR H fixed the More BUTTON that way; these pin
-# the Escape paths, which took the same shape.
+# ordering against that pump: it focuses the control the recompose is about
+# to detach, Textual re-picks focus for the pruned widget, and task-31567's
+# restore -- whose captured identity went with the same children -- takes
+# its list-entry fallback. Measured on 43b0a7440: Escape from inside the
+# open More disclosure left focus on ``#library-media-row-0``, outside the
+# Reader, so the next Escape acted on the LIST. PR H fixed the More BUTTON;
+# these pin the Escape paths, which took the same shape.
 
 
 async def _open_reader_find(screen, pilot):
@@ -2596,10 +2598,13 @@ async def test_escape_closing_more_lands_on_the_live_more_button():
     """Escape closes the disclosure and leaves focus on the NEW More button.
 
     Qodo High on #2470 ("Readers lose keys after escape"): the follow-up ran
-    on the screen's pump while the viewer rebuilt on its own, so focus ended
-    up on a widget with no parent chain -- which swallows every subsequent
-    key, Escape included. The second half presses Enter on whatever holds
-    focus: only a live, mounted More button re-opens the row.
+    on the screen's pump while the viewer rebuilt on its own, so it never
+    held the control it named. The first half passes on 43b0a7440 by
+    coincidence -- the identity task-31567 captured IS the More button, so
+    its restore lands where the follow-up wanted; the second half, from
+    inside the disclosure, is where the two differ and the base fails.
+    Both then press Enter on whatever holds focus: only a live, mounted More
+    button re-opens the row.
     """
     host = _four_action_host()
     async with host.run_test(size=(235, 52)) as pilot:
