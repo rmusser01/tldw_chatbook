@@ -563,7 +563,30 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # AST method-name set on `LibraryScreen` is identical at the merge-base
     # and at `origin/dev` (measured, not assumed -- both directions of the set
     # difference are empty), so dev's extraction added and removed no name.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
+    #
+    # 2026-09-06, wave-7 task 1 (media state PR, media series 1/3): 82 of the
+    # 85 "media"-named `LibraryScreen` attributes moved verbatim into
+    # `LibraryMediaState` (`UI/Library_Modules/library_media_state.py`), which
+    # the screen constructs as `self._media_state` and shims back under every
+    # original flat name. Fresh `_measure()`: 37537/1282 -> 37333/1282. The
+    # METHOD count is unchanged, as every pure field move's must be: zero
+    # `FunctionDef`s were touched. Line delta -204 reconciles EXACTLY, each
+    # term measured off the diff rather than estimated: -242 removed lines
+    # (110 lines of field statements spanning 78 of the 82 moved fields -- 75
+    # deleted outright and 3 whose value becomes a constructor argument; the
+    # other 4 fields KEEP their original assignment lines, because those run
+    # after the forced-early construction point -- plus the 131 comment lines
+    # that moved with them, every one verified byte-for-byte identical to its
+    # relocated copy in the state module, plus 1 blank line left doubled where
+    # the sole CLASS-BODY attribute, `_library_media_arrival_note`, and its
+    # comment were removed);
+    # +4 for the `library_media_state` import; +14 for the construction site
+    # (`self._media_state = LibraryMediaState(...)`, 3 constructor arguments,
+    # under a 9-line why-this-is-early comment); +20 for the sentinel-wrapped
+    # generated shim block at module end (the same shape the collections/
+    # search+RAG/skills/ingest/prompts state PRs each installed and their own
+    # cleanup PRs each deleted). -242 + 4 + 14 + 20 = -204.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37333, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
