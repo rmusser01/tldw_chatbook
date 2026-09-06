@@ -67,6 +67,95 @@ def test_segment_gets_a_speaker_id_from_the_diarizer(meeting_session_with_fake_c
     assert seg.speaker_id == "S1"
 
 
+def _pcm_spy(session):
+    """Wrap `session.capture.pcm_window` to record the `source` it's called with."""
+    calls: list[str] = []
+    original = session.capture.pcm_window
+
+    def spy(source, start_s, end_s):
+        calls.append(source)
+        return original(source, start_s, end_s)
+
+    session.capture.pcm_window = spy
+    return calls
+
+
+# ---- task 31743: hybrid-room mic diarization behind a flag -----------------
+
+def test_you_segment_never_assigned_when_flag_off(meeting_session_with_fake_capture):
+    """Existing behaviour, asserted explicitly: with the flag off (default),
+    a "you" segment in call mode is never sent to `assign`."""
+    session = meeting_session_with_fake_capture(diarizer=FakeDiarizer(["S1"]), mode="call")
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
+def test_both_segment_never_assigned_when_flag_off(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(diarizer=FakeDiarizer(["S1"]), mode="call")
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="both")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
+def test_you_segment_assigned_from_you_pcm_when_flag_on(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == ["you"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_both_segment_assigned_from_mixed_pcm_when_flag_on(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="both")
+    assert calls == ["mixed"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_others_segment_still_assigned_from_others_pcm_when_flag_on(meeting_session_with_fake_capture):
+    """The flag only adds "you"/"both" -- "others" keeps its existing source."""
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="others")
+    assert calls == ["others"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_stop_uses_mixed_wav_when_diarize_mic_flag_on_in_call_mode(tmp_path, meeting_session_with_fake_capture):
+    """task 31743: with the flag on, live centroids came from every channel,
+    so the Stop pass must reconcile against mixed.wav, not others.wav."""
+    seen = {}
+
+    class ChannelProbe(StopReconcileDiarizer):
+        def diarize(self, wav_path, start_s, end_s):
+            seen["wav"] = wav_path.name
+            return []
+
+    (tmp_path / "mixed.wav").write_bytes(b"")
+    session = meeting_session_with_fake_capture(
+        diarizer=ChannelProbe(), mode="call", diarize_mic_channel=True,
+    )
+    session.start()
+    session._on_final_for_test("hello", label="others")
+    session.stop()
+    assert seen["wav"] == "mixed.wav"
+
+
 def test_diarizer_closed_on_stop(meeting_session_with_fake_capture):
     fake = FakeDiarizer([])
     session = meeting_session_with_fake_capture(diarizer=fake, mode="call")

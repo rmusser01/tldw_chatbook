@@ -130,6 +130,10 @@ class MeetingSettings(BaseModel):
     post_transcribe: bool = True
     post_diarize: bool = True
     live_diarization: bool = False
+    #: Hybrid-room mic diarization (task 31743): in call mode, also diarize
+    #: the mic ("you") and overlap ("both") segments instead of leaving them
+    #: pre-named as the user. Off by default -- see `meetings.md`.
+    diarize_mic_channel: bool = False
     diarizer_backend: str = "local"
     #: Qodo Q7: 0 or a negative value silently disabled the Stop pass (the
     #: clusterer can hold no clusters), so it is refused at the boundary
@@ -187,6 +191,7 @@ class MeetingSettings(BaseModel):
             post_transcribe=get_setting("meetings", "post_transcribe", True),
             post_diarize=get_setting("meetings", "post_diarize", True),
             live_diarization=get_setting("meetings", "live_diarization", False),
+            diarize_mic_channel=get_setting("meetings", "diarize_mic_channel", False),
             diarizer_backend=get_setting("meetings", "diarizer_backend", "local") or "local",
             max_speakers=get_setting("meetings", "max_speakers", 8),
         )
@@ -562,6 +567,7 @@ class MeetingSessionOwner:
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
                     user_display_name=meeting_user_display_name(),
+                    diarize_mic_channel=self.settings.diarize_mic_channel,
                 )
                 # Two independent mechanisms, deliberately NOT conflated
                 # (Qodo Q12): the live backend's authoritative Stop pass is

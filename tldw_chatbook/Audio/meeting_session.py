@@ -48,6 +48,14 @@ class MeetingMeta:
     #: Defaulted to "You" for direct-construction call sites (tests, and any
     #: `MeetingMeta` built before this field existed).
     user_display_name: str = "You"
+    #: Hybrid-room mic diarization (task 31743): when True, the mic ("you")
+    #: and overlap ("both") channels are ALSO sent to the live diarizer in
+    #: call mode, and the Stop pass reconciles against `mixed.wav` instead of
+    #: `others.wav` (see `_on_final` / `stop`). Stamped from `MeetingSettings.
+    #: diarize_mic_channel` by `MeetingSessionOwner.start()`. Defaulted False
+    #: for direct-construction call sites and back-filled False for old
+    #: `meeting.json` files that predate this field.
+    diarize_mic_channel: bool = False
     speaker_names: dict = field(default_factory=dict)
     format_version: int = 2
 
@@ -203,6 +211,9 @@ def read_meeting_json(folder: Path) -> dict:
     # before the mic channel's display name was persisted, and always
     # showed "You" live.
     payload.setdefault("user_display_name", "You")
+    # Back-fill pre-task-31743 recordings: mic-channel diarization did not
+    # exist yet, so those meetings never diarized "you"/"both" segments.
+    payload.setdefault("diarize_mic_channel", False)
     return payload
 
 
@@ -260,7 +271,9 @@ def is_widget_safe_cluster_id(cluster_id: str) -> bool:
     return bool(cluster_id) and bool(_WIDGET_SAFE_CLUSTER_ID.match(cluster_id))
 
 
-def render_label(segment: MeetingSegment, names: dict[str, str], user_display_name: str) -> str | None:
+def render_label(
+    segment: MeetingSegment, names: dict[str, str], user_display_name: str, diarize_mic: bool = False,
+) -> str | None:
     """Display name for a segment: the user for the mic channel, else the
     named or generic speaker.
 
@@ -269,12 +282,18 @@ def render_label(segment: MeetingSegment, names: dict[str, str], user_display_na
         names: The meeting's `cluster_id -> user name` map; ids absent from
             it fall back to a generic "Speaker N".
         user_display_name: What stands in for the mic channel ("You").
+        diarize_mic: task 31743 -- when True, a "you"-labelled segment that
+            already carries a diarized `speaker_id` renders by that id
+            instead of pre-naming it as the user (a "both" segment already
+            falls through to the `speaker_id` branch below unconditionally,
+            since it never had one until this flag existed). Default False
+            keeps every existing caller's behaviour unchanged.
 
     Returns:
         The display name, or None when the segment carries no label at all
         (room mode before diarization).
     """
-    if segment.label == "you":
+    if segment.label == "you" and not (diarize_mic and segment.speaker_id):
         return user_display_name
     if segment.speaker_id:
         if segment.speaker_id in names:
@@ -482,11 +501,17 @@ class MeetingSession:
             # segments only, which nothing persisted read). Never log segment
             # text or speaker names -- lengths/types only.
             try:
-                # Diarize the SAME channel the live centroids were built from
-                # (`_on_final` used "others" in call mode, "mixed" in room
-                # mode) so reconcile compares like-for-like. Absent file ->
-                # skip, keep near-live labels, never raise.
-                wav_name = "others.wav" if self.capture.mode == "call" else "mixed.wav"
+                # Diarize the SAME channel(s) the live centroids were built
+                # from so reconcile compares like-for-like. Absent file ->
+                # skip, keep near-live labels, never raise. `_on_final` used
+                # "others" (call mode) / "mixed" (room mode) by default; with
+                # `diarize_mic_channel` on, call mode ALSO fed "you"/"mixed"
+                # into the live centroids (task 31743), so only "mixed.wav"
+                # -- which covers every channel -- reconciles like-for-like.
+                if self.capture.mode == "call" and not self.meta.diarize_mic_channel:
+                    wav_name = "others.wav"
+                else:
+                    wav_name = "mixed.wav"
                 wav_path = Path(self.meta.folder) / wav_name
                 with self._lock:
                     meeting_segments = list(self.segments)
@@ -620,8 +645,20 @@ class MeetingSession:
         # any segment in room mode (label is None there). `assign` may block
         # on a subprocess in the real backend, so it MUST run off `_lock`,
         # which is already released at this point in the method.
-        if self._diarizer is not None and segment is not None and segment.label in ("others", None):
-            source = "others" if segment.label == "others" else "mixed"
+        source: str | None = None
+        if segment is not None:
+            if segment.label in ("others", None):
+                source = "others" if segment.label == "others" else "mixed"
+            elif self.meta.diarize_mic_channel:
+                # task 31743: hybrid-room mic diarization, call mode only --
+                # "you"/"both" are the mic-carrying channels, so their PCM
+                # comes from the "you" track and the mixed (overlap) track
+                # respectively.
+                if segment.label == "you":
+                    source = "you"
+                elif segment.label == "both":
+                    source = "mixed"
+        if self._diarizer is not None and segment is not None and source is not None:
             pcm = self.capture.pcm_window(source, segment.t_audio_start, segment.t_audio_end)
             sid = None
             if pcm:
@@ -706,7 +743,7 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        who = render_label(segment, speaker_names, meta.user_display_name)
+        who = render_label(segment, speaker_names, meta.user_display_name, diarize_mic=meta.diarize_mic_channel)
         lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
     return "\n".join(lines) + "\n"
 

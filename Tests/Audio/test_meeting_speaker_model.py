@@ -55,3 +55,29 @@ def test_old_meeting_json_backfills_speaker_fields(tmp_path):
     payload = read_meeting_json(tmp_path)
     assert payload["format_version"] == 1
     assert payload.get("speaker_names", {}) == {}
+
+def test_old_meeting_json_backfills_diarize_mic_channel_false(tmp_path):
+    """task 31743: old recordings predate hybrid-room mic diarization and
+    must read back as flag-off."""
+    write_meeting_json(tmp_path, {"mode": "call", "format_version": 1})
+    payload = read_meeting_json(tmp_path)
+    assert payload["diarize_mic_channel"] is False
+
+def test_you_channel_with_diarized_speaker_renders_the_speaker_when_flag_on():
+    """task 31743: `diarize_mic=True` yields the "you" pre-naming to a
+    diarized mic segment's own speaker id."""
+    seg = _seg(label="you", speaker_id="S2")
+    assert render_label(seg, {"S2": "Bob"}, "You", diarize_mic=True) == "Bob"
+
+def test_you_channel_with_diarized_speaker_keeps_display_name_when_flag_off():
+    """Default `diarize_mic=False` keeps every existing caller's behaviour:
+    a "you" segment always renders the display name, speaker_id or not."""
+    seg = _seg(label="you", speaker_id="S2")
+    assert render_label(seg, {"S2": "Bob"}, "You", diarize_mic=False) == "You"
+    assert render_label(seg, {"S2": "Bob"}, "You") == "You"
+
+def test_you_channel_without_a_speaker_id_still_renders_display_name_when_flag_on():
+    """Best-effort: a failed/absent assignment falls back to the mic name
+    even with the flag on."""
+    seg = _seg(label="you", speaker_id=None)
+    assert render_label(seg, {}, "You", diarize_mic=True) == "You"

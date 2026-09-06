@@ -109,15 +109,16 @@ def _read_meeting_transcript_segments(folder: Path) -> list[MeetingSegment]:
 
 
 def _render_meeting_transcript(
-    segments: list[MeetingSegment], names: dict[str, str], user_display_name: str
+    segments: list[MeetingSegment], names: dict[str, str], user_display_name: str, diarize_mic: bool = False,
 ) -> str:
     """Render `segments` as the same "[hh:mm:ss] Label: text" lines the live
     meeting screen shows, using the CURRENT name map (task 2's `render_label`)
-    and the meeting's own mic-channel display name (task 31746)."""
+    and the meeting's own mic-channel display name (task 31746), honouring
+    the meeting's own `diarize_mic_channel` flag (task 31743)."""
     lines = []
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        label = render_label(segment, names, user_display_name)
+        label = render_label(segment, names, user_display_name, diarize_mic=diarize_mic)
         lines.append(f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}")
     return "\n".join(lines) + ("\n" if lines else "")
 
@@ -267,8 +268,9 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     meeting = read_meeting_json(folder)
     names = dict(meeting.get("speaker_names") or {})
     user_display_name = meeting.get("user_display_name", "You")
+    diarize_mic = meeting.get("diarize_mic_channel", False)
     segments = _read_meeting_transcript_segments(folder)
-    current_content = _render_meeting_transcript(segments, names, user_display_name)
+    current_content = _render_meeting_transcript(segments, names, user_display_name, diarize_mic)
     if not current_content.strip():
         return SpeakerRenameResult(False, RENAME_REFUSED_EMPTY_TRANSCRIPT)
     if (row["content"] or "").strip() != current_content.strip():
@@ -281,7 +283,7 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         names.pop(cluster_id, None)
     update_meeting_json(folder, speaker_names=names)
 
-    new_content = _render_meeting_transcript(segments, names, user_display_name)
+    new_content = _render_meeting_transcript(segments, names, user_display_name, diarize_mic)
     new_hash = hashlib.sha256(new_content.encode()).hexdigest()
 
     media_uuid = row["uuid"]
@@ -334,6 +336,7 @@ def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]
     meeting = read_meeting_json(folder)
     names = dict(meeting.get("speaker_names") or {})
     user_display_name = meeting.get("user_display_name", "You")
+    diarize_mic = meeting.get("diarize_mic_channel", False)
     segments = _read_meeting_transcript_segments(folder)
     seen: list[str] = []
     for segment in segments:
@@ -347,7 +350,7 @@ def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]
     rows = []
     for cluster_id in seen:
         placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
-        label = render_label(placeholder, names, user_display_name) or cluster_id
+        label = render_label(placeholder, names, user_display_name, diarize_mic=diarize_mic) or cluster_id
         rows.append((cluster_id, label))
     return rows
 

@@ -129,6 +129,20 @@ def test_settings_from_config_reads_flat_meetings_section(tmp_path):
     assert default.recordings_dir == (tmp_path / "meetings").resolve()
 
 
+def test_settings_diarize_mic_channel_round_trip(tmp_path):
+    """task 31743: the flag defaults off and round-trips through config."""
+    values = {"diarize_mic_channel": True}
+
+    def get(section, key, default):
+        assert section == "meetings"
+        return values.get(key, default)
+
+    settings = mo.MeetingSettings.from_config(get, data_dir=tmp_path)
+    assert settings.diarize_mic_channel is True
+    default = mo.MeetingSettings.from_config(lambda s, k, d: d, data_dir=tmp_path)
+    assert default.diarize_mic_channel is False
+
+
 def test_meeting_user_display_name_defaults_to_you_when_unset():
     """No `chat_defaults.user_display_name` at all: the validated getter
     returns the factory default it was handed, same as the real
@@ -319,6 +333,26 @@ def test_start_stamps_the_configured_display_name_onto_meta(tmp_path, monkeypatc
     owner.prepare()
     session = owner.start()
     assert session.meta.user_display_name == "Alice"
+    owner.stop()
+
+
+def test_start_stamps_diarize_mic_channel_onto_meta(tmp_path, monkeypatch):
+    """task 31743: the owner stamps the configured flag onto `meta` so the
+    session/render path can read a single source of truth."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path, diarize_mic_channel=True)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarize_mic_channel is True
+    owner.stop()
+
+
+def test_start_leaves_diarize_mic_channel_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarize_mic_channel is False
     owner.stop()
 
 

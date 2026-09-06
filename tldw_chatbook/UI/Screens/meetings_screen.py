@@ -550,14 +550,16 @@ class MeetingsScreen(BaseAppScreen):
     def _line_for_segment(self, segment: MeetingSegment) -> str:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
         names = self._session.meta.speaker_names if self._session is not None else {}
-        label = render_label(segment, names, self._user_display_name())
+        diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
+        label = render_label(segment, names, self._user_display_name(), diarize_mic=diarize_mic)
         return f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}"
 
     def _speaker_label(self, cluster_id: str) -> str:
         """The legend row's current display name for `cluster_id`."""
         names = self._session.meta.speaker_names if self._session is not None else {}
+        diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
         placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
-        return render_label(placeholder, names, self._user_display_name()) or cluster_id
+        return render_label(placeholder, names, self._user_display_name(), diarize_mic=diarize_mic) or cluster_id
 
     def _note_speaker(self, segment: MeetingSegment) -> None:
         """Track a newly-seen `speaker_id`, mounting its legend row once."""

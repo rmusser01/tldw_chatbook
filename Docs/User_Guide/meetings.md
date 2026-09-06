@@ -108,6 +108,7 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Requires the same diarization packages as `post_diarize` and `diarizer_backend` set to `"local"`. |
 | `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
 | `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
+| `diarize_mic_channel` | `false` | Hybrid rooms: also diarize the mic ("you") and overlap ("both") channels in call mode instead of always pre-naming them — see "Speaker labels" below. |
 
 Each finished meeting's folder (named by start time, e.g.
 `2026-09-04_2121/`) contains:
@@ -171,6 +172,17 @@ what happens to a meeting once it's queued.
   far, and the name map saved into `meeting.json` for the finished
   recording. This live path has automated pilot-test coverage only; it has
   not been exercised in a live session on this page's verification host.
+- **Hybrid rooms — someone else sharing your microphone — can also be
+  diarized, behind `meetings.diarize_mic_channel` (off by default).**
+  Normally the mic ("you") and overlap ("both") channels in call mode are
+  never sent through the diarizer: every mic-channel segment is pre-named as
+  you regardless of who is actually speaking into that mic. Turning this flag
+  on (in addition to `live_diarization`) sends those channels through the
+  diarizer too, so a "you"/"both" segment that gets a speaker id renders by
+  that id (a name, or "Speaker N") instead of your display name — the "You"
+  pre-naming no longer applies once a segment has been diarized. This only
+  changes call mode; room mode already diarizes every segment regardless of
+  this flag.
 - **Speaker names can also be renamed after the fact, on the finished
   Library item — not only live, during the meeting.** A rename control
   mirroring the live Speakers legend exists in the Library media item's

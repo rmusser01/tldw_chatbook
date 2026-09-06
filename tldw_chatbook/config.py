@@ -5215,6 +5215,11 @@ diarizer_backend = "local"
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.
 max_speakers = 8
+# Hybrid rooms (a call where more than one person shares the mic): also
+# diarize the mic ("you") and overlap ("both") channels in call mode instead
+# of always pre-naming them as you. Off by default -- turning it on means a
+# mic segment may render as a diarized speaker instead of your own name.
+diarize_mic_channel = false
 
 [transcription]
 # Default transcription provider
