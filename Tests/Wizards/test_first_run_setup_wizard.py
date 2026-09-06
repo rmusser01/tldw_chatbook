@@ -11168,9 +11168,11 @@ class TestCommandPaletteReentry:
         )
         # Dict results flow through the shared handler unchanged.
         screen.app._handle_first_run_wizard_result.reset_mock()
-        callback({"completed": True, "exit_route": "chat"})
+        from tldw_chatbook.Constants import TAB_CHAT as _TAB_CHAT
+
+        callback({"completed": True, "exit_route": _TAB_CHAT})
         screen.app._handle_first_run_wizard_result.assert_called_once_with(
-            {"completed": True, "exit_route": "chat"}, cancel_to_console=False
+            {"completed": True, "exit_route": _TAB_CHAT}, cancel_to_console=False
         )
 
     def test_unknown_action_id_is_a_no_op(self):

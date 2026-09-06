@@ -12,13 +12,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME, TAB_SETTINGS
 
 
-class _CancelHarness:
+class CancelHarness:
     """Duck-typed app recording the navigation the cancel branch performs."""
 
-    def __init__(self, *, deferred_focus: bool = False, current_tab: str = "home"):
+    def __init__(self, *, deferred_focus: bool = False, current_tab: str = TAB_HOME):
         self.calls: list[str] = []
         self.posted: list[object] = []
         self.focus_mode = False
@@ -46,7 +46,7 @@ def _cancel_result() -> None:
 
 
 def test_cancelled_boot_wizard_routes_to_the_console() -> None:
-    app = _CancelHarness()
+    app = CancelHarness()
 
     TldwCli._continue_first_run_wizard_result(app, None)
 
@@ -54,7 +54,7 @@ def test_cancelled_boot_wizard_routes_to_the_console() -> None:
 
 
 def test_cancelled_boot_wizard_applies_deferred_focus_request() -> None:
-    app = _CancelHarness(deferred_focus=True)
+    app = CancelHarness(deferred_focus=True)
 
     TldwCli._continue_first_run_wizard_result(app, None)
 
@@ -64,7 +64,7 @@ def test_cancelled_boot_wizard_applies_deferred_focus_request() -> None:
 
 
 def test_cancelled_rerun_leaves_the_current_screen_alone() -> None:
-    app = _CancelHarness(current_tab="settings")
+    app = CancelHarness(current_tab=TAB_SETTINGS)
 
     TldwCli._continue_first_run_wizard_result(
         app, None, cancel_to_console=False
@@ -75,7 +75,7 @@ def test_cancelled_rerun_leaves_the_current_screen_alone() -> None:
 
 
 def test_completed_exit_route_still_navigates_regression_pin() -> None:
-    app = _CancelHarness()
+    app = CancelHarness()
 
     TldwCli._continue_first_run_wizard_result(
         app,
@@ -89,7 +89,7 @@ def test_completed_exit_route_still_navigates_regression_pin() -> None:
 
 def test_interview_wrapper_forwards_cancel_flag() -> None:
     """The public entry must forward cancel_to_console to the continuation."""
-    app = _CancelHarness()
+    app = CancelHarness()
 
     TldwCli._handle_first_run_wizard_result(
         app, None, cancel_to_console=False
