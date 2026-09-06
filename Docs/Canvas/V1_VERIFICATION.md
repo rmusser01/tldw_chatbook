@@ -20,8 +20,10 @@ post-format preservation selection passes **172 tests, 1 Requests warning,
 skips, 1 Requests warning, 180.07s**, and all six derived preflight checks pass.
 Changed-range formatting and fatal static checks pass; ordinary Ruff remains
 unchanged from the fix baseline (41 existing findings across the four files).
-Scoped rereview remains pending. The implemented repair composes exactly one
-verified replacement then
+Scoped rereview of `f55ab2cbe..ee27c7193` approves the runtime fix and prose
+corrections with no new Critical/Important breakage. Reference-machine latency
+and latest-dev integration/PR gates remain open; this is not merge approval.
+The implemented repair composes exactly one verified replacement then
 one saved-user append; exact owned Retry and three-way commit reconciliation
 preserve at-most-once adapter entry. Operation-owned SQLite cleanup preserves
 borrowed connections. Governance is the amended

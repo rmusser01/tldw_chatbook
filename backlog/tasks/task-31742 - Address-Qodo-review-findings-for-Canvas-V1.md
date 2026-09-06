@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 03:38'
+updated_date: '2026-09-06 03:44'
 labels:
   - canvas
   - review
@@ -54,6 +54,8 @@ Completed the approved Task 2 recovery repair under backlog/decisions/097-consol
 Task3 checkpoint ffb934ce9: compound-growth file7passed; corrected observed test-harness counter publication and completion ordering with deterministic RED before atomic publication. Final three Chromium files90passed2optionalbrowser skips1Requests warning184.52s; startup/Canvas110passed4warnings40.72s after an unchanged isolated/full rerun; census967/972 and import635/660 remain within budgets. All six derived preflight categories pass after source-private fixed-warning inventory review. Three changed test/fixture files pass Ruff and formatter checks. Numeric latency gate has18passes1failure solely at reference-hardware identity: actual M5 Max18CPU128GiB differs from pinned M4Pro14CPU48GiB; thresholds not applied and no waiver. Independent checkpoint review, actual-dev migration-number reconciliation/rebase, new Qodo/current-headCI and merge remain pending. No merge or V2; AC4 stays unchecked.
 
 Broad repair review found fresh AGENT_FIRST actor/chain identities could replay the same unresolved saved turn. Two real gateway regressions confirmed this before product correction. Real agent-enabled Retry anyway positive established its existing Capture Off behavior and unchanged old trace ledger, so the fix reuses the current owner/turn unresolved-call query for AGENT_FIRST as well as FRESH without a new recovery authority. Post-format preservation selection172passed1Requests warning73.73s; all six preflight guards pass. Scoped final rereview pending. Reference-machine latency and latest-dev migration/task collision/rebase plus fresh Qodo/CI remain open; no merge or V2.
+
+Final scoped rereview of f55ab2cbe..ee27c7193 approves runtimeI1 and minorM2 with no new Critical/Important fix breakage. I2 reference-hardware numerical latency and I3 actual-dev migration/task reconciliation plus current-head PR/Qodo/CI remain unaddressed merge gates. Current code has172focused passes,90Chromium passes(two optional skips),1compound-growth pass and all6preflight guards. No rebase, push, merge or V2 in this checkpoint; keep In Progress/AC4 unchecked. Reference M4Pro14CPU48GiB availability requested from user; actual hostM5Max cannot satisfy the unchanged identity gate.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05
