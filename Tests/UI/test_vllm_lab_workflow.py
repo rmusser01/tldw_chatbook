@@ -60,6 +60,13 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 pytestmark = pytest.mark.asyncio
 
+#: TASK-31809: iteration budget for the loops that poll for the lazily-mounted
+#: vLLM pane / VllmSetupView in the navigation handoff test. Bare `pilot.pause()`
+#: per iteration, so this is a generous ceiling for a machine under concurrent
+#: test load, not a performance target -- the loops break the instant their
+#: condition holds.
+_LAZY_MOUNT_POLL_ITERATIONS = 120
+
 
 @pytest.fixture(autouse=True)
 def _no_splash(monkeypatch):
@@ -2527,10 +2534,17 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         # NoMatches. Under concurrent test load the window's compose lags its
         # bare mount by enough for the old code to lose this race
         # intermittently. Wait for the pane before switching.
-        for _ in range(120):
+        for _ in range(_LAZY_MOUNT_POLL_ITERATIONS):
             if list(first_window.query("#llm-view-vllm")):
                 break
             await pilot.pause()
+        # Fail loud if the budget expired: switching active_view now would let
+        # watch_active_view swallow the missing pane and the test would proceed
+        # in a broken state, masking the very flake this guards.
+        assert list(first_window.query("#llm-view-vllm")), (
+            "vLLM pane #llm-view-vllm did not mount within "
+            f"{_LAZY_MOUNT_POLL_ITERATIONS} poll iterations"
+        )
         first_window.active_view = "vllm"
         # The loop's exit predicate and the post-loop assertion must be the
         # SAME condition. The old loop broke on
@@ -2539,7 +2553,7 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         # bare pauses later -- so a run whose budget expired with profiles
         # loaded but the view not yet mounted passed the assert and then
         # raised NoMatches. Wait for BOTH and assert BOTH before querying.
-        for _ in range(120):
+        for _ in range(_LAZY_MOUNT_POLL_ITERATIONS):
             await pilot.pause()
             if first_screen._vllm_profiles_loaded and list(
                 first_screen.query(VllmSetupView)
@@ -2580,126 +2594,137 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         assert app.screen.current_console_provider_for_command() == "vllm"
 
-        block_next_load.set()
-        await app.handle_screen_navigation(NavigateToScreen(TAB_LLM))
-        fresh_screen = app.screen
-        assert isinstance(fresh_screen, LLMScreen)
-        assert fresh_screen is not first_screen
-        for _ in range(100):
-            await pilot.pause(0.02)
-            if list(fresh_screen.query(LLMManagementWindow)):
-                break
-        fresh_window = fresh_screen.query_one(LLMManagementWindow)
-        # TASK-31809: mirror the first-visit fix -- wait for the lazily
-        # composed vLLM pane before switching `active_view`, or the deferred
-        # mount worker never starts and the view never appears.
-        for _ in range(120):
-            if list(fresh_window.query("#llm-view-vllm")):
-                break
+        # TASK-31809 (Qodo): the fresh-screen profile load blocks a worker
+        # thread on release_second_load until the mid-test set() below. If any
+        # assertion here raised before that set(), the worker would hang on the
+        # 60s failsafe -- so guarantee the release on every exit path.
+        try:
+            block_next_load.set()
+            await app.handle_screen_navigation(NavigateToScreen(TAB_LLM))
+            fresh_screen = app.screen
+            assert isinstance(fresh_screen, LLMScreen)
+            assert fresh_screen is not first_screen
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if list(fresh_screen.query(LLMManagementWindow)):
+                    break
+            fresh_window = fresh_screen.query_one(LLMManagementWindow)
+            # TASK-31809: mirror the first-visit fix -- wait for the lazily
+            # composed vLLM pane before switching `active_view`, or the deferred
+            # mount worker never starts and the view never appears.
+            for _ in range(_LAZY_MOUNT_POLL_ITERATIONS):
+                if list(fresh_window.query("#llm-view-vllm")):
+                    break
+                await pilot.pause()
+            assert list(fresh_window.query("#llm-view-vllm")), (
+                "vLLM pane #llm-view-vllm did not mount within "
+                f"{_LAZY_MOUNT_POLL_ITERATIONS} poll iterations"
+            )
+            fresh_window.active_view = "vllm"
+            # The load stays pending here (see `_NavigationRepository.load`), so a
+            # generous budget cannot flip `_vllm_profiles_loaded` -- it only gives
+            # the mount time to land. Wait for the view, then assert it is present
+            # before querying it.
+            for _ in range(_LAZY_MOUNT_POLL_ITERATIONS):
+                await pilot.pause()
+                if second_load_entered.is_set() and list(fresh_screen.query(VllmSetupView)):
+                    break
+            assert second_load_entered.is_set()
+            assert not fresh_screen._vllm_profiles_loaded
+            assert list(fresh_screen.query(VllmSetupView))
+            fresh_view = fresh_screen.query_one(VllmSetupView)
+            for _ in range(5):
+                await pilot.pause()
+            assert (
+                str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
+                == "Setup incomplete"
+            )
+            assert "✓" not in " ".join(
+                str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
+                for row in ("environment", "installation", "model", "network")
+            )
+            assert (
+                str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
+                == "No activity yet."
+            )
+            assert "API and model are ready" not in str(
+                fresh_view.query_one("#vllm-activity-events", Label).renderable
+            )
+            fresh_view.project_lifecycle(active=True)
             await pilot.pause()
-        fresh_window.active_view = "vllm"
-        # The load stays pending here (see `_NavigationRepository.load`), so a
-        # generous budget cannot flip `_vllm_profiles_loaded` -- it only gives
-        # the mount time to land. Wait for the view, then assert it is present
-        # before querying it.
-        for _ in range(120):
-            await pilot.pause()
-            if second_load_entered.is_set() and list(fresh_screen.query(VllmSetupView)):
-                break
-        assert second_load_entered.is_set()
-        assert not fresh_screen._vllm_profiles_loaded
-        assert list(fresh_screen.query(VllmSetupView))
-        fresh_view = fresh_screen.query_one(VllmSetupView)
-        for _ in range(5):
-            await pilot.pause()
-        assert (
-            str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
-            == "Setup incomplete"
-        )
-        assert "✓" not in " ".join(
-            str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
-            for row in ("environment", "installation", "model", "network")
-        )
-        assert (
-            str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
-            == "No activity yet."
-        )
-        assert "API and model are ready" not in str(
-            fresh_view.query_one("#vllm-activity-events", Label).renderable
-        )
-        fresh_view.project_lifecycle(active=True)
-        await pilot.pause()
-        assert (
-            str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
-            == "Setup incomplete"
-        )
-        assert "✓" not in " ".join(
-            str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
-            for row in ("environment", "installation", "model", "network")
-        )
-        assert (
-            str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
-            == "No activity yet."
-        )
-        assert "API and model are ready" not in str(
-            fresh_view.query_one("#vllm-activity-events", Label).renderable
-        )
-        assert not fresh_view.query_one("#vllm-use-console", Button).display
-        assert fresh_view.query_one("#vllm-use-console", Button).disabled
-        assert not fresh_view.query_one("#vllm-make-default", Button).display
-        assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
-        assert not fresh_view.query_one("#vllm-stop", Button).disabled
-        assert "Next: Stop vLLM" in str(
-            fresh_screen.query_one("#lab-status-chip-model-install", Static).renderable
-        )
+            assert (
+                str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
+                == "Setup incomplete"
+            )
+            assert "✓" not in " ".join(
+                str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
+                for row in ("environment", "installation", "model", "network")
+            )
+            assert (
+                str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
+                == "No activity yet."
+            )
+            assert "API and model are ready" not in str(
+                fresh_view.query_one("#vllm-activity-events", Label).renderable
+            )
+            assert not fresh_view.query_one("#vllm-use-console", Button).display
+            assert fresh_view.query_one("#vllm-use-console", Button).disabled
+            assert not fresh_view.query_one("#vllm-make-default", Button).display
+            assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+            assert not fresh_view.query_one("#vllm-stop", Button).disabled
+            assert "Next: Stop vLLM" in str(
+                fresh_screen.query_one("#lab-status-chip-model-install", Static).renderable
+            )
 
-        from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+            from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
 
-        original_post_message = fresh_screen.post_message
-        monkeypatch.setattr(fresh_screen, "post_message", lambda *_args: True)
-        staged_before_hydration = fresh_screen._stage_vllm_handoff(
-            channel=HandoffChannel.VLLM_CONSOLE,
-            intent_type=VllmConsoleIntent,
-            route=TAB_CHAT,
-        )
-        monkeypatch.setattr(fresh_screen, "post_message", original_post_message)
-        assert not staged_before_hydration
-        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        focus_target = app.focused
-        assert focus_target is not None
+            original_post_message = fresh_screen.post_message
+            monkeypatch.setattr(fresh_screen, "post_message", lambda *_args: True)
+            staged_before_hydration = fresh_screen._stage_vllm_handoff(
+                channel=HandoffChannel.VLLM_CONSOLE,
+                intent_type=VllmConsoleIntent,
+                route=TAB_CHAT,
+            )
+            monkeypatch.setattr(fresh_screen, "post_message", original_post_message)
+            assert not staged_before_hydration
+            assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+            focus_target = app.focused
+            assert focus_target is not None
 
-        release_second_load.set()
-        for _ in range(100):
-            await pilot.pause(0.02)
-            if fresh_screen._vllm_profiles_loaded:
-                break
-        assert fresh_screen._vllm_profiles_loaded
-        assert app.focused is focus_target
+            release_second_load.set()
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if fresh_screen._vllm_profiles_loaded:
+                    break
+            assert fresh_screen._vllm_profiles_loaded
+            assert app.focused is focus_target
 
-        for _ in range(5):
-            await pilot.pause()
-        snapshot = fresh_screen._vllm_owner.snapshot()
-        assert snapshot.current_token == token
-        assert snapshot.state is VllmReadinessState.READY
-        assert snapshot.target == _ready_result(token).target
-        assert "Ready at http://127.0.0.1:8000/v1" in str(
-            fresh_view.query_one("#vllm-readiness-state", Label).renderable
-        )
-        assert "✓ Model · exact selection verified" in str(
-            fresh_view.query_one("#vllm-check-model", Label).renderable
-        )
-        assert "✓ Network · API reachable" in str(
-            fresh_view.query_one("#vllm-check-network", Label).renderable
-        )
-        assert "API and model are ready" in str(
-            fresh_view.query_one("#vllm-activity-summary", Label).renderable
-        )
-        assert fresh_view.query_one("#vllm-use-console", Button).display
-        assert not fresh_view.query_one("#vllm-use-console", Button).disabled
-        assert fresh_view.query_one("#vllm-make-default", Button).display
-        assert not fresh_view.query_one("#vllm-make-default", Button).disabled
-        assert not fresh_view.query_one("#vllm-stop", Button).disabled
-        assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+            for _ in range(5):
+                await pilot.pause()
+            snapshot = fresh_screen._vllm_owner.snapshot()
+            assert snapshot.current_token == token
+            assert snapshot.state is VllmReadinessState.READY
+            assert snapshot.target == _ready_result(token).target
+            assert "Ready at http://127.0.0.1:8000/v1" in str(
+                fresh_view.query_one("#vllm-readiness-state", Label).renderable
+            )
+            assert "✓ Model · exact selection verified" in str(
+                fresh_view.query_one("#vllm-check-model", Label).renderable
+            )
+            assert "✓ Network · API reachable" in str(
+                fresh_view.query_one("#vllm-check-network", Label).renderable
+            )
+            assert "API and model are ready" in str(
+                fresh_view.query_one("#vllm-activity-summary", Label).renderable
+            )
+            assert fresh_view.query_one("#vllm-use-console", Button).display
+            assert not fresh_view.query_one("#vllm-use-console", Button).disabled
+            assert fresh_view.query_one("#vllm-make-default", Button).display
+            assert not fresh_view.query_one("#vllm-make-default", Button).disabled
+            assert not fresh_view.query_one("#vllm-stop", Button).disabled
+            assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
+        finally:
+            release_second_load.set()
 
 
 async def test_delayed_profile_hydration_interaction_fence_preserves_exact_ready(

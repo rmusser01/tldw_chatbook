@@ -29,11 +29,13 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 
@@ -88,6 +90,19 @@ def _fresh_wizard_app():
 async def test_stray_navigation_does_not_dismiss_first_run_wizard(
     trigger: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A navigation arriving while the wizard is up must not dismiss it.
+
+    Fires the stray navigation two ways: a raw ``NavigateToScreen`` post and
+    the ``action_shell_destination`` a leaked F9 keypress invokes. Both must
+    leave the wizard mounted (the guard ignores them); before the fix either
+    tore the wizard down to Home.
+
+    Args:
+        trigger: Which stray-navigation path to exercise ("posted_navigate"
+            or "shell_destination_key").
+        monkeypatch: Pytest fixture used to sandbox the config lookups.
+        tmp_path: Pytest fixture providing the clean HOME/XDG sandbox dirs.
+    """
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _fresh_wizard_app()
 
@@ -126,7 +141,12 @@ async def test_navigation_resumes_once_the_wizard_leaves_the_stack(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The guard must not outlive the wizard: once it is off the stack, a
-    navigation posted afterwards proceeds normally."""
+    navigation posted afterwards proceeds normally.
+
+    Args:
+        monkeypatch: Pytest fixture used to sandbox the config lookups.
+        tmp_path: Pytest fixture providing the clean HOME/XDG sandbox dirs.
+    """
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _fresh_wizard_app()
 
@@ -146,3 +166,76 @@ async def test_navigation_resumes_once_the_wizard_leaves_the_stack(
                 pilot, lambda: app.current_tab == "settings"
             )
             assert app.current_tab == "settings"
+
+
+# ---------------------------------------------------------------------------
+# Isolated unit tests for the guard predicate in
+# TldwCli._handle_screen_navigation_locked (no app.run_test): pin the
+# stack-scan + silent-False contract directly, independent of the full app.
+# ---------------------------------------------------------------------------
+
+
+class _StubScreen:
+    """A minimal stand-in for a screen on the navigation stack.
+
+    Args:
+        blocks: When True, carries ``blocks_stray_navigation = True`` exactly
+            as ``FirstRunSetupWizard`` does; otherwise the attribute is absent
+            (matching an ordinary screen).
+    """
+
+    def __init__(self, blocks: bool = False) -> None:
+        if blocks:
+            self.blocks_stray_navigation = True
+
+
+class _StubApp:
+    """Duck-typed host exposing only what the guard reads before it acts.
+
+    Args:
+        stack: The value returned for ``_screen_stack``.
+    """
+
+    _initial_screen_pushed = True
+
+    def __init__(self, stack: list[object]) -> None:
+        self._screen_stack = stack
+        self.notify = MagicMock()
+        self._resolve_screen_navigation_target = MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_guard_returns_false_and_does_not_resolve_when_gate_on_stack() -> None:
+    """A blocking gate anywhere on the stack short-circuits to a silent False.
+
+    Confirms the guard neither resolves a navigation target nor notifies the
+    user -- the stray navigation is ignored, not surfaced as a failure.
+    """
+    app = _StubApp([_StubScreen(), _StubScreen(blocks=True)])
+
+    result = await TldwCli._handle_screen_navigation_locked(
+        app, SimpleNamespace(screen_name="settings")
+    )
+
+    assert result is False
+    app._resolve_screen_navigation_target.assert_not_called()
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_guard_lets_navigation_through_when_no_gate_on_stack() -> None:
+    """With no blocking gate, the guard passes control on to target resolution.
+
+    Uses a sentinel raised from ``_resolve_screen_navigation_target`` to prove
+    execution reached past the guard (rather than returning False early).
+    """
+    app = _StubApp([_StubScreen(), _StubScreen()])
+    sentinel = RuntimeError("reached target resolution")
+    app._resolve_screen_navigation_target.side_effect = sentinel
+
+    with pytest.raises(RuntimeError, match="reached target resolution"):
+        await TldwCli._handle_screen_navigation_locked(
+            app, SimpleNamespace(screen_name="settings")
+        )
+
+    app._resolve_screen_navigation_target.assert_called_once_with("settings")
