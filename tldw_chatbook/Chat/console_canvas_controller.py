@@ -330,11 +330,13 @@ class ConsoleCanvasController:
         self._assistant_runs: dict[str, str] = {}
         self._closed = False
         self._session_owners: dict[str, CanvasSessionOwner] = {}
+        self._promoted_selection_owners: dict[str, CanvasSessionOwner] = {}
         self._session_incarnations: dict[str, int] = {}
         self._promotion_leases: dict[str, object] = {}
         self._session_generations: dict[str, int] = {}
         self._lock = threading.RLock()
         self.compilation = CanvasCompilation()
+        self._selection_resolver: Callable[[CanvasScope], CanvasScope] | None = None
         self._settlement_listeners: list[
             Callable[[CanvasSettlementPublication], None]
         ] = []
@@ -370,6 +372,35 @@ class ConsoleCanvasController:
 
         return self._durable_service
 
+    def bind_selection_resolver(
+        self, resolver: Callable[[CanvasScope], CanvasScope]
+    ) -> None:
+        """Bind the current native authority without eagerly constructing it."""
+        with self._lock:
+            self._selection_resolver = resolver
+
+    def capture_selected_scope(self, scope: CanvasScope) -> CanvasScope:
+        """Hand the live reachable selection to a newly captured assistant run."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("canvas_scope_unavailable")
+            resolver = self._selection_resolver
+        # Native authority already calls into this controller under its lock.
+        selected = resolver(scope) if resolver is not None else scope
+        with self._lock:
+            if self._closed or self._selection_resolver != resolver:
+                raise RuntimeError("canvas_scope_unavailable")
+        if (
+            replace(
+                selected,
+                selected_canvas_id=scope.selected_canvas_id,
+                selected_revision_id=scope.selected_revision_id,
+            )
+            != scope
+        ):
+            raise RuntimeError("canvas_scope_unavailable")
+        return selected
+
     def activate_session(self, session_id: str) -> CanvasSessionOwner:
         """Activate a fresh temporary incarnation and retire same-ID predecessors."""
 
@@ -382,6 +413,7 @@ class ConsoleCanvasController:
                 raise RuntimeError("canvas_promotion_in_flight")
             incarnation = self._session_incarnations.get(session_id, 0) + 1
             owner = CanvasSessionOwner(session_id, incarnation)
+            self._promoted_selection_owners.pop(session_id, None)
             self._session_incarnations[session_id] = incarnation
             self._session_owners[session_id] = owner
             for run_id, stage in tuple(self._runs.items()):
@@ -730,6 +762,16 @@ class ConsoleCanvasController:
             owner = self._session_owners.get(scope.session_id)
             self.validate_interactive_owner(scope, owner, temporary=temporary)
             return owner
+
+    def capture_selection_owner(
+        self, scope: CanvasScope, *, temporary: bool
+    ) -> CanvasSessionOwner | None:
+        """Retain selection identity only across a confirmed same-session promotion."""
+        with self._lock:
+            owner = self.capture_interactive_owner(scope, temporary=temporary)
+            if owner is not None or temporary:
+                return owner
+            return self._promoted_selection_owners.get(scope.session_id)
 
     def validate_interactive_owner(
         self, scope: CanvasScope, owner: Any, *, temporary: bool
@@ -1259,6 +1301,7 @@ class ConsoleCanvasController:
         with self._lock:
             if session_id in self._promotion_leases:
                 return
+            self._promoted_selection_owners.pop(session_id, None)
             for run_id, stage in tuple(self._runs.items()):
                 if stage.scope.session_id != session_id:
                     continue
@@ -1272,6 +1315,7 @@ class ConsoleCanvasController:
 
     def discard_all(self) -> None:
         with self._lock:
+            self._promoted_selection_owners.clear()
             for run_id, stage in tuple(self._runs.items()):
                 if stage.scope.session_id in self._promotion_leases:
                     continue
@@ -1343,6 +1387,7 @@ class ConsoleCanvasController:
                 stage = self._runs.pop(run_id)
                 self._release_assistant_run(run_id, stage)
             self._promotion_leases.pop(session_id, None)
+            self._promoted_selection_owners[session_id] = contribution._owner
             self._session_owners.pop(session_id, None)
             return True
 
@@ -1397,6 +1442,8 @@ class ConsoleCanvasController:
                     self._release_assistant_run(run_id, stage)
                     self._runs.pop(run_id, None)
             self._closed = True
+            self._promoted_selection_owners.clear()
+            self._selection_resolver = None
             leased_sessions = set(self._promotion_leases)
             self._session_owners = {
                 session_id: owner

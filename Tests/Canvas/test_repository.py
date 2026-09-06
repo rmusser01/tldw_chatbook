@@ -1476,7 +1476,11 @@ def test_valid_import_preserves_ids_branch_graph_source_and_reopen_hint(db) -> N
     ]
 
 
-def test_import_retains_well_formed_unknown_runtime_profile_inertly(db) -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery", ["native", "served"])
+async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
+    db, delivery
+) -> None:
     """Import storage must not coerce a future profile into executable canvas-v1."""
 
     conversation_id, message_id = _owner(db)
@@ -1500,7 +1504,7 @@ def test_import_retains_well_formed_unknown_runtime_profile_inertly(db) -> None:
                 parent_revision_id=None,
                 sequence=1,
                 title="Future",
-                runtime_profile="canvas-v9",  # type: ignore[arg-type]
+                runtime_profile="canvas-v99",  # type: ignore[arg-type]
                 source=source,
                 content_sha256=_sha256(source),
                 source_bytes=len(source.encode("utf-8")),
@@ -1515,8 +1519,75 @@ def test_import_retains_well_formed_unknown_runtime_profile_inertly(db) -> None:
     repository.import_batch(batch)
 
     restored = repository.read_revision(conversation_id, revision_id)
-    assert restored.runtime_profile == "canvas-v9"
+    assert restored.runtime_profile == "canvas-v99"
     assert restored.source == source
+
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Canvas.control_protocol import (
+        CONTROL_PROTOCOL_VERSION,
+        ControlMessage,
+    )
+    from tldw_chatbook.Canvas.gateway import ServedCanvasControlHandler
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+    from tldw_chatbook.Web_Server.serve import _ServedCanvasAuthorityProxy
+
+    controller = ConsoleCanvasController(durable_service=CanvasService(db))
+    controller.activate_session("profile-session")
+    scope = CanvasScope(
+        session_id="profile-session",
+        conversation_id=conversation_id,
+        active_message_ids=(message_id,),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="profile-read",
+    )
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _session: scope,
+        canvas_controller=controller,
+    )
+    gateway_scope = authority.gateway_scope(
+        session_id=scope.session_id,
+        browser_session_id="profile-browser",
+        canvas_id=canvas_id,
+        revision_id=revision_id,
+        follow_latest=False,
+    )
+    reader = authority
+    if delivery == "served":
+        handler = ServedCanvasControlHandler()
+        handler.bind(authority, gateway_scope)
+        gateway_scope = handler.scope
+
+        class InProcessControlBroker:
+            async def request(self, _child, message_type, payload, *, timeout):
+                return await handler.handle(
+                    ControlMessage(
+                        CONTROL_PROTOCOL_VERSION,
+                        message_type,
+                        str(uuid4()),
+                        None,
+                        payload,
+                    )
+                )
+
+        reader = _ServedCanvasAuthorityProxy(
+            SimpleNamespace(
+                _served_browser_children={"profile-browser": "profile-child"},
+                _canvas_control_broker=InProcessControlBroker(),
+            )
+        )
+
+    # Source inspection/export stays available on both delivery boundaries.
+    inert_source = reader.read_source(gateway_scope)
+    if delivery == "served":
+        inert_source = await inert_source
+    assert inert_source.source == source
+    with pytest.raises(ValueError, match="unsupported Canvas runtime profile"):
+        await reader.resolve_render_plan(gateway_scope)
 
 
 def test_import_prevalidation_collisions_and_injected_write_failure_are_atomic(

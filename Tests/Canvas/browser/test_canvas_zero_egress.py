@@ -835,6 +835,70 @@ def test_benign_counter_form_timer_svg_and_typed_submit_work_with_zero_egress(
 
 
 @pytest.mark.loopback_network
+def test_textarea_and_select_submit_defaults_edits_and_reconstruction(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        source = """<!doctype html><html><body>
+<section id="controls"><textarea id="text">hello</textarea>
+<select id="choice"><option value="a">A</option><option value="b" selected>B</option></select>
+<select id="fallback"><option>first</option><option>second</option></select></section>
+<button id="submit-values">submit</button><button id="detach">detach</button>
+<button id="restore">restore</button><button id="change-defaults">change defaults</button>
+<script>
+const controls = document.getElementById("controls");
+const text = document.getElementById("text");
+const choice = document.getElementById("choice");
+const fallback = document.getElementById("fallback");
+document.getElementById("submit-values").addEventListener("click", () => {
+  canvas.submit({text: text.value, choice: choice.value, fallback: fallback.value});
+});
+document.getElementById("detach").addEventListener("click", () => { controls.parentNode.removeChild(controls); });
+document.getElementById("restore").addEventListener("click", () => { document.body.appendChild(controls); });
+document.getElementById("change-defaults").addEventListener("click", () => {
+  text.textContent = "new default";
+  fallback.childNodes[1].selected = true;
+});
+</script></body></html>"""
+        assert _load(page, _wire_plan(source), recorder)["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+
+        def submit(index, expected):
+            assert frame.locator("#text").input_value() == expected["text"]
+            assert frame.locator("#choice").input_value() == expected["choice"]
+            assert frame.locator("#fallback").input_value() == expected["fallback"]
+            frame.locator("#submit-values").click()
+            page.wait_for_function(
+                "count => window.__canvasHarness.messages.filter(item => "
+                "item.type === 'canvas:bridge-request' && item.kind === 'submit').length === count",
+                arg=index,
+            )
+            bridges = page.evaluate(
+                "window.__canvasHarness.messages.filter(item => "
+                "item.type === 'canvas:bridge-request' && item.kind === 'submit')"
+            )
+            assert bridges[-1]["value"] == expected
+
+        submit(1, {"text": "hello", "choice": "b", "fallback": "first"})
+        frame.locator("#text").fill("edited")
+        frame.locator("#choice").select_option("a")
+        submit(2, {"text": "edited", "choice": "a", "fallback": "first"})
+        frame.locator("#detach").click()
+        frame.locator("#controls").wait_for(state="detached")
+        frame.locator("#change-defaults").click()
+        frame.locator("#restore").click()
+        frame.locator("#controls").wait_for(state="visible")
+        submit(3, {"text": "edited", "choice": "a", "fallback": "second"})
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 def test_dom_move_detach_and_reinsert_preserve_virtual_identity_and_bounds(
     chromium_browser: Any,
     asset_server: _OwnedServer,

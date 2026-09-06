@@ -201,6 +201,7 @@ class CanvasSourceResponse:
 
     source: str = field(repr=False)
     content_sha256: str
+    runtime_profile: str | None = None
 
     def __post_init__(self) -> None:
         validate_utf8_text(
@@ -669,6 +670,7 @@ class ServedCanvasControlHandler:
                     "source_bytes": projection.source_bytes,
                     "render_metadata": {
                         "source": source.source,
+                        "runtime_profile": source.runtime_profile,
                         "projection": _projection_wire(projection),
                         "selection_generation": scope.selection_generation,
                     },

@@ -95,6 +95,8 @@ class _Selection:
     canvas_id: str
     revision_id: str
     following: bool = True
+    conversation_id: str | None = None
+    owner: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +196,62 @@ class NativeConsoleCanvasAuthority:
         self._lock = RLock()
         self._disposed = False
         self._view_generation = 0
+        canvas_controller.bind_selection_resolver(self._capture_selected_scope)
+
+    def _new_selection(
+        self,
+        scope: CanvasScope,
+        canvas_id: str,
+        revision_id: str,
+        following: bool = True,
+    ) -> _Selection:
+        return _Selection(
+            canvas_id,
+            revision_id,
+            following,
+            scope.conversation_id,
+            self._canvas_controller.capture_selection_owner(
+                scope, temporary=self._is_temporary(scope)
+            ),
+        )
+
+    def _capture_selected_scope(self, scope: CanvasScope) -> CanvasScope:
+        """Validate the current native pin against the exact next-run authority."""
+        with self._lock:
+            if self._disposed or self._enabled_reader() is not True:
+                raise RuntimeError("canvas_scope_unavailable")
+            current = self._scope_resolver(scope.session_id)
+            if (
+                current.session_id != scope.session_id
+                or current.conversation_id != scope.conversation_id
+                or current.active_message_ids != scope.active_message_ids
+            ):
+                raise RuntimeError("canvas_scope_unavailable")
+            selection = self._selection.get(scope.session_id)
+            if selection is None:
+                return scope
+            owner = self._canvas_controller.capture_selection_owner(
+                scope, temporary=self._is_temporary(scope)
+            )
+            promoted = (
+                selection.conversation_id == scope.session_id
+                and not self._is_temporary(scope)
+                and owner is not None
+                and selection.owner is owner
+            )
+            if (
+                selection.conversation_id != scope.conversation_id and not promoted
+            ) or selection.owner is not owner:
+                raise RuntimeError("canvas_scope_unavailable")
+            selected = replace(
+                scope,
+                selected_canvas_id=selection.canvas_id,
+                selected_revision_id=selection.revision_id,
+            )
+            self._read_exact(selected, selection.canvas_id, selection.revision_id)
+            if promoted:
+                selection.conversation_id = scope.conversation_id
+            return selected
 
     def dispose(self) -> None:
         """Fence publication replay state and release runtime-owned memory."""
@@ -321,8 +379,8 @@ class NativeConsoleCanvasAuthority:
                     else:
                         preserve_pin = True
                 if not preserve_pin:
-                    self._selection[scope.session_id] = _Selection(
-                        info.canvas_id, info.revision_id, True
+                    self._selection[scope.session_id] = self._new_selection(
+                        scope, info.canvas_id, info.revision_id, True
                     )
                 for revision in revisions:
                     self._publish(
@@ -515,7 +573,8 @@ class NativeConsoleCanvasAuthority:
                         selected_scope, prior.canvas_id, prior.revision_id
                     )
                     self._parsed_block_imports.move_to_end(parsed_key)
-                    self._selection[session_id] = _Selection(
+                    self._selection[session_id] = self._new_selection(
+                        scope,
                         existing.revision.canvas_id,
                         existing.revision.revision_id,
                     )
@@ -553,7 +612,9 @@ class NativeConsoleCanvasAuthority:
                 self._parsed_block_imports.move_to_end(parsed_key)
                 while len(self._parsed_block_imports) > _MAX_PARSED_BLOCK_IMPORTS:
                     self._parsed_block_imports.popitem(last=False)
-            self._selection[session_id] = _Selection(info.canvas_id, info.revision_id)
+            self._selection[session_id] = self._new_selection(
+                scope, info.canvas_id, info.revision_id
+            )
             self._publish(session_id, info, "selection_changed")
             return info
 
@@ -606,7 +667,8 @@ class NativeConsoleCanvasAuthority:
         scope = self._scope_resolver(session_id)
         with self._lock:
             chosen = self._choose(scope, session_id, canvas_id, revision_id)
-            self._selection[session_id] = _Selection(
+            self._selection[session_id] = self._new_selection(
+                scope,
                 chosen.revision.canvas_id,
                 chosen.revision.revision_id,
                 following=follow_latest,
@@ -640,9 +702,11 @@ class NativeConsoleCanvasAuthority:
         owner = self._canvas_controller.capture_interactive_owner(
             captured, temporary=self._is_temporary(captured)
         )
-        source = self._read_exact(captured, scope.canvas_id, scope.revision_id).source
+        read = self._read_exact(captured, scope.canvas_id, scope.revision_id)
+        if read.revision.runtime_profile != "canvas-v1":
+            raise ValueError("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
-            lambda: compile_canvas_document(source)
+            lambda: compile_canvas_document(read.source)
         )
         current = self._selected_scope(scope)
         if (
@@ -684,7 +748,9 @@ class NativeConsoleCanvasAuthority:
 
     def read_source(self, scope: CanvasGatewayScope) -> CanvasSourceResponse:
         read = self._read_gateway(scope)
-        return CanvasSourceResponse(read.source, read.revision.content_sha256)
+        return CanvasSourceResponse(
+            read.source, read.revision.content_sha256, read.revision.runtime_profile
+        )
 
     def describe_selection(self, scope: CanvasGatewayScope) -> CanvasGatewayProjection:
         canvas_scope = self._selected_scope(scope)
@@ -755,7 +821,8 @@ class NativeConsoleCanvasAuthority:
                     current = self._rename(canvas_scope, current, validated)
                 else:
                     raise ValueError("Unsupported Canvas navigation")
-            self._selection[session_id] = _Selection(
+            self._selection[session_id] = self._new_selection(
+                canvas_scope,
                 current.revision.canvas_id,
                 current.revision.revision_id,
                 following,
@@ -816,8 +883,8 @@ class NativeConsoleCanvasAuthority:
                 return
             reachable = self._read_exact(scope, item.canvas_id, item.revision_id)
             if selection.following:
-                self._selection[session_id] = _Selection(
-                    item.canvas_id, item.revision_id, True
+                self._selection[session_id] = self._new_selection(
+                    scope, item.canvas_id, item.revision_id, True
                 )
             self._publish(session_id, reachable.revision, "selection_changed")
         self._revoke_browser_targets(invalidated)

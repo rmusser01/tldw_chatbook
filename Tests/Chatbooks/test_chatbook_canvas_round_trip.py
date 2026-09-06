@@ -13,6 +13,8 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+import pytest
+
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Canvas.archive import export_canvas_archive
 from tldw_chatbook.Canvas.repository import (
@@ -450,6 +452,67 @@ def test_canvas_v3_exact_same_identity_restore_is_idempotent(tmp_path: Path) -> 
         .fetchone()[0]
         == 4
     )
+    database.close_connection()
+
+
+@pytest.mark.parametrize("divergence", ["message", "conversation", "lineage"])
+def test_canvas_same_identity_restore_rejects_divergent_message_graph_atomically(
+    tmp_path: Path,
+    divergence: str,
+) -> None:
+    source_path = tmp_path / "divergent.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    archive_path = tmp_path / "before-edit.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    creator.temp_dir = tmp_path / "creator"
+    creator.temp_dir.mkdir()
+    assert creator.create_chatbook(
+        name="before edit",
+        description="graph equality",
+        content_selections={
+            ContentType.CONVERSATION: [str(expected["conversation_id"])]
+        },
+        output_path=archive_path,
+    )[0]
+    database = CharactersRAGDB(source_path, client_id="graph-edit")
+    connection = database.get_connection()
+    if divergence == "message":
+        message_id = expected["message_ids"][2]
+        version = connection.execute(
+            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()[0]
+        assert database.update_message(
+            message_id,
+            {"content": "changed originating message"},
+            version,
+            preserve_descendants=True,
+        )
+    elif divergence == "conversation":
+        with database.transaction() as cursor:
+            cursor.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                ("changed title", expected["conversation_id"]),
+            )
+    else:
+        message_id = expected["message_ids"][2]
+        version = connection.execute(
+            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()[0]
+        assert database.update_message(
+            message_id,
+            {"parent_message_id": expected["message_ids"][0]},
+            version,
+            preserve_descendants=True,
+        )
+    before = tuple(connection.iterdump())
+    importer = ChatbookImporter({"ChaChaNotes": str(source_path)})
+    importer.temp_dir = tmp_path / "importer"
+    importer.temp_dir.mkdir()
+    status = ImportStatus()
+    success, _message = importer.import_chatbook(archive_path, import_status=status)
+    assert success is False
+    assert status.skipped_items == 0
+    assert tuple(connection.iterdump()) == before
     database.close_connection()
 
 

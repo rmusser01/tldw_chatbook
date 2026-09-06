@@ -783,8 +783,9 @@ class ChatbookCreator:
         path.reverse()
         return path
 
+    @classmethod
     def _export_message_chunk(
-        self,
+        cls,
         chunk: Sequence[Mapping[str, Any]],
         extra_attachments: Mapping[str, list],
         conv_dir: Path,
@@ -881,7 +882,7 @@ class ChatbookCreator:
             message_data["assistant_generation_state"] = (
                 generation_state.value if generation_state is not None else None
             )
-            attachment_entries = self._export_message_attachments(
+            attachment_entries = cls._export_message_attachments(
                 msg,
                 extra_attachments.get(str(message_id), []),
                 conv_dir,
@@ -889,7 +890,7 @@ class ChatbookCreator:
             )
             if attachment_entries:
                 message_data["attachments"] = attachment_entries
-            citation_payload = self._message_citation_export_payload(msg)
+            citation_payload = cls._message_citation_export_payload(msg)
             if citation_payload:
                 message_data.update(citation_payload)
                 citation_messages.append(message_data)
@@ -924,8 +925,9 @@ class ChatbookCreator:
 
         return mimetypes.guess_extension(mime_type) or ".bin"
 
+    @classmethod
     def _export_message_attachments(
-        self,
+        cls,
         msg: Mapping[str, Any],
         extra_rows: list[Mapping[str, Any]],
         conv_dir: Path,
@@ -970,7 +972,7 @@ class ChatbookCreator:
             data = row.get("data")
             if not data:
                 continue
-            extension = self._attachment_extension(row.get("mime_type"))
+            extension = cls._attachment_extension(row.get("mime_type"))
             file_name = f"{message_id}-{row['position']}{extension}"
             (attachments_dir / file_name).write_bytes(data)
             entries.append(

@@ -1483,6 +1483,18 @@ class ChatbookImporter:
             "chatbook_canvas_conflict_preflight",
             console_library_migration_seed=load_console_library_migration_seed(),
         )
+        if owns_db:
+            try:
+                with db.transaction(immediate=True):
+                    return ChatbookImporter._preflight_canvas_target_conflicts(
+                        self,
+                        extract_dir,
+                        manifest,
+                        conversation_ids,
+                        target_db=db,
+                    )
+            finally:
+                db.close_connection()
         connection = db.get_connection()
         idempotent: set[str] = set()
         try:
@@ -1499,6 +1511,12 @@ class ChatbookImporter:
                 ).fetchone()
                 if exists is None:
                     continue
+                self._validate_same_identity_conversation(
+                    db,
+                    extract_dir,
+                    manifest,
+                    conversation_id,
+                )
                 expected_documents = {
                     document.canvas_id: document for document in documents
                 }
@@ -1572,6 +1590,96 @@ class ChatbookImporter:
             if owns_db:
                 db.close_connection()
         return frozenset(idempotent)
+
+    def _validate_same_identity_conversation(
+        self,
+        db: CharactersRAGDB,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        conversation_id: str,
+    ) -> None:
+        """Compare the canonical archive projection using the locked target DB."""
+        from ..Chat.thinking_blocks import normalize_thinking_history_policy
+        from .chatbook_creator import CITATION_MESSAGE_EXPORT_KEYS, ChatbookCreator
+
+        path = self._conversation_file_path(
+            extract_dir,
+            extract_dir / "content" / "conversations",
+            manifest,
+            conversation_id,
+        )
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        conversation = db.get_conversation_by_id(conversation_id)
+        if not conversation:
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        actual = {
+            "id": str(conversation["id"]),
+            "name": conversation.get(
+                "title", conversation.get("conversation_name", "Untitled")
+            ),
+            "created_at": conversation["created_at"],
+            "updated_at": conversation.get("last_modified", conversation["created_at"]),
+            "character_id": conversation.get("character_id"),
+            "thinking_history_policy": normalize_thinking_history_policy(
+                conversation.get("thinking_history_policy")
+            ),
+            "active_leaf_message_id": db.get_conversation_active_leaf(conversation_id),
+        }
+        for key, value in actual.items():
+            if hasattr(value, "isoformat"):
+                value = value.isoformat()
+            if expected.get(key) != value:
+                raise CanvasArchiveValidationError("same_identity_conflict")
+        rows = ChatbookCreator._conversation_graph_messages(db, conversation_id)
+        if len(rows) > _MAX_V2_GRAPH_MESSAGES:
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        expected_messages = expected.get("messages", [])
+        if len(rows) != len(expected_messages):
+            raise CanvasArchiveValidationError("same_identity_conflict")
+        projected: list[dict[str, Any]] = []
+        # Reuse export normalization without a creator instance, sidecar, or DB owner.
+        with tempfile.TemporaryDirectory(prefix="canvas-restore-compare-") as temporary:
+            root = Path(temporary)
+            conv_dir = root / "content" / "conversations"
+            conv_dir.mkdir(parents=True)
+            for start in range(0, len(rows), ChatbookCreator._ATTACHMENT_FETCH_CHUNK):
+                chunk = rows[start : start + ChatbookCreator._ATTACHMENT_FETCH_CHUNK]
+                attachments = db.get_attachments_for_messages(
+                    [str(row["id"]) for row in chunk]
+                )
+                ChatbookCreator._export_message_chunk(
+                    chunk, attachments, conv_dir, projected, []
+                )
+                for index in range(start, len(projected)):
+                    message = projected[index]
+                    archived = {
+                        key: value
+                        for key, value in expected_messages[index].items()
+                        if key not in CITATION_MESSAGE_EXPORT_KEYS
+                    }
+                    if message != archived:
+                        raise CanvasArchiveValidationError("same_identity_conflict")
+                    for attachment in message.get("attachments", []):
+                        relative = attachment["file"]
+                        with (
+                            (root / relative).open("rb") as stored,
+                            (extract_dir / relative).open("rb") as incoming,
+                        ):
+                            while True:
+                                block = stored.read(_ARCHIVE_COPY_CHUNK_BYTES)
+                                if block != incoming.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                                    raise CanvasArchiveValidationError(
+                                        "same_identity_conflict"
+                                    )
+                                if not block:
+                                    break
+            if expected.get(
+                "selected_path_message_ids"
+            ) != ChatbookCreator._selected_path_ids(
+                projected,
+                actual["active_leaf_message_id"],
+            ):
+                raise CanvasArchiveValidationError("same_identity_conflict")
 
     @staticmethod
     def _load_canvas_import_batch(

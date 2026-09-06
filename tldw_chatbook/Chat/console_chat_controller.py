@@ -22298,6 +22298,7 @@ class ConsoleChatController:
                 selected_revision_id=None,
                 run_id=canvas_run_id,
             )
+            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
             canvas_run = canvas_controller.register_run(
                 canvas_scope,
                 assistant_message_id=assistant_message_id,
