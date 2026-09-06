@@ -108,7 +108,10 @@ knows more than the source owners do:
   name (for example `RuntimeError`), so a private path is never painted.
   Pressing **Retry** against an unchanged failure still repaints — the
   message gains "· attempt 2", "· attempt 3", and so on, so a press is never
-  silent even when the outcome repeats.
+  silent even when the outcome repeats. A brand-new profile sees the same
+  callout on its Get-started view when that first source read times out or
+  fails — it paints above the Get-started content rather than hiding it, so
+  a new profile is never left with silent empty counts and no way to retry.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
   the order does not imply that items were ranked against each other.
@@ -472,7 +475,13 @@ landing paints one recovery callout with its own Retry when the source
 snapshot fails, withholds Continue while it shows, and re-runs a timed-out
 read on return. Verified live for the hard failure at 235x52 and 100x30 with
 a scratch profile whose media DB path is a directory; the deadline case is
-covered by the app tests, which is the only way to force it reliably.)*
+covered by the app tests, which is the only way to force it reliably.
+Qodo PR #2451 round: the same callout now also paints on a brand-new
+profile's Get-started view, above the starter content rather than in place
+of it; the shared reason mapper redacts filesystem/database paths out of
+`OSError`/`sqlite3` text before it can reach this or the Media callout; and
+the Media pager's Retry re-requests only the page or type-facet fence that
+actually failed instead of always reloading the page.)*
 
 —
 *Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Folder files

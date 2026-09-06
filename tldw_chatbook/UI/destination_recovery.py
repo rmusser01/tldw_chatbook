@@ -60,6 +60,10 @@ class DestinationRecoveryState:
         Silent about ``attempt`` on a first failure; once a caller bumps it
         past 1 (the same failure repeating), the label names the attempt so
         a retry against an unchanged failure still reads as a fresh press.
+
+        Returns:
+            The one-line ``"<unavailable_what> · <why>"`` callout copy, with
+            a trailing ``· attempt N`` clause once ``attempt`` exceeds 1.
         """
 
         base = f"{self.unavailable_what} · {self.why}"

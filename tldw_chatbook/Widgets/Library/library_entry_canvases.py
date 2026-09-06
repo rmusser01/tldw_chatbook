@@ -223,8 +223,54 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         status.display = bool(value)
         return status
 
+    @staticmethod
+    def _failure_callout(failure: DestinationRecoveryState) -> ComposeResult:
+        """Compose the one load-failure callout, shared by both landing modes.
+
+        Qodo PR G finding 5: a source-snapshot failure is valid regardless
+        of lifecycle, so Get-started mode composes this too -- ABOVE the
+        starter content, which stays. This is the same callout the returning
+        (non-Get-started) landing has always painted; only the caller site
+        differs per mode.
+        """
+        callout = Horizontal(
+            id="library-hub-load-failure",
+            classes=(
+                "ds-recovery-callout is-blocked"
+                if failure.severity == "error"
+                else "ds-recovery-callout"
+            ),
+        )
+        callout.styles.height = "auto"
+        with callout:
+            # The reason WRAPS, the Retry keeps its content width --
+            # left to the defaults the 1fr Static swallows the row and
+            # pushes the button outside the callout (measured on the
+            # Media callout at 235x52 and 100x30).
+            copy = Static(
+                failure.message,
+                id="library-hub-load-failure-copy",
+                markup=False,
+            )
+            copy.styles.width = "1fr"
+            copy.styles.min_width = 0
+            yield copy
+            retry = Button(
+                "Retry",
+                id=failure.retry_id or "library-source-retry",
+                classes="console-action-subdued",
+                compact=True,
+                tooltip=failure.disabled_tooltip,
+            )
+            retry.styles.width = "auto"
+            retry.styles.min_width = 0
+            yield retry
+
     def compose(self) -> ComposeResult:
         get_started = self._is_get_started(self.state)
+        failure = self.state.load_failure
+        if get_started and failure is not None:
+            yield from self._failure_callout(failure)
         if get_started:
             yield Static(
                 "Get started",
@@ -258,44 +304,12 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 classes="library-hub-meta",
                 markup=False,
             )
-        failure = self.state.load_failure
         if not get_started and failure is not None:
             # The same ``.ds-recovery-callout`` grammar as the "Needs
             # attention" row below, tinted by severity: ``.is-blocked`` is
             # the repo-wide error tint, so a timeout the next attempt may
             # beat never paints like a hard failure.
-            callout = Horizontal(
-                id="library-hub-load-failure",
-                classes=(
-                    "ds-recovery-callout is-blocked"
-                    if failure.severity == "error"
-                    else "ds-recovery-callout"
-                ),
-            )
-            callout.styles.height = "auto"
-            with callout:
-                # The reason WRAPS, the Retry keeps its content width --
-                # left to the defaults the 1fr Static swallows the row and
-                # pushes the button outside the callout (measured on the
-                # Media callout at 235x52 and 100x30).
-                copy = Static(
-                    failure.message,
-                    id="library-hub-load-failure-copy",
-                    markup=False,
-                )
-                copy.styles.width = "1fr"
-                copy.styles.min_width = 0
-                yield copy
-                retry = Button(
-                    "Retry",
-                    id=failure.retry_id or "library-source-retry",
-                    classes="console-action-subdued",
-                    compact=True,
-                    tooltip=failure.disabled_tooltip,
-                )
-                retry.styles.width = "auto"
-                retry.styles.min_width = 0
-                yield retry
+            yield from self._failure_callout(failure)
         continue_action = self._continue_action(self.state)
         if not get_started and continue_action is not None:
             yield Static(
@@ -374,6 +388,15 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if self.state.show_retry:
             yield Button("Retry source check", id="library-hub-retry-evidence")
 
+    def _sync_load_failure(self, failure: DestinationRecoveryState) -> None:
+        """Patch the one load-failure callout's copy and tint in place."""
+        self.query_one("#library-hub-load-failure-copy", Static).update(
+            failure.message
+        )
+        self.query_one("#library-hub-load-failure").set_class(
+            failure.severity == "error", "is-blocked"
+        )
+
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
         """Patch stable fields, recomposing only when the widget set changes."""
         previous_key = self._widget_set_key(self.state)
@@ -387,19 +410,14 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         lifecycle_status = self.query_one("#library-hub-lifecycle-status", Static)
         lifecycle_status.update(state.lifecycle_status)
         lifecycle_status.display = bool(state.lifecycle_status)
+        if state.load_failure is not None:
+            self._sync_load_failure(state.load_failure)
         if self._is_get_started(state):
             orientation = self.query_one("#library-hub-orientation", Static)
             orientation.display = state.lifecycle is LibraryLifecycle.STARTER
             self._complete_targeted_sync()
             return
         self.query_one("#library-hub-counts", Static).update(state.counts_line)
-        if state.load_failure is not None:
-            self.query_one("#library-hub-load-failure-copy", Static).update(
-                state.load_failure.message
-            )
-            self.query_one("#library-hub-load-failure").set_class(
-                state.load_failure.severity == "error", "is-blocked"
-            )
         continue_action = self._continue_action(state)
         if continue_action is not None:
             continue_button = self.query_one("#library-hub-continue", Button)

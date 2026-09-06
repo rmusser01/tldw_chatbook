@@ -482,6 +482,41 @@ async def test_library_landing_does_not_duplicate_screen_persistence_warning():
         assert (
             app.query_one("#library-hub-action-new-note", Button).disabled is False
         )
+        # Qodo PR G finding 5, third pin: a STARTER lifecycle with no
+        # source-snapshot failure paints no callout at all.
+        assert not app.query("#library-hub-load-failure")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("timeout", "error"))
+async def test_library_landing_starter_with_a_source_failure_shows_recovery_too(
+    kind: str,
+):
+    """Qodo PR G finding 5: a new-profile (STARTER/UNKNOWN) user whose first
+    source read timed out or failed must still see the recovery callout and
+    Retry -- not silent empty counts -- and the Get-started content stays.
+    """
+    failure = _source_load_failure(kind)
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, load_failure=failure)
+    )
+
+    async with app.run_test():
+        callouts = list(app.query("#library-hub-load-failure"))
+        assert len(callouts) == 1
+        callout = callouts[0]
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked") == (kind == "error")
+        assert str(
+            app.query_one("#library-hub-load-failure-copy", Static).renderable
+        ) == failure.message
+        retry = app.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button))
+
+        # The starter content stays -- this is Get-started, not a wall.
+        assert app.query_one("#library-hub-heading", Static)
+        assert app.query_one("#library-hub-action-import", Button)
+        assert app.query_one("#library-hub-action-new-note", Button)
 
 
 @pytest.mark.asyncio

@@ -668,7 +668,12 @@ async def test_facet_failure_publishes_its_own_recovery_state_and_clears_on_succ
 
 @pytest.mark.asyncio
 async def test_retry_reloads_the_type_facets_that_failed() -> None:
-    """The callout's only Retry owns the facet failure it advertises."""
+    """The callout's only Retry owns the facet failure it advertises.
+
+    Qodo PR G finding 4: a facet-only failure retries the facet fence
+    ALONE -- the page already succeeded, so an unnecessary page re-request
+    (which could itself fail and steal the callout) must not fire.
+    """
     screen = _Screen()
     service = _Service(_page(1, 20), _page(1, 20), types=RuntimeError("boom"))
     controller = _controller(screen, service)
@@ -676,13 +681,17 @@ async def test_retry_reloads_the_type_facets_that_failed() -> None:
     await screen.pending.pop()
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
-    assert controller.failure is not None
+    assert controller.page_failure is None
+    assert controller.facet_failure is not None
+    assert len(service.search_calls) == 1
 
     service.types = ("video",)
     controller.retry(focus_identity=None)
     while screen.pending:
         await screen.pending.pop()
 
+    assert len(service.search_calls) == 1, "page fence must not be re-requested"
+    assert len(service.type_calls) == 2
     assert controller.type_options == ("video",)
     assert controller.failure is None
 
@@ -762,3 +771,127 @@ async def test_a_facet_failure_is_live_until_the_next_facet_request_starts() -> 
     await screen.pending.pop()
     assert controller.failure is None
     assert controller.type_options == ("video",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    (
+        (
+            OSError(
+                2,
+                "No such file or directory: "
+                "'/Users/x/.local/share/tldw_cli/media.db'",
+            ),
+            "No such file or directory: '<path>'",
+        ),
+        (
+            sqlite3.OperationalError(
+                "unable to open database file /Users/x/db.sqlite"
+            ),
+            "unable to open database file <path>",
+        ),
+        (
+            sqlite3.OperationalError("database is locked"),
+            "database is locked",
+        ),
+    ),
+)
+async def test_page_failure_reason_redacts_filesystem_paths(
+    failure: Exception, reason: str
+) -> None:
+    """Qodo PR G finding 3: an OSError/sqlite3 message can carry a private
+    database or filesystem path -- the shared reason mapper must redact any
+    path-like token before it ever reaches the visible callout.
+    """
+    screen = _Screen()
+    controller = _controller(screen, _Service(failure))
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert state.why == reason
+    assert "/Users/x" not in state.message
+    assert "/Users/x" not in state.why
+
+
+@pytest.mark.asyncio
+async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> None:
+    """The same mapper also covers ``~/...`` and ``C:\\...`` forms."""
+    screen = _Screen()
+    controller = _controller(
+        screen,
+        _Service(OSError("~/Library/Application Support/media.db is missing")),
+    )
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    state = controller.failure
+    assert state is not None
+    assert "~/Library" not in state.why
+    assert "<path>" in state.why
+
+    windows_screen = _Screen()
+    windows_controller = _controller(
+        windows_screen,
+        _Service(OSError(r"C:\Users\x\media.db not found")),
+    )
+    windows_controller.request(MediaBrowseScope(), focus_identity=None)
+    await windows_screen.pending.pop()
+
+    windows_state = windows_controller.failure
+    assert windows_state is not None
+    assert "C:\\Users" not in windows_state.why
+    assert "<path>" in windows_state.why
+
+
+@pytest.mark.asyncio
+async def test_retry_retries_the_page_fence_alone_for_a_page_only_failure() -> None:
+    screen = _Screen()
+    service = _Service(RuntimeError("page boom"), _page(1, 20), types=("video",))
+    controller = _controller(screen, service)
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    assert controller.page_failure is not None
+    assert controller.facet_failure is None
+    assert len(service.type_calls) == 1
+
+    controller.retry(focus_identity=None)
+    while screen.pending:
+        await screen.pending.pop()
+
+    assert len(service.search_calls) == 2
+    assert len(service.type_calls) == 1, "facet fence must not be re-requested"
+    assert controller.applied_result is not None
+    assert controller.failure is None
+
+
+@pytest.mark.asyncio
+async def test_retry_retries_both_fences_when_both_have_failed() -> None:
+    screen = _Screen()
+    service = _Service(
+        RuntimeError("page boom"),
+        _page(1, 20),
+        types=RuntimeError("facet boom"),
+    )
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    assert controller.page_failure is not None
+    assert controller.facet_failure is not None
+
+    service.types = ("video",)
+    controller.retry(focus_identity=None)
+    while screen.pending:
+        await screen.pending.pop()
+
+    assert len(service.search_calls) == 2
+    assert len(service.type_calls) == 2
+    assert controller.type_options == ("video",)
+    assert controller.applied_result is not None
+    assert controller.failure is None

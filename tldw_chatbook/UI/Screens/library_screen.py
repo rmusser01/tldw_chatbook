@@ -13929,7 +13929,13 @@ class LibraryScreen(BaseAppScreen):
             LibraryLifecycle.STARTER,
         )
         lifecycle_status = self._library_onboarding_status_copy if get_started else ""
-        load_failure = None if get_started else self._library_source_load_failure()
+        # Qodo PR G finding 5: the source-snapshot failure is valid
+        # regardless of lifecycle -- a new profile's first source read can
+        # time out or fail exactly like a returning one's, and withholding
+        # it here left a STARTER/UNKNOWN visit with empty counts and no
+        # callout or Retry. The canvas is the one that decides how to
+        # compose it per mode (above the starter content in Get-started).
+        load_failure = self._library_source_load_failure()
         attention_action = (
             self._library_landing_attention_action()
             if not get_started and not self._library_notes_compact

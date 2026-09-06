@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Mapping
@@ -48,6 +49,35 @@ _RETRY_FAILED_PREFIX = "Couldn't retry · "
 # invented. (The 5 s figure belongs to the screen-level source snapshot,
 # a different path.)
 _TIMEOUT_REASON = "timed out"
+# Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
+# (kept, unlike other exceptions -- see below), but that text can embed a
+# database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
+# (``~/a``), Windows drive (``C:\a``), and ``file:`` URI tokens so the shared
+# mapper can redact them before any of it reaches a screen.
+_PATH_TOKEN_PATTERN = re.compile(
+    r"""(?P<prefix>^|[\s'"])
+    (?:
+        file:[^\s'"]+
+      | [A-Za-z]:\\[^\s'"]*
+      | ~/[^\s'"]*
+      | /[^\s'"]+
+    )""",
+    re.VERBOSE,
+)
+
+
+def _redact_paths(text: str) -> str:
+    """Replace filesystem/database path tokens in ``text`` with ``<path>``.
+
+    Args:
+        text: Raw exception text that may embed a local path.
+
+    Returns:
+        ``text`` with every path-like token (see ``_PATH_TOKEN_PATTERN``)
+        replaced by the literal ``<path>``; text with no such token is
+        returned unchanged.
+    """
+    return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
 
 
 def _retry_failure_reason(exc: BaseException) -> str:
@@ -57,16 +87,20 @@ def _retry_failure_reason(exc: BaseException) -> str:
         exc: The exception the failed page request raised.
 
     Returns:
-        A short human-readable reason for the failure.
+        A short human-readable reason for the failure, with any filesystem
+        or database path redacted to ``<path>``.
     """
     # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
     # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
     if isinstance(exc, TimeoutError):
         return _TIMEOUT_REASON
     if isinstance(exc, (OSError, sqlite3.OperationalError)):
-        # One bounded line: this lands in a ~36-col status Static, so an
-        # embedded newline or a long path would push the pager off screen.
-        message = " ".join(str(exc).split())[:80]
+        # ``strerror`` (when set) is the human message without the
+        # "[Errno N] " wrapper ``str()`` adds. Redact BEFORE truncating --
+        # cutting a path in half at the 80-char bound would still leak its
+        # unredacted prefix.
+        raw = getattr(exc, "strerror", None) or str(exc)
+        message = " ".join(_redact_paths(raw).split())[:80]
         return message or type(exc).__name__
     return type(exc).__name__
 
@@ -142,7 +176,13 @@ class LibraryMediaBrowseController:
 
     @property
     def failure(self) -> DestinationRecoveryState | None:
-        """Return the load failure to show: the page's, else the facets'."""
+        """Return the load failure to show: the page's, else the facets'.
+
+        Returns:
+            ``page_failure`` when a page load has failed; otherwise
+            ``facet_failure`` when the type facets have failed; otherwise
+            ``None`` when both fences are clean.
+        """
         return self.page_failure or self.facet_failure
 
     @property
@@ -216,9 +256,20 @@ class LibraryMediaBrowseController:
         # task-31632: the callout advertises ONE Retry for whichever load
         # failed, so a facet failure it names has to be one this button can
         # clear -- the type list has no retry control of its own.
-        if self.facet_error_copy:
+        # Qodo PR G finding 4: decide per fence from `page_failure`/
+        # `facet_failure`, not from the copy strings -- a facet-only
+        # failure must retry the facet fence ALONE. An unconditional page
+        # reload here would replace a live facet failure with a page one
+        # if that unnecessary page request itself failed. `page_failed`
+        # also covers the "neither is live" edge case, defaulting to the
+        # page fence like this method always has.
+        facet_failed = self.facet_failure is not None
+        page_failed = self.page_failure is not None or not facet_failed
+        if facet_failed:
             self.request_facets(fingerprint=self.requested_scope.fingerprint)
-        return self.request(self.requested_scope, focus_identity=focus_identity)
+        if page_failed:
+            return self.request(self.requested_scope, focus_identity=focus_identity)
+        return None
 
     async def _search(self, scope: MediaBrowseScope) -> MediaBrowseResult:
         service = self._media_service()
