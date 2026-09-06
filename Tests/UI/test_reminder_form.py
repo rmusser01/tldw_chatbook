@@ -517,10 +517,24 @@ async def test_unrecognized_stored_zone_round_trips_on_unrelated_edit():
 @pytest.mark.asyncio
 async def test_undetected_machine_zone_is_labeled_honestly(monkeypatch):
     """Review F7: when the machine zone cannot be detected the default is
-    UTC -- the UI must say so instead of claiming it is the machine's."""
+    UTC -- the UI must say so instead of claiming it is the machine's.
+
+    task-31711 fix round: `detect_system_timezone`/`system_timezone_name`
+    were hoisted into `schedule_input_parsing.py` (`SchedulingService`
+    needed them too, without reaching UP into this UI-layer module) and
+    re-imported back here under their original names. `reminder_form.py`'s
+    OWN calls (`timezone_options`, `_timezone_helper_copy`) resolve
+    `detect_system_timezone` through THIS module's globals, but
+    `_initial_timezone`'s `system_timezone_name()` call resolves ITS
+    internal `detect_system_timezone()` through `schedule_input_parsing`'s
+    OWN globals (where `system_timezone_name` is defined) -- a separate
+    name binding from the one re-imported here. Both need patching for
+    every call site this test exercises to actually see it."""
+    import tldw_chatbook.Scheduling.schedule_input_parsing as parsing_mod
     import tldw_chatbook.UI.Screens.scheduling.forms.reminder_form as form_mod
 
     monkeypatch.setattr(form_mod, "detect_system_timezone", lambda: None)
+    monkeypatch.setattr(parsing_mod, "detect_system_timezone", lambda: None)
     app = FormTestApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(ReminderForm())

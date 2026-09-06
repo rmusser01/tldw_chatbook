@@ -4,7 +4,7 @@ title: Schedules timestamp/timezone display pass
 status: Done
 assignee: []
 created_date: '2026-09-05 12:05'
-updated_date: '2026-09-06 05:03'
+updated_date: '2026-09-06 05:38'
 labels:
   - scheduling
   - ux
@@ -85,4 +85,18 @@ Updated pinned tests: test_ux_batch3.py and test_schedules_sync_surface.py (asse
 Two pre-existing baseline-red failures encountered while running the full suite (test_destination_visual_parity_correction.py::test_schedules_screen_matches_approved_control_plane_columns, ::test_operational_loading_states_preserve_workbench_geometry[schedules-...], and test_schedules_new_button.py::test_new_button_row_flattens_to_one_line_in_compact_mode) were confirmed unrelated to this change via a throwaway detached worktree at the pre-task HEAD (all three fail there too, before any 5a edit).
 
 Modified: tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py, unified_rows.py, sync_status_widget.py, conflicts_tab.py, task_detail.py, definition_detail.py, forms/reminder_form.py, forms/automation_definition_form.py, tldw_chatbook/Scheduling/schedule_input_parsing.py, tldw_chatbook/Scheduling/services/scheduling_service.py, Tests/UI/test_reminder_form.py, Tests/UI/test_schedules_workbench.py, Tests/UI/test_schedules_sync_surface.py, Tests/UI/test_ux_batch3.py.
+
+--- Fix round (review REQUEST-CHANGES) ---
+
+Root-cause fix for AC#2, not a symptom patch: `ReminderForm._save()`'s fix (this task's original commit) covered CREATE, but `SchedulingService.update_reminder`'s local-path branch (`Scheduling/services/scheduling_service.py`, the ONE_TIME schedule-kind normalization) unconditionally set `payload["timezone"] = None` on every edit, regardless of what the payload carried -- so a reminder created with a real detected zone lost it the moment it was next saved through the SAME form. Grepped the service for every `ScheduleKind.ONE_TIME` timezone write first (only that one site plus `create_reminder`, which has no normalization step of its own and simply persists whatever the caller's payload contains) to confirm this was the only other site.
+
+Fixed at the data layer (the one place both create and edit payloads converge before a DB write), not by patching the form again: `payload["timezone"] = merged_task.timezone or system_timezone_name()` -- preserves whatever the update's own payload supplied, and only backstops a caller that supplies none. `detect_system_timezone`/`system_timezone_name` were hoisted from `reminder_form.py` (a UI-layer module) into `Scheduling/schedule_input_parsing.py` (the existing pure home for this exact class of shared logic, matching the precedent already documented in that module's own docstring) so the service layer doesn't reach UP into UI code for them; `reminder_form.py` and `automation_definition_form.py` keep importing both names unchanged. This required fixing one now-broken test (`test_undetected_machine_zone_is_labeled_honestly`): after the hoist, `system_timezone_name()`'s internal `detect_system_timezone()` call resolves through `schedule_input_parsing`'s own module globals, not `reminder_form`'s re-exported alias, so the monkeypatch now patches both modules.
+
+Added `Tests/Scheduling/test_scheduling_service.py::test_update_reminder_preserves_detected_timezone_for_one_time`: a real `SchedulingService` + tmp-path `ScheduledTasksDB`, create -> update (the exact field shape `ReminderForm._save()` sends) -> re-read, asserting `timezone` survives the edit. Revert-checked: reverting the fix line back to `payload["timezone"] = None` makes this test fail; confirmed manually, then restored the fix.
+
+AC#3 (31710) sweep gap: the earlier `--`->em-dash pass was scoped to `UI/Screens/scheduling/` only and missed 8 genuinely user-facing strings in `Scheduling/services/scheduling_service.py` (three module-level transfer/cancel reason constants, three field_error/reachability messages, two `ResolveOutcome.reason` strings) -- all reach the user via `row.show_error`/`outcome.errors[...]["message"]`. Fixed all 8; re-ran the AST sweep script across the whole `Scheduling/` tree afterward, 0 remaining hits.
+
+Docs/User_Guide/schedules.md was stale (title, intro sentence, and the chooser's "Reminder…" button copy) -- updated to match the in-app copy and added a dated "Copy synced with code" note (not an independent live-TUI re-verification, since this was a text-only parity fix).
+
+Modified (this round): tldw_chatbook/Scheduling/schedule_input_parsing.py, tldw_chatbook/Scheduling/services/scheduling_service.py, tldw_chatbook/UI/Screens/scheduling/forms/reminder_form.py, Tests/Scheduling/test_scheduling_service.py, Tests/UI/test_reminder_form.py, Docs/User_Guide/schedules.md.
 <!-- SECTION:NOTES:END -->

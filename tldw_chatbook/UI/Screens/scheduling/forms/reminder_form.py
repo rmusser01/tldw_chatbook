@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Sequence
 from datetime import datetime
@@ -18,9 +17,11 @@ from textual.widgets import Button, Input, Label, Select, Static, TextArea
 from tldw_chatbook.Scheduling.events import ReminderFormSubmitted
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.schedule_input_parsing import (
+    detect_system_timezone,
     example_run_at_text,
     is_valid_zone,
     parse_forgiving_datetime,
+    system_timezone_name,
 )
 
 
@@ -58,42 +59,6 @@ _PRESET_DOW: dict[str, str] = {
 }
 
 _TIME_OF_DAY_PRESETS = frozenset(_PRESET_DOW)
-
-
-def detect_system_timezone() -> str | None:
-    """Best-effort IANA name for the machine's local timezone, or None.
-
-    Checks ``TZ`` first, then the ``/etc/localtime`` symlink (macOS and
-    Linux both point it into a ``zoneinfo`` tree). Returns None where
-    neither yields a valid zone (copied-file distros, containers,
-    Windows) so callers can label the UTC fallback honestly instead of
-    claiming it is the machine's zone (review F7).
-
-    Returns:
-        The detected IANA zone name, or None when detection fails.
-    """
-    tz_env = os.environ.get("TZ", "").strip()
-    if tz_env and is_valid_zone(tz_env):
-        return tz_env
-    try:
-        localtime = os.path.realpath("/etc/localtime")
-    except OSError:
-        localtime = ""
-    if "/zoneinfo/" in localtime:
-        name = localtime.split("/zoneinfo/", 1)[1]
-        if is_valid_zone(name):
-            return name
-    return None
-
-
-def system_timezone_name() -> str:
-    """The detected machine zone, or UTC when detection fails.
-
-    Returns:
-        The IANA zone name from :func:`detect_system_timezone`, falling
-        back to ``"UTC"``.
-    """
-    return detect_system_timezone() or _DEFAULT_TIMEZONE
 
 
 #: The time of day every preset-driven surface falls back to when it has

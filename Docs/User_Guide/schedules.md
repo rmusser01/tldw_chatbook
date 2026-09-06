@@ -1,4 +1,4 @@
-# Schedules — When jobs, watchlists, and workflows run
+# Schedules — When scheduled tasks fire and recurring questions run
 
 ## Recurring Watchlists briefings
 
@@ -21,7 +21,7 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 
 ## What this screen is for
 
-Schedules controls when jobs, watchlists, and workflows run. It is a
+Schedules controls when scheduled tasks fire and recurring questions run. It is a
 **single surface**: one list of everything scheduled, a detail pane for
 whatever is highlighted, and an inspector — no tabs. A one-line
 scheduler-liveness indicator sits above them, and a status strip (sync
@@ -308,11 +308,19 @@ target and only changes through **Edit in full…** or the create form.
 ## Creating a scheduled task
 
 Press **n**, or click **Create ▾** in the rail header. Both ask which
-kind of task you want — **Reminder…** or **Recurring question…** —
+kind of task you want — **Scheduled task…** or **Recurring question…** —
 since a recurring question is a different kind of definition, not just
 another schedule shape. The form scrolls when the terminal is short; the
 live "Runs: …" preview, validation, and Save/Cancel stay pinned at the
 bottom while you edit.
+
+*Copy synced with code — task-31710, 2026-09-05: the chooser's other
+button was **Reminder…**, and the page title/intro sentence said "When
+jobs, watchlists, and workflows run" — both stale (watchlist/briefing
+projections never enter this screen's list; the button and this page's
+own vocabulary now match "Scheduled task" everywhere else it appears).
+Text-parity fix only, not independently re-verified live in the TUI for
+this pass.*
 
 Every create/edit form also has a **Runs on** selector — **This device**
 or **Server (\<id\>)** when a scheduling server is connected — defaulting

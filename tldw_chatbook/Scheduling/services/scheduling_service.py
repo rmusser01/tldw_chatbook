@@ -123,9 +123,9 @@ _TRANSFER_IMMINENT_WINDOW = timedelta(minutes=5)
 #: (the actual mutation) share exactly one source of truth instead of
 #: two copies of the same branching drifting apart (Task 7 fix round
 #: finding 1: the UI used to re-derive this locally).
-_CANCEL_TOO_LATE_REASON = "Too late to cancel -- start a reverse transfer instead."
+_CANCEL_TOO_LATE_REASON = "Too late to cancel — start a reverse transfer instead."
 _CANCEL_NOT_IN_PROGRESS_REASON = (
-    "No transfer in progress on this row -- if it already moved, start a "
+    "No transfer in progress on this row — if it already moved, start a "
     "reverse transfer instead."
 )
 
@@ -140,7 +140,7 @@ _TRANSFER_IN_PROGRESS_REASON = "A transfer is already in progress on this row."
 #: the PRE-edit content to the server and then be overwritten locally by
 #: the first mirror pull -- silently discarding the user's edit.
 _TRANSFER_READ_ONLY_REASON = (
-    "This row is moving between this device and the server -- it is "
+    "This row is moving between this device and the server — it is "
     "read-only until the move finishes. Cancel the transfer first."
 )
 
@@ -254,7 +254,7 @@ def _seam_failure_warning(exc: Exception) -> dict[str, str]:
             "code": "policy_denied",
             "message": (
                 f"The server refused this automation ({exc}); showing local "
-                "validation only -- this will not resolve by retrying."
+                "validation only — this will not resolve by retrying."
             ),
         }
     return {
@@ -697,7 +697,24 @@ class SchedulingService:
             payload = dict(payload)
             if merged_task.schedule_kind == ScheduleKind.ONE_TIME:
                 payload["cron"] = None
-                payload["timezone"] = None
+                # task-31711 fix round (review finding 1): this used to
+                # hard-null the timezone unconditionally, stomping
+                # `ReminderForm._save()`'s now-real detected zone back to
+                # `None` the moment an existing one-time reminder was
+                # edited -- create persisted a real zone, the very next
+                # edit erased it. Root-caused here (the one place both
+                # the create and edit paths' payloads converge before a
+                # DB write) instead of in the form: `merged_task.timezone`
+                # already reflects whatever this update's own payload
+                # supplied, so this only backstops a caller that supplies
+                # none (or an untouched legacy `None` row), exactly
+                # mirroring the recurring form's own detected-or-UTC
+                # default rather than introducing a second convention.
+                from tldw_chatbook.Scheduling.schedule_input_parsing import (
+                    system_timezone_name,
+                )
+
+                payload["timezone"] = merged_task.timezone or system_timezone_name()
             elif merged_task.schedule_kind == ScheduleKind.RECURRING:
                 payload["run_at"] = None
             payload["next_run_at"] = self._compute_next_run_at(merged_task)
@@ -850,7 +867,7 @@ class SchedulingService:
                     field_error(
                         "_row",
                         "update_refused",
-                        "This reminder could not be updated -- it may have "
+                        "This reminder could not be updated — it may have "
                         "just been deleted or locked by a transfer.",
                     )
                 ],
@@ -1229,7 +1246,7 @@ class SchedulingService:
             # simply refused this specific request.
             if self.server_permission_denied:
                 return (
-                    "Permission denied while checking the server -- ask "
+                    "Permission denied while checking the server — ask "
                     "an admin about the automations permission."
                 )
             return "The configured server is not reachable right now."
@@ -2015,7 +2032,7 @@ class SchedulingService:
             return ResolveOutcome(
                 status="error",
                 reason=(
-                    f"The server refused to {action_desc} ({exc}) -- this "
+                    f"The server refused to {action_desc} ({exc}) — this "
                     "will not resolve by retrying."
                 ),
             )
@@ -2030,7 +2047,7 @@ class SchedulingService:
             )
             return ResolveOutcome(
                 status="error",
-                reason=f"Could not {action_desc} -- this action requires a server connection.",
+                reason=f"Could not {action_desc} — this action requires a server connection.",
             )
 
         await asyncio.to_thread(

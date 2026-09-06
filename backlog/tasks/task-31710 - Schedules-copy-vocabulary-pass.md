@@ -4,7 +4,7 @@ title: Schedules copy/vocabulary pass
 status: Done
 assignee: []
 created_date: '2026-09-05 12:05'
-updated_date: '2026-09-06 05:03'
+updated_date: '2026-09-06 05:38'
 labels:
   - scheduling
   - ux
@@ -67,4 +67,12 @@ Converged the schedules screen's vocabulary onto the two names already establish
 Updated pinned tests: test_schedules_automations_tab.py (toast wording), test_destination_visual_parity_correction.py (pane-title tuple).
 
 Modified: tldw_chatbook/UI/Screens/scheduling/forms/new_task_choice_modal.py, definition_detail.py, schedules_workbench.py, results_tab.py, tldw_chatbook/UI/Navigation/shell_destinations.py, tldw_chatbook/UI/Screens/schedules_screen.py, Tests/UI/test_schedules_automations_tab.py, Tests/UI/test_destination_visual_parity_correction.py.
+
+--- Fix round (review REQUEST-CHANGES) ---
+
+AC#3 sweep scope gap: the original pass scoped the `--`->em-dash sweep to `.py` files under `UI/Screens/scheduling/` only, missing 8 genuinely user-facing strings in `tldw_chatbook/Scheduling/services/scheduling_service.py` (three module-level transfer/cancel reason constants, three field_error/reachability messages, two `ResolveOutcome.reason` strings -- all reach the user via `row.show_error`/`outcome.errors[...]["message"]` on this same screen). Fixed all 8; re-ran the AST sweep script across the whole `Scheduling/` tree, 0 remaining hits.
+
+Docs/User_Guide/schedules.md was stale for AC#1/AC#2 (title, intro sentence, and the Create chooser's "Reminder…" button copy) -- CLAUDE.md requires the matching User_Guide page be updated alongside a screen's UI copy change. Updated the three stale strings and added a dated "Copy synced with code" note.
+
+Modified (this round): tldw_chatbook/Scheduling/services/scheduling_service.py, Docs/User_Guide/schedules.md.
 <!-- SECTION:NOTES:END -->
